@@ -13,6 +13,33 @@ export const CATEGORIES = {
 export const categoryLabel = (id) => CATEGORIES[id]?.label || id;
 export const categoryColor = (id) => CATEGORIES[id]?.color || "gray";
 
+// Retrocompatibilidade: aceita `categories` (array) ou `category` (string legado)
+export const getGroupCategories = (group) => {
+  if (Array.isArray(group?.categories) && group.categories.length > 0) return group.categories;
+  if (group?.category) return [group.category];
+  return [];
+};
+
+// Resolve os grupos de WhatsApp vinculados a um grupo da app
+export const getLinkedWhatsapps = (group, whatsappGroups = []) => {
+  const ids = group?.whatsappGroupIds || [];
+  return whatsappGroups.filter(w => ids.includes(w.id));
+};
+
+// Estatísticas derivadas dos grupos de WhatsApp vinculados
+export const getGroupStats = (group, whatsappGroups = []) => {
+  const linked = getLinkedWhatsapps(group, whatsappGroups);
+  const members = linked.reduce((s, w) => s + (w.members || 0), 0);
+  const connected = linked.filter(w => w.status === "connected").length;
+  return {
+    linked,
+    count: linked.length,
+    members,
+    connected,
+    status: linked.length === 0 ? "empty" : connected > 0 ? "connected" : "disconnected",
+  };
+};
+
 export const formatPrice = (v) =>
   v != null ? `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` : "";
 
