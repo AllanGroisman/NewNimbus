@@ -1,6 +1,6 @@
-import { useState, useRef } from "react";
-import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, CATEGORIES, categoryLabel, categoryColor, formatPrice, getGroupCategories, getGroupStats } from "../data/constants";
-import { fetchOfertas, createWAGroup, leaveWAGroup, getWAInvite, revokeWAInvite, broadcastWA, sendWAText } from "../data/api";
+import { useState, useRef, useEffect } from "react";
+import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, CATEGORIES, categoryLabel, categoryColor, formatPrice, getGroupCategories, getGroupStats, computeQueueETA, formatETA } from "../data/constants";
+import { fetchOfertas, createWAGroup, leaveWAGroup, getWAInvite, revokeWAInvite, broadcastWA, sendWAText, sendNextNow as apiSendNextNow, loadAppOps } from "../data/api";
 import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
 
 const TEMPLATE_VARS = [
@@ -58,6 +58,40 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], on
   const [createWGError, setCreateWGError] = useState(null);
   const [showPreview, setShowPreview] = useState(false);
   const [sendStatus, setSendStatus] = useState({}); // wgId -> "sending" | "sent" | "error:..."
+  const [sendingNow, setSendingNow] = useState(false);
+  const [sendNowMsg, setSendNowMsg] = useState(null);
+
+  // Sincroniza queue/pending/history quando o polling do App atualiza o grupo
+  useEffect(() => { setQueue(group.queue || []); }, [group.queue]);
+  useEffect(() => { setPending(group.pending || []); }, [group.pending]);
+
+  async function triggerSendNow() {
+    if (sendingNow || queue.length === 0) return;
+    setSendingNow(true);
+    setSendNowMsg(null);
+    try {
+      const r = await apiSendNextNow(group.id);
+      // Pega ops fresco do servidor pra refletir lastSend/queue/history atualizados
+      const ops = await loadAppOps();
+      const o = (ops.groups || []).find(g => g.id === group.id);
+      if (o) {
+        onUpdate(group.id, {
+          queue: o.queue,
+          history: o.history,
+          sentToday: o.sentToday,
+          sentWeek: o.sentWeek,
+          weekData: o.weekData,
+          lastSend: o.lastSend,
+        });
+      }
+      setSendNowMsg({ type: "ok", text: `Enviado para ${r.sent} grupo(s).` });
+      setTimeout(() => setSendNowMsg(null), 4000);
+    } catch (err) {
+      setSendNowMsg({ type: "err", text: err.message });
+    } finally {
+      setSendingNow(false);
+    }
+  }
   const [broadcasting, setBroadcasting] = useState(false);
   const templateRef = useRef(null);
 
@@ -283,7 +317,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], on
     try {
       const { minDiscount, maxPrice, minRating, minSales, keywords } = scraping.filters;
       const cats = groupInfo.categories.length > 0 ? groupInfo.categories : [primaryCat];
-      const results = await Promise.all(cats.map(cat => fetchOfertas({ category: cat, minDiscount, maxPrice, limit: 50, refresh: true })));
+      const results = await Promise.all(cats.map(cat => fetchOfertas({ category: cat, minDiscount, maxPrice, limit: 50, refresh: true, sources: scraping.sources || ["Mercado Livre"] })));
       const seen = new Set();
       const merged = [];
       for (const r of results) {
@@ -868,31 +902,75 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], on
               <div style={{ margin: "20px 0 12px", borderTop: "0.5px solid var(--color-border-tertiary)" }} />
             </div>
           )}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
             <div>
               <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 2 }}>Fila de envio</div>
-              <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>{queue.length} produto{queue.length !== 1 ? "s" : ""} agendados</div>
+              <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                {queue.length} produto{queue.length !== 1 ? "s" : ""} agendado{queue.length !== 1 ? "s" : ""}
+                {group.lastSend && group.lastSend !== "—" && (() => {
+                  const d = new Date(group.lastSend);
+                  return !isNaN(d.getTime()) ? <> · último envio às {formatETA(d)}</> : null;
+                })()}
+              </div>
             </div>
-            {queue.length > 0 && (
-              <button onClick={() => setQueue([])} style={{ padding: "5px 12px", borderRadius: 7, background: "#FCEBEB", color: "#A32D2D", border: "0.5px solid #F7C1C1", fontSize: 12, cursor: "pointer" }}>Limpar fila</button>
-            )}
+            <div style={{ display: "flex", gap: 6 }}>
+              {queue.length > 0 && (
+                <button
+                  onClick={triggerSendNow}
+                  disabled={sendingNow || (group.whatsappGroupIds || []).length === 0}
+                  title={(group.whatsappGroupIds || []).length === 0 ? "Vincule um grupo de WhatsApp primeiro" : "Envia o próximo produto agora e reseta o intervalo"}
+                  style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY, color: "#fff", border: "none", fontSize: 12, cursor: (sendingNow || !(group.whatsappGroupIds || []).length) ? "not-allowed" : "pointer", fontWeight: 500, opacity: (sendingNow || !(group.whatsappGroupIds || []).length) ? 0.5 : 1 }}
+                >
+                  {sendingNow ? "⟳ Enviando..." : "▶ Enviar próximo agora"}
+                </button>
+              )}
+              {queue.length > 0 && (
+                <button onClick={() => setQueue([])} style={{ padding: "5px 12px", borderRadius: 7, background: "#FCEBEB", color: "#A32D2D", border: "0.5px solid #F7C1C1", fontSize: 12, cursor: "pointer" }}>Limpar fila</button>
+              )}
+            </div>
           </div>
-          {queue.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "40px 0", color: "var(--color-text-secondary)", fontSize: 13, background: "var(--color-background-secondary)", borderRadius: 12 }}>Fila vazia. Execute o scraping para adicionar produtos.</div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {queue.map((item, idx) => (
-                <ProductRow
-                  key={item.id}
-                  product={item}
-                  index={idx + 1}
-                  actions={
-                    <button onClick={() => removeFromQueue(item.id)} style={{ padding: "5px 10px", borderRadius: 7, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 12, cursor: "pointer", flexShrink: 0 }}>Remover</button>
-                  }
-                />
-              ))}
-            </div>
+          {sendNowMsg && (
+            <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: sendNowMsg.type === "ok" ? PRIMARY_LIGHT : "#FCEBEB", color: sendNowMsg.type === "ok" ? PRIMARY_DARK : "#A32D2D" }}>{sendNowMsg.text}</div>
           )}
+          {queue.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "30px 20px", background: "var(--color-background-secondary)", borderRadius: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Fila vazia</div>
+              {scraping.auto ? (
+                <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                  Scraping automático está ativo — novos produtos vão entrar nas próximas verificações ({(scraping.times || []).join(", ") || "horários configurados"}). Você também pode buscar agora no botão acima.
+                </div>
+              ) : (
+                <>
+                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
+                    Scraping automático está <strong style={{ color: "#854F0B" }}>desligado</strong>. Para completar o turno, ligue o automático ou rode o scraping manualmente.
+                  </div>
+                  <button onClick={runScraping} disabled={scrapingRunning} style={{ padding: "7px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: scrapingRunning ? 0.6 : 1 }}>
+                    {scrapingRunning ? "⟳ Buscando..." : "Buscar produtos agora"}
+                  </button>
+                </>
+              )}
+            </div>
+          ) : (() => {
+            const etas = computeQueueETA(group);
+            return (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {queue.map((item, idx) => (
+                  <div key={item.key || item.id || idx} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "var(--color-text-secondary)" }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 18, padding: "0 6px", borderRadius: 9, background: idx === 0 ? PRIMARY_LIGHT : "var(--color-background-secondary)", color: idx === 0 ? PRIMARY_DARK : "var(--color-text-secondary)", fontWeight: 500, fontSize: 11 }}>#{idx + 1}</span>
+                      <span>⏱ {idx === 0 ? "Próximo às" : "Previsto"} <strong style={{ color: idx === 0 ? PRIMARY_DARK : "var(--color-text-primary)" }}>{formatETA(etas[idx])}</strong></span>
+                    </div>
+                    <ProductRow
+                      product={item}
+                      actions={
+                        <button onClick={() => removeFromQueue(item.id)} style={{ padding: "5px 10px", borderRadius: 7, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 12, cursor: "pointer", flexShrink: 0 }}>Remover</button>
+                      }
+                    />
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
         </div>
       )}
 

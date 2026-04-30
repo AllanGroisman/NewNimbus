@@ -18,12 +18,12 @@ export const DEFAULT_MESSAGE_TEMPLATE = `🔥 OFERTA IMPERDÍVEL!
 🛒 Compre aqui: {link}`;
 
 // Cria uma campanha vazia com defaults razoáveis
-export const makeEmptyGroup = ({ id, name, categories }) => ({
+export const makeEmptyGroup = ({ id, name, categories, template }) => ({
   id,
   name,
   categories,
   whatsappGroupIds: [],
-  messageTemplate: DEFAULT_MESSAGE_TEMPLATE,
+  messageTemplate: template || DEFAULT_MESSAGE_TEMPLATE,
   sentToday: 0,
   sentWeek: 0,
   avgDiscount: "—",

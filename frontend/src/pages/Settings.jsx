@@ -1,18 +1,65 @@
 import { useState } from "react";
-import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../data/constants";
+import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, CATEGORIES } from "../data/constants";
 import Badge from "../components/ui/Badge";
 import Toggle from "../components/ui/Toggle";
 import Modal from "../components/ui/Modal";
+import { authUpdate, authChangePassword } from "../data/api";
+import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
 
-export default function PageSettings({ onLogout }) {
+export default function PageSettings({ user, setUser, onLogout, settings = {}, setSettings = () => {} }) {
   const [section, setSection] = useState("account");
-  const [msgTemplate, setMsgTemplate] = useState("�� OFERTA IMPERDÍVEL!\n\n�� {produto}\n�� {loja}\n\n�� De: {preco_antigo}\n✅ Por: {preco}\n��️ -{desconto}\n\n�� {link}");
-  const [account, setAccount] = useState({ name: "João Silva", email: "joao@email.com", phone: "+55 11 99999-9999" });
-  const [notifications, setNotifications] = useState({ email: true, push: false, weeklyReport: true, pendingReview: true });
+  const msgTemplate = settings.messageTemplate ?? DEFAULT_MESSAGE_TEMPLATE;
+  const setMsgTemplate = (v) => setSettings(s => ({ ...s, messageTemplate: v }));
+  const notifications = settings.notifications || { email: true, push: false, weeklyReport: true, pendingReview: true };
+  const setNotifications = (updater) => setSettings(s => ({ ...s, notifications: typeof updater === "function" ? updater(s.notifications || {}) : updater }));
+  const sources = settings.sources || allSources;
+  const setSources = (updater) => setSettings(s => ({ ...s, sources: typeof updater === "function" ? updater(s.sources || allSources) : updater }));
+  const theme = settings.theme || "auto";
+  const setTheme = (v) => setSettings(s => ({ ...s, theme: v }));
+
+  const [account, setAccount] = useState({
+    name: user?.name || "",
+    email: user?.email || "",
+    phone: user?.phone || "",
+  });
+  const [accountMsg, setAccountMsg] = useState(null);
+  const [accountSaving, setAccountSaving] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [showLogout, setShowLogout] = useState(false);
-  const [theme, setTheme] = useState("auto");
+  const [pwd, setPwd] = useState({ current: "", next: "", confirm: "" });
+  const [pwdMsg, setPwdMsg] = useState(null);
+  const [pwdSaving, setPwdSaving] = useState(false);
+
+  async function handleSaveAccount() {
+    setAccountSaving(true);
+    setAccountMsg(null);
+    try {
+      const r = await authUpdate({ name: account.name, phone: account.phone });
+      if (setUser) setUser(r.user);
+      setAccountMsg({ type: "ok", text: "Salvo!" });
+    } catch (err) {
+      setAccountMsg({ type: "err", text: err.message });
+    } finally {
+      setAccountSaving(false);
+    }
+  }
+
+  async function handleChangePassword() {
+    setPwdMsg(null);
+    if (pwd.next !== pwd.confirm) { setPwdMsg({ type: "err", text: "Senhas não conferem" }); return; }
+    if (pwd.next.length < 6) { setPwdMsg({ type: "err", text: "Nova senha precisa ter 6+ caracteres" }); return; }
+    setPwdSaving(true);
+    try {
+      await authChangePassword({ currentPassword: pwd.current, newPassword: pwd.next });
+      setPwd({ current: "", next: "", confirm: "" });
+      setShowPasswordModal(false);
+    } catch (err) {
+      setPwdMsg({ type: "err", text: err.message });
+    } finally {
+      setPwdSaving(false);
+    }
+  }
 
   const sections = [
     { id: "account", label: "Conta" },
@@ -41,14 +88,22 @@ export default function PageSettings({ onLogout }) {
                 <div style={{ fontWeight: 500, marginBottom: 4 }}>Informações pessoais</div>
                 <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>Dados exibidos na sua conta</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {[["Nome completo", "name"], ["Email", "email"], ["Telefone", "phone"]].map(([label, key]) => (
+                  {[["Nome completo", "name", false], ["Email", "email", true], ["Telefone", "phone", false]].map(([label, key, readOnly]) => (
                     <div key={key}>
                       <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>{label}</label>
-                      <input value={account[key]} onChange={e => setAccount(a => ({ ...a, [key]: e.target.value }))} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }} />
+                      <input
+                        value={account[key]}
+                        onChange={e => !readOnly && setAccount(a => ({ ...a, [key]: e.target.value }))}
+                        readOnly={readOnly}
+                        style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: readOnly ? "var(--color-background-tertiary, #f3f3f3)" : "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", color: readOnly ? "var(--color-text-secondary)" : "inherit" }}
+                      />
                     </div>
                   ))}
                 </div>
-                <button style={{ marginTop: 14, padding: "7px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>Salvar alterações</button>
+                {accountMsg && (
+                  <div style={{ marginTop: 10, fontSize: 12, color: accountMsg.type === "ok" ? PRIMARY_DARK : "#A32D2D" }}>{accountMsg.text}</div>
+                )}
+                <button onClick={handleSaveAccount} disabled={accountSaving} style={{ marginTop: 14, padding: "7px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: accountSaving ? "wait" : "pointer", fontWeight: 500, opacity: accountSaving ? 0.7 : 1 }}>{accountSaving ? "Salvando..." : "Salvar alterações"}</button>
               </div>
               <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
                 <div style={{ fontWeight: 500, marginBottom: 4 }}>Sessão</div>
@@ -113,35 +168,47 @@ export default function PageSettings({ onLogout }) {
 
           {section === "sources" && (
             <>
-              {[
-                { label: "Sites monitorados", desc: "Lojas disponíveis para scraping em todos os grupos", items: ["Mercado Livre", "Amazon", "Shopee", "Americanas"] },
-                { label: "Categorias ativas", desc: "Categorias de produtos disponíveis na plataforma", items: ["Gamer", "Bebê"] },
-              ].map(sec => (
-                <div key={sec.label} style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-                  <div style={{ fontWeight: 500, marginBottom: 4 }}>{sec.label}</div>
-                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>{sec.desc}</div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {sec.items.map(item => (
-                      <div key={item} style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--color-background-secondary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 8, padding: "5px 10px", fontSize: 13 }}>
-                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: PRIMARY }} />{item}
-                      </div>
-                    ))}
-                    <button style={{ padding: "5px 12px", borderRadius: 8, border: "0.5px dashed var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer", color: "var(--color-text-secondary)" }}>+ Adicionar</button>
-                  </div>
+              <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+                <div style={{ fontWeight: 500, marginBottom: 4 }}>Sites monitorados</div>
+                <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>Clique para ativar/desativar. Hoje só Mercado Livre tem scraper implementado.</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {allSources.map(item => {
+                    const active = sources.includes(item);
+                    return (
+                      <button
+                        key={item}
+                        onClick={() => setSources(arr => active ? arr.filter(s => s !== item) : [...arr, item])}
+                        style={{ display: "flex", alignItems: "center", gap: 6, background: active ? "var(--color-background-secondary)" : "transparent", border: `0.5px solid ${active ? "var(--color-border-tertiary)" : "var(--color-border-secondary)"}`, borderRadius: 8, padding: "5px 10px", fontSize: 13, cursor: "pointer", opacity: active ? 1 : 0.5 }}
+                      >
+                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: active ? PRIMARY : "var(--color-border-secondary)" }} />{item}
+                      </button>
+                    );
+                  })}
                 </div>
-              ))}
+              </div>
+              <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+                <div style={{ fontWeight: 500, marginBottom: 4 }}>Categorias ativas</div>
+                <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>Categorias de produtos disponíveis na plataforma.</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {Object.values(CATEGORIES).map(c => (
+                    <div key={c.label} style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--color-background-secondary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 8, padding: "5px 10px", fontSize: 13 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: PRIMARY }} />{c.label}
+                    </div>
+                  ))}
+                </div>
+              </div>
             </>
           )}
 
           {section === "template" && (
             <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
               <div style={{ fontWeight: 500, marginBottom: 4 }}>Modelo de mensagem padrão</div>
-              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>Usado como base para todos os grupos que não têm modelo próprio.</div>
+              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>Aplicado a campanhas novas. Cada campanha pode ter seu próprio modelo depois.</div>
               <textarea value={msgTemplate} onChange={e => setMsgTemplate(e.target.value)} style={{ width: "100%", padding: 10, borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, resize: "vertical", minHeight: 160, boxSizing: "border-box", fontFamily: "inherit" }} />
               <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 8 }}>
                 Variáveis: {"{produto}"}, {"{preco}"}, {"{preco_antigo}"}, {"{desconto}"}, {"{loja}"}, {"{link}"}
               </div>
-              <button style={{ marginTop: 12, padding: "7px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer" }}>Salvar modelo</button>
+              <div style={{ fontSize: 11, color: PRIMARY_DARK, marginTop: 8 }}>Salva automaticamente.</div>
             </div>
           )}
 
@@ -168,18 +235,30 @@ export default function PageSettings({ onLogout }) {
       </div>
 
       {showPasswordModal && (
-        <Modal title="Alterar senha" onClose={() => setShowPasswordModal(false)}>
+        <Modal title="Alterar senha" onClose={() => { setShowPasswordModal(false); setPwdMsg(null); }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {["Senha atual", "Nova senha", "Confirmar nova senha"].map(label => (
-              <div key={label}>
+            {[
+              ["Senha atual", "current"],
+              ["Nova senha", "next"],
+              ["Confirmar nova senha", "confirm"],
+            ].map(([label, key]) => (
+              <div key={key}>
                 <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>{label}</label>
-                <input type="password" style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }} />
+                <input
+                  type="password"
+                  value={pwd[key]}
+                  onChange={e => setPwd(p => ({ ...p, [key]: e.target.value }))}
+                  style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }}
+                />
               </div>
             ))}
           </div>
+          {pwdMsg && (
+            <div style={{ marginTop: 10, fontSize: 12, color: pwdMsg.type === "ok" ? PRIMARY_DARK : "#A32D2D" }}>{pwdMsg.text}</div>
+          )}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
-            <button onClick={() => setShowPasswordModal(false)} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
-            <button onClick={() => setShowPasswordModal(false)} style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>Alterar senha</button>
+            <button onClick={() => { setShowPasswordModal(false); setPwdMsg(null); }} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+            <button onClick={handleChangePassword} disabled={pwdSaving} style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: pwdSaving ? "wait" : "pointer", fontWeight: 500, opacity: pwdSaving ? 0.7 : 1 }}>{pwdSaving ? "Salvando..." : "Alterar senha"}</button>
           </div>
         </Modal>
       )}

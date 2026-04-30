@@ -1,12 +1,29 @@
 const API_BASE = "";
+const TOKEN_KEY = "nimbus.token";
+
+// ─── Token (localStorage) ──────────────────────────────────────────────
+export function getToken() {
+  try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
+}
+export function setToken(t) {
+  try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); } catch {}
+}
+export function clearToken() { setToken(null); }
 
 async function http(method, path, body) {
   const opts = { method, headers: {} };
+  const token = getToken();
+  if (token) opts.headers["Authorization"] = `Bearer ${token}`;
   if (body !== undefined) {
     opts.headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
   }
   const res = await fetch(`${API_BASE}${path}`, opts);
+  if (res.status === 401) {
+    clearToken();
+    // notifica a app que o token caiu
+    window.dispatchEvent(new CustomEvent("nimbus:unauthorized"));
+  }
   if (!res.ok) {
     let detail = res.statusText;
     try { const j = await res.json(); detail = j.error || j.details || detail; } catch {}
@@ -15,14 +32,53 @@ async function http(method, path, body) {
   return res.json();
 }
 
+// ─── Auth ──────────────────────────────────────────────────────────────
+export async function authRegister({ name, email, password, phone }) {
+  const r = await http("POST", "/api/auth/register", { name, email, password, phone });
+  if (r.token) setToken(r.token);
+  return r;
+}
+export async function authLogin({ email, password }) {
+  const r = await http("POST", "/api/auth/login", { email, password });
+  if (r.token) setToken(r.token);
+  return r;
+}
+export async function authMe() {
+  return http("GET", "/api/auth/me");
+}
+export async function authUpdate(updates) {
+  return http("PATCH", "/api/auth/me", updates);
+}
+export async function authChangePassword({ currentPassword, newPassword }) {
+  return http("POST", "/api/auth/password", { currentPassword, newPassword });
+}
+export function authLogout() { clearToken(); }
+
+// ─── Estado persistido (groups / numbers / whatsappGroups) ─────────────
+export async function loadAppState() {
+  return http("GET", "/api/state");
+}
+export async function saveAppState(state) {
+  return http("PUT", "/api/state", state);
+}
+// Apenas dados operacionais (queue/history/métricas) para polling
+export async function loadAppOps() {
+  return http("GET", "/api/state/ops");
+}
+// Envia o próximo item da fila da campanha agora (ignora janela/intervalo)
+export async function sendNextNow(groupId) {
+  return http("POST", `/api/state/groups/${groupId}/send-now`);
+}
+
 // ─── Scraping ──────────────────────────────────────────────────────────
-export async function fetchOfertas({ category, minDiscount = 0, maxPrice, limit = 50, refresh = false } = {}) {
+export async function fetchOfertas({ category, minDiscount = 0, maxPrice, limit = 50, refresh = false, sources } = {}) {
   const params = new URLSearchParams();
   if (category) params.set("category", category);
   if (minDiscount > 0) params.set("minDiscount", minDiscount);
   if (maxPrice) params.set("maxPrice", maxPrice);
   if (limit) params.set("limit", limit);
   if (refresh) params.set("refresh", "true");
+  if (sources && sources.length) params.set("sources", sources.join(","));
   return http("GET", `/api/ofertas?${params}`);
 }
 

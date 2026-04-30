@@ -4,6 +4,7 @@ const { scrapeOfertas, CATEGORIES } = require("./scraper");
 const wa = require("./whatsapp");
 const auth = require("./auth");
 const storage = require("./storage");
+const scheduler = require("./scheduler");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -66,11 +67,30 @@ app.get("/api/state", auth.requireAuth, (req, res) => {
   res.json(storage.loadState(req.user.id));
 });
 
-app.put("/api/state", auth.requireAuth, (req, res) => {
+app.put("/api/state", auth.requireAuth, async (req, res) => {
   try {
-    const saved = storage.saveState(req.user.id, req.body || {});
+    const saved = await storage.saveState(req.user.id, req.body || {});
     res.json({ ok: true, updatedAt: saved.updatedAt });
   } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Apenas dados operacionais (queue/history/métricas) para polling do front
+app.get("/api/state/ops", auth.requireAuth, (req, res) => {
+  res.json(storage.loadOps(req.user.id));
+});
+
+// Dispara envio do próximo item da fila imediatamente (botão "Enviar agora").
+// Ignora janela/intervalo, mas atualiza lastSend — o próximo automático
+// conta o intervalo a partir deste envio.
+app.post("/api/state/groups/:gid/send-now", auth.requireAuth, async (req, res) => {
+  try {
+    const groupId = isNaN(Number(req.params.gid)) ? req.params.gid : Number(req.params.gid);
+    const r = await scheduler.sendNextNow(req.user.id, groupId);
+    res.json({ ok: true, ...r });
+  } catch (err) {
+    console.error("[send-now]", err.message);
     res.status(400).json({ error: err.message });
   }
 });
@@ -99,21 +119,24 @@ app.get("/api/ofertas", async (req, res) => {
     const maxPrice = parseFloat(req.query.maxPrice) || Infinity;
     const limit = parseInt(req.query.limit) || 50;
     const forceRefresh = req.query.refresh === "true";
+    const sources = req.query.sources
+      ? String(req.query.sources).split(",").map(s => s.trim()).filter(Boolean)
+      : ["ml"];
 
-    const cache = getCache(category);
+    const cacheKey = `${category || "_all"}::${[...sources].sort().join(",")}`;
+    const cache = getCache(cacheKey);
     const now = Date.now();
     const cacheValid = cache.data && (now - cache.timestamp < CACHE_TTL) && !forceRefresh;
 
     let allProducts;
     if (cacheValid) {
       allProducts = cache.data;
-      console.log(`[cache] ${category || "geral"}: ${allProducts.length} produtos do cache`);
+      console.log(`[cache] ${cacheKey}: ${allProducts.length} produtos do cache`);
     } else {
-      console.log(`[scraper] Buscando ${category || "todas as"} ofertas...`);
       const start = Date.now();
-      allProducts = await scrapeOfertas({ category, minDiscount: 0, maxPrice: Infinity, limit: 200 });
-      setCache(category, allProducts);
-      console.log(`[scraper] ${allProducts.length} produtos (${category || "geral"}) em ${Date.now() - start}ms`);
+      allProducts = await scrapeOfertas({ category, sources, limit: 200 });
+      setCache(cacheKey, allProducts);
+      console.log(`[scraper] ${allProducts.length} produtos (${cacheKey}) em ${Date.now() - start}ms`);
     }
 
     let filtered = allProducts;
@@ -121,7 +144,7 @@ app.get("/api/ofertas", async (req, res) => {
     if (maxPrice < Infinity) filtered = filtered.filter(p => p.price <= maxPrice);
     filtered = filtered.slice(0, limit);
 
-    res.json({ total: filtered.length, cached: cacheValid, category, products: filtered });
+    res.json({ total: filtered.length, cached: cacheValid, category, sources, products: filtered });
   } catch (err) {
     console.error("[scraper] Erro:", err.message);
     res.status(500).json({ error: "Falha ao buscar ofertas", details: err.message });
@@ -144,26 +167,21 @@ app.get("/api/status", (req, res) => {
     categories: Object.keys(CATEGORIES),
     caches,
     cachedProducts: caches.reduce((a, c) => a + c.products, 0),
-    whatsappSessions: wa.listSessions(),
   });
 });
 
 // ────────────────────────────────────────────────────────────────────────
-// WhatsApp (Baileys)
+// WhatsApp (Baileys) — todas as rotas escopadas por usuário
 // ────────────────────────────────────────────────────────────────────────
 
-// Lista todas as sessões em memória
-app.get("/api/whatsapp/sessions", (req, res) => {
-  res.json(wa.listSessions());
+app.get("/api/whatsapp/sessions", auth.requireAuth, (req, res) => {
+  res.json(wa.listSessions(req.user.id));
 });
 
-// Inicia (ou retoma) uma sessão. O id é definido pelo cliente — pode ser
-// o numberId local do front ou um uuid. Persistimos os credenciais em disco
-// para sobreviver reinícios do servidor.
-app.post("/api/whatsapp/sessions/:id", async (req, res) => {
+app.post("/api/whatsapp/sessions/:id", auth.requireAuth, async (req, res) => {
   try {
-    await wa.startSession(req.params.id);
-    const s = wa.getSession(req.params.id);
+    await wa.startSession(req.user.id, req.params.id);
+    const s = wa.getSession(req.user.id, req.params.id);
     res.json({ ok: true, id: req.params.id, status: s?.status });
   } catch (err) {
     console.error("[whatsapp] startSession:", err);
@@ -171,10 +189,8 @@ app.post("/api/whatsapp/sessions/:id", async (req, res) => {
   }
 });
 
-// Status atual + QR (se aguardando) + info do número conectado.
-// O front faz polling neste endpoint enquanto o status é "awaiting_qr".
-app.get("/api/whatsapp/sessions/:id", (req, res) => {
-  const s = wa.getSession(req.params.id);
+app.get("/api/whatsapp/sessions/:id", auth.requireAuth, (req, res) => {
+  const s = wa.getSession(req.user.id, req.params.id);
   if (!s) return res.status(404).json({ error: "Sessão não encontrada" });
   res.json({
     id: s.numberId,
@@ -185,36 +201,32 @@ app.get("/api/whatsapp/sessions/:id", (req, res) => {
   });
 });
 
-// Desconecta e remove credenciais
-app.delete("/api/whatsapp/sessions/:id", async (req, res) => {
+app.delete("/api/whatsapp/sessions/:id", auth.requireAuth, async (req, res) => {
   try {
-    await wa.deleteSession(req.params.id);
+    await wa.deleteSession(req.user.id, req.params.id);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Lista grupos do WhatsApp em que o número participa
-app.get("/api/whatsapp/sessions/:id/groups", async (req, res) => {
+app.get("/api/whatsapp/sessions/:id/groups", auth.requireAuth, async (req, res) => {
   try {
-    const groups = await wa.listGroups(req.params.id);
+    const groups = await wa.listGroups(req.user.id, req.params.id);
     res.json(groups);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Cria um novo grupo. Body: { name, participants: ["+5511..."] }
-// O WhatsApp exige pelo menos um participante (não pode ser apenas o próprio número).
-app.post("/api/whatsapp/sessions/:id/groups", async (req, res) => {
+app.post("/api/whatsapp/sessions/:id/groups", auth.requireAuth, async (req, res) => {
   try {
     const { name, participants = [] } = req.body || {};
     if (!name || !String(name).trim()) return res.status(400).json({ error: "name obrigatório" });
     if (!Array.isArray(participants) || participants.length === 0) {
       return res.status(400).json({ error: "informe ao menos um participante (telefone)" });
     }
-    const group = await wa.createGroup(req.params.id, String(name).trim(), participants);
+    const group = await wa.createGroup(req.user.id, req.params.id, String(name).trim(), participants);
     res.json(group);
   } catch (err) {
     console.error("[whatsapp] createGroup:", err);
@@ -222,46 +234,42 @@ app.post("/api/whatsapp/sessions/:id/groups", async (req, res) => {
   }
 });
 
-// Link de convite atual do grupo
-app.get("/api/whatsapp/sessions/:id/groups/:jid/invite", async (req, res) => {
+app.get("/api/whatsapp/sessions/:id/groups/:jid/invite", auth.requireAuth, async (req, res) => {
   try {
-    const inviteLink = await wa.getInviteLink(req.params.id, req.params.jid);
+    const inviteLink = await wa.getInviteLink(req.user.id, req.params.id, req.params.jid);
     res.json({ inviteLink });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Revoga o convite atual e devolve o novo
-app.post("/api/whatsapp/sessions/:id/groups/:jid/invite/revoke", async (req, res) => {
+app.post("/api/whatsapp/sessions/:id/groups/:jid/invite/revoke", auth.requireAuth, async (req, res) => {
   try {
-    const inviteLink = await wa.revokeInvite(req.params.id, req.params.jid);
+    const inviteLink = await wa.revokeInvite(req.user.id, req.params.id, req.params.jid);
     res.json({ inviteLink });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Sai do grupo (não exclui — sai e deixa de receber mensagens)
-app.delete("/api/whatsapp/sessions/:id/groups/:jid", async (req, res) => {
+app.delete("/api/whatsapp/sessions/:id/groups/:jid", auth.requireAuth, async (req, res) => {
   try {
-    await wa.leaveGroup(req.params.id, req.params.jid);
+    await wa.leaveGroup(req.user.id, req.params.id, req.params.jid);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Envia mensagem de texto. Body: { jid, text, imageUrl? }
-app.post("/api/whatsapp/sessions/:id/send", async (req, res) => {
+app.post("/api/whatsapp/sessions/:id/send", auth.requireAuth, async (req, res) => {
   try {
     const { jid, text, imageUrl } = req.body || {};
     if (!jid) return res.status(400).json({ error: "jid obrigatório" });
     if (!text && !imageUrl) return res.status(400).json({ error: "text ou imageUrl obrigatório" });
     if (imageUrl) {
-      await wa.sendImage(req.params.id, jid, imageUrl, text);
+      await wa.sendImage(req.user.id, req.params.id, jid, imageUrl, text);
     } else {
-      await wa.sendText(req.params.id, jid, text);
+      await wa.sendText(req.user.id, req.params.id, jid, text);
     }
     res.json({ ok: true });
   } catch (err) {
@@ -270,9 +278,7 @@ app.post("/api/whatsapp/sessions/:id/send", async (req, res) => {
   }
 });
 
-// Envia a mesma mensagem para vários grupos. Body: { jids: [...], text, imageUrl?, intervalMs? }
-// Disparado em sequência com delay entre cada envio para reduzir risco de bloqueio.
-app.post("/api/whatsapp/sessions/:id/broadcast", async (req, res) => {
+app.post("/api/whatsapp/sessions/:id/broadcast", auth.requireAuth, async (req, res) => {
   try {
     const { jids = [], text, imageUrl, intervalMs = 4000 } = req.body || {};
     if (!Array.isArray(jids) || jids.length === 0) return res.status(400).json({ error: "jids obrigatório (array)" });
@@ -283,9 +289,9 @@ app.post("/api/whatsapp/sessions/:id/broadcast", async (req, res) => {
       const jid = jids[i];
       try {
         if (imageUrl) {
-          await wa.sendImage(req.params.id, jid, imageUrl, text);
+          await wa.sendImage(req.user.id, req.params.id, jid, imageUrl, text);
         } else {
-          await wa.sendText(req.params.id, jid, text);
+          await wa.sendText(req.user.id, req.params.id, jid, text);
         }
         results.push({ jid, ok: true });
       } catch (err) {
@@ -313,6 +319,7 @@ app.listen(PORT, () => {
   console.log(`  POST /api/whatsapp/sessions/:id/groups`);
   console.log(`  POST /api/whatsapp/sessions/:id/broadcast`);
 
-  // Restaura sessões persistidas
+  // Restaura sessões persistidas e inicia o scheduler
   wa.restoreSessions();
+  scheduler.start();
 });

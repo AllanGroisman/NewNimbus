@@ -5,9 +5,13 @@ export const PRIMARY_LIGHT = "#E1F5EE";
 export const allSources = ["Mercado Livre", "Amazon", "Shopee", "Americanas"];
 
 // Categorias — mapeia id → label e cor do badge
+// IMPORTANTE: manter em sincronia com backend/scraper.js → CATEGORIES
 export const CATEGORIES = {
-  gamer: { label: "Gamer", color: "blue" },
-  bebe: { label: "Bebê", color: "teal" },
+  gamer:       { label: "Gamer",       color: "blue" },
+  bebe:        { label: "Bebê",        color: "teal" },
+  eletronicos: { label: "Eletrônicos", color: "purple" },
+  casa:        { label: "Casa",        color: "amber" },
+  beleza:      { label: "Beleza",      color: "green" },
 };
 
 export const categoryLabel = (id) => CATEGORIES[id]?.label || id;
@@ -42,6 +46,79 @@ export const getGroupStats = (group, whatsappGroups = []) => {
 
 export const formatPrice = (v) =>
   v != null ? `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` : "";
+
+// Calcula o horário previsto de envio para cada item da fila, baseado nas
+// janelas, no interval e no lastSend. Retorna array de Date | null (null se
+// o item não cabe nas próximas 24h de janelas).
+export function computeQueueETA(group, now = new Date()) {
+  const queue = group?.queue || [];
+  const windows = (group?.schedule?.windows || []).slice().sort((a, b) => (a.from || "").localeCompare(b.from || ""));
+  if (!queue.length || !windows.length) return queue.map(() => null);
+
+  const hhmmToMin = (s) => {
+    const [h, m] = String(s || "0:0").split(":").map(Number);
+    return (h || 0) * 60 + (m || 0);
+  };
+  const dateAt = (base, mins) => {
+    const d = new Date(base);
+    d.setHours(0, 0, 0, 0);
+    d.setMinutes(mins);
+    return d;
+  };
+
+  // Próximo "slot" a partir de um instante: devolve { time, window } ou null
+  function nextSlot(after, lookaheadDays = 2) {
+    for (let day = 0; day < lookaheadDays; day++) {
+      const dayBase = new Date(after); dayBase.setDate(dayBase.getDate() + day);
+      const afterMin = (day === 0)
+        ? after.getHours() * 60 + after.getMinutes() + (after.getSeconds() > 0 ? 1 : 0)
+        : 0;
+      for (const w of windows) {
+        const from = hhmmToMin(w.from), to = hhmmToMin(w.to);
+        const slotMin = Math.max(from, afterMin);
+        if (slotMin < to) return { time: dateAt(dayBase, slotMin), window: w };
+      }
+    }
+    return null;
+  }
+
+  // Primeiro item: respeita lastSend + interval (se há janela ativa)
+  const result = [];
+  let cursor = new Date(now);
+  if (group.lastSend && group.lastSend !== "—") {
+    const last = new Date(group.lastSend);
+    if (!isNaN(last.getTime())) {
+      const activeWin = windows.find(w => {
+        const cur = now.getHours() * 60 + now.getMinutes();
+        return cur >= hhmmToMin(w.from) && cur < hhmmToMin(w.to);
+      });
+      if (activeWin) {
+        const earliest = new Date(last.getTime() + (Number(activeWin.interval) || 30) * 60_000);
+        if (earliest > cursor) cursor = earliest;
+      }
+    }
+  }
+
+  for (let i = 0; i < queue.length; i++) {
+    const slot = nextSlot(cursor);
+    if (!slot) { result.push(null); cursor = new Date(cursor.getTime() + 60_000); continue; }
+    result.push(slot.time);
+    const interval = Number(slot.window.interval) || 30;
+    cursor = new Date(slot.time.getTime() + interval * 60_000);
+  }
+  return result;
+}
+
+export function formatETA(d, now = new Date()) {
+  if (!d) return "—";
+  const sameDay = d.toDateString() === now.toDateString();
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  if (sameDay) return `${hh}:${mm}`;
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mo = String(d.getMonth() + 1).padStart(2, "0");
+  return `${dd}/${mo} ${hh}:${mm}`;
+}
 
 export const sidebarItems = [
   { id: "dashboard", icon: "▦", label: "Dashboard geral" },

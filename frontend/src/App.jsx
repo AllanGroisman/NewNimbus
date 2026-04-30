@@ -1,5 +1,14 @@
-import { useState } from "react";
-import { initialGroups, initialNumbers, initialWhatsappGroups, makeEmptyGroup } from "./data/mockData";
+import { useState, useEffect, useRef } from "react";
+import { initialGroups, initialNumbers, initialWhatsappGroups, makeEmptyGroup, DEFAULT_MESSAGE_TEMPLATE } from "./data/mockData";
+import { allSources } from "./data/constants";
+
+const DEFAULT_SETTINGS = {
+  messageTemplate: DEFAULT_MESSAGE_TEMPLATE,
+  notifications: { email: true, push: false, weeklyReport: true, pendingReview: true },
+  sources: allSources,
+  theme: "auto",
+};
+import { authMe, authLogout, loadAppState, saveAppState, loadAppOps, getToken } from "./data/api";
 import Sidebar from "./components/Sidebar";
 import GroupDashboard from "./components/GroupDashboard";
 import PageDashboard from "./pages/Dashboard";
@@ -9,17 +18,130 @@ import PageSettings from "./pages/Settings";
 import PageSubscription from "./pages/Subscription";
 import Login from "./pages/Login";
 
+const SAVE_DEBOUNCE_MS = 800;
+const OPS_POLL_MS = 30 * 1000;
+// Campos por grupo gerenciados pelo scheduler — atualizados por polling
+const OPS_FIELDS = ["queue", "pending", "history", "sentToday", "sentWeek", "weekData", "lastSend", "avgDiscount"];
+
 export default function App() {
   const [groups, setGroups] = useState(initialGroups);
   const [numbers, setNumbers] = useState(initialNumbers);
   const [whatsappGroups, setWhatsappGroups] = useState(initialWhatsappGroups);
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [page, setPage] = useState("dashboard");
   const [selectedGroup, setSelectedGroup] = useState(null);
-  const [loggedIn, setLoggedIn] = useState(false);
+  const [user, setUser] = useState(null);
+  const [bootstrapping, setBootstrapping] = useState(true);
   const [mobileMenu, setMobileMenu] = useState(false);
 
+  // Controla se já carregamos o estado do servidor — só começamos a salvar depois disso
+  const stateLoadedRef = useRef(false);
+  const saveTimerRef = useRef(null);
+
+  // Boot: se há token salvo, valida com o servidor e carrega o estado
+  useEffect(() => {
+    let cancelled = false;
+    async function bootstrap() {
+      if (!getToken()) { setBootstrapping(false); return; }
+      try {
+        const me = await authMe();
+        if (cancelled) return;
+        setUser(me.user);
+        const state = await loadAppState();
+        if (cancelled) return;
+        setGroups(state.groups || []);
+        setNumbers(state.numbers || []);
+        setWhatsappGroups(state.whatsappGroups || []);
+        setSettings({ ...DEFAULT_SETTINGS, ...(state.settings || {}) });
+        stateLoadedRef.current = true;
+      } catch {
+        // token inválido — segue para tela de login
+      } finally {
+        if (!cancelled) setBootstrapping(false);
+      }
+    }
+    bootstrap();
+
+    // Se o backend devolver 401 em qualquer chamada, derruba a sessão
+    const onUnauth = () => { setUser(null); stateLoadedRef.current = false; };
+    window.addEventListener("nimbus:unauthorized", onUnauth);
+    return () => { cancelled = true; window.removeEventListener("nimbus:unauthorized", onUnauth); };
+  }, []);
+
+  // Persistência com debounce — dispara sempre que algo no estado muda,
+  // mas só depois do load inicial pra não sobrescrever com defaults vazios.
+  useEffect(() => {
+    if (!user || !stateLoadedRef.current) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      saveAppState({ groups, numbers, whatsappGroups, settings }).catch(err => {
+        console.warn("[nimbus] falha ao salvar estado:", err.message);
+      });
+    }, SAVE_DEBOUNCE_MS);
+    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
+  }, [user, groups, numbers, whatsappGroups, settings]);
+
+  // Aplica o tema no <html> via data-theme — CSS responde via prefers-color-scheme/atributo
+  useEffect(() => {
+    const t = settings.theme || "auto";
+    document.documentElement.dataset.theme = t;
+  }, [settings.theme]);
+
+  // Polling: pega dados operacionais (queue/history/métricas) que o scheduler
+  // atualiza no servidor. Faz merge sem sobrescrever campos editáveis localmente.
+  useEffect(() => {
+    if (!user || !stateLoadedRef.current) return;
+    let cancelled = false;
+    async function pull() {
+      try {
+        const ops = await loadAppOps();
+        if (cancelled) return;
+        const opsById = new Map((ops.groups || []).map(g => [g.id, g]));
+        const merge = (g) => {
+          const o = opsById.get(g.id);
+          if (!o) return g;
+          const next = { ...g };
+          for (const f of OPS_FIELDS) if (o[f] !== undefined) next[f] = o[f];
+          return next;
+        };
+        setGroups(prev => prev.map(merge));
+        setSelectedGroup(prev => prev ? merge(prev) : prev);
+      } catch {
+        // ignora — próxima rodada tenta de novo
+      }
+    }
+    const id = setInterval(pull, OPS_POLL_MS);
+    pull();
+    return () => { cancelled = true; clearInterval(id); };
+  }, [user]);
+
+  async function handleLogin(loggedUser) {
+    setUser(loggedUser);
+    try {
+      const state = await loadAppState();
+      setGroups(state.groups || []);
+      setNumbers(state.numbers || []);
+      setWhatsappGroups(state.whatsappGroups || []);
+      setSettings({ ...DEFAULT_SETTINGS, ...(state.settings || {}) });
+    } catch {
+      setGroups([]); setNumbers([]); setWhatsappGroups([]); setSettings(DEFAULT_SETTINGS);
+    } finally {
+      stateLoadedRef.current = true;
+    }
+  }
+
+  function handleLogout() {
+    authLogout();
+    stateLoadedRef.current = false;
+    setUser(null);
+    setGroups([]); setNumbers([]); setWhatsappGroups([]);
+    setSettings(DEFAULT_SETTINGS);
+    setSelectedGroup(null);
+    setPage("dashboard");
+  }
+
   const handleCreateGroup = ({ name, categories }) => {
-    const newGroup = makeEmptyGroup({ id: Date.now(), name, categories });
+    const newGroup = makeEmptyGroup({ id: Date.now(), name, categories, template: settings.messageTemplate });
     setGroups(gs => [...gs, newGroup]);
     setSelectedGroup(newGroup);
     setPage("group");
@@ -38,9 +160,6 @@ export default function App() {
     setPage("dashboard");
   };
 
-  // Registra um grupo do WhatsApp já criado no backend (Baileys).
-  // Se `id` não vier, gera um id local (caso de teste/sem backend).
-  // Se `linkToAppGroupId` for informado, vincula à campanha indicada.
   const createWhatsappGroup = ({ id, name, numberId, members = 0, inviteLink, linkToAppGroupId }) => {
     const wgId = id || Date.now();
     const newWG = {
@@ -64,25 +183,30 @@ export default function App() {
     return wgId;
   };
 
-  // Remove um grupo do WhatsApp por completo (e de todas as campanhas)
   const deleteWhatsappGroup = (wgId) => {
     setWhatsappGroups(ws => ws.filter(w => w.id !== wgId));
     setGroups(gs => gs.map(g => ({ ...g, whatsappGroupIds: (g.whatsappGroupIds || []).filter(id => id !== wgId) })));
     setSelectedGroup(g => g ? { ...g, whatsappGroupIds: (g.whatsappGroupIds || []).filter(id => id !== wgId) } : g);
   };
 
-  // Atualiza o status (conectar/desconectar) de um grupo do WhatsApp
   const setWhatsappGroupStatus = (wgId, status) => {
     setWhatsappGroups(ws => ws.map(w => w.id === wgId ? { ...w, status } : w));
   };
 
-  // Atualiza campos arbitrários de um grupo do WhatsApp
   const updateWhatsappGroup = (wgId, updates) => {
     setWhatsappGroups(ws => ws.map(w => w.id === wgId ? { ...w, ...updates } : w));
   };
 
-  if (!loggedIn) {
-    return <Login onLogin={() => setLoggedIn(true)} />;
+  if (bootstrapping) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-text-secondary)", fontSize: 13 }}>
+        Carregando...
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Login onLogin={handleLogin} />;
   }
 
   const pageMap = {
@@ -98,7 +222,7 @@ export default function App() {
       onSetWhatsappGroupStatus={setWhatsappGroupStatus}
       onUpdateWhatsappGroup={updateWhatsappGroup}
     />,
-    settings: <PageSettings onLogout={() => setLoggedIn(false)} />,
+    settings: <PageSettings user={user} setUser={setUser} onLogout={handleLogout} settings={settings} setSettings={setSettings} />,
     subscription: <PageSubscription />,
   };
 
@@ -111,7 +235,7 @@ export default function App() {
         whatsappGroups={whatsappGroups}
         onNavigate={(id) => { setPage(id); setSelectedGroup(null); }}
         onSelectGroup={handleSelectGroup}
-        onLogout={() => setLoggedIn(false)}
+        onLogout={handleLogout}
         mobileOpen={mobileMenu}
         onToggleMobile={setMobileMenu}
       />

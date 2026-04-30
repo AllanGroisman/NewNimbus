@@ -44,6 +44,10 @@ Thumbs.db
 backend/auth_states/
 **/auth_states/
 
+# Dados da aplicação (usuários, estado, segredo JWT) — NUNCA versionar
+backend/data/
+**/data/
+
 # Arquivos grandes / temporários
 frontTotal
 *.zip

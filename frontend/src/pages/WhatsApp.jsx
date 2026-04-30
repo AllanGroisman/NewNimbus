@@ -3,7 +3,7 @@ import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, categoryColor, getGroupCategories
 import Badge from "../components/ui/Badge";
 import Modal from "../components/ui/Modal";
 import WhatsappQR from "../components/WhatsappQR";
-import { deleteWASession, startWASession, createWAGroup, leaveWAGroup } from "../data/api";
+import { deleteWASession, startWASession, createWAGroup, leaveWAGroup, listWAGroups } from "../data/api";
 
 export default function PageWhatsApp({
   numbers, setNumbers,
@@ -21,6 +21,17 @@ export default function PageWhatsApp({
   const [filterNumber, setFilterNumber] = useState("all");
   const [pendingNumberId, setPendingNumberId] = useState(null); // id local enquanto aguarda QR
   const [pendingLabel, setPendingLabel] = useState("");
+
+  // Importar grupos existentes do WhatsApp
+  const [showImport, setShowImport] = useState(false);
+  const [importNumberId, setImportNumberId] = useState(numbers[0]?.id || "");
+  const [importGroups, setImportGroups] = useState([]);
+  const [importLoading, setImportLoading] = useState(false);
+  const [importError, setImportError] = useState(null);
+  const [importSelected, setImportSelected] = useState(new Set());
+  const [importFilter, setImportFilter] = useState("");
+  const [importLinkToAppGroupId, setImportLinkToAppGroupId] = useState("");
+  const [importing, setImporting] = useState(false);
 
   // Desconecta (logout no Baileys e remove auth_state). O número some da lista.
   const disconnect = async (id) => {
@@ -111,6 +122,65 @@ export default function PageWhatsApp({
     }
   };
 
+  // Abre o modal de importar e busca grupos do número selecionado
+  const openImport = async (numberId) => {
+    const nid = numberId || numbers[0]?.id || "";
+    setImportNumberId(nid);
+    setImportGroups([]);
+    setImportSelected(new Set());
+    setImportFilter("");
+    setImportLinkToAppGroupId("");
+    setImportError(null);
+    setShowImport(true);
+    if (nid) await fetchImportGroups(nid);
+  };
+
+  const fetchImportGroups = async (numberId) => {
+    setImportLoading(true);
+    setImportError(null);
+    try {
+      const list = await listWAGroups(numberId);
+      list.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+      setImportGroups(list);
+    } catch (err) {
+      setImportError(err.message || "Falha ao listar grupos");
+      setImportGroups([]);
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  const toggleImport = (jid) => {
+    setImportSelected(prev => {
+      const next = new Set(prev);
+      next.has(jid) ? next.delete(jid) : next.add(jid);
+      return next;
+    });
+  };
+
+  const submitImport = () => {
+    if (importSelected.size === 0 || !importNumberId) return;
+    setImporting(true);
+    try {
+      const linkId = importLinkToAppGroupId ? Number(importLinkToAppGroupId) : undefined;
+      for (const jid of importSelected) {
+        const g = importGroups.find(x => x.jid === jid);
+        if (!g) continue;
+        onCreateWhatsappGroup({
+          id: g.jid,
+          name: g.name,
+          numberId: Number(importNumberId),
+          members: g.members || 0,
+          inviteLink: null,
+          linkToAppGroupId: linkId,
+        });
+      }
+      setShowImport(false);
+    } finally {
+      setImporting(false);
+    }
+  };
+
   // Sai do grupo no WhatsApp e remove do estado
   const handleDeleteGroup = async (wg) => {
     try { await leaveWAGroup(wg.numberId, wg.id); } catch (err) { console.error(err); }
@@ -136,7 +206,8 @@ export default function PageWhatsApp({
             {numbers.filter(n => n.status === "connected").length}/{numbers.length} números · {whatsappGroups.length} grupos
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button onClick={() => openImport()} disabled={numbers.length === 0} title={numbers.length === 0 ? "Conecte um número primeiro" : "Importar grupos que já existem no seu WhatsApp"} style={{ padding: "7px 14px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: numbers.length === 0 ? "not-allowed" : "pointer", opacity: numbers.length === 0 ? 0.5 : 1 }}>↓ Importar grupos</button>
           <button onClick={() => setShowCreateGroup(true)} disabled={numbers.length === 0} title={numbers.length === 0 ? "Conecte um número primeiro" : ""} style={{ padding: "7px 14px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: numbers.length === 0 ? "not-allowed" : "pointer", opacity: numbers.length === 0 ? 0.5 : 1 }}>+ Criar grupo</button>
           <button onClick={startAddNumber} style={{ padding: "7px 14px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>+ Adicionar número</button>
         </div>
@@ -315,6 +386,90 @@ export default function PageWhatsApp({
           </div>
         </Modal>
       )}
+
+      {/* Modal importar grupos existentes do WhatsApp */}
+      {showImport && (() => {
+        const filter = importFilter.trim().toLowerCase();
+        const existingJids = new Set(whatsappGroups.map(w => w.id));
+        const filtered = importGroups.filter(g => !filter || (g.name || "").toLowerCase().includes(filter));
+        const importable = filtered.filter(g => !existingJids.has(g.jid));
+        return (
+          <Modal title="Importar grupos do WhatsApp" onClose={() => setShowImport(false)}>
+            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14, lineHeight: 1.5 }}>
+              Mostra os grupos em que o número conectado já participa. Selecione os que você quer adicionar ao Nimbus para enviar ofertas.
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+              <select value={importNumberId} onChange={e => { setImportNumberId(e.target.value); fetchImportGroups(e.target.value); }} style={{ flex: 1, minWidth: 160, padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13 }}>
+                {numbers.map(n => <option key={n.id} value={n.id}>{n.label} — {n.phone}</option>)}
+              </select>
+              <input value={importFilter} onChange={e => setImportFilter(e.target.value)} placeholder="Buscar grupo..." style={{ flex: 1, minWidth: 160, padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13 }} />
+            </div>
+
+            {importLoading && (
+              <div style={{ textAlign: "center", padding: 30, color: "var(--color-text-secondary)", fontSize: 13 }}>Carregando grupos do WhatsApp…</div>
+            )}
+            {importError && !importLoading && (
+              <div style={{ background: "#FCEBEB", color: "#A32D2D", padding: "10px 12px", borderRadius: 8, fontSize: 12, marginBottom: 10 }}>{importError}</div>
+            )}
+            {!importLoading && !importError && filtered.length === 0 && (
+              <div style={{ textAlign: "center", padding: 30, color: "var(--color-text-secondary)", fontSize: 13 }}>Nenhum grupo encontrado.</div>
+            )}
+            {!importLoading && filtered.length > 0 && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 11, color: "var(--color-text-secondary)" }}>
+                <span>{filtered.length} grupo(s) · {importSelected.size} selecionado(s)</span>
+                {importable.length > 0 && (
+                  <button
+                    onClick={() => {
+                      const next = new Set(importSelected);
+                      const allSelected = importable.every(g => next.has(g.jid));
+                      if (allSelected) importable.forEach(g => next.delete(g.jid));
+                      else importable.forEach(g => next.add(g.jid));
+                      setImportSelected(next);
+                    }}
+                    style={{ background: "transparent", border: "none", color: PRIMARY, fontSize: 11, cursor: "pointer", padding: 0 }}
+                  >
+                    {importable.every(g => importSelected.has(g.jid)) ? "Limpar seleção" : "Selecionar todos visíveis"}
+                  </button>
+                )}
+              </div>
+            )}
+            {!importLoading && filtered.length > 0 && (
+              <div style={{ maxHeight: 320, overflowY: "auto", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10, marginBottom: 12 }}>
+                {filtered.map(g => {
+                  const already = existingJids.has(g.jid);
+                  const checked = importSelected.has(g.jid);
+                  return (
+                    <label key={g.jid} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderBottom: "0.5px solid var(--color-border-tertiary)", cursor: already ? "not-allowed" : "pointer", opacity: already ? 0.5 : 1 }}>
+                      <input type="checkbox" checked={checked} disabled={already} onChange={() => toggleImport(g.jid)} style={{ width: 16, height: 16, cursor: already ? "not-allowed" : "pointer" }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name || "(sem nome)"}</div>
+                        <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>{g.members} membro{g.members !== 1 ? "s" : ""}{already ? " · já adicionado" : ""}</div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+
+            {importSelected.size > 0 && groups.length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Vincular a uma campanha (opcional)</label>
+                <select value={importLinkToAppGroupId} onChange={e => setImportLinkToAppGroupId(e.target.value)} style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13 }}>
+                  <option value="">Nenhuma — vincular depois</option>
+                  {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                </select>
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button onClick={() => setShowImport(false)} disabled={importing} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+              <button onClick={submitImport} disabled={importSelected.size === 0 || importing} style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: importing ? "wait" : "pointer", fontWeight: 500, opacity: (importSelected.size === 0 || importing) ? 0.5 : 1 }}>
+                {importing ? "Importando..." : `Importar ${importSelected.size > 0 ? `(${importSelected.size})` : ""}`}
+              </button>
+            </div>
+          </Modal>
+        );
+      })()}
 
       {/* Modal excluir grupo do WhatsApp */}
       {confirmDeleteGroup && (

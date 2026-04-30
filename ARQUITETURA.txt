@@ -1,0 +1,192 @@
+==============================================================
+NIMBUS — Arquitetura (visão alto-nível)
+==============================================================
+
+O Nimbus é uma aplicação web cliente-servidor com três peças
+principais rodando em paralelo:
+
+    [ Frontend (React + Vite) ]
+              ↓ HTTP /api/*
+    [ Backend (Node + Express) ]
+              ↓
+    ┌─────────┬───────────────┬────────────────┐
+    │ Auth    │ Storage       │ Integrações    │
+    │ JWT +   │ JSON em       │ WhatsApp       │
+    │ bcrypt  │ disco         │ (Baileys)      │
+    │         │               │ Scraping ML    │
+    │         │               │ (Puppeteer)    │
+    └─────────┴───────────────┴────────────────┘
+
+
+--------------------------------------------------------------
+1. ESTRUTURA DE PASTAS
+--------------------------------------------------------------
+
+NewNimbus/
+├── frontend/                    SPA React + Vite
+│   ├── src/
+│   │   ├── App.jsx              Raiz: auth + estado global
+│   │   ├── pages/               Telas principais
+│   │   │   ├── Login.jsx        Login / cadastro
+│   │   │   ├── Dashboard.jsx    Visão geral das campanhas
+│   │   │   ├── WhatsApp.jsx     Números e grupos
+│   │   │   ├── Products.jsx     Ofertas scrapeadas
+│   │   │   ├── Settings.jsx     Configurações da conta
+│   │   │   └── Subscription.jsx Plano/assinatura
+│   │   ├── components/          Componentes reutilizáveis
+│   │   │   ├── Sidebar.jsx
+│   │   │   ├── GroupDashboard.jsx
+│   │   │   ├── WhatsappQR.jsx
+│   │   │   └── ui/              Badge, Toggle, Modal, etc.
+│   │   └── data/
+│   │       ├── api.js           Cliente HTTP + auth + state
+│   │       ├── constants.js     Cores, categorias, helpers
+│   │       └── mockData.js      Defaults p/ estado novo
+│   └── vite.config.js           Proxy /api → :3001
+│
+├── backend/                     API + integrações
+│   ├── server.js                Rotas Express
+│   ├── auth.js                  Cadastro/login, JWT, bcrypt
+│   ├── storage.js               Persistência por usuário
+│   ├── whatsapp.js              Baileys (sessões, envio)
+│   ├── scraper.js               Puppeteer (Mercado Livre)
+│   ├── data/                    Dados da aplicação
+│   │   ├── users.json           Lista de usuários
+│   │   ├── .jwt_secret          Segredo JWT (gerado 1x)
+│   │   └── state/<userId>.json  Estado de cada usuário
+│   └── auth_states/<numberId>/  Credenciais Baileys
+│
+├── start.bat / stop.bat         Sobem/derrubam tudo (Windows)
+├── COMO-RODAR.md                Instruções de execução
+├── SOBRE.txt                    O que é a aplicação
+└── ARQUITETURA.txt              Este arquivo
+
+
+--------------------------------------------------------------
+2. TECNOLOGIAS E PARA QUE SERVEM
+--------------------------------------------------------------
+
+[ FRONTEND ]
+
+- React 19 (JSX, sem TypeScript)
+  → biblioteca de UI declarativa
+- Vite 8
+  → bundler/dev server, HMR e build de produção
+- @vitejs/plugin-react
+  → integração JSX/Fast Refresh com Vite
+- ESLint
+  → checagem de qualidade de código
+- Estilização: inline styles + CSS variables
+  → permite suporte a tema claro/escuro sem framework CSS
+- localStorage do navegador
+  → guarda o JWT entre recarregamentos da página
+- fetch nativo
+  → cliente HTTP (sem axios)
+
+
+[ BACKEND ]
+
+- Node.js (v18+)
+  → runtime
+- Express 5
+  → framework web (rotas, JSON parsing, middleware)
+- cors
+  → libera o frontend a chamar o backend (em dev)
+- bcryptjs
+  → gera o hash da senha (NUNCA guardamos a senha em claro)
+  → escolhido em vez de bcrypt nativo p/ evitar build no
+    Windows
+- jsonwebtoken
+  → emite e valida o token de sessão (JWT)
+  → enviado pelo frontend no header Authorization
+- @whiskeysockets/baileys
+  → biblioteca para conectar a contas do WhatsApp via QR
+  → mantém sessão multi-arquivo em disco
+- qrcode
+  → converte o payload do QR em data URL para o frontend
+- pino
+  → logger do Baileys (silenciado em warn)
+- @hapi/boom
+  → tipos de erro usados pelo Baileys
+- puppeteer
+  → headless Chromium para fazer scraping do Mercado Livre
+
+
+[ INTEGRAÇÕES EXTERNAS ]
+
+- Mercado Livre (mercadolivre.com.br/ofertas)
+  → fonte das ofertas; varremos o HTML pela classe
+    .poly-card via Puppeteer
+- WhatsApp Web (via Baileys / sinal/protocolo Signal)
+  → envio de mensagens, criação/listagem de grupos,
+    geração de link de convite
+- ngrok (opcional, fora do código)
+  → expõe a porta 5173 com URL pública para uso externo
+
+
+--------------------------------------------------------------
+3. FLUXO DE AUTENTICAÇÃO
+--------------------------------------------------------------
+
+  Login.jsx ── POST /api/auth/login (email, senha)
+       │            │
+       │            └─ bcrypt.compare → JWT.sign
+       │
+       └─ recebe { token, user }
+              │
+              localStorage["nimbus.token"] = token
+              │
+  api.js ── todas as requests passam:
+              Authorization: Bearer <token>
+       │
+  server.js ── auth.requireAuth middleware:
+              JWT.verify → req.user = { id, name, email }
+       │
+  Se 401 em qualquer chamada:
+       └─ window.dispatchEvent("nimbus:unauthorized")
+              → App.jsx volta para tela de Login
+
+
+--------------------------------------------------------------
+4. FLUXO DE PERSISTÊNCIA
+--------------------------------------------------------------
+
+  Login OK
+       │
+  App.jsx ── GET /api/state
+       │       └─ storage.loadState(userId)
+       │             └─ lê backend/data/state/<userId>.json
+       │
+       setGroups / setNumbers / setWhatsappGroups
+       stateLoadedRef = true
+       │
+  Qualquer mudança no estado:
+       └─ useEffect com debounce (800 ms)
+              └─ PUT /api/state { groups, numbers, ... }
+                    └─ storage.saveState(userId, body)
+                          └─ grava .tmp e renomeia (atômico)
+
+
+--------------------------------------------------------------
+5. PORTAS E PROXY
+--------------------------------------------------------------
+
+  Frontend (Vite dev server)  : http://localhost:5173
+  Backend  (Express)          : http://localhost:3001
+
+  Vite proxia /api → 3001, então o frontend chama
+  caminhos relativos (/api/...) e não precisa lidar com CORS
+  em desenvolvimento.
+
+
+--------------------------------------------------------------
+6. ARMAZENAMENTO EM DISCO (resumo)
+--------------------------------------------------------------
+
+  backend/data/users.json          Usuários + hash da senha
+  backend/data/.jwt_secret         Segredo do JWT
+  backend/data/state/<id>.json     Estado da app por usuário
+  backend/auth_states/<num>/       Credenciais Baileys
+
+  Tudo dentro de backend/data e backend/auth_states está no
+  .gitignore — nada disso é versionado.

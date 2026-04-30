@@ -20,24 +20,27 @@ if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
 
 const log = pino({ level: "warn" });
 
-// numberId (string) -> { sock, status, qr (raw), qrDataUrl, info, lastError, restartCount }
+// chave: `${userId}::${numberId}` -> { sock, status, qr, qrDataUrl, info, ... }
 const sessions = new Map();
 
-function normalizePhone(p) {
-  return String(p).replace(/\D/g, "");
+function key(userId, numberId) { return `${userId}::${numberId}`; }
+function dirFor(userId, numberId) {
+  const safeUser = String(userId).replace(/[^a-zA-Z0-9_-]/g, "_");
+  const safeNum = String(numberId).replace(/[^a-zA-Z0-9_-]/g, "_");
+  return path.join(AUTH_DIR, safeUser, safeNum);
 }
 
-function jidFromPhone(phone) {
-  return `${normalizePhone(phone)}@s.whatsapp.net`;
-}
+function normalizePhone(p) { return String(p).replace(/\D/g, ""); }
+function jidFromPhone(phone) { return `${normalizePhone(phone)}@s.whatsapp.net`; }
 
-async function startSession(numberId) {
+async function startSession(userId, numberId) {
+  userId = String(userId);
   numberId = String(numberId);
-  const dir = path.join(AUTH_DIR, numberId);
+  const dir = dirFor(userId, numberId);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-  // Se já tem sessão rodando, não recria
-  const existing = sessions.get(numberId);
+  const k = key(userId, numberId);
+  const existing = sessions.get(k);
   if (existing?.sock && existing.status === "connected") return existing;
 
   const { state, saveCreds } = await useMultiFileAuthState(dir);
@@ -53,11 +56,11 @@ async function startSession(numberId) {
     markOnlineOnConnect: false,
   });
 
-  const session = sessions.get(numberId) || { numberId, restartCount: 0 };
+  const session = sessions.get(k) || { userId, numberId, restartCount: 0 };
   session.sock = sock;
   session.status = session.status && session.status !== "logged_out" ? session.status : "connecting";
   session.lastError = null;
-  sessions.set(numberId, session);
+  sessions.set(k, session);
 
   sock.ev.on("creds.update", saveCreds);
 
@@ -91,17 +94,15 @@ async function startSession(numberId) {
       session.qrDataUrl = null;
 
       if (loggedOut) {
-        // Limpa auth_state — usuário precisa escanear de novo
         try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
         return;
       }
 
-      // Reconecta com backoff simples
       session.restartCount = (session.restartCount || 0) + 1;
       const delay = Math.min(30000, 1500 * session.restartCount);
       setTimeout(() => {
-        startSession(numberId).catch(err => {
-          console.error(`[whatsapp] erro ao reconectar ${numberId}:`, err.message);
+        startSession(userId, numberId).catch(err => {
+          console.error(`[whatsapp] erro ao reconectar ${userId}/${numberId}:`, err.message);
         });
       }, delay);
     }
@@ -110,55 +111,59 @@ async function startSession(numberId) {
   return session;
 }
 
-function getSession(numberId) {
-  return sessions.get(String(numberId));
+function getSession(userId, numberId) {
+  return sessions.get(key(userId, numberId));
 }
 
-function listSessions() {
-  return Array.from(sessions.values()).map(s => ({
-    numberId: s.numberId,
-    status: s.status,
-    info: s.info || null,
-    lastError: s.lastError || null,
-  }));
+function listSessions(userId) {
+  const u = String(userId);
+  return Array.from(sessions.values())
+    .filter(s => s.userId === u)
+    .map(s => ({
+      numberId: s.numberId,
+      status: s.status,
+      info: s.info || null,
+      lastError: s.lastError || null,
+    }));
 }
 
-async function deleteSession(numberId) {
+async function deleteSession(userId, numberId) {
+  userId = String(userId);
   numberId = String(numberId);
-  const s = sessions.get(numberId);
+  const k = key(userId, numberId);
+  const s = sessions.get(k);
   if (s?.sock) {
     try { await s.sock.logout(); } catch {}
     try { s.sock.end(); } catch {}
   }
-  sessions.delete(numberId);
-  const dir = path.join(AUTH_DIR, numberId);
+  sessions.delete(k);
+  const dir = dirFor(userId, numberId);
   if (fs.existsSync(dir)) {
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   }
 }
 
-function ensureConnected(numberId) {
-  const s = sessions.get(String(numberId));
+function ensureConnected(userId, numberId) {
+  const s = sessions.get(key(userId, numberId));
   if (!s?.sock) throw new Error("Sessão não encontrada — adicione o número primeiro.");
   if (s.status !== "connected") throw new Error(`Sessão não está conectada (status: ${s.status}).`);
   return s;
 }
 
-async function sendText(numberId, jid, text) {
-  const s = ensureConnected(numberId);
+async function sendText(userId, numberId, jid, text) {
+  const s = ensureConnected(userId, numberId);
   return s.sock.sendMessage(jid, { text });
 }
 
-async function sendImage(numberId, jid, imageUrl, caption) {
-  const s = ensureConnected(numberId);
+async function sendImage(userId, numberId, jid, imageUrl, caption) {
+  const s = ensureConnected(userId, numberId);
   return s.sock.sendMessage(jid, { image: { url: imageUrl }, caption });
 }
 
-async function createGroup(numberId, name, participantPhones) {
-  const s = ensureConnected(numberId);
+async function createGroup(userId, numberId, name, participantPhones) {
+  const s = ensureConnected(userId, numberId);
   const jids = participantPhones.map(jidFromPhone);
   const result = await s.sock.groupCreate(name, jids);
-  // Tenta pegar o link de convite imediatamente
   let inviteLink = null;
   try {
     const code = await s.sock.groupInviteCode(result.id);
@@ -174,20 +179,20 @@ async function createGroup(numberId, name, participantPhones) {
   };
 }
 
-async function getInviteLink(numberId, jid) {
-  const s = ensureConnected(numberId);
+async function getInviteLink(userId, numberId, jid) {
+  const s = ensureConnected(userId, numberId);
   const code = await s.sock.groupInviteCode(jid);
   return `https://chat.whatsapp.com/${code}`;
 }
 
-async function revokeInvite(numberId, jid) {
-  const s = ensureConnected(numberId);
+async function revokeInvite(userId, numberId, jid) {
+  const s = ensureConnected(userId, numberId);
   const code = await s.sock.groupRevokeInvite(jid);
   return `https://chat.whatsapp.com/${code}`;
 }
 
-async function listGroups(numberId) {
-  const s = ensureConnected(numberId);
+async function listGroups(userId, numberId) {
+  const s = ensureConnected(userId, numberId);
   const all = await s.sock.groupFetchAllParticipating();
   return Object.values(all).map(g => ({
     jid: g.id,
@@ -198,28 +203,37 @@ async function listGroups(numberId) {
   }));
 }
 
-async function leaveGroup(numberId, jid) {
-  const s = ensureConnected(numberId);
+async function leaveGroup(userId, numberId, jid) {
+  const s = ensureConnected(userId, numberId);
   await s.sock.groupLeave(jid);
 }
 
-async function getGroupMetadata(numberId, jid) {
-  const s = ensureConnected(numberId);
+async function getGroupMetadata(userId, numberId, jid) {
+  const s = ensureConnected(userId, numberId);
   return s.sock.groupMetadata(jid);
 }
 
-// Restaura sessões persistidas em auth_states/ ao subir o servidor
+// Restaura sessões persistidas — varre auth_states/<userId>/<numberId>/
 function restoreSessions() {
   if (!fs.existsSync(AUTH_DIR)) return;
-  const dirs = fs.readdirSync(AUTH_DIR, { withFileTypes: true })
+  const userDirs = fs.readdirSync(AUTH_DIR, { withFileTypes: true })
     .filter(d => d.isDirectory())
     .map(d => d.name);
-  for (const id of dirs) {
-    startSession(id).catch(err => {
-      console.error(`[whatsapp] falha ao restaurar sessão ${id}:`, err.message);
-    });
+
+  let count = 0;
+  for (const userId of userDirs) {
+    const userPath = path.join(AUTH_DIR, userId);
+    const numbers = fs.readdirSync(userPath, { withFileTypes: true })
+      .filter(d => d.isDirectory())
+      .map(d => d.name);
+    for (const numberId of numbers) {
+      count++;
+      startSession(userId, numberId).catch(err => {
+        console.error(`[whatsapp] falha ao restaurar ${userId}/${numberId}:`, err.message);
+      });
+    }
   }
-  if (dirs.length > 0) console.log(`[whatsapp] restaurando ${dirs.length} sessão(ões)...`);
+  if (count > 0) console.log(`[whatsapp] restaurando ${count} sessão(ões)...`);
 }
 
 module.exports = {
@@ -240,7 +254,6 @@ module.exports = {
   normalizePhone,
 };
 
-// Stub usado quando Baileys não está instalado — mantém o servidor de pé com mensagens claras
 function makeStub() {
   const fail = () => Promise.reject(new Error("Baileys não instalado. Rode: cd backend && npm install"));
   return {

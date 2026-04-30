@@ -1,0 +1,125 @@
+==============================================================
+NIMBUS — Sobre a aplicação
+==============================================================
+
+O Nimbus é uma plataforma SaaS de automação de marketing por
+WhatsApp focada em ofertas. Ele faz scraping de produtos em
+promoção (hoje no Mercado Livre, com suporte planejado a
+Amazon, Shopee e Americanas), permite organizar essas ofertas
+em campanhas por categoria e dispara as mensagens em grupos
+de WhatsApp do próprio usuário, em horários e cadência
+configuráveis.
+
+A ideia é tirar o trabalho manual de quem hoje monta grupos
+de "promoção/achadinhos" e copia-cola ofertas o dia inteiro:
+o Nimbus encontra, formata e envia.
+
+
+--------------------------------------------------------------
+1. PRINCIPAIS FUNCIONALIDADES
+--------------------------------------------------------------
+
+[ Conta e autenticação ]
+- Cadastro de usuário com nome, email, senha e telefone
+- Login com email + senha (senha guardada com hash bcrypt)
+- Sessão persistida via JWT (token salvo no navegador)
+- Auto-login enquanto o token for válido (TTL de 30 dias)
+- Atualização de perfil (nome, telefone) e troca de senha
+- Logout em qualquer dispositivo
+
+[ Persistência por usuário ]
+- Cada conta tem seu próprio estado salvo no servidor:
+  campanhas, números conectados, grupos de WhatsApp
+  vinculados, modelos de mensagem, agendamentos
+- Os dados sobrevivem a reinícios do servidor e entre
+  navegadores/dispositivos do mesmo usuário
+- O frontend salva automaticamente (debounced) sempre que
+  algo muda — não há botão "Salvar tudo"
+
+[ Conexão com WhatsApp ]
+- Cada usuário pode adicionar múltiplos números de WhatsApp
+- A conexão é feita escaneando um QR Code (Baileys)
+- As credenciais ficam salvas em disco no servidor, então
+  o número fica logado entre reinícios
+- Listagem de grupos em que o número participa
+- Criação de novos grupos pelo Nimbus
+- Geração e revogação de link de convite
+- Saída de grupos
+
+[ Campanhas (grupos de envio) ]
+- Cada campanha tem:
+  - Nome
+  - Categorias monitoradas (Gamer, Bebê, etc.)
+  - Modelo de mensagem com variáveis ({produto}, {preco},
+    {preco_antigo}, {desconto}, {loja}, {link})
+  - Janela horária de envio (ex: 09–12h e 14–18h)
+  - Intervalo entre mensagens
+  - Cooldown para não repetir o mesmo produto
+  - Filtros (desconto mínimo, preço máximo, rating mínimo,
+    quantidade mínima de vendas, palavras-chave)
+  - Lista de grupos de WhatsApp vinculados
+
+[ Scraping de ofertas ]
+- Busca de ofertas no Mercado Livre via Puppeteer
+- Cache de 5 minutos por categoria para reduzir tráfego
+- Filtros aplicáveis na consulta (desconto mínimo, preço
+  máximo, limite)
+- Categorias suportadas hoje: Gamer (MLB1144), Bebê (MLB1384),
+  Eletrônicos (MLB1051), Casa (MLB1574) e Beleza (MLB1246)
+- Estrutura preparada para adicionar novas categorias e fontes
+
+[ Envio de mensagens ]
+- Envio individual de texto ou texto + imagem
+- Broadcast: mesma mensagem para vários grupos em sequência,
+  com intervalo configurável (default 4s) para reduzir risco
+  de bloqueio do WhatsApp
+
+[ Configurações ]
+- Conta: editar perfil e trocar senha
+- Segurança: alterar senha, dispositivos conectados, 2FA
+  (placeholder visual)
+- Notificações: email, push, relatório semanal, produtos
+  pendentes de revisão
+- Fontes e categorias: lojas e categorias ativas
+- Modelo padrão de mensagem aplicado a campanhas novas
+- Aparência: tema claro / escuro / automático
+- Zona de perigo: excluir conta
+
+[ Painel ]
+- Dashboard com visão geral das campanhas
+- Lista de produtos vindos do scraping
+- Página WhatsApp com gerenciamento de números e grupos
+- Página Assinatura (placeholder do plano)
+- Sidebar com atalhos e indicador de status por campanha
+- Layout responsivo para uso no celular
+
+
+--------------------------------------------------------------
+2. FLUXO TÍPICO DE USO
+--------------------------------------------------------------
+
+1. O usuário cria uma conta (nome, email, senha)
+2. Conecta um número de WhatsApp escaneando o QR
+3. Cria uma campanha (ex: "Achados Gamer")
+4. Vincula um ou mais grupos do WhatsApp à campanha
+5. Define filtros (ex: -30%, até R$ 2.000) e janela horária
+6. O Nimbus passa a buscar ofertas que batem nos critérios
+7. Conforme o agendamento, dispara as mensagens nos grupos
+8. O usuário acompanha o histórico e ajusta filtros/template
+
+
+--------------------------------------------------------------
+3. DECISÕES DE PRODUTO (NOTAS)
+--------------------------------------------------------------
+
+- O scraping roda no PC do usuário/servidor onde o backend
+  está hospedado — exige máquina ligada
+- A persistência é em arquivos JSON (sem banco) — simples,
+  suficiente para o estágio atual e fácil de migrar depois
+  para PostgreSQL/Mongo quando o produto crescer
+- O JWT é assinado com um segredo que é gerado uma vez e
+  guardado em backend/data/.jwt_secret — pode ser
+  sobrescrito definindo a env JWT_SECRET
+- Os credenciais do WhatsApp (Baileys) NÃO ficam no
+  arquivo de estado do usuário; ficam em backend/auth_states
+  e estão no .gitignore
