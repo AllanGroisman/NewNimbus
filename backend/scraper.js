@@ -255,10 +255,13 @@ async function scrapeOfertas({ category, sources, limit = 200 } = {}) {
 
 // Reaplica filtros num conjunto já scrapeado — usado pelo scheduler
 // para reusar cache compartilhado por categoria.
-function applyFilters(products, { minDiscount = 0, maxPrice = Infinity, minRating = 0, minSales = 0, keywords = "" } = {}) {
+function applyFilters(products, { minDiscount = 0, minPrice = 0, maxPrice = Infinity, minRating = 0, minSales = 0, keywords = "" } = {}) {
   let out = products;
   if (minDiscount > 0) out = out.filter(p => p.discount && p.discount >= minDiscount);
-  if (maxPrice < Infinity) out = out.filter(p => p.price <= maxPrice);
+  // null/undefined coerce p/ 0 em comparações, então produtos sem preço passariam
+  // pelo filtro de maxPrice (null <= 5000 === true). Tem que checar explicitamente.
+  if (minPrice > 0) out = out.filter(p => p.price != null && p.price >= minPrice);
+  if (maxPrice < Infinity) out = out.filter(p => p.price != null && p.price <= maxPrice);
   if (minRating > 0) out = out.filter(p => (p.rating || 0) >= minRating);
   if (minSales > 0) out = out.filter(p => parseSold(p.sold) >= minSales);
   if (keywords && String(keywords).trim()) {

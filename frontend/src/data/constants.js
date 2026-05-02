@@ -30,17 +30,33 @@ export const getLinkedWhatsapps = (group, whatsappGroups = []) => {
   return whatsappGroups.filter(w => ids.includes(w.id));
 };
 
-// Estatísticas derivadas dos grupos de WhatsApp vinculados
-export const getGroupStats = (group, whatsappGroups = []) => {
+// Grupo depende de afiliado ML? (sem fontes definidas = default ML)
+export const groupUsesML = (group) => {
+  const srcs = group?.scraping?.sources;
+  if (!Array.isArray(srcs) || srcs.length === 0) return true;
+  return srcs.includes("Mercado Livre");
+};
+
+// Estatísticas derivadas dos grupos de WhatsApp vinculados.
+// Se o grupo depende de ML e o afiliado não está configurado, status = "paused"
+// (o backend não envia até a tag/cookie estarem ok).
+export const getGroupStats = (group, whatsappGroups = [], { affiliateConfigured = true } = {}) => {
   const linked = getLinkedWhatsapps(group, whatsappGroups);
   const members = linked.reduce((s, w) => s + (w.members || 0), 0);
   const connected = linked.filter(w => w.status === "connected").length;
+  const pausedByAffiliate = !affiliateConfigured && groupUsesML(group);
+  let status;
+  if (pausedByAffiliate) status = "paused";
+  else if (linked.length === 0) status = "empty";
+  else if (connected > 0) status = "connected";
+  else status = "disconnected";
   return {
     linked,
     count: linked.length,
     members,
     connected,
-    status: linked.length === 0 ? "empty" : connected > 0 ? "connected" : "disconnected",
+    status,
+    pausedByAffiliate,
   };
 };
 

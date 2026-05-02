@@ -6,7 +6,7 @@ import StatCard from "../components/ui/StatCard";
 import MiniBar from "../components/ui/MiniBar";
 import Modal from "../components/ui/Modal";
 
-export default function PageDashboard({ groups, whatsappGroups = [], onSelectGroup, onCreateGroup }) {
+export default function PageDashboard({ groups, whatsappGroups = [], onSelectGroup, onCreateGroup, affiliateConfigured = true, onGoToSettings }) {
   const [backendStatus, setBackendStatus] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ name: "", categories: [] });
@@ -42,6 +42,20 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
         </div>
       </div>
 
+      {!affiliateConfigured && groups.length > 0 && (
+        <div style={{ background: "#FEF3C7", border: "0.5px solid #F4D08A", borderRadius: 10, padding: "10px 14px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 16 }}>⚠️</span>
+          <span style={{ fontSize: 13, color: "#854F0B", flex: 1, minWidth: 200 }}>
+            Campanhas do Mercado Livre estão <strong>pausadas</strong> — configure a TAG e o cookie de afiliado para retomar os envios.
+          </span>
+          {onGoToSettings && (
+            <button onClick={onGoToSettings} style={{ padding: "6px 12px", borderRadius: 8, background: "#854F0B", color: "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
+              Configurar afiliado
+            </button>
+          )}
+        </div>
+      )}
+
       {groups.length === 0 ? (
         <div style={{ textAlign: "center", padding: "60px 20px", background: "var(--color-background-secondary)", borderRadius: 14, border: "0.5px dashed var(--color-border-secondary)" }}>
           <div style={{ fontSize: 36, marginBottom: 14 }}>📣</div>
@@ -56,18 +70,20 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
           <div style={{ display: "flex", gap: 10, marginBottom: 24, flexWrap: "wrap" }}>
             <StatCard label="Envios hoje" value={groups.reduce((a, g) => a + g.sentToday, 0)} color={PRIMARY_DARK} />
             <StatCard label="Envios semana" value={groups.reduce((a, g) => a + g.sentWeek, 0)} />
-            <StatCard label="Campanhas ativas" value={`${groups.filter(g => getGroupStats(g, whatsappGroups).status === "connected").length}/${groups.length}`} color="#854F0B" />
+            <StatCard label="Campanhas ativas" value={`${groups.filter(g => getGroupStats(g, whatsappGroups, { affiliateConfigured }).status === "connected").length}/${groups.length}`} color="#854F0B" />
             <StatCard label="Para revisar" value={groups.reduce((a, g) => a + g.pending.length, 0)} color={groups.reduce((a, g) => a + g.pending.length, 0) > 0 ? "#854F0B" : undefined} />
           </div>
           <h3 style={{ fontSize: 13, fontWeight: 500, marginBottom: 12, color: "var(--color-text-secondary)" }}>Campanhas &mdash; clique para gerenciar</h3>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {groups.map(g => {
-              const stats = getGroupStats(g, whatsappGroups);
-              const statusBadge = stats.status === "connected"
-                ? <Badge color="green">{stats.connected}/{stats.count} conectados</Badge>
-                : stats.status === "empty"
-                  ? <Badge color="gray">Sem grupos</Badge>
-                  : <Badge color="red">Desconectado</Badge>;
+              const stats = getGroupStats(g, whatsappGroups, { affiliateConfigured });
+              const statusBadge = stats.status === "paused"
+                ? <Badge color="amber">Pausado · sem afiliado ML</Badge>
+                : stats.status === "connected"
+                  ? <Badge color="green">{stats.connected}/{stats.count} conectados</Badge>
+                  : stats.status === "empty"
+                    ? <Badge color="gray">Sem grupos</Badge>
+                    : <Badge color="red">Desconectado</Badge>;
               return (
                 <div
                   key={g.id}

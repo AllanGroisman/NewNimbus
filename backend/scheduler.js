@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const { scrapeOfertas, applyFilters, normalizeSource } = require("./scraper");
 const wa = require("./whatsapp");
 const storage = require("./storage");
+const affiliate = require("./affiliate");
 
 // Cadência do loop principal (em ms). Roda funcionalidades baseadas em
 // horário: scraping nos horários configurados, envio dentro das janelas.
@@ -96,6 +97,14 @@ function resolveSources(sources) {
     .map(normalizeSource)
     .filter(Boolean);
   return ids.length ? [...new Set(ids)] : ["ml"];
+}
+
+// Grupo está pausado quando depende do ML mas o afiliado não está configurado
+// (sem tag+cookie). Sem afiliado o link sai sem comissão — preferimos não enviar.
+function groupPausedByAffiliate(group) {
+  const sources = resolveSources(group.scraping?.sources);
+  if (!sources.includes("ml")) return false;
+  return !affiliate.status().configured;
 }
 
 async function scrapeCategoryShared(category, sources) {
@@ -222,7 +231,20 @@ async function sendItem(userId, group, whatsappGroups, item) {
     throw new Error("Grupos vinculados não encontrados.");
   }
 
-  const text = renderTemplate(group.messageTemplate, item);
+  // Se afiliados ML estão configurados e o produto é do ML, troca o link cru
+  // pelo link curto de afiliado. Se falhar (cookie expirado, etc), usa o link
+  // original — melhor enviar sem comissão do que perder a oferta.
+  let itemForSend = item;
+  if (item.store === "Mercado Livre" && item.link) {
+    const aff = await affiliate.gerarLinkAfiliadoML(item.link);
+    if (aff) {
+      itemForSend = { ...item, link: aff };
+    } else if (affiliate.status().configured) {
+      console.warn(`[scheduler] afiliado ML falhou pra "${item.name?.slice(0, 40)}" — enviando com link original`);
+    }
+  }
+
+  const text = renderTemplate(group.messageTemplate, itemForSend);
 
   const byNumber = new Map();
   for (const w of linked) {
@@ -313,6 +335,9 @@ async function sendNextNow(userId, groupId) {
   const state = storage.loadState(userId);
   const group = (state.groups || []).find(g => g.id === groupId);
   if (!group) throw new Error("Campanha não encontrada");
+  if (groupPausedByAffiliate(group)) {
+    throw new Error("Campanha pausada: configure o afiliado do Mercado Livre (tag + cookie) em Configurações.");
+  }
   const queue = group.queue || [];
   if (!queue.length) throw new Error("Fila vazia");
 
@@ -333,6 +358,11 @@ async function sendNextNow(userId, groupId) {
 async function processGroup(userId, group, whatsappGroups, numbers) {
   const updates = {};
   const now = new Date();
+
+  if (groupPausedByAffiliate(group)) {
+    console.log(`[scheduler] "${group.name}": pausado — afiliado ML não configurado (tag/cookie ausentes)`);
+    return;
+  }
 
   // Scrape se houver horário configurado batendo agora
   const auto = group.scraping?.auto;

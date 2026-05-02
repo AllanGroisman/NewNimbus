@@ -66,6 +66,108 @@ export default function PageProducts() {
   };
   if (sortFns[sortBy]) filtered = [...filtered].sort(sortFns[sortBy]);
 
+  const exportHTML = () => {
+    if (!filtered.length) return;
+    const escapeHTML = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
+    const stars = (rating) => {
+      const filled = Math.max(0, Math.min(5, Math.round(Number(rating) || 0)));
+      return "★".repeat(filled) + "☆".repeat(5 - filled);
+    };
+    const priceText = (p) => typeof p === "number"
+      ? `R$ ${p.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
+      : (p || "");
+
+    const cards = filtered.map(p => {
+      const ratingBlock = p.rating ? `
+        <div class="rating-nimbus">
+            <span class="stars-nimbus">${stars(p.rating)}</span>${p.reviewsCount ? `
+            <span class="reviews-nimbus">(${escapeHTML(p.reviewsCount)} avaliações)</span>` : ""}
+        </div>` : "";
+      return `    <div class="product-card-nimbus">
+        <div class="img-placeholder-nimbus">IMG 1080x1080</div>
+        <span class="title-nimbus">${escapeHTML(p.name)}</span>${ratingBlock}
+        <span class="price-nimbus">${escapeHTML(priceText(p.price))}</span>
+    </div>`;
+    }).join("\n");
+
+    const html = `<style>
+    .product-grid-nimbus {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 20px;
+        padding: 15px;
+        background-color: #F4F4F4;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    .product-card-nimbus {
+        background: #FFFFFF;
+        border: 1px solid #E0E0E0;
+        border-radius: 4px;
+        padding: 16px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+
+    .img-placeholder-nimbus {
+        width: 100%;
+        aspect-ratio: 1 / 1;
+        background-color: #EEE;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 12px;
+        color: #999;
+        font-weight: bold;
+    }
+
+    .title-nimbus {
+        color: #0B2A33;
+        font-size: 1rem;
+        font-weight: 600;
+        margin: 0 0 8px 0;
+        line-height: 1.4;
+        display: block;
+    }
+
+    .rating-nimbus {
+        display: flex;
+        align-items: center;
+        margin-bottom: 10px;
+        gap: 5px;
+    }
+
+    .stars-nimbus {
+        color: #FF5E12;
+    }
+
+    .reviews-nimbus {
+        font-size: 0.8rem;
+        color: #666;
+    }
+
+    .price-nimbus {
+        color: #FF5E12;
+        font-size: 1.25rem;
+        font-weight: 700;
+        display: block;
+    }
+</style>
+
+<div class="product-grid-nimbus">
+${cards}
+</div>`;
+
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `produtos-${activeCat}-${new Date().toISOString().slice(0, 10)}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
@@ -75,13 +177,23 @@ export default function PageProducts() {
             {loading ? "Buscando ofertas..." : `${filtered.length} ofertas — ${CATEGORIES[activeCat]?.label}`}
           </div>
         </div>
-        <button
-          onClick={() => load(activeCat, true)}
-          disabled={refreshing}
-          style={{ padding: "7px 14px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: refreshing ? 0.6 : 1 }}
-        >
-          {refreshing ? "⟳ Atualizando..." : "⟳ Atualizar ofertas"}
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={exportHTML}
+            disabled={!filtered.length}
+            style={{ padding: "7px 14px", borderRadius: 8, background: "transparent", color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 13, cursor: filtered.length ? "pointer" : "not-allowed", fontWeight: 500, opacity: filtered.length ? 1 : 0.5 }}
+            title={`Exportar ${filtered.length} produto(s) como HTML`}
+          >
+            ↓ Exportar HTML
+          </button>
+          <button
+            onClick={() => load(activeCat, true)}
+            disabled={refreshing}
+            style={{ padding: "7px 14px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: refreshing ? 0.6 : 1 }}
+          >
+            {refreshing ? "⟳ Atualizando..." : "⟳ Atualizar ofertas"}
+          </button>
+        </div>
       </div>
 
       {/* Category tabs */}

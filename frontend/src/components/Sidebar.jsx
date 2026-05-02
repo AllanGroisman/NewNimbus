@@ -1,6 +1,6 @@
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, sidebarItems, getGroupStats } from "../data/constants";
 
-export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = [], onNavigate, onSelectGroup, onLogout, mobileOpen, onToggleMobile }) {
+export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = [], affiliateConfigured = true, onNavigate, onSelectGroup, onLogout, mobileOpen, onToggleMobile }) {
   const nav = (id) => { onNavigate(id); onToggleMobile(false); };
   const selGroup = (g) => { onSelectGroup(g); onToggleMobile(false); };
 
@@ -36,8 +36,11 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
           <div style={{ fontSize: 11, color: "var(--color-text-secondary)", padding: "6px 6px", fontStyle: "italic" }}>Nenhuma campanha ainda</div>
         )}
         {groups.map(g => {
-          const stats = getGroupStats(g, whatsappGroups);
-          const dotColor = stats.status === "connected" ? PRIMARY : stats.status === "empty" ? "var(--color-border-secondary)" : "#E24B4A";
+          const stats = getGroupStats(g, whatsappGroups, { affiliateConfigured });
+          const dotColor = stats.status === "paused" ? "#EF9F27"
+            : stats.status === "connected" ? PRIMARY
+            : stats.status === "empty" ? "var(--color-border-secondary)"
+            : "#E24B4A";
           return (
             <button
               key={g.id}

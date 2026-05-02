@@ -70,11 +70,18 @@ export async function sendNextNow(groupId) {
   return http("POST", `/api/state/groups/${groupId}/send-now`);
 }
 
+// ─── Afiliados ML ──────────────────────────────────────────────────────
+export async function getAffiliateStatus()      { return http("GET",    "/api/affiliate"); }
+export async function saveAffiliate(payload)    { return http("PUT",    "/api/affiliate", payload); }
+export async function clearAffiliate()          { return http("DELETE", "/api/affiliate"); }
+export async function testAffiliate(url)        { return http("POST",   "/api/affiliate/test", url ? { url } : {}); }
+
 // ─── Scraping ──────────────────────────────────────────────────────────
-export async function fetchOfertas({ category, minDiscount = 0, maxPrice, limit = 50, refresh = false, sources } = {}) {
+export async function fetchOfertas({ category, minDiscount = 0, minPrice = 0, maxPrice, limit = 50, refresh = false, sources } = {}) {
   const params = new URLSearchParams();
   if (category) params.set("category", category);
   if (minDiscount > 0) params.set("minDiscount", minDiscount);
+  if (minPrice > 0) params.set("minPrice", minPrice);
   if (maxPrice) params.set("maxPrice", maxPrice);
   if (limit) params.set("limit", limit);
   if (refresh) params.set("refresh", "true");

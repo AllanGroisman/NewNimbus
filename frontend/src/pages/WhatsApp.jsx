@@ -15,7 +15,7 @@ export default function PageWhatsApp({
   const [confirmDisconnect, setConfirmDisconnect] = useState(null);
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [confirmDeleteGroup, setConfirmDeleteGroup] = useState(null);
-  const [groupForm, setGroupForm] = useState({ name: "", numberId: numbers[0]?.id, participants: "", linkToAppGroupId: "" });
+  const [groupForm, setGroupForm] = useState({ name: "", numberIds: numbers[0]?.id ? [numbers[0].id] : [], participants: "", linkToAppGroupId: "" });
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [createError, setCreateError] = useState(null);
   const [filterNumber, setFilterNumber] = useState("all");
@@ -87,10 +87,11 @@ export default function PageWhatsApp({
     setPendingLabel("");
   };
 
-  // Cria grupo de fato no WhatsApp via Baileys
+  // Cria grupo de fato no WhatsApp via Baileys (1 grupo por número selecionado)
   const submitCreateGroup = async () => {
     setCreateError(null);
-    if (!groupForm.name.trim() || !groupForm.numberId) return;
+    const selectedIds = groupForm.numberIds || [];
+    if (!groupForm.name.trim() || selectedIds.length === 0) return;
     const parts = groupForm.participants
       .split(/[\n,;]/)
       .map(p => p.trim())
@@ -101,22 +102,37 @@ export default function PageWhatsApp({
     }
 
     setCreatingGroup(true);
+    const baseName = groupForm.name.trim();
+    const useSuffix = selectedIds.length > 1;
+    const linkId = groupForm.linkToAppGroupId ? Number(groupForm.linkToAppGroupId) : undefined;
+    const errors = [];
+    let createdAny = false;
     try {
-      const result = await createWAGroup(groupForm.numberId, groupForm.name.trim(), parts);
-      // Adiciona o grupo ao estado da app, usando o JID real como id
-      onCreateWhatsappGroup({
-        id: result.jid,
-        name: result.name,
-        numberId: Number(groupForm.numberId),
-        members: result.participants.length + 1, // + o próprio número
-        inviteLink: result.inviteLink,
-        linkToAppGroupId: groupForm.linkToAppGroupId ? Number(groupForm.linkToAppGroupId) : undefined,
-        skipBackend: true, // já foi criado no backend
-      });
+      for (const numId of selectedIds) {
+        const num = numbers.find(n => n.id === numId);
+        const name = useSuffix && num ? `${baseName} — ${num.label}` : baseName;
+        try {
+          const result = await createWAGroup(numId, name, parts);
+          onCreateWhatsappGroup({
+            id: result.jid,
+            name: result.name,
+            numberId: Number(numId),
+            members: result.participants.length + 1,
+            inviteLink: result.inviteLink,
+            linkToAppGroupId: linkId,
+            skipBackend: true,
+          });
+          createdAny = true;
+        } catch (err) {
+          errors.push(`${num?.label || numId}: ${err.message}`);
+        }
+      }
+      if (errors.length > 0) {
+        setCreateError(`Falhou em ${errors.length} número(s):\n${errors.join("\n")}`);
+        if (!createdAny) return;
+      }
       setShowCreateGroup(false);
-      setGroupForm({ name: "", numberId: numbers[0]?.id, participants: "", linkToAppGroupId: "" });
-    } catch (err) {
-      setCreateError(err.message);
+      setGroupForm({ name: "", numberIds: numbers[0]?.id ? [numbers[0].id] : [], participants: "", linkToAppGroupId: "" });
     } finally {
       setCreatingGroup(false);
     }
@@ -349,10 +365,39 @@ export default function PageWhatsApp({
               <input value={groupForm.name} onChange={e => setGroupForm(f => ({ ...f, name: e.target.value }))} placeholder="Ex: Ofertas Tech BH" style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }} />
             </div>
             <div>
-              <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Número que vai criar</label>
-              <select value={groupForm.numberId || ""} onChange={e => setGroupForm(f => ({ ...f, numberId: e.target.value }))} style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13 }}>
-                {numbers.map(n => <option key={n.id} value={n.id}>{n.label} — {n.phone}</option>)}
-              </select>
+              <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 6 }}>
+                Números que vão criar <span style={{ color: "var(--color-text-tertiary, var(--color-text-secondary))" }}>(selecione um ou mais — cria 1 grupo por número)</span>
+              </label>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 180, overflowY: "auto", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 8, padding: 8, background: "var(--color-background-secondary)" }}>
+                {numbers.map(n => {
+                  const checked = (groupForm.numberIds || []).includes(n.id);
+                  const connected = n.status === "connected";
+                  return (
+                    <label key={n.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 6, cursor: connected ? "pointer" : "not-allowed", opacity: connected ? 1 : 0.5, background: checked ? PRIMARY_LIGHT : "transparent" }}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={!connected}
+                        onChange={() => setGroupForm(f => {
+                          const cur = new Set(f.numberIds || []);
+                          cur.has(n.id) ? cur.delete(n.id) : cur.add(n.id);
+                          return { ...f, numberIds: [...cur] };
+                        })}
+                        style={{ width: 15, height: 15, cursor: connected ? "pointer" : "not-allowed" }}
+                      />
+                      <span style={{ width: 7, height: 7, borderRadius: "50%", background: connected ? PRIMARY : "#E24B4A", flexShrink: 0 }} />
+                      <span style={{ fontSize: 13, fontWeight: checked ? 500 : 400 }}>{n.label}</span>
+                      <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{n.phone}</span>
+                      {!connected && <span style={{ fontSize: 11, color: "#A32D2D", marginLeft: "auto" }}>desconectado</span>}
+                    </label>
+                  );
+                })}
+              </div>
+              {(groupForm.numberIds || []).length > 1 && (
+                <div style={{ fontSize: 11, color: PRIMARY_DARK, marginTop: 6 }}>
+                  💡 Serão criados {groupForm.numberIds.length} grupos (sufixo com o apelido de cada número).
+                </div>
+              )}
             </div>
             <div>
               <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Participantes iniciais</label>
@@ -380,8 +425,8 @@ export default function PageWhatsApp({
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 18 }}>
             <button onClick={() => setShowCreateGroup(false)} disabled={creatingGroup} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
-            <button onClick={submitCreateGroup} disabled={!groupForm.name.trim() || !groupForm.numberId || creatingGroup} style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: (!groupForm.name.trim() || !groupForm.numberId || creatingGroup) ? 0.5 : 1 }}>
-              {creatingGroup ? "⟳ Criando..." : "Criar grupo"}
+            <button onClick={submitCreateGroup} disabled={!groupForm.name.trim() || (groupForm.numberIds || []).length === 0 || creatingGroup} style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: (!groupForm.name.trim() || (groupForm.numberIds || []).length === 0 || creatingGroup) ? 0.5 : 1 }}>
+              {creatingGroup ? "⟳ Criando..." : (groupForm.numberIds || []).length > 1 ? `Criar ${groupForm.numberIds.length} grupos` : "Criar grupo"}
             </button>
           </div>
         </Modal>

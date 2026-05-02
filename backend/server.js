@@ -5,6 +5,7 @@ const wa = require("./whatsapp");
 const auth = require("./auth");
 const storage = require("./storage");
 const scheduler = require("./scheduler");
+const affiliate = require("./affiliate");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -81,6 +82,54 @@ app.get("/api/state/ops", auth.requireAuth, (req, res) => {
   res.json(storage.loadOps(req.user.id));
 });
 
+// ────────────────────────────────────────────────────────────────────────
+// Afiliados ML — TAG + COOKIE (cookie expira de tempos em tempos, user atualiza pela UI)
+// ────────────────────────────────────────────────────────────────────────
+
+app.get("/api/affiliate", auth.requireAuth, (req, res) => {
+  res.json(affiliate.status());
+});
+
+app.put("/api/affiliate", auth.requireAuth, (req, res) => {
+  try {
+    const { tag, cookie } = req.body || {};
+    affiliate.writeConfig({ tag, cookie });
+    res.json(affiliate.status());
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete("/api/affiliate", auth.requireAuth, (req, res) => {
+  try {
+    affiliate.clearConfig();
+    res.json(affiliate.status());
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Testa o cookie/tag gerando link a partir de uma URL fornecida.
+// Não cacheia — usado pelo botão "Testar conexão" no front.
+app.post("/api/affiliate/test", auth.requireAuth, async (req, res) => {
+  try {
+    const url = req.body?.url;
+    if (!url || typeof url !== "string" || !url.trim()) {
+      return res.status(400).json({ error: "Forneça uma URL de produto do Mercado Livre pra testar." });
+    }
+    const short = await affiliate.gerarLinkAfiliadoML(url.trim());
+    if (!short) {
+      const s = affiliate.status();
+      // Se cookie está saudável, o erro é de URL — não de autenticação
+      const reason = s.lastFailureReason || "Falha ao gerar link";
+      return res.status(400).json({ error: reason, cookieHealthy: !!s.healthy });
+    }
+    res.json({ ok: true, shortUrl: short });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Dispara envio do próximo item da fila imediatamente (botão "Enviar agora").
 // Ignora janela/intervalo, mas atualiza lastSend — o próximo automático
 // conta o intervalo a partir deste envio.
@@ -116,6 +165,7 @@ app.get("/api/ofertas", async (req, res) => {
   try {
     const category = req.query.category || null;
     const minDiscount = parseInt(req.query.minDiscount) || 0;
+    const minPrice = parseFloat(req.query.minPrice) || 0;
     const maxPrice = parseFloat(req.query.maxPrice) || Infinity;
     const limit = parseInt(req.query.limit) || 50;
     const forceRefresh = req.query.refresh === "true";
@@ -141,7 +191,8 @@ app.get("/api/ofertas", async (req, res) => {
 
     let filtered = allProducts;
     if (minDiscount > 0) filtered = filtered.filter(p => p.discount && p.discount >= minDiscount);
-    if (maxPrice < Infinity) filtered = filtered.filter(p => p.price <= maxPrice);
+    if (minPrice > 0) filtered = filtered.filter(p => p.price != null && p.price >= minPrice);
+    if (maxPrice < Infinity) filtered = filtered.filter(p => p.price != null && p.price <= maxPrice);
     filtered = filtered.slice(0, limit);
 
     res.json({ total: filtered.length, cached: cacheValid, category, sources, products: filtered });

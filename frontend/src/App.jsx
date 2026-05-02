@@ -8,7 +8,7 @@ const DEFAULT_SETTINGS = {
   sources: allSources,
   theme: "auto",
 };
-import { authMe, authLogout, loadAppState, saveAppState, loadAppOps, getToken } from "./data/api";
+import { authMe, authLogout, loadAppState, saveAppState, loadAppOps, getToken, getAffiliateStatus } from "./data/api";
 import Sidebar from "./components/Sidebar";
 import GroupDashboard from "./components/GroupDashboard";
 import PageDashboard from "./pages/Dashboard";
@@ -33,6 +33,7 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [bootstrapping, setBootstrapping] = useState(true);
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [affiliateConfigured, setAffiliateConfigured] = useState(true);
 
   // Controla se já carregamos o estado do servidor — só começamos a salvar depois disso
   const stateLoadedRef = useRef(false);
@@ -108,6 +109,24 @@ export default function App() {
         setSelectedGroup(prev => prev ? merge(prev) : prev);
       } catch {
         // ignora — próxima rodada tenta de novo
+      }
+    }
+    const id = setInterval(pull, OPS_POLL_MS);
+    pull();
+    return () => { cancelled = true; clearInterval(id); };
+  }, [user]);
+
+  // Polling do status de afiliado — quando muda em Configurações, o badge
+  // "pausado" some/aparece sem precisar recarregar a página.
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    async function pull() {
+      try {
+        const s = await getAffiliateStatus();
+        if (!cancelled) setAffiliateConfigured(!!s?.configured);
+      } catch {
+        // silencioso
       }
     }
     const id = setInterval(pull, OPS_POLL_MS);
@@ -210,7 +229,7 @@ export default function App() {
   }
 
   const pageMap = {
-    dashboard: <PageDashboard groups={groups} whatsappGroups={whatsappGroups} onSelectGroup={handleSelectGroup} onCreateGroup={handleCreateGroup} />,
+    dashboard: <PageDashboard groups={groups} whatsappGroups={whatsappGroups} onSelectGroup={handleSelectGroup} onCreateGroup={handleCreateGroup} affiliateConfigured={affiliateConfigured} onGoToSettings={() => setPage("settings")} />,
     products: <PageProducts />,
     whatsapp: <PageWhatsApp
       numbers={numbers}
@@ -222,7 +241,7 @@ export default function App() {
       onSetWhatsappGroupStatus={setWhatsappGroupStatus}
       onUpdateWhatsappGroup={updateWhatsappGroup}
     />,
-    settings: <PageSettings user={user} setUser={setUser} onLogout={handleLogout} settings={settings} setSettings={setSettings} />,
+    settings: <PageSettings user={user} setUser={setUser} onLogout={handleLogout} settings={settings} setSettings={setSettings} onAffiliateChange={setAffiliateConfigured} />,
     subscription: <PageSubscription />,
   };
 
@@ -233,6 +252,7 @@ export default function App() {
         selectedGroup={selectedGroup}
         groups={groups}
         whatsappGroups={whatsappGroups}
+        affiliateConfigured={affiliateConfigured}
         onNavigate={(id) => { setPage(id); setSelectedGroup(null); }}
         onSelectGroup={handleSelectGroup}
         onLogout={handleLogout}
@@ -245,12 +265,14 @@ export default function App() {
               group={selectedGroup}
               numbers={numbers}
               whatsappGroups={whatsappGroups}
+              affiliateConfigured={affiliateConfigured}
               onBack={handleBack}
               onUpdate={handleUpdate}
               onDelete={handleDelete}
               onCreateWhatsappGroup={createWhatsappGroup}
               onDeleteWhatsappGroup={deleteWhatsappGroup}
               onUpdateWhatsappGroup={updateWhatsappGroup}
+              onGoToSettings={() => setPage("settings")}
             />
           : pageMap[page] || pageMap["dashboard"]
         }
