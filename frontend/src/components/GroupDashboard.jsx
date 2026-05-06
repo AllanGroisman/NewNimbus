@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, CATEGORIES, categoryLabel, categoryColor, formatPrice, getGroupCategories, getGroupStats, computeQueueETA, formatETA } from "../data/constants";
-import { createWAGroup, leaveWAGroup, revokeWAInvite, broadcastWA, sendWAText, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupHistory, approvePendingItem, rejectPendingItem } from "../data/api";
+import { createWAGroup, leaveWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupHistory, approvePendingItem, rejectPendingItem } from "../data/api";
 import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
 
 const TEMPLATE_VARS = [
@@ -50,7 +50,9 @@ function renderWhatsappFormatted(text) {
   });
 }
 
-// Modelos pré-prontos pra o usuário começar de algum lugar.
+// Modelos pré-prontos pra o usuário começar de algum lugar. O "Padrão" é
+// inalterável — usuário pode editar o conteúdo no editor mas nunca sobrescreve
+// o preset; ao salvar, sempre se cria um novo modelo customizado.
 const MESSAGE_PRESETS = [
   {
     id: "default",
@@ -66,21 +68,6 @@ const MESSAGE_PRESETS = [
 🏷️ Desconto: -{desconto}
 
 🛒 Compre aqui: {link}`,
-  },
-  {
-    id: "urgent",
-    name: "Promoção relâmpago",
-    desc: "Tom de urgência, cria pressão",
-    template: `⚡ *PROMOÇÃO RELÂMPAGO!*
-
-{produto}
-
-~{preco_antigo}~  →  *{preco}*
-🔻 *{desconto}* de desconto
-
-👉 {link}
-
-_Aproveite antes que acabe!_`,
   },
 ];
 
@@ -232,13 +219,21 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const [newWGForm, setNewWGForm] = useState({ name: "", numberIds: numbers[0]?.id ? [numbers[0].id] : [], participants: "" });
   const [creatingWG, setCreatingWG] = useState(false);
   const [createWGError, setCreateWGError] = useState(null);
-  const [sendStatus, setSendStatus] = useState({}); // wgId -> "sending" | "sent" | "error:..."
   const [sendingNow, setSendingNow] = useState(false);
   const [sendNowMsg, setSendNowMsg] = useState(null);
   const [refilling, setRefilling] = useState(false);
   const [refillMsg, setRefillMsg] = useState(null);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [confirmDeleteTpl, setConfirmDeleteTpl] = useState(null);
+  // Diálogo "Salvar alterações" do modelo: abre quando usuário tenta salvar
+  // mudanças (presets nunca são sobrescritos, customs podem ser).
+  // Estrutura: { mode: "preset" | "custom", suggestedName }
+  const [saveTplDialog, setSaveTplDialog] = useState(null);
+  const [saveTplName, setSaveTplName] = useState("");
+  // Confirmações para botões destrutivos
+  const [confirmPause, setConfirmPause] = useState(false);
+  const [confirmClearQueue, setConfirmClearQueue] = useState(false);
+  const [confirmRemoveQueueItem, setConfirmRemoveQueueItem] = useState(null);
   // Aba de modelo selecionada (presets + customs). Inicia tentando casar com o template do grupo.
   const initialActiveTplKey = (() => {
     if (group.messageTemplate) {
@@ -339,7 +334,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       setSendingNow(false);
     }
   }
-  const [broadcasting, setBroadcasting] = useState(false);
   const templateRef = useRef(null);
 
   const insertTemplateVar = (token) => {
@@ -425,13 +419,74 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     }
   };
 
-  // Salva alterações na aba custom ativa (presets são read-only).
-  const saveActiveTab = () => {
-    if (!activeTab || !isDirty || !isCustomTab) return;
+  // Sugere um nome único pra novos modelos baseados no nome atual da aba.
+  const suggestUniqueTemplateName = (base) => {
+    const cleanBase = String(base || "Novo modelo").trim() || "Novo modelo";
+    let name = cleanBase;
+    let n = 1;
+    while (customTemplates.some(t => t.name === name)) {
+      n++;
+      name = `${cleanBase} (${n})`;
+    }
+    return name;
+  };
+
+  // Abre o diálogo de "Salvar alterações" — sempre pergunta se é pra criar
+  // novo modelo (presets são inalteráveis; customs podem ser substituídos).
+  const openSaveTplDialog = () => {
+    if (!activeTab || !isDirty) return;
+    if (isCustomTab) {
+      setSaveTplDialog({ mode: "custom" });
+      setSaveTplName(customNameDraft.trim() || activeTab.name);
+    } else {
+      setSaveTplDialog({ mode: "preset" });
+      setSaveTplName(suggestUniqueTemplateName(`${activeTab.name} (cópia)`));
+    }
+  };
+
+  const closeSaveTplDialog = () => {
+    setSaveTplDialog(null);
+    setSaveTplName("");
+  };
+
+  // Salva como novo modelo customizado (vale para presets E customs)
+  const saveAsNewTemplate = () => {
+    const cleanName = String(saveTplName || "").trim();
+    if (!cleanName) return;
+    const finalName = customTemplates.some(t => t.name === cleanName)
+      ? suggestUniqueTemplateName(cleanName)
+      : cleanName;
+    const newId = onAddCustomTemplate?.(finalName, groupInfo.messageTemplate);
+    if (newId) {
+      setActiveTplKey(`custom:${newId}`);
+      setCustomNameDraft(finalName);
+    }
+    closeSaveTplDialog();
+  };
+
+  // Substitui o modelo customizado atual (só disponível em aba custom)
+  const replaceCurrentCustom = () => {
+    if (!activeTab || !isCustomTab) return;
+    const desiredName = customNameDraft.trim() || activeTab.name;
     onUpdateCustomTemplate?.(activeTab.id, {
-      name: customNameDraft.trim() || activeTab.name,
+      name: desiredName,
       template: groupInfo.messageTemplate,
     });
+    closeSaveTplDialog();
+  };
+
+  // "Modelo ativo" = aquele cujo texto salvo corresponde ao template em uso
+  // pela campanha. Como múltiplas abas podem ter o mesmo texto, marcamos
+  // todas que casarem (caso raro, mas o indicador fica consistente).
+  const isTemplateActive = (tpl) => !!group.messageTemplate && tpl === group.messageTemplate;
+  const activeTabIsActive = activeTab && isTemplateActive(activeTab.template);
+
+  // Ativa o modelo da aba atual na campanha — substitui o messageTemplate do
+  // grupo e reseta o editor pra refletir o que passou a estar em uso.
+  const activateActiveTab = () => {
+    if (!activeTab || activeTabIsActive) return;
+    onUpdate(group.id, { messageTemplate: activeTab.template });
+    setGroupInfo(g => ({ ...g, messageTemplate: activeTab.template }));
   };
 
   // Quando deleta a aba custom ativa, pula pra primeira aba disponível.
@@ -568,60 +623,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       setNewWGForm({ name: "", numberIds: numbers[0]?.id ? [numbers[0].id] : [], participants: "" });
     } finally {
       setCreatingWG(false);
-    }
-  };
-
-  // Renderiza o template substituindo variáveis pelos campos de um produto
-  const renderForProduct = (tpl, p) => {
-    if (!tpl) return "";
-    const map = {
-      produto: p.name || "",
-      preco: p.price || "",
-      preco_antigo: p.originalPrice || "",
-      desconto: p.discount || "",
-      loja: p.store || "",
-      link: p.link || "",
-    };
-    return tpl.replace(/\{(\w+)\}/g, (_, k) => map[k] ?? `{${k}}`);
-  };
-
-  // Envia o próximo produto da fila para um único grupo (botão "Enviar agora" do card)
-  const sendNowToGroup = async (wg) => {
-    if (queue.length === 0) return;
-    const product = queue[0];
-    const text = renderForProduct(groupInfo.messageTemplate || DEFAULT_MESSAGE_TEMPLATE, product);
-    setSendStatus(s => ({ ...s, [wg.id]: "sending" }));
-    try {
-      await sendWAText(wg.numberId, wg.id, text);
-      setSendStatus(s => ({ ...s, [wg.id]: "sent" }));
-      setTimeout(() => setSendStatus(s => { const c = { ...s }; delete c[wg.id]; return c; }), 2500);
-    } catch (err) {
-      setSendStatus(s => ({ ...s, [wg.id]: `error:${err.message}` }));
-    }
-  };
-
-  // Envia o próximo produto da fila para todos os grupos vinculados
-  const broadcastNow = async () => {
-    if (queue.length === 0 || linkedWGs.length === 0) return;
-    const product = queue[0];
-    const text = renderForProduct(groupInfo.messageTemplate || DEFAULT_MESSAGE_TEMPLATE, product);
-    setBroadcasting(true);
-    try {
-      // Agrupa por numberId e dispara um broadcast por número
-      const byNumber = linkedWGs.reduce((acc, w) => {
-        (acc[w.numberId] = acc[w.numberId] || []).push(w.id);
-        return acc;
-      }, {});
-      for (const [numberId, jids] of Object.entries(byNumber)) {
-        await broadcastWA(numberId, jids, text);
-      }
-      // Remove o produto da fila após envio
-      setQueue(q => q.slice(1));
-    } catch (err) {
-      console.error(err);
-      alert(`Erro ao enviar: ${err.message}`);
-    } finally {
-      setBroadcasting(false);
     }
   };
 
@@ -765,13 +766,44 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
   const save = () => { onUpdate(group.id, { schedule: sched, scraping, queue, pending, ...groupInfo }); setSaved(true); setTimeout(() => setSaved(false), 2000); };
 
+  // Salva apenas os filtros do scraping — usado pelo botão dedicado dentro
+  // dos filtros avançados, sem comprometer mudanças em sources/auto que ainda
+  // não foram salvas (essas continuam disponíveis via "Salvar configurações").
+  const saveFilters = () => {
+    onUpdate(group.id, { scraping: { ...(group.scraping || {}), filters: scraping.filters } });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  // Dirty state por aba — usado pra (a) escurecer o botão de salvar quando
+  // não há alterações, e (b) impedir cliques inúteis. JSON.stringify é
+  // suficiente porque todos os objetos são produzidos por código com keys
+  // em ordem estável.
+  const stableJSON = (v) => JSON.stringify(v ?? null);
+  const manageDirty = groupInfo.name !== group.name
+    || stableJSON(groupInfo.categories) !== stableJSON(getGroupCategories(group));
+  const scrapingDirty = stableJSON(scraping) !== stableJSON(group.scraping);
+  const filtersDirty = stableJSON(scraping?.filters) !== stableJSON(group.scraping?.filters);
+  const scheduleDirty = stableJSON(sched) !== stableJSON(group.schedule);
+
+  // Estilos compartilhados pros botões de salvar — desabilitado quando não dirty.
+  const saveBtnStyle = (dirty) => ({
+    padding: "9px 24px", borderRadius: 8,
+    background: saved ? "#3B6D11" : (dirty ? PRIMARY : "var(--color-background-secondary)"),
+    color: saved ? "#fff" : (dirty ? "#fff" : "var(--color-text-secondary)"),
+    border: "none", fontSize: 13,
+    cursor: dirty ? "pointer" : "not-allowed",
+    fontWeight: 500,
+    opacity: dirty ? 1 : 0.55,
+  });
+
   const groupTabs = [
     { id: "overview", label: "Visão geral" },
     { id: "manage", label: "Gerenciar" },
     { id: "messages", label: "Modelos Mensagens" },
     { id: "whatsapp", label: `Grupos (${stats.count})` },
     { id: "queue", label: `Fila (${queue.length})`, dot: pending.length > 0 },
-    { id: "schedule", label: "Disparos" },
+    { id: "schedule", label: "Janelas de envio" },
     { id: "history", label: "Histórico" },
   ];
 
@@ -794,7 +826,11 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button
-            onClick={() => onUpdate(group.id, { paused: !group.paused })}
+            onClick={() => {
+              // Retomar é seguro — pausar pede confirmação
+              if (group.paused) onUpdate(group.id, { paused: false });
+              else setConfirmPause(true);
+            }}
             title={group.paused ? "Retomar campanha" : "Pausar envios desta campanha"}
             style={{ padding: "7px 14px", borderRadius: 8, background: group.paused ? PRIMARY : "var(--color-background-secondary)", color: group.paused ? "#fff" : "var(--color-text-primary)", border: group.paused ? "none" : "0.5px solid var(--color-border-tertiary)", fontSize: 13, cursor: "pointer", fontWeight: 500 }}
           >
@@ -866,6 +902,57 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               )}
             </div>
           </div>
+
+          {/* Últimos 5 produtos enviados — derivado do histórico (mais recente primeiro) */}
+          <div style={{ marginTop: 14, background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 8, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-secondary)" }}>Últimos 5 produtos enviados</div>
+              {(group.history || []).length > 5 && (
+                <button onClick={() => setTab("history")} style={{ background: "transparent", border: "none", padding: 0, color: PRIMARY_DARK, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
+                  Ver histórico completo →
+                </button>
+              )}
+            </div>
+            {(group.history || []).length === 0 ? (
+              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", padding: "16px 0", textAlign: "center", fontStyle: "italic" }}>
+                Nenhum envio registrado ainda.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                {(group.history || [])
+                  .slice()
+                  .sort((a, b) => new Date(b.sentAt || 0) - new Date(a.sentAt || 0))
+                  .slice(0, 5)
+                  .map((h, i, arr) => {
+                    const sent = h.sentAt ? new Date(h.sentAt) : null;
+                    const sentValid = sent && !isNaN(sent.getTime());
+                    const today = sentValid && sent.toDateString() === new Date().toDateString();
+                    const dateStr = sentValid
+                      ? (today ? `hoje ${sent.toTimeString().slice(0, 5)}` : sent.toLocaleDateString("pt-BR"))
+                      : "—";
+                    const priceStr = h.price != null ? formatPrice(Number(h.price)) : null;
+                    return (
+                      <div key={h.key || i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: i < arr.length - 1 ? "0.5px solid var(--color-border-tertiary)" : "none" }}>
+                        <div style={{ width: 36, height: 36, borderRadius: 8, background: "var(--color-background-secondary)", flexShrink: 0, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          {h.img
+                            ? <img src={h.img} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { e.target.style.display = "none"; }} />
+                            : <span style={{ fontSize: 14, color: "var(--color-text-secondary)" }}>📦</span>}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          {h.link
+                            ? <a href={h.link} target="_blank" rel="noreferrer" style={{ fontSize: 12, fontWeight: 500, color: "var(--color-text-primary)", textDecoration: "none", display: "block", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={h.name}>{h.name}</a>
+                            : <div style={{ fontSize: 12, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={h.name}>{h.name}</div>}
+                          <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 1 }}>
+                            {dateStr}{h.store ? ` · ${h.store}` : ""}
+                          </div>
+                        </div>
+                        {priceStr && <div style={{ fontSize: 12, fontWeight: 500, color: PRIMARY_DARK, flexShrink: 0 }}>{priceStr}</div>}
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -898,7 +985,14 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button onClick={save} style={{ padding: "9px 24px", borderRadius: 8, background: saved ? "#3B6D11" : PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>{saved ? "✓ Salvo!" : "Salvar alterações"}</button>
+            <button
+              onClick={save}
+              disabled={!manageDirty && !saved}
+              title={manageDirty ? "Salvar alterações" : "Sem alterações pra salvar"}
+              style={saveBtnStyle(manageDirty)}
+            >
+              {saved ? "✓ Salvo!" : "Salvar alterações"}
+            </button>
             <button onClick={() => setShowDelete(true)} style={{ padding: "9px 18px", borderRadius: 8, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>Excluir grupo</button>
           </div>
 
@@ -930,35 +1024,53 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             {/* Abas estilo Chrome — modelos prontos + meus modelos + (+) */}
             <div style={{ display: "flex", alignItems: "flex-end", gap: 2, borderBottom: "0.5px solid var(--color-border-tertiary)", marginBottom: 14, overflowX: "auto", paddingTop: 2 }}>
               {allTabs.map(t => {
-                const isActive = t.key === activeTplKey;
-                const tabIsDirty = isActive && isDirty;
+                const isSelected = t.key === activeTplKey;
+                const tabIsDirty = isSelected && isDirty;
+                const isModelActive = isTemplateActive(t.template);
                 return (
                   <div
                     key={t.key}
                     onClick={() => handleTabClick(t)}
-                    title={t.kind === "preset" ? `${t.name} (modelo pronto)` : t.name}
+                    title={isModelActive
+                      ? `${t.name} — em uso pela campanha`
+                      : (t.kind === "preset" ? `${t.name} (modelo pronto)` : t.name)}
                     style={{
                       display: "flex", alignItems: "center", gap: 6,
                       padding: "7px 12px",
                       borderTopLeftRadius: 8, borderTopRightRadius: 8,
-                      borderTop: `0.5px solid ${isActive ? "var(--color-border-tertiary)" : "transparent"}`,
-                      borderLeft: `0.5px solid ${isActive ? "var(--color-border-tertiary)" : "transparent"}`,
-                      borderRight: `0.5px solid ${isActive ? "var(--color-border-tertiary)" : "transparent"}`,
-                      borderBottom: isActive ? "0.5px solid var(--color-background-primary)" : "0.5px solid transparent",
-                      background: isActive ? "var(--color-background-primary)" : "transparent",
-                      color: isActive ? "var(--color-text-primary)" : "var(--color-text-secondary)",
-                      fontWeight: isActive ? 500 : 400,
+                      borderTop: `0.5px solid ${isSelected ? "var(--color-border-tertiary)" : "transparent"}`,
+                      borderLeft: `0.5px solid ${isSelected ? "var(--color-border-tertiary)" : "transparent"}`,
+                      borderRight: `0.5px solid ${isSelected ? "var(--color-border-tertiary)" : "transparent"}`,
+                      borderBottom: isSelected ? "0.5px solid var(--color-background-primary)" : "0.5px solid transparent",
+                      background: isSelected ? "var(--color-background-primary)" : "transparent",
+                      color: isSelected ? "var(--color-text-primary)" : "var(--color-text-secondary)",
+                      fontWeight: isSelected ? 500 : 400,
                       fontSize: 12,
                       cursor: "pointer",
                       whiteSpace: "nowrap",
                       marginBottom: -1,
                       flexShrink: 0,
-                      maxWidth: 200,
+                      maxWidth: 240,
                     }}
                   >
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
                       {t.name}{tabIsDirty ? " •" : ""}
                     </span>
+                    {isModelActive && (
+                      <span
+                        title="Modelo atualmente em uso pela campanha"
+                        style={{
+                          display: "inline-flex", alignItems: "center", gap: 4,
+                          padding: "1px 7px", borderRadius: 8,
+                          background: PRIMARY_LIGHT, color: PRIMARY_DARK,
+                          fontSize: 10, fontWeight: 600, lineHeight: 1.4,
+                          flexShrink: 0,
+                        }}
+                      >
+                        <span style={{ width: 6, height: 6, borderRadius: "50%", background: PRIMARY }} />
+                        Ativo
+                      </span>
+                    )}
                     {t.kind === "custom" && (
                       <button
                         onClick={(e) => { e.stopPropagation(); setConfirmDeleteTpl(t); }}
@@ -999,33 +1111,54 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                   <input
                     value={customNameDraft}
                     onChange={e => setCustomNameDraft(e.target.value)}
-                    onKeyDown={e => { if (e.key === "Enter") saveActiveTab(); }}
+                    onKeyDown={e => { if (e.key === "Enter") openSaveTplDialog(); }}
                     placeholder="Ex: Eletrônicos com urgência"
                     style={{ width: "100%", height: 36, padding: "0 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", color: "var(--color-text-primary)", fontSize: 13, boxSizing: "border-box" }}
                   />
                 ) : (
                   <div
-                    title="Modelos prontos não podem ser renomeados — clique em + pra criar um novo a partir deste"
+                    title="O modelo padrão é inalterável — ao salvar suas edições você cria um novo modelo customizado"
                     style={{ width: "100%", height: 36, padding: "0 10px", borderRadius: 8, border: "0.5px dashed var(--color-border-tertiary)", background: "transparent", color: "var(--color-text-secondary)", fontSize: 13, boxSizing: "border-box", display: "flex", alignItems: "center", fontStyle: "italic" }}
                   >
-                    {activeTab ? `${activeTab.name} · modelo pronto` : "—"}
+                    {activeTab ? `${activeTab.name} · modelo padrão (inalterável)` : "—"}
                   </div>
                 )}
               </div>
               <button
-                onClick={saveActiveTab}
-                disabled={!isDirty || !isCustomTab}
-                title={!isCustomTab
-                  ? "Modelos prontos não podem ser editados — clique em + pra criar um novo a partir deste"
-                  : (isDirty ? "Salvar alterações neste modelo" : "Sem alterações pra salvar")}
+                onClick={activateActiveTab}
+                disabled={!activeTab || activeTabIsActive}
+                title={activeTabIsActive
+                  ? "Este modelo já está em uso pela campanha"
+                  : "Passar a usar este modelo nos envios desta campanha"}
+                style={{
+                  height: 36, padding: "0 16px", borderRadius: 8,
+                  border: `0.5px solid ${activeTabIsActive ? PRIMARY : "var(--color-border-secondary)"}`,
+                  background: activeTabIsActive ? PRIMARY_LIGHT : "transparent",
+                  color: activeTabIsActive ? PRIMARY_DARK : "var(--color-text-primary)",
+                  fontSize: 13, fontWeight: 500,
+                  cursor: activeTabIsActive ? "default" : "pointer",
+                  opacity: !activeTab ? 0.55 : 1,
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                }}
+              >
+                {activeTabIsActive
+                  ? <><span style={{ width: 8, height: 8, borderRadius: "50%", background: PRIMARY }} /> Ativo na campanha</>
+                  : "Ativar este modelo"}
+              </button>
+              <button
+                onClick={openSaveTplDialog}
+                disabled={!isDirty}
+                title={!isDirty
+                  ? "Sem alterações pra salvar"
+                  : (isCustomTab ? "Salvar alterações neste modelo (ou como novo)" : "Salvar como novo modelo a partir das edições")}
                 style={{
                   height: 36, padding: "0 18px", borderRadius: 8,
                   border: "none",
-                  background: (isDirty && isCustomTab) ? PRIMARY : "var(--color-background-secondary)",
-                  color: (isDirty && isCustomTab) ? "#fff" : "var(--color-text-secondary)",
+                  background: isDirty ? PRIMARY : "var(--color-background-secondary)",
+                  color: isDirty ? "#fff" : "var(--color-text-secondary)",
                   fontSize: 13, fontWeight: 500,
-                  cursor: (isDirty && isCustomTab) ? "pointer" : "not-allowed",
-                  opacity: (isDirty && isCustomTab) ? 1 : 0.55,
+                  cursor: isDirty ? "pointer" : "not-allowed",
+                  opacity: isDirty ? 1 : 0.55,
                 }}
               >
                 Salvar alterações
@@ -1086,7 +1219,44 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             </div>
           </div>
 
-          <button onClick={save} style={{ alignSelf: "flex-start", padding: "9px 24px", borderRadius: 8, background: saved ? "#3B6D11" : PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>{saved ? "✓ Salvo!" : "Salvar mensagem"}</button>
+          {saveTplDialog && (
+            <Modal title="Salvar alterações" onClose={closeSaveTplDialog}>
+              <p style={{ fontSize: 13, marginBottom: 14, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+                {saveTplDialog.mode === "preset"
+                  ? <>O modelo <strong style={{ color: "var(--color-text-primary)" }}>{activeTab?.name}</strong> é o padrão e não pode ser sobrescrito. Suas edições serão salvas como um <strong style={{ color: "var(--color-text-primary)" }}>novo modelo</strong>.</>
+                  : <>Você editou o modelo <strong style={{ color: "var(--color-text-primary)" }}>{activeTab?.name}</strong>. Quer salvar como um novo modelo ou substituir o atual?</>}
+              </p>
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Nome do novo modelo</label>
+                <input
+                  autoFocus
+                  value={saveTplName}
+                  onChange={e => setSaveTplName(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") saveAsNewTemplate(); }}
+                  placeholder="Ex: Padrão (minha versão)"
+                  style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", color: "var(--color-text-primary)", fontSize: 13, boxSizing: "border-box" }}
+                />
+              </div>
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                <button onClick={closeSaveTplDialog} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+                {saveTplDialog.mode === "custom" && (
+                  <button
+                    onClick={replaceCurrentCustom}
+                    style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 13, cursor: "pointer", fontWeight: 500 }}
+                  >
+                    Substituir este modelo
+                  </button>
+                )}
+                <button
+                  onClick={saveAsNewTemplate}
+                  disabled={!saveTplName.trim()}
+                  style={{ padding: "8px 16px", borderRadius: 8, background: saveTplName.trim() ? PRIMARY : "var(--color-background-secondary)", color: saveTplName.trim() ? "#fff" : "var(--color-text-secondary)", border: "none", fontSize: 13, cursor: saveTplName.trim() ? "pointer" : "not-allowed", fontWeight: 500, opacity: saveTplName.trim() ? 1 : 0.55 }}
+                >
+                  Salvar como novo
+                </button>
+              </div>
+            </Modal>
+          )}
 
           {confirmDeleteTpl && (
             <Modal title="Excluir modelo?" onClose={() => setConfirmDeleteTpl(null)} danger>
@@ -1118,11 +1288,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               </div>
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {linkedWGs.length > 0 && queue.length > 0 && (
-                <button onClick={broadcastNow} disabled={broadcasting} style={{ padding: "7px 12px", borderRadius: 8, background: broadcasting ? "var(--color-border-secondary)" : "#1D9E75", color: "#fff", border: "none", fontSize: 13, cursor: broadcasting ? "not-allowed" : "pointer", fontWeight: 500 }}>
-                  {broadcasting ? "⟳ Enviando..." : `📤 Enviar a todos (${linkedWGs.length})`}
-                </button>
-              )}
               <button
                 onClick={() => setAddStep("choose")}
                 disabled={numbers.length === 0}
@@ -1194,21 +1359,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                     )}
 
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      <button
-                        onClick={() => sendNowToGroup(w)}
-                        disabled={queue.length === 0 || sendStatus[w.id] === "sending" || !connected}
-                        title={queue.length === 0 ? "Fila vazia" : !connected ? "Grupo desconectado" : `Envia o próximo da fila: ${queue[0]?.name}`}
-                        style={{
-                          padding: "6px 12px", borderRadius: 7,
-                          background: sendStatus[w.id]?.startsWith("error") ? "#FCEBEB" : sendStatus[w.id] === "sent" ? "#EAF3DE" : PRIMARY_LIGHT,
-                          color: sendStatus[w.id]?.startsWith("error") ? "#A32D2D" : sendStatus[w.id] === "sent" ? "#3B6D11" : PRIMARY_DARK,
-                          border: `0.5px solid ${sendStatus[w.id]?.startsWith("error") ? "#F7C1C1" : sendStatus[w.id] === "sent" ? "#3B6D11" : PRIMARY}`,
-                          fontSize: 12, cursor: queue.length === 0 || !connected ? "not-allowed" : "pointer",
-                          fontWeight: 500, opacity: queue.length === 0 || !connected ? 0.5 : 1
-                        }}
-                      >
-                        {sendStatus[w.id] === "sending" ? "⟳ Enviando..." : sendStatus[w.id] === "sent" ? "✓ Enviado" : sendStatus[w.id]?.startsWith("error") ? "✗ Erro" : "Enviar agora"}
-                      </button>
                       {w.inviteLink && <button onClick={() => refreshInvite(w)} style={{ padding: "6px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: "pointer" }}>Renovar link</button>}
                       <div style={{ flex: 1 }} />
                       <button onClick={() => unlinkWG(w.id)} style={{ padding: "6px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: "pointer" }}>Desvincular</button>
@@ -1611,11 +1761,43 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 10, padding: "6px 10px", background: "var(--color-background-secondary)", borderRadius: 6 }}>
                 ⚠️ Filtros de Avaliação e Vendas excluem produtos sem essa info — alguns produtos da Amazon não vêm com rating extraído.
               </div>
+
+              {/* Botão dedicado pra salvar APENAS as alterações de filtros — só fica ativo quando filtros mudam */}
+              <div style={{ display: "flex", gap: 10, marginTop: 14, alignItems: "center", flexWrap: "wrap" }}>
+                <button
+                  onClick={saveFilters}
+                  disabled={!filtersDirty}
+                  title={filtersDirty ? "Salvar as alterações dos filtros avançados" : "Sem alterações nos filtros pra salvar"}
+                  style={{
+                    padding: "8px 18px", borderRadius: 8,
+                    background: filtersDirty ? PRIMARY : "var(--color-background-secondary)",
+                    color: filtersDirty ? "#fff" : "var(--color-text-secondary)",
+                    border: "none", fontSize: 13,
+                    cursor: filtersDirty ? "pointer" : "not-allowed",
+                    fontWeight: 500,
+                    opacity: filtersDirty ? 1 : 0.55,
+                  }}
+                >
+                  Salvar alterações filtros
+                </button>
+                {filtersDirty && (
+                  <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                    Filtros alterados — clique para aplicar.
+                  </span>
+                )}
+              </div>
             </div>
             </>}
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-              <button onClick={save} style={{ padding: "9px 24px", borderRadius: 8, background: saved ? "#3B6D11" : PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>{saved ? "✓ Salvo!" : "Salvar configurações"}</button>
+              <button
+                onClick={save}
+                disabled={!scrapingDirty && !saved}
+                title={scrapingDirty ? "Salvar configurações do scraping desta campanha" : "Sem alterações pra salvar"}
+                style={saveBtnStyle(scrapingDirty)}
+              >
+                {saved ? "✓ Salvo!" : "Salvar configurações"}
+              </button>
               <button onClick={triggerRefill} disabled={refilling} style={{ padding: "9px 18px", borderRadius: 8, border: `0.5px solid ${PRIMARY}`, background: "transparent", color: PRIMARY_DARK, fontSize: 13, cursor: refilling ? "wait" : "pointer", fontWeight: 500, opacity: refilling ? 0.6 : 1 }}>
                 {refilling ? "⟳ Buscando..." : "↻ Buscar do catálogo"}
               </button>
@@ -1683,7 +1865,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 </button>
               )}
               {queue.length > 0 && (
-                <button onClick={() => setQueue([])} style={{ padding: "5px 12px", borderRadius: 7, background: "#FCEBEB", color: "#A32D2D", border: "0.5px solid #F7C1C1", fontSize: 12, cursor: "pointer" }}>Limpar fila</button>
+                <button onClick={() => setConfirmClearQueue(true)} style={{ padding: "5px 12px", borderRadius: 7, background: "#FCEBEB", color: "#A32D2D", border: "0.5px solid #F7C1C1", fontSize: 12, cursor: "pointer" }}>Limpar fila</button>
               )}
             </div>
           </div>
@@ -1716,7 +1898,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                     item={item}
                     idx={idx}
                     eta={etas[idx]}
-                    onRemove={() => removeFromQueue(item.id || item.key)}
+                    onRemove={() => setConfirmRemoveQueueItem(item)}
                     onDragStart={handleQueueDragStart(idx)}
                     onDragOver={handleQueueDragOver(idx)}
                     onDragEnd={handleQueueDragEnd}
@@ -1774,7 +1956,14 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             </div>
             <div style={{ marginTop: 10, fontSize: 12, color: "var(--color-text-secondary)" }}>Produto enviado hoje só poderá ser reenviado após {sched.cooldownValue} {sched.cooldownUnit}.</div>
           </div>
-          <button onClick={save} style={{ padding: "9px 24px", borderRadius: 8, background: saved ? "#3B6D11" : PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, alignSelf: "flex-start" }}>{saved ? "✓ Salvo!" : "Salvar configurações"}</button>
+          <button
+            onClick={save}
+            disabled={!scheduleDirty && !saved}
+            title={scheduleDirty ? "Salvar configurações de janelas/cooldown" : "Sem alterações pra salvar"}
+            style={{ ...saveBtnStyle(scheduleDirty), alignSelf: "flex-start" }}
+          >
+            {saved ? "✓ Salvo!" : "Salvar configurações"}
+          </button>
         </div>
       )}
 
@@ -1851,6 +2040,61 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             <button onClick={() => setConfirmClearHistory(false)} disabled={clearingHistory} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
             <button onClick={handleClearHistory} disabled={clearingHistory} style={{ padding: "8px 16px", borderRadius: 8, background: "#E24B4A", color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: clearingHistory ? 0.6 : 1 }}>
               {clearingHistory ? "Limpando..." : "Limpar histórico"}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {confirmPause && (
+        <Modal title="Pausar campanha?" onClose={() => setConfirmPause(false)} danger>
+          <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+            Enquanto <strong style={{ color: "var(--color-text-primary)" }}>{groupInfo.name}</strong> estiver pausada, ela não vai buscar produtos novos do catálogo nem enviar mensagens para os grupos vinculados. Você pode retomar a qualquer momento.
+          </p>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button onClick={() => setConfirmPause(false)} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+            <button
+              onClick={() => { onUpdate(group.id, { paused: true }); setConfirmPause(false); }}
+              style={{ padding: "8px 16px", borderRadius: 8, background: "#E24B4A", color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}
+            >
+              Sim, pausar
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {confirmClearQueue && (
+        <Modal title="Limpar fila?" onClose={() => setConfirmClearQueue(false)} danger>
+          <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+            Todos os <strong style={{ color: "var(--color-text-primary)" }}>{queue.length} produto{queue.length !== 1 ? "s" : ""}</strong> da fila serão removidos. Você pode reabastecer depois com o botão "Buscar do catálogo".
+          </p>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button onClick={() => setConfirmClearQueue(false)} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+            <button
+              onClick={() => { setQueue([]); setConfirmClearQueue(false); }}
+              style={{ padding: "8px 16px", borderRadius: 8, background: "#E24B4A", color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}
+            >
+              Sim, limpar
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {confirmRemoveQueueItem && (
+        <Modal title="Remover produto da fila?" onClose={() => setConfirmRemoveQueueItem(null)} danger>
+          <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+            <strong style={{ color: "var(--color-text-primary)" }}>{confirmRemoveQueueItem.name || "Este produto"}</strong> será removido da fila e não será enviado.
+          </p>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button onClick={() => setConfirmRemoveQueueItem(null)} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+            <button
+              onClick={() => {
+                const it = confirmRemoveQueueItem;
+                removeFromQueue(it.id || it.key);
+                setConfirmRemoveQueueItem(null);
+              }}
+              style={{ padding: "8px 16px", borderRadius: 8, background: "#E24B4A", color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}
+            >
+              Sim, remover
             </button>
           </div>
         </Modal>

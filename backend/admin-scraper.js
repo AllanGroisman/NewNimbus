@@ -109,15 +109,26 @@ async function runOnce() {
         }
       }
 
-      // Limpa produtos antigos
+      // Limpa produtos antigos (limite máximo, default 30 dias)
       const pruned = await catalog.prune(cfg.pruneAfterDays);
       console.log(`[admin-scraper] prune: -${pruned.removed} antigos, total ${pruned.total}`);
+
+      // Após cada run, descarta tudo que NÃO foi visto hoje — assim o catálogo
+      // só guarda o que veio na rodada atual (e em rodadas anteriores do mesmo dia).
+      // Isso atende ao requisito "ao realizar um scrap, exclui itens do dia anterior"
+      // e elimina duplicatas residuais (a chave já é única, mas variantes antigas somem).
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const purged = await catalog.pruneBeforeDate(startOfToday);
+      if (purged.removed > 0) {
+        console.log(`[admin-scraper] purge dia anterior: -${purged.removed}, total ${purged.total}`);
+      }
 
       _status.lastResult = {
         inserted: totalInserted,
         updated: totalUpdated,
-        total: pruned.total,
-        pruned: pruned.removed,
+        total: purged.total,
+        pruned: pruned.removed + purged.removed,
         perCategory,
       };
     } catch (err) {

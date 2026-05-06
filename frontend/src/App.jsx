@@ -17,6 +17,9 @@ import PageProducts from "./pages/Products";
 import PageWhatsApp from "./pages/WhatsApp";
 import PageSettings from "./pages/Settings";
 import PageSubscription from "./pages/Subscription";
+import PageAffiliateML from "./pages/AffiliateML";
+import PageAffiliateAmazon from "./pages/AffiliateAmazon";
+import PageAffiliateShopee from "./pages/AffiliateShopee";
 import PageAdminScraper from "./pages/AdminScraper";
 import PageAdminUsers from "./pages/AdminUsers";
 import Login from "./pages/Login";
@@ -310,6 +313,9 @@ export default function App() {
     />,
     settings: <PageSettings user={user} setUser={setUser} onLogout={handleLogout} settings={settings} setSettings={setSettings} onAffiliateChange={setAffiliateConfigured} />,
     subscription: <PageSubscription />,
+    "mercado-livre": <PageAffiliateML onAffiliateChange={setAffiliateConfigured} />,
+    "amazon": <PageAffiliateAmazon />,
+    "shopee": <PageAffiliateShopee />,
     "admin-scraper": user?.role === "admin" ? <PageAdminScraper /> : fallbackPage,
     "admin-users":   user?.role === "admin" ? <PageAdminUsers currentUser={user} /> : fallbackPage,
   };

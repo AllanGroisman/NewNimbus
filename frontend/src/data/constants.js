@@ -142,6 +142,9 @@ export function formatETA(d, now = new Date()) {
 export const sidebarItems = [
   { id: "dashboard", icon: "▦", label: "Dashboard geral" },
   { id: "whatsapp", icon: "◎", label: "WhatsApp" },
+  { id: "mercado-livre", icon: "◆", label: "Mercado Livre" },
+  { id: "amazon", icon: "◇", label: "Amazon" },
+  { id: "shopee", icon: "◈", label: "Shopee" },
   { id: "settings", icon: "⚙", label: "Configurações" },
   { id: "subscription", icon: "★", label: "Assinatura" },
   { id: "products", icon: "⊟", label: "Produtos", adminOnly: true },

@@ -209,6 +209,28 @@ function prune(daysOld = 30) {
   });
 }
 
+// Remove produtos cujo lastSeenAt é anterior ao instante `cutoffDate`.
+// Usado pelo admin-scraper ao final de cada run pra descartar itens do dia anterior.
+function pruneBeforeDate(cutoffDate) {
+  return withLock(() => {
+    const data = readDisk();
+    const cutoff = new Date(cutoffDate).getTime();
+    let removed = 0;
+    for (const [key, p] of Object.entries(data.products)) {
+      const last = new Date(p.lastSeenAt || p.firstSeenAt || 0).getTime();
+      if (last < cutoff) {
+        delete data.products[key];
+        removed++;
+      }
+    }
+    if (removed > 0) {
+      data.updatedAt = new Date().toISOString();
+      writeDisk(data);
+    }
+    return { removed, total: Object.keys(data.products).length };
+  });
+}
+
 module.exports = {
   productKey,
   upsertProducts,
@@ -217,5 +239,6 @@ module.exports = {
   query,
   getStats,
   prune,
+  pruneBeforeDate,
   storeToId,
 };
