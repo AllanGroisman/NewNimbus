@@ -1,93 +1,185 @@
 const fs = require("fs");
 const path = require("path");
 
-// Config persistida em data/affiliate.json (data/ está no .gitignore — cookie nunca vai pro git).
-// Variáveis de ambiente têm precedência sobre o arquivo, pra facilitar deploy.
+// Config persistida em data/affiliate.json. Schema novo:
+// { ml: { tag, cookie, updatedAt }, amazon: { tag, updatedAt } }
+// Lê também o schema antigo flat { tag, cookie, updatedAt } como ML.
 const DATA_DIR = path.join(__dirname, "data");
 const CONFIG_FILE = path.join(DATA_DIR, "affiliate.json");
 
-const ENDPOINT = "https://www.mercadolivre.com.br/affiliate-program/api/v2/affiliates/createLink";
+const ML_ENDPOINT = "https://www.mercadolivre.com.br/affiliate-program/api/v2/affiliates/createLink";
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias
-const cache = new Map(); // linkOriginal → { shortUrl, ts }
+const mlCache = new Map();      // linkOriginal → { shortUrl, ts }
+const amazonCache = new Map();  // linkOriginal → { shortUrl, ts }
 
-// Estado de saúde do cookie. Sai pra status() saber se expirou.
-let lastFailureAt = null;
-let lastFailureReason = null;
-let lastSuccessAt = null;
+let mlLastFailureAt = null;
+let mlLastFailureReason = null;
+let mlLastSuccessAt = null;
 
-function readConfig() {
+let amazonLastFailureAt = null;
+let amazonLastFailureReason = null;
+let amazonLastSuccessAt = null;
+
+// ────────────────────────────────────────────────────────────────────────
+// Storage
+// ────────────────────────────────────────────────────────────────────────
+
+function readRaw() {
+  if (!fs.existsSync(CONFIG_FILE)) return {};
+  try { return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8")); }
+  catch { return {}; }
+}
+
+function writeRaw(obj) {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(obj, null, 2), { mode: 0o600 });
+}
+
+function readMLConfig() {
   if (process.env.ML_AFFILIATE_TAG && process.env.ML_AFFILIATE_COOKIE) {
-    return {
-      tag: process.env.ML_AFFILIATE_TAG.trim(),
-      cookie: process.env.ML_AFFILIATE_COOKIE,
-      source: "env",
-      updatedAt: null,
-    };
+    return { tag: process.env.ML_AFFILIATE_TAG.trim(), cookie: process.env.ML_AFFILIATE_COOKIE, source: "env", updatedAt: null };
   }
-  if (fs.existsSync(CONFIG_FILE)) {
-    try {
-      const obj = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
-      return { tag: obj.tag || null, cookie: obj.cookie || null, source: "file", updatedAt: obj.updatedAt || null };
-    } catch {}
+  const raw = readRaw();
+  // Schema novo
+  if (raw.ml && (raw.ml.tag || raw.ml.cookie)) {
+    return { tag: raw.ml.tag || null, cookie: raw.ml.cookie || null, source: "file", updatedAt: raw.ml.updatedAt || null };
+  }
+  // Schema antigo (flat) — migra mentalmente como ML
+  if (raw.tag || raw.cookie) {
+    return { tag: raw.tag || null, cookie: raw.cookie || null, source: "file", updatedAt: raw.updatedAt || null };
   }
   return { tag: null, cookie: null, source: null, updatedAt: null };
 }
 
-function writeConfig({ tag, cookie }) {
-  if (process.env.ML_AFFILIATE_TAG || process.env.ML_AFFILIATE_COOKIE) {
-    throw new Error("Configuração vem de variável de ambiente — desligue ML_AFFILIATE_TAG/ML_AFFILIATE_COOKIE pra usar config dinâmica.");
+function readAmazonConfig() {
+  if (process.env.AMAZON_AFFILIATE_TAG) {
+    return { tag: process.env.AMAZON_AFFILIATE_TAG.trim(), source: "env", updatedAt: null };
   }
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  const cur = readConfig();
+  const raw = readRaw();
+  if (raw.amazon && raw.amazon.tag) {
+    return { tag: raw.amazon.tag, source: "file", updatedAt: raw.amazon.updatedAt || null };
+  }
+  return { tag: null, source: null, updatedAt: null };
+}
+
+function writeMLConfig({ tag, cookie }) {
+  if (process.env.ML_AFFILIATE_TAG || process.env.ML_AFFILIATE_COOKIE) {
+    throw new Error("Configuração ML vem de variável de ambiente — desligue ML_AFFILIATE_TAG/ML_AFFILIATE_COOKIE pra usar config dinâmica.");
+  }
+  const raw = readRaw();
+  const cur = readMLConfig();
   const next = {
     tag: tag !== undefined ? String(tag || "").trim() : cur.tag,
     cookie: cookie !== undefined ? String(cookie || "").trim() : cur.cookie,
     updatedAt: new Date().toISOString(),
   };
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2), { mode: 0o600 });
-  cache.clear();
-  lastFailureAt = null;
-  lastFailureReason = null;
+  // Migra schema antigo: remove campos flat
+  delete raw.tag; delete raw.cookie; delete raw.updatedAt;
+  raw.ml = next;
+  writeRaw(raw);
+  mlCache.clear();
+  mlLastFailureAt = null;
+  mlLastFailureReason = null;
   return next;
 }
 
-function clearConfig() {
-  if (fs.existsSync(CONFIG_FILE)) fs.unlinkSync(CONFIG_FILE);
-  cache.clear();
-  lastFailureAt = null;
-  lastFailureReason = null;
+function writeAmazonConfig({ tag }) {
+  if (process.env.AMAZON_AFFILIATE_TAG) {
+    throw new Error("Configuração Amazon vem de variável de ambiente — desligue AMAZON_AFFILIATE_TAG pra usar config dinâmica.");
+  }
+  const cleanTag = String(tag || "").trim();
+  if (cleanTag && !/^[a-zA-Z0-9_-]{2,30}$/.test(cleanTag)) {
+    throw new Error("Tag inválida — use letras, números, hífen ou sublinhado (ex: pedroguterres-20)");
+  }
+  const raw = readRaw();
+  raw.amazon = { tag: cleanTag || null, updatedAt: new Date().toISOString() };
+  writeRaw(raw);
+  amazonCache.clear();
+  amazonLastFailureAt = null;
+  amazonLastFailureReason = null;
+  return raw.amazon;
 }
 
+function clearMLConfig() {
+  const raw = readRaw();
+  delete raw.tag; delete raw.cookie; delete raw.updatedAt; delete raw.ml;
+  if (Object.keys(raw).length) writeRaw(raw);
+  else if (fs.existsSync(CONFIG_FILE)) fs.unlinkSync(CONFIG_FILE);
+  mlCache.clear();
+  mlLastFailureAt = null;
+  mlLastFailureReason = null;
+}
+
+function clearAmazonConfig() {
+  const raw = readRaw();
+  delete raw.amazon;
+  if (Object.keys(raw).length) writeRaw(raw);
+  else if (fs.existsSync(CONFIG_FILE)) fs.unlinkSync(CONFIG_FILE);
+  amazonCache.clear();
+  amazonLastFailureAt = null;
+  amazonLastFailureReason = null;
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Status
+// ────────────────────────────────────────────────────────────────────────
+
 function status() {
-  const c = readConfig();
+  const ml = readMLConfig();
+  const amazon = readAmazonConfig();
   return {
-    configured: !!(c.tag && c.cookie),
-    tag: c.tag || null,
-    cookieLength: c.cookie ? c.cookie.length : 0,
-    cookiePreview: c.cookie ? c.cookie.slice(0, 30) + "…" : null,
-    source: c.source,
-    updatedAt: c.updatedAt,
-    lastSuccessAt,
-    lastFailureAt,
-    lastFailureReason,
-    healthy: !!(c.tag && c.cookie) && (!lastFailureAt || (lastSuccessAt && new Date(lastSuccessAt) > new Date(lastFailureAt))),
+    // Compat com UI antiga: campos top-level são do ML
+    configured: !!(ml.tag && ml.cookie),
+    tag: ml.tag || null,
+    cookieLength: ml.cookie ? ml.cookie.length : 0,
+    cookiePreview: ml.cookie ? ml.cookie.slice(0, 30) + "…" : null,
+    source: ml.source,
+    updatedAt: ml.updatedAt,
+    lastSuccessAt: mlLastSuccessAt,
+    lastFailureAt: mlLastFailureAt,
+    lastFailureReason: mlLastFailureReason,
+    healthy: !!(ml.tag && ml.cookie) && (!mlLastFailureAt || (mlLastSuccessAt && new Date(mlLastSuccessAt) > new Date(mlLastFailureAt))),
+    // Sub-objetos novos (UI nova lê daqui)
+    ml: {
+      configured: !!(ml.tag && ml.cookie),
+      tag: ml.tag || null,
+      cookieLength: ml.cookie ? ml.cookie.length : 0,
+      cookiePreview: ml.cookie ? ml.cookie.slice(0, 30) + "…" : null,
+      source: ml.source,
+      updatedAt: ml.updatedAt,
+      lastSuccessAt: mlLastSuccessAt,
+      lastFailureAt: mlLastFailureAt,
+      lastFailureReason: mlLastFailureReason,
+      healthy: !!(ml.tag && ml.cookie) && (!mlLastFailureAt || (mlLastSuccessAt && new Date(mlLastSuccessAt) > new Date(mlLastFailureAt))),
+    },
+    amazon: {
+      configured: !!amazon.tag,
+      tag: amazon.tag || null,
+      source: amazon.source,
+      updatedAt: amazon.updatedAt,
+      lastSuccessAt: amazonLastSuccessAt,
+      lastFailureAt: amazonLastFailureAt,
+      lastFailureReason: amazonLastFailureReason,
+    },
   };
 }
 
-// Gera link de afiliado via API interna do painel ML. Devolve a short_url
-// ou null em qualquer falha (cookie expirado, link inválido, rede, etc).
+// ────────────────────────────────────────────────────────────────────────
+// Mercado Livre
+// ────────────────────────────────────────────────────────────────────────
+
 async function gerarLinkAfiliadoML(linkOriginal) {
   if (!linkOriginal || typeof linkOriginal !== "string") return null;
-  const { tag, cookie } = readConfig();
+  const { tag, cookie } = readMLConfig();
   if (!tag || !cookie) return null;
 
-  const cached = cache.get(linkOriginal);
+  const cached = mlCache.get(linkOriginal);
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.shortUrl;
 
   try {
-    const res = await fetch(ENDPOINT, {
+    const res = await fetch(ML_ENDPOINT, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -100,35 +192,103 @@ async function gerarLinkAfiliadoML(linkOriginal) {
     });
 
     if (!res.ok) {
-      lastFailureAt = new Date().toISOString();
-      lastFailureReason = `HTTP ${res.status} — cookie pode ter expirado`;
-      console.error(`[afiliados] ${lastFailureReason}`);
+      mlLastFailureAt = new Date().toISOString();
+      mlLastFailureReason = `HTTP ${res.status} — cookie pode ter expirado`;
+      console.error(`[afiliados ML] ${mlLastFailureReason}`);
       return null;
     }
 
     const data = await res.json();
     const short = data?.urls?.[0]?.short_url || null;
     if (!short) {
-      // API respondeu autenticada (cookie OK), mas a URL não gera link curto.
-      // Marcar lastSuccessAt mantém o cookie como "saudável".
-      lastSuccessAt = new Date().toISOString();
+      mlLastSuccessAt = new Date().toISOString();
       const apiMsg = data?.urls?.[0]?.error || data?.message || data?.error || null;
-      lastFailureReason = apiMsg
+      mlLastFailureReason = apiMsg
         ? `Link inválido: ${String(apiMsg).slice(0, 120)}`
         : "Link inválido — use uma URL de produto/oferta do Mercado Livre (a home não funciona)";
-      console.warn(`[afiliados] ${lastFailureReason}: ${JSON.stringify(data).slice(0, 200)}`);
+      console.warn(`[afiliados ML] ${mlLastFailureReason}: ${JSON.stringify(data).slice(0, 200)}`);
       return null;
     }
-    cache.set(linkOriginal, { shortUrl: short, ts: Date.now() });
-    lastSuccessAt = new Date().toISOString();
-    lastFailureReason = null;
+    mlCache.set(linkOriginal, { shortUrl: short, ts: Date.now() });
+    mlLastSuccessAt = new Date().toISOString();
+    mlLastFailureReason = null;
     return short;
   } catch (err) {
-    lastFailureAt = new Date().toISOString();
-    lastFailureReason = err.message;
-    console.error("[afiliados] erro:", err.message);
+    mlLastFailureAt = new Date().toISOString();
+    mlLastFailureReason = err.message;
+    console.error("[afiliados ML] erro:", err.message);
     return null;
   }
 }
 
-module.exports = { gerarLinkAfiliadoML, readConfig, writeConfig, clearConfig, status };
+// ────────────────────────────────────────────────────────────────────────
+// Amazon BR
+// ────────────────────────────────────────────────────────────────────────
+
+// Extrai ASIN (10 caracteres alfanuméricos) de uma URL da Amazon BR.
+// Cobre os principais padrões de URL: /dp/, /gp/product/, /product/, /-/pt/dp/, /exec/obidos/asin/
+function extractASIN(url) {
+  if (!url || typeof url !== "string") return null;
+  const decoded = (() => { try { return decodeURIComponent(url); } catch { return url; } })();
+  const patterns = [
+    /\/dp\/([A-Z0-9]{10})(?:[/?]|$)/i,
+    /\/gp\/product\/([A-Z0-9]{10})(?:[/?]|$)/i,
+    /\/gp\/aw\/d\/([A-Z0-9]{10})(?:[/?]|$)/i,
+    /\/product\/([A-Z0-9]{10})(?:[/?]|$)/i,
+    /\/[a-z]{2}\/dp\/([A-Z0-9]{10})(?:[/?]|$)/i,
+    /\/exec\/obidos\/asin\/([A-Z0-9]{10})(?:[/?]|$)/i,
+    /[?&]asin=([A-Z0-9]{10})\b/i,
+  ];
+  for (const p of patterns) {
+    const m = decoded.match(p);
+    if (m) return m[1].toUpperCase();
+  }
+  return null;
+}
+
+// Gera link curto de afiliado Amazon: https://www.amazon.com.br/dp/ASIN?tag=TAG
+// Não chama API externa — só monta a URL. Retorna null se não tem tag ou ASIN.
+function gerarLinkAfiliadoAmazon(linkOriginal) {
+  if (!linkOriginal || typeof linkOriginal !== "string") return null;
+  const { tag } = readAmazonConfig();
+  if (!tag) return null;
+
+  const cached = amazonCache.get(linkOriginal);
+  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.shortUrl;
+
+  const asin = extractASIN(linkOriginal);
+  if (!asin) {
+    amazonLastFailureAt = new Date().toISOString();
+    amazonLastFailureReason = "Não foi possível extrair o ASIN — URL não é de produto Amazon BR válida";
+    return null;
+  }
+
+  const short = `https://www.amazon.com.br/dp/${asin}?tag=${encodeURIComponent(tag)}`;
+  amazonCache.set(linkOriginal, { shortUrl: short, ts: Date.now() });
+  amazonLastSuccessAt = new Date().toISOString();
+  amazonLastFailureReason = null;
+  return short;
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// API pública
+// ────────────────────────────────────────────────────────────────────────
+
+module.exports = {
+  // ML
+  gerarLinkAfiliadoML,
+  readMLConfig,
+  writeMLConfig,
+  clearMLConfig,
+  // Amazon
+  gerarLinkAfiliadoAmazon,
+  readAmazonConfig,
+  writeAmazonConfig,
+  clearAmazonConfig,
+  extractASIN,
+  // Compat: nomes antigos apontam pra ML
+  readConfig: readMLConfig,
+  writeConfig: writeMLConfig,
+  clearConfig: clearMLConfig,
+  status,
+};

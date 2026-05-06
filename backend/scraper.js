@@ -166,7 +166,17 @@ async function scrapeAmazon({ category, limit = 100 } = {}) {
                             || card.querySelector('.a-price:not(.a-text-price) .a-offscreen');
         // Preço original: SÓ o riscado (data-a-strike="true"), nunca preço unitário.
         const priceOriginalEl = card.querySelector('.a-price.a-text-price[data-a-strike="true"] .a-offscreen');
-        const ratingEl = card.querySelector('i.a-icon-star-small .a-icon-alt, i.a-icon-star .a-icon-alt');
+        // Rating: tenta múltiplos seletores que a Amazon usa em diferentes layouts.
+        // O texto pode estar dentro do <i> ou no aria-label do container pai.
+        const ratingEl = card.querySelector('i.a-icon-star-small .a-icon-alt')
+                      || card.querySelector('i.a-icon-star .a-icon-alt')
+                      || card.querySelector('.a-icon-star-small .a-icon-alt')
+                      || card.querySelector('.a-icon-star .a-icon-alt')
+                      || card.querySelector('[aria-label*="de 5"]');
+        // reviewsCount: aparece num link/span ao lado do rating
+        const reviewsEl = card.querySelector('.a-row.a-size-small a span.a-size-base')
+                       || card.querySelector('a[href*="customerReviews"] span')
+                       || card.querySelector('.s-link-style .s-underline-text');
 
         if (!titleEl || !linkEl || !priceCurrentEl) continue;
 
@@ -180,11 +190,18 @@ async function scrapeAmazon({ category, limit = 100 } = {}) {
           discount = Math.round((1 - price / originalPrice) * 100);
         }
 
-        // Rating "4,5 de 5 estrelas"
+        // Rating "4,5 de 5 estrelas" — tenta textContent e aria-label
         let rating = null;
         if (ratingEl) {
-          const m = ratingEl.textContent.match(/([\d,.]+)\s*de\s*5/i);
+          const text = ratingEl.textContent || ratingEl.getAttribute("aria-label") || "";
+          const m = text.match(/([\d,.]+)\s*de\s*5/i);
           if (m) rating = parseFloat(m[1].replace(",", "."));
+        }
+        // reviewsCount: número entre parênteses ou número puro ao lado do rating
+        let reviewsCount = null;
+        if (reviewsEl) {
+          const t = (reviewsEl.textContent || "").trim().replace(/[^\d]/g, "");
+          if (t) reviewsCount = t;
         }
 
         const href = linkEl.getAttribute("href") || "";
@@ -199,7 +216,7 @@ async function scrapeAmazon({ category, limit = 100 } = {}) {
           discount,
           category: cat || null,
           rating,
-          reviewsCount: null,
+          reviewsCount,
           seller: null,
           freeShipping: false,
           sold: null,

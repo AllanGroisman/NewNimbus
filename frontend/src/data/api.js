@@ -69,12 +69,33 @@ export async function loadAppOps() {
 export async function sendNextNow(groupId) {
   return http("POST", `/api/state/groups/${groupId}/send-now`);
 }
+// Força refill da fila a partir do catálogo (consulta com filtros atuais da campanha)
+export async function refillQueueNow(groupId, overrides) {
+  return http("POST", `/api/state/groups/${groupId}/refill`, overrides || {});
+}
+// Limpa o histórico de envios da campanha (reseta cooldown — produtos voltam a ser elegíveis)
+export async function clearGroupHistory(groupId) {
+  return http("DELETE", `/api/state/groups/${groupId}/history`);
+}
+// Move um item de pending pra queue (aprova manualmente)
+export async function approvePendingItem(groupId, pendingId) {
+  return http("POST", `/api/state/groups/${groupId}/pending/${encodeURIComponent(pendingId)}/approve`);
+}
+// Remove um item de pending (rejeita)
+export async function rejectPendingItem(groupId, pendingId) {
+  return http("DELETE", `/api/state/groups/${groupId}/pending/${encodeURIComponent(pendingId)}`);
+}
 
 // ─── Afiliados ML ──────────────────────────────────────────────────────
 export async function getAffiliateStatus()      { return http("GET",    "/api/affiliate"); }
 export async function saveAffiliate(payload)    { return http("PUT",    "/api/affiliate", payload); }
 export async function clearAffiliate()          { return http("DELETE", "/api/affiliate"); }
 export async function testAffiliate(url)        { return http("POST",   "/api/affiliate/test", url ? { url } : {}); }
+
+// ─── Afiliados Amazon ──────────────────────────────────────────────────
+export async function saveAmazonAffiliate(tag)  { return http("PUT",    "/api/affiliate/amazon", { tag }); }
+export async function clearAmazonAffiliate()    { return http("DELETE", "/api/affiliate/amazon"); }
+export async function testAmazonAffiliate(url)  { return http("POST",   "/api/affiliate/amazon/test", url ? { url } : {}); }
 
 // ─── Scraping ──────────────────────────────────────────────────────────
 export async function fetchOfertas({ category, minDiscount = 0, minPrice = 0, maxPrice, limit = 50, refresh = false, sources } = {}) {
@@ -120,4 +141,30 @@ export async function sendWAText(id, jid, text, imageUrl) {
 }
 export async function broadcastWA(id, jids, text, imageUrl, intervalMs = 4000) {
   return http("POST", `/api/whatsapp/sessions/${id}/broadcast`, { jids, text, imageUrl, intervalMs });
+}
+
+// ─── Admin / usuários ──────────────────────────────────────────────────
+export async function adminListUsers()           { return http("GET",    "/api/admin/users"); }
+export async function adminDeleteUser(id)        { return http("DELETE", `/api/admin/users/${id}`); }
+export async function adminSetUserPassword(id, newPassword) {
+  return http("PATCH", `/api/admin/users/${id}/password`, { newPassword });
+}
+export async function adminSetUserRole(id, role) {
+  return http("PATCH", `/api/admin/users/${id}/role`, { role });
+}
+
+// ─── Admin / scraper global e catálogo ─────────────────────────────────
+export async function adminScraperConfig()       { return http("GET",  "/api/admin/scraper/config"); }
+export async function adminSaveScraperConfig(cfg){ return http("PUT",  "/api/admin/scraper/config", cfg); }
+export async function adminRunScraper()          { return http("POST", "/api/admin/scraper/run"); }
+export async function adminScraperStatus()       { return http("GET",  "/api/admin/scraper/status"); }
+export async function adminCatalog({ page = 1, pageSize = 50, category, source, q, sortBy } = {}) {
+  const params = new URLSearchParams();
+  params.set("page", page);
+  params.set("pageSize", pageSize);
+  if (category) params.set("category", category);
+  if (source) params.set("source", source);
+  if (q) params.set("q", q);
+  if (sortBy) params.set("sortBy", sortBy);
+  return http("GET", `/api/admin/catalog?${params}`);
 }

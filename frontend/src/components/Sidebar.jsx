@@ -1,35 +1,47 @@
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, sidebarItems, getGroupStats } from "../data/constants";
 
-export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = [], affiliateConfigured = true, onNavigate, onSelectGroup, onLogout, mobileOpen, onToggleMobile }) {
+export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = [], affiliateConfigured = true, user, onNavigate, onSelectGroup, onLogout, mobileOpen, onToggleMobile }) {
   const nav = (id) => { onNavigate(id); onToggleMobile(false); };
   const selGroup = (g) => { onSelectGroup(g); onToggleMobile(false); };
+  const isAdmin = user?.role === "admin";
+
+  const visibleItems = sidebarItems.filter(it => !it.adminOnly);
+  const adminItems = sidebarItems.filter(it => it.adminOnly);
+
+  const renderItem = (item) => (
+    <button
+      key={item.id}
+      onClick={() => nav(item.id)}
+      style={{
+        display: "flex", alignItems: "center", gap: 10, padding: "9px 16px",
+        background: page === item.id && !selectedGroup ? PRIMARY_LIGHT : "transparent",
+        border: "none", cursor: "pointer", textAlign: "left",
+        color: page === item.id && !selectedGroup ? PRIMARY_DARK : "var(--color-text-secondary)",
+        fontWeight: page === item.id && !selectedGroup ? 500 : 400, fontSize: 13,
+      }}
+    >
+      <span style={{ fontSize: 14 }}>{item.icon}</span>{item.label}
+    </button>
+  );
 
   const sidebarContent = (
     <>
       <div style={{ padding: "0 16px 16px", borderBottom: "0.5px solid var(--color-border-tertiary)", marginBottom: 8 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 500, color: PRIMARY_DARK }}>Nimbus</div>
-            <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Plano Pro</div>
+            <div style={{ fontSize: 16, fontWeight: 500, color: PRIMARY_DARK }}>Nimbus {isAdmin && <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: PRIMARY_DARK, color: "#fff", marginLeft: 4, verticalAlign: "middle" }}>ADMIN</span>}</div>
+            <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{isAdmin ? "Painel administrativo" : "Plano Pro"}</div>
           </div>
           <button className="mobile-only" onClick={() => onToggleMobile(false)} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 20, color: "var(--color-text-secondary)", padding: "4px" }}>✕</button>
         </div>
       </div>
-      {sidebarItems.map(item => (
-        <button
-          key={item.id}
-          onClick={() => nav(item.id)}
-          style={{
-            display: "flex", alignItems: "center", gap: 10, padding: "9px 16px",
-            background: page === item.id && !selectedGroup ? PRIMARY_LIGHT : "transparent",
-            border: "none", cursor: "pointer", textAlign: "left",
-            color: page === item.id && !selectedGroup ? PRIMARY_DARK : "var(--color-text-secondary)",
-            fontWeight: page === item.id && !selectedGroup ? 500 : 400, fontSize: 13,
-          }}
-        >
-          <span style={{ fontSize: 14 }}>{item.icon}</span>{item.label}
-        </button>
-      ))}
+      {visibleItems.map(renderItem)}
+      {isAdmin && adminItems.length > 0 && (
+        <div style={{ margin: "8px 10px 0", borderTop: "0.5px solid var(--color-border-tertiary)", paddingTop: 8 }}>
+          <div style={{ fontSize: 11, color: "var(--color-text-secondary)", padding: "4px 6px", marginBottom: 4 }}>Admin</div>
+          {adminItems.map(renderItem)}
+        </div>
+      )}
       <div style={{ margin: "8px 10px 0", borderTop: "0.5px solid var(--color-border-tertiary)", paddingTop: 8 }}>
         <div style={{ fontSize: 11, color: "var(--color-text-secondary)", padding: "4px 6px", marginBottom: 4 }}>Campanhas</div>
         {groups.length === 0 && (

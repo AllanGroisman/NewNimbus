@@ -1,0 +1,171 @@
+const fs = require("fs");
+const path = require("path");
+const { scrapeOfertas, CATEGORIES, STORES } = require("./scraper");
+const catalog = require("./catalog");
+
+const DATA_DIR = path.join(__dirname, "data");
+const CONFIG_FILE = path.join(DATA_DIR, "scraper-config.json");
+
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+
+const DEFAULT_CONFIG = {
+  enabled: false,
+  intervalMinutes: 360,                                  // 6h
+  categories: Object.keys(CATEGORIES),                   // todas
+  sources: Object.keys(STORES),                          // ml, amazon
+  limitPerCategory: 200,
+  pruneAfterDays: 30,
+};
+
+let _status = {
+  running: false,
+  lastRun: null,            // ISO
+  lastDuration: null,       // ms
+  lastResult: null,         // { inserted, updated, total, perCategory: { gamer-ml: { ... } } }
+  lastError: null,
+  nextRunAt: null,
+};
+
+let _interval = null;
+let _runPromise = null;
+
+function readConfig() {
+  if (!fs.existsSync(CONFIG_FILE)) return { ...DEFAULT_CONFIG };
+  try {
+    const raw = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
+    return { ...DEFAULT_CONFIG, ...raw };
+  } catch {
+    return { ...DEFAULT_CONFIG };
+  }
+}
+
+function writeConfig(cfg) {
+  const merged = { ...readConfig(), ...cfg };
+  // Validações básicas
+  merged.intervalMinutes = Math.max(5, Number(merged.intervalMinutes) || DEFAULT_CONFIG.intervalMinutes);
+  merged.limitPerCategory = Math.max(10, Number(merged.limitPerCategory) || DEFAULT_CONFIG.limitPerCategory);
+  merged.categories = Array.isArray(merged.categories)
+    ? merged.categories.filter(c => CATEGORIES[c])
+    : DEFAULT_CONFIG.categories;
+  merged.sources = Array.isArray(merged.sources)
+    ? merged.sources.filter(s => STORES[s])
+    : DEFAULT_CONFIG.sources;
+  merged.enabled = !!merged.enabled;
+  merged.pruneAfterDays = Math.max(1, Number(merged.pruneAfterDays) || DEFAULT_CONFIG.pruneAfterDays);
+
+  const tmp = CONFIG_FILE + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(merged, null, 2));
+  fs.renameSync(tmp, CONFIG_FILE);
+  scheduleNext();
+  return merged;
+}
+
+function status() {
+  const cfg = readConfig();
+  return {
+    config: cfg,
+    ..._status,
+  };
+}
+
+// Roda uma vez: para cada (categoria × loja), faz scrape e dá upsert no catálogo.
+async function runOnce() {
+  if (_runPromise) return _runPromise;
+  const cfg = readConfig();
+  if (!cfg.categories.length || !cfg.sources.length) {
+    throw new Error("Configure ao menos 1 categoria e 1 loja");
+  }
+
+  _runPromise = (async () => {
+    _status.running = true;
+    _status.lastError = null;
+    const t0 = Date.now();
+    const perCategory = {};
+    let totalInserted = 0, totalUpdated = 0;
+
+    try {
+      for (const cat of cfg.categories) {
+        for (const src of cfg.sources) {
+          const tag = `${cat}-${src}`;
+          try {
+            console.log(`[admin-scraper] ${tag}: iniciando...`);
+            const products = await scrapeOfertas({
+              category: cat,
+              sources: [src],
+              limit: cfg.limitPerCategory,
+            });
+            // Marca a categoria EXPLICITAMENTE — o scraper às vezes devolve categoria
+            // como objeto {label, mlCode, ...}; aqui forçamos string id.
+            const tagged = products.map(p => ({ ...p, category: cat }));
+            const r = await catalog.upsertProducts(tagged);
+            perCategory[tag] = { ok: true, count: products.length, inserted: r.inserted, updated: r.updated };
+            totalInserted += r.inserted;
+            totalUpdated += r.updated;
+            console.log(`[admin-scraper] ${tag}: +${r.inserted} novos, ${r.updated} atualizados`);
+          } catch (err) {
+            console.error(`[admin-scraper] ${tag} falhou:`, err.message);
+            perCategory[tag] = { ok: false, error: err.message };
+          }
+        }
+      }
+
+      // Limpa produtos antigos
+      const pruned = await catalog.prune(cfg.pruneAfterDays);
+      console.log(`[admin-scraper] prune: -${pruned.removed} antigos, total ${pruned.total}`);
+
+      _status.lastResult = {
+        inserted: totalInserted,
+        updated: totalUpdated,
+        total: pruned.total,
+        pruned: pruned.removed,
+        perCategory,
+      };
+    } catch (err) {
+      _status.lastError = err.message;
+      console.error(`[admin-scraper] erro fatal:`, err.message);
+    } finally {
+      _status.running = false;
+      _status.lastRun = new Date().toISOString();
+      _status.lastDuration = Date.now() - t0;
+      _runPromise = null;
+      scheduleNext();
+    }
+    return _status.lastResult;
+  })();
+  return _runPromise;
+}
+
+function scheduleNext() {
+  if (_interval) { clearInterval(_interval); _interval = null; }
+  const cfg = readConfig();
+  if (!cfg.enabled) {
+    _status.nextRunAt = null;
+    return;
+  }
+  const ms = cfg.intervalMinutes * 60 * 1000;
+  _interval = setInterval(() => {
+    runOnce().catch(err => console.error("[admin-scraper] tick:", err.message));
+  }, ms);
+  _status.nextRunAt = new Date(Date.now() + ms).toISOString();
+}
+
+function start() {
+  scheduleNext();
+  // Não dispara automático no boot — admin clica "rodar agora" quando quiser
+}
+
+function stop() {
+  if (_interval) { clearInterval(_interval); _interval = null; }
+}
+
+module.exports = {
+  readConfig,
+  writeConfig,
+  status,
+  runOnce,
+  start,
+  stop,
+  DEFAULT_CONFIG,
+  AVAILABLE_CATEGORIES: Object.keys(CATEGORIES),
+  AVAILABLE_SOURCES: Object.keys(STORES),
+};

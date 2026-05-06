@@ -6,9 +6,13 @@ echo         NIMBUS - Iniciando tudo
 echo ========================================
 echo.
 
+:: Emails que viram admin automaticamente no login
+:: (separe por virgula pra adicionar mais)
+set "ADMIN_EMAILS=allangroisman@gmail.com"
+
 :: Inicia o backend
 echo [1/3] Iniciando Backend (porta 3001)...
-start "Nimbus - Backend" cmd /k "cd /d %~dp0backend && node server.js"
+start "Nimbus - Backend" cmd /k "cd /d %~dp0backend && set ADMIN_EMAILS=%ADMIN_EMAILS%&& node server.js"
 
 :: Aguarda o backend subir
 timeout /t 2 /nobreak >nul

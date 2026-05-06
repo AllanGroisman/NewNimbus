@@ -50,6 +50,26 @@ input, select, textarea, button {
   color: var(--color-text-primary);
 }
 
+/* Bolha de prévia da mensagem (estilo WhatsApp) — adapta ao tema */
+.wa-preview {
+  background: #dcf8c6;
+  color: #1a1a1a;
+}
+.wa-preview code {
+  background: rgba(0, 0, 0, 0.08);
+  color: #1a1a1a;
+}
+@media (prefers-color-scheme: dark) {
+  .wa-preview {
+    background: #054640;
+    color: #e9edef;
+  }
+  .wa-preview code {
+    background: rgba(255, 255, 255, 0.12);
+    color: #e9edef;
+  }
+}
+
 /* Mobile responsive */
 @media (max-width: 768px) {
   .desktop-only { display: none !important; }

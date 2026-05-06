@@ -10,6 +10,17 @@ const SECRET_FILE = path.join(DATA_DIR, ".jwt_secret");
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
+// Emails que recebem role "admin" automaticamente no login/registro.
+// Definir via ADMIN_EMAILS=email1@x.com,email2@y.com
+const ADMIN_EMAILS = String(process.env.ADMIN_EMAILS || "")
+  .split(",")
+  .map(s => s.trim().toLowerCase())
+  .filter(Boolean);
+
+function isAdminEmail(email) {
+  return ADMIN_EMAILS.includes(String(email || "").trim().toLowerCase());
+}
+
 // JWT secret persistido em disco — gera uma vez e reusa entre reinícios.
 // Em produção, sobrescreva com a env JWT_SECRET.
 function loadOrCreateSecret() {
@@ -32,9 +43,31 @@ function writeUsers(users) {
   fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
 }
 
+// Sincroniza role com ADMIN_EMAILS — chamada em pontos críticos (login, requireAuth).
+// Garante que mudanças na env var refletem imediatamente sem precisar re-cadastrar.
+function syncRole(user) {
+  if (!user) return user;
+  const expected = isAdminEmail(user.email) ? "admin" : (user.role === "admin" ? "admin" : "user");
+  // Se ADMIN_EMAILS deixou de incluir o email, NÃO rebaixa automaticamente —
+  // role "admin" só é removido manualmente via API admin (evita lockout acidental).
+  if (user.role !== expected && (expected === "admin" || !user.role)) {
+    user.role = expected;
+    const users = readUsers();
+    const i = users.findIndex(u => u.id === user.id);
+    if (i >= 0) {
+      users[i].role = expected;
+      writeUsers(users);
+    }
+  } else if (!user.role) {
+    user.role = "user";
+  }
+  return user;
+}
+
 function publicUser(u) {
   if (!u) return null;
   const { passwordHash, ...rest } = u;
+  if (!rest.role) rest.role = "user";
   return rest;
 }
 
@@ -66,6 +99,7 @@ async function register({ name, email, password, phone }) {
     email,
     phone: phone ? String(phone).trim() : "",
     passwordHash,
+    role: isAdminEmail(email) ? "admin" : "user",
     createdAt: new Date().toISOString(),
   };
   users.push(user);
@@ -80,6 +114,7 @@ async function login({ email, password }) {
   if (!user) throw new Error("Email ou senha incorretos");
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) throw new Error("Email ou senha incorretos");
+  syncRole(user);
   const token = jwt.sign({ sub: user.id, email: user.email }, JWT_SECRET, { expiresIn: TOKEN_TTL });
   return { token, user: publicUser(user) };
 }
@@ -97,7 +132,16 @@ function requireAuth(req, res, next) {
   if (!payload) return res.status(401).json({ error: "Não autorizado" });
   const user = findById(payload.sub);
   if (!user) return res.status(401).json({ error: "Usuário não encontrado" });
+  syncRole(user);
   req.user = publicUser(user);
+  next();
+}
+
+// Middleware admin — usar APÓS requireAuth
+function requireAdmin(req, res, next) {
+  if (!req.user || req.user.role !== "admin") {
+    return res.status(403).json({ error: "Acesso restrito a administradores" });
+  }
   next();
 }
 
@@ -125,12 +169,56 @@ async function changePassword(userId, { currentPassword, newPassword }) {
   return true;
 }
 
+// ────────────────────────────────────────────────────────────────────────
+// Funções admin (gerenciamento de usuários)
+// ────────────────────────────────────────────────────────────────────────
+
+function listUsers() {
+  return readUsers().map(publicUser);
+}
+
+function deleteUser(userId) {
+  const users = readUsers();
+  const i = users.findIndex(u => u.id === userId);
+  if (i < 0) throw new Error("Usuário não encontrado");
+  users.splice(i, 1);
+  writeUsers(users);
+  return true;
+}
+
+async function adminSetPassword(userId, newPassword) {
+  if (String(newPassword || "").length < 6) throw new Error("Senha precisa ter ao menos 6 caracteres");
+  const users = readUsers();
+  const i = users.findIndex(u => u.id === userId);
+  if (i < 0) throw new Error("Usuário não encontrado");
+  users[i].passwordHash = await bcrypt.hash(String(newPassword), 10);
+  writeUsers(users);
+  return true;
+}
+
+function setUserRole(userId, role) {
+  if (role !== "admin" && role !== "user") throw new Error("Role inválida");
+  const users = readUsers();
+  const i = users.findIndex(u => u.id === userId);
+  if (i < 0) throw new Error("Usuário não encontrado");
+  users[i].role = role;
+  writeUsers(users);
+  return publicUser(users[i]);
+}
+
 module.exports = {
   register,
   login,
   requireAuth,
+  requireAdmin,
   updateProfile,
   changePassword,
   findById,
   publicUser,
+  // admin
+  listUsers,
+  deleteUser,
+  adminSetPassword,
+  setUserRole,
+  isAdminEmail,
 };

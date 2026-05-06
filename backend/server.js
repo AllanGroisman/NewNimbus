@@ -1,11 +1,13 @@
 const express = require("express");
 const cors = require("cors");
-const { scrapeOfertas, CATEGORIES } = require("./scraper");
+const { CATEGORIES, STORES } = require("./scraper");
 const wa = require("./whatsapp");
 const auth = require("./auth");
 const storage = require("./storage");
 const scheduler = require("./scheduler");
 const affiliate = require("./affiliate");
+const catalog = require("./catalog");
+const adminScraper = require("./admin-scraper");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -77,13 +79,12 @@ app.put("/api/state", auth.requireAuth, async (req, res) => {
   }
 });
 
-// Apenas dados operacionais (queue/history/métricas) para polling do front
 app.get("/api/state/ops", auth.requireAuth, (req, res) => {
   res.json(storage.loadOps(req.user.id));
 });
 
 // ────────────────────────────────────────────────────────────────────────
-// Afiliados ML — TAG + COOKIE (cookie expira de tempos em tempos, user atualiza pela UI)
+// Afiliados ML
 // ────────────────────────────────────────────────────────────────────────
 
 app.get("/api/affiliate", auth.requireAuth, (req, res) => {
@@ -109,8 +110,6 @@ app.delete("/api/affiliate", auth.requireAuth, (req, res) => {
   }
 });
 
-// Testa o cookie/tag gerando link a partir de uma URL fornecida.
-// Não cacheia — usado pelo botão "Testar conexão" no front.
 app.post("/api/affiliate/test", auth.requireAuth, async (req, res) => {
   try {
     const url = req.body?.url;
@@ -120,7 +119,6 @@ app.post("/api/affiliate/test", auth.requireAuth, async (req, res) => {
     const short = await affiliate.gerarLinkAfiliadoML(url.trim());
     if (!short) {
       const s = affiliate.status();
-      // Se cookie está saudável, o erro é de URL — não de autenticação
       const reason = s.lastFailureReason || "Falha ao gerar link";
       return res.status(400).json({ error: reason, cookieHealthy: !!s.healthy });
     }
@@ -130,9 +128,47 @@ app.post("/api/affiliate/test", auth.requireAuth, async (req, res) => {
   }
 });
 
-// Dispara envio do próximo item da fila imediatamente (botão "Enviar agora").
-// Ignora janela/intervalo, mas atualiza lastSend — o próximo automático
-// conta o intervalo a partir deste envio.
+// ─── Afiliado Amazon ───────────────────────────────────────────────────
+
+app.put("/api/affiliate/amazon", auth.requireAuth, (req, res) => {
+  try {
+    const { tag } = req.body || {};
+    affiliate.writeAmazonConfig({ tag });
+    res.json(affiliate.status());
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete("/api/affiliate/amazon", auth.requireAuth, (req, res) => {
+  try {
+    affiliate.clearAmazonConfig();
+    res.json(affiliate.status());
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/affiliate/amazon/test", auth.requireAuth, (req, res) => {
+  try {
+    const url = req.body?.url;
+    if (!url || typeof url !== "string" || !url.trim()) {
+      return res.status(400).json({ error: "Forneça uma URL de produto da Amazon pra testar." });
+    }
+    const short = affiliate.gerarLinkAfiliadoAmazon(url.trim());
+    if (!short) {
+      const s = affiliate.status();
+      const reason = s.amazon.lastFailureReason
+        || (!s.amazon.configured ? "Configure a tag de afiliado da Amazon primeiro." : "Falha ao gerar link");
+      return res.status(400).json({ error: reason });
+    }
+    res.json({ ok: true, shortUrl: short });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Dispara envio do próximo item da fila imediatamente
 app.post("/api/state/groups/:gid/send-now", auth.requireAuth, async (req, res) => {
   try {
     const groupId = isNaN(Number(req.params.gid)) ? req.params.gid : Number(req.params.gid);
@@ -144,85 +180,246 @@ app.post("/api/state/groups/:gid/send-now", auth.requireAuth, async (req, res) =
   }
 });
 
+// Aprovar item pendente: move de pending pra queue (final).
+app.post("/api/state/groups/:gid/pending/:pid/approve", auth.requireAuth, async (req, res) => {
+  try {
+    const groupId = isNaN(Number(req.params.gid)) ? req.params.gid : Number(req.params.gid);
+    const pid = req.params.pid;
+    const state = storage.loadState(req.user.id);
+    const group = (state.groups || []).find(g => g.id === groupId);
+    if (!group) return res.status(404).json({ error: "Campanha não encontrada" });
+    const idx = (group.pending || []).findIndex(p => String(p.id ?? p.key) === String(pid));
+    if (idx < 0) return res.status(404).json({ error: "Item pendente não encontrado" });
+    const item = group.pending[idx];
+    const newPending = group.pending.filter((_, i) => i !== idx);
+    const newQueue = [...(group.queue || []), item];
+    await storage.updateGroupOps(req.user.id, groupId, { pending: newPending, queue: newQueue });
+    res.json({ ok: true, queueSize: newQueue.length, pendingSize: newPending.length });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Rejeitar item pendente: remove de pending.
+app.delete("/api/state/groups/:gid/pending/:pid", auth.requireAuth, async (req, res) => {
+  try {
+    const groupId = isNaN(Number(req.params.gid)) ? req.params.gid : Number(req.params.gid);
+    const pid = req.params.pid;
+    const state = storage.loadState(req.user.id);
+    const group = (state.groups || []).find(g => g.id === groupId);
+    if (!group) return res.status(404).json({ error: "Campanha não encontrada" });
+    const newPending = (group.pending || []).filter(p => String(p.id ?? p.key) !== String(pid));
+    if (newPending.length === (group.pending || []).length) {
+      return res.status(404).json({ error: "Item pendente não encontrado" });
+    }
+    await storage.updateGroupOps(req.user.id, groupId, { pending: newPending });
+    res.json({ ok: true, pendingSize: newPending.length });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Limpa o histórico de envios da campanha (reseta cooldown — produtos podem voltar)
+app.delete("/api/state/groups/:gid/history", auth.requireAuth, async (req, res) => {
+  try {
+    const groupId = isNaN(Number(req.params.gid)) ? req.params.gid : Number(req.params.gid);
+    const updated = await storage.updateGroupOps(req.user.id, groupId, {
+      history: [],
+      sentToday: 0,
+      sentWeek: 0,
+      weekData: [0, 0, 0, 0, 0, 0, 0],
+      lastSend: "—",
+    });
+    if (!updated) return res.status(404).json({ error: "Campanha não encontrada" });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Força refill da fila a partir do catálogo (aplica filtros da campanha).
+// Aceita body opcional { filters, sources, categories } com overrides ainda não persistidos.
+app.post("/api/state/groups/:gid/refill", auth.requireAuth, async (req, res) => {
+  try {
+    const groupId = isNaN(Number(req.params.gid)) ? req.params.gid : Number(req.params.gid);
+    const r = await scheduler.refillNow(req.user.id, groupId, req.body || {});
+    res.json({ ok: true, ...r });
+  } catch (err) {
+    console.error("[refill]", err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // ────────────────────────────────────────────────────────────────────────
-// Scraping (existente)
+// Ofertas — agora lê do CATÁLOGO global (preenchido pelo admin-scraper)
 // ────────────────────────────────────────────────────────────────────────
 
-const cacheByCategory = {};
-const CACHE_TTL = 5 * 60 * 1000;
-
-function getCache(category) {
-  const key = category || "_all";
-  return cacheByCategory[key] || { data: null, timestamp: 0 };
-}
-
-function setCache(category, data) {
-  const key = category || "_all";
-  cacheByCategory[key] = { data, timestamp: Date.now() };
-}
-
-app.get("/api/ofertas", async (req, res) => {
+app.get("/api/ofertas", auth.requireAuth, (req, res) => {
   try {
     const category = req.query.category || null;
     const minDiscount = parseInt(req.query.minDiscount) || 0;
     const minPrice = parseFloat(req.query.minPrice) || 0;
     const maxPrice = parseFloat(req.query.maxPrice) || Infinity;
     const limit = parseInt(req.query.limit) || 50;
-    const forceRefresh = req.query.refresh === "true";
     const sources = req.query.sources
       ? String(req.query.sources).split(",").map(s => s.trim()).filter(Boolean)
-      : ["ml"];
+      : null;
 
-    const cacheKey = `${category || "_all"}::${[...sources].sort().join(",")}`;
-    const cache = getCache(cacheKey);
-    const now = Date.now();
-    const cacheValid = cache.data && (now - cache.timestamp < CACHE_TTL) && !forceRefresh;
+    const products = catalog.query({
+      categories: category ? [category] : null,
+      sources,
+      filters: { minDiscount, minPrice, maxPrice },
+      limit,
+      sortBy: "discount_desc",
+    });
 
-    let allProducts;
-    if (cacheValid) {
-      allProducts = cache.data;
-      console.log(`[cache] ${cacheKey}: ${allProducts.length} produtos do cache`);
-    } else {
-      const start = Date.now();
-      allProducts = await scrapeOfertas({ category, sources, limit: 200 });
-      setCache(cacheKey, allProducts);
-      console.log(`[scraper] ${allProducts.length} produtos (${cacheKey}) em ${Date.now() - start}ms`);
-    }
-
-    let filtered = allProducts;
-    if (minDiscount > 0) filtered = filtered.filter(p => p.discount && p.discount >= minDiscount);
-    if (minPrice > 0) filtered = filtered.filter(p => p.price != null && p.price >= minPrice);
-    if (maxPrice < Infinity) filtered = filtered.filter(p => p.price != null && p.price <= maxPrice);
-    filtered = filtered.slice(0, limit);
-
-    res.json({ total: filtered.length, cached: cacheValid, category, sources, products: filtered });
+    res.json({
+      total: products.length,
+      category,
+      sources,
+      products,
+      catalogStats: catalog.getStats(),
+    });
   } catch (err) {
-    console.error("[scraper] Erro:", err.message);
+    console.error("[ofertas] Erro:", err.message);
     res.status(500).json({ error: "Falha ao buscar ofertas", details: err.message });
   }
 });
 
 app.get("/api/categories", (req, res) => {
-  const cats = Object.entries(CATEGORIES).map(([id, info]) => ({ id, label: info.label, code: info.code }));
+  const cats = Object.entries(CATEGORIES).map(([id, info]) => ({ id, label: info.label }));
   res.json(cats);
 });
 
 app.get("/api/status", (req, res) => {
-  const caches = Object.entries(cacheByCategory).map(([key, c]) => ({
-    category: key,
-    products: c.data ? c.data.length : 0,
-    age: c.data ? Math.round((Date.now() - c.timestamp) / 1000) + "s" : null,
-  }));
+  const s = catalog.getStats();
   res.json({
     status: "ok",
     categories: Object.keys(CATEGORIES),
-    caches,
-    cachedProducts: caches.reduce((a, c) => a + c.products, 0),
+    catalog: s,
+    adminScraper: adminScraper.status(),
   });
 });
 
 // ────────────────────────────────────────────────────────────────────────
-// WhatsApp (Baileys) — todas as rotas escopadas por usuário
+// Admin — gerenciamento de usuários
+// ────────────────────────────────────────────────────────────────────────
+
+app.get("/api/admin/users", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json({ users: auth.listUsers() });
+});
+
+app.delete("/api/admin/users/:id", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    if (req.params.id === req.user.id) {
+      return res.status(400).json({ error: "Você não pode excluir a si mesmo" });
+    }
+    auth.deleteUser(req.params.id);
+    storage.clearState(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.patch("/api/admin/users/:id/password", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const { newPassword } = req.body || {};
+    await auth.adminSetPassword(req.params.id, newPassword);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.patch("/api/admin/users/:id/role", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  try {
+    const { role } = req.body || {};
+    if (req.params.id === req.user.id && role !== "admin") {
+      return res.status(400).json({ error: "Você não pode rebaixar a si mesmo" });
+    }
+    const user = auth.setUserRole(req.params.id, role);
+    res.json({ user });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// Admin — scraper global e catálogo
+// ────────────────────────────────────────────────────────────────────────
+
+app.get("/api/admin/scraper/config", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json({
+    config: adminScraper.readConfig(),
+    available: {
+      categories: Object.entries(CATEGORIES).map(([id, info]) => ({ id, label: info.label })),
+      sources: Object.entries(STORES).map(([id, info]) => ({ id, label: info.label })),
+    },
+  });
+});
+
+app.put("/api/admin/scraper/config", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  try {
+    const cfg = adminScraper.writeConfig(req.body || {});
+    res.json({ config: cfg });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/scraper/run", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    if (adminScraper.status().running) {
+      return res.status(409).json({ error: "Scraping já em execução" });
+    }
+    // Não bloqueia a resposta — roda em background
+    adminScraper.runOnce().catch(err => console.error("[admin-scraper.run]", err.message));
+    res.json({ ok: true, message: "Scraping iniciado em background" });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/scraper/status", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json(adminScraper.status());
+});
+
+// Lista paginada do catálogo, com filtros opcionais — visualização do admin
+app.get("/api/admin/catalog", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const pageSize = Math.min(200, Math.max(10, parseInt(req.query.pageSize) || 50));
+    const category = req.query.category || null;
+    const source = req.query.source || null;
+    const search = (req.query.q || "").toString().trim().toLowerCase();
+    const sortBy = req.query.sortBy || "lastSeen_desc";
+
+    let items = catalog.query({
+      categories: category ? [category] : null,
+      sources: source ? [source] : null,
+      limit: 0,
+      sortBy,
+    });
+    if (search) items = items.filter(p => (p.name || "").toLowerCase().includes(search));
+
+    const total = items.length;
+    const start = (page - 1) * pageSize;
+    const slice = items.slice(start, start + pageSize);
+    res.json({
+      page,
+      pageSize,
+      total,
+      items: slice,
+      stats: catalog.getStats(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// WhatsApp (Baileys)
 // ────────────────────────────────────────────────────────────────────────
 
 app.get("/api/whatsapp/sessions", auth.requireAuth, (req, res) => {
@@ -365,12 +562,11 @@ app.listen(PORT, () => {
   console.log(`Nimbus Backend rodando em http://localhost:${PORT}`);
   console.log(`  GET  /api/ofertas?category=gamer&minDiscount=20&limit=10`);
   console.log(`  GET  /api/status`);
-  console.log(`  POST /api/whatsapp/sessions/:id   (inicia sessão)`);
-  console.log(`  GET  /api/whatsapp/sessions/:id   (status + QR)`);
-  console.log(`  POST /api/whatsapp/sessions/:id/groups`);
-  console.log(`  POST /api/whatsapp/sessions/:id/broadcast`);
+  console.log(`  GET  /api/admin/scraper/config (admin)`);
+  console.log(`  POST /api/admin/scraper/run    (admin)`);
+  console.log(`  GET  /api/admin/users          (admin)`);
 
-  // Restaura sessões persistidas e inicia o scheduler
   wa.restoreSessions();
   scheduler.start();
+  adminScraper.start();
 });

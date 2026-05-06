@@ -45,8 +45,9 @@ export const getGroupStats = (group, whatsappGroups = [], { affiliateConfigured 
   const members = linked.reduce((s, w) => s + (w.members || 0), 0);
   const connected = linked.filter(w => w.status === "connected").length;
   const pausedByAffiliate = !affiliateConfigured && groupUsesML(group);
+  const pausedManual = !!group?.paused;
   let status;
-  if (pausedByAffiliate) status = "paused";
+  if (pausedManual || pausedByAffiliate) status = "paused";
   else if (linked.length === 0) status = "empty";
   else if (connected > 0) status = "connected";
   else status = "disconnected";
@@ -57,6 +58,8 @@ export const getGroupStats = (group, whatsappGroups = [], { affiliateConfigured 
     connected,
     status,
     pausedByAffiliate,
+    pausedManual,
+    paused: pausedManual || pausedByAffiliate,
   };
 };
 
@@ -138,8 +141,10 @@ export function formatETA(d, now = new Date()) {
 
 export const sidebarItems = [
   { id: "dashboard", icon: "▦", label: "Dashboard geral" },
-  { id: "products", icon: "⊟", label: "Produtos" },
   { id: "whatsapp", icon: "◎", label: "WhatsApp" },
   { id: "settings", icon: "⚙", label: "Configurações" },
   { id: "subscription", icon: "★", label: "Assinatura" },
+  { id: "products", icon: "⊟", label: "Produtos", adminOnly: true },
+  { id: "admin-scraper", icon: "⟳", label: "Scraping", adminOnly: true },
+  { id: "admin-users",   icon: "♟", label: "Usuários", adminOnly: true },
 ];

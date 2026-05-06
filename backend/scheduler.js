@@ -1,30 +1,22 @@
 const crypto = require("crypto");
-const { scrapeOfertas, applyFilters, normalizeSource } = require("./scraper");
+const { normalizeSource } = require("./scraper");
 const wa = require("./whatsapp");
 const storage = require("./storage");
+const catalog = require("./catalog");
 const affiliate = require("./affiliate");
 
-// Cadência do loop principal (em ms). Roda funcionalidades baseadas em
-// horário: scraping nos horários configurados, envio dentro das janelas.
+// Cadência do loop principal (em ms). Roda janelas de envio.
 const TICK_MS = 30 * 1000;
 
-// Cache de scraping COMPARTILHADO (todos os usuários) por categoria
-// para não martelarmos o ML toda hora. TTL: 10 minutos.
-const SCRAPE_TTL_MS = 10 * 60 * 1000;
-const scrapeCache = new Map(); // category -> { data, ts }
-
-// Trava por categoria pra não disparar duas scrapes paralelas pra mesma cat
-const scrapeInflight = new Map(); // category -> Promise
-
-// Marcas pra não disparar scrape duas vezes no mesmo minuto/categoria
-const scrapeFiredMin = new Map(); // `${userId}::${groupId}::${HH:MM}` -> dateKey
+// Refill do catálogo: faz quando a queue tem menos que isso
+const REFILL_THRESHOLD = 5;
 
 function todayKey(d = new Date()) {
-  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+  return d.toISOString().slice(0, 10);
 }
 
 function hhmm(d = new Date()) {
-  return d.toTimeString().slice(0, 5); // HH:MM (local)
+  return d.toTimeString().slice(0, 5);
 }
 
 function minutesSince(iso) {
@@ -52,29 +44,20 @@ function cooldownMinutes(schedule) {
   return v * 60 * 24; // dias (default)
 }
 
-// Chave estável de produto. NÃO usa o link cru porque o Mercado Livre injeta
-// tracking_id/deal_print_id/wid/position/sid diferentes a cada scrape — isso
-// fazia o MESMO produto ganhar hashes diferentes, furando o cooldown.
-// Estratégia: extrair o ID canônico do produto que aparece no caminho da URL.
+// Mesma chave do catalog.js — duplicada aqui pra evitar circular import
 function productKey(p) {
   const link = p.link || "";
-  // Decodifica %2F etc pra capturar /p/MLB... que vem urlencoded em links de tracking
   const decoded = (() => { try { return decodeURIComponent(link); } catch { return link; } })();
-  // Padrões canônicos de produto no path do ML — NÃO bater com `wid=MLB...` (query)
   const m = decoded.match(/\/p\/MLB(\d+)/i)
         || decoded.match(/\/MLB-?(\d{6,})-/i)
         || decoded.match(/produto\.mercadolivre\.com\.br\/MLB-?(\d{6,})/i);
-  if (m) {
-    return crypto.createHash("md5").update("MLB" + m[1]).digest("hex");
-  }
-  // Fallback 1: origin+pathname (sem query/fragment) já é estável o suficiente
+  if (m) return crypto.createHash("md5").update("MLB" + m[1]).digest("hex");
   if (link) {
     try {
       const u = new URL(link);
       return crypto.createHash("md5").update(u.origin + u.pathname).digest("hex");
     } catch {}
   }
-  // Fallback final: nome normalizado + loja
   const nm = (p.name || "").toLowerCase().replace(/\s+/g, " ").trim();
   return crypto.createHash("md5").update(`${nm}|${p.store || ""}`).digest("hex");
 }
@@ -90,8 +73,6 @@ function renderTemplate(template, p) {
     .replace(/\{link\}/g, p.link || "");
 }
 
-// Normaliza sources (aceita "Mercado Livre"/"ml"/"Amazon"/"amazon", filtra inválidos).
-// Default = ML quando vazio.
 function resolveSources(sources) {
   const ids = (Array.isArray(sources) ? sources : [])
     .map(normalizeSource)
@@ -99,66 +80,46 @@ function resolveSources(sources) {
   return ids.length ? [...new Set(ids)] : ["ml"];
 }
 
-// Grupo está pausado quando depende do ML mas o afiliado não está configurado
-// (sem tag+cookie). Sem afiliado o link sai sem comissão — preferimos não enviar.
+// Grupo está pausado quando depende do ML mas o afiliado não está configurado.
 function groupPausedByAffiliate(group) {
   const sources = resolveSources(group.scraping?.sources);
   if (!sources.includes("ml")) return false;
   return !affiliate.status().configured;
 }
 
-async function scrapeCategoryShared(category, sources) {
-  const ids = resolveSources(sources);
-  const key = `${category || "_all"}::${ids.sort().join(",")}`;
-  const cached = scrapeCache.get(key);
-  if (cached && Date.now() - cached.ts < SCRAPE_TTL_MS) return cached.data;
-
-  if (scrapeInflight.has(key)) return scrapeInflight.get(key);
-
-  const p = (async () => {
-    try {
-      console.log(`[scheduler] scrape ${key}...`);
-      const data = await scrapeOfertas({ category: category || null, sources: ids, limit: 200 });
-      scrapeCache.set(key, { data, ts: Date.now() });
-      return data;
-    } catch (err) {
-      console.error(`[scheduler] erro scrape ${key}:`, err.message);
-      return [];
-    } finally {
-      scrapeInflight.delete(key);
-    }
-  })();
-  scrapeInflight.set(key, p);
-  return p;
+// Auto-aprovação: produtos vão direto pra queue. Se false, vão pra pending pra
+// o usuário aprovar antes de enviar. Default = true (mantém comportamento legado).
+function isAutoApprove(group) {
+  const v = group.scraping?.auto;
+  return v === undefined ? true : !!v;
 }
 
-// Faz scraping pra campanha, aplica filtros, deduplica vs queue/cooldown e
-// devolve a queue limpa + novos itens.
-//
-// Importante: usa productKey(item) recalculado em vez do `item.key` armazenado
-// — keys antigos (de antes do fix de tracking_id) ficam compatíveis na hora.
-async function refillQueue(group) {
+// Faz refill da fila/pending CONSULTANDO O CATÁLOGO (não scrape).
+// Aplica filtros da campanha e exclui keys já no queue/pending/history (cooldown).
+// Retorna { cleanedQueue, cleanedPending, newItems, target, removedFromQueue }.
+// `target` = "queue" ou "pending" (pra onde os newItems vão).
+function refillQueue(group) {
   const cats = Array.isArray(group.categories) && group.categories.length
     ? group.categories
-    : (group.category ? [group.category] : [null]);
+    : (group.category ? [group.category] : []);
   const filters = (group.scraping && group.scraping.filters) || {};
-  const sources = (group.scraping && group.scraping.sources) || ["Mercado Livre"];
+  const sources = resolveSources(group.scraping?.sources);
   const cdMin = cooldownMinutes(group.schedule);
+  const target = isAutoApprove(group) ? "queue" : "pending";
 
-  // Recalcula keys de history pra detectar duplicatas mesmo com tracking_id velho
+  // Recalcula keys do history pra detectar duplicatas
   const historyKeys = (group.history || []).map(h => ({ k: productKey(h), sentAt: h.sentAt }));
   const sentRecentlyKeys = new Set(
     historyKeys.filter(h => minutesSince(h.sentAt) < cdMin).map(h => h.k)
   );
-
-  // Limpa duplicatas dentro da queue + remove items que estão no history (qualquer tempo)
-  // — produtos já enviados não voltam. Após cooldown, eles podem voltar via novo scrape.
   const histKeySet = new Set(historyKeys.map(h => h.k));
+
+  // Limpa duplicatas + já-enviados de dentro da queue
   const queueSeen = new Set();
   const cleanedQueue = (group.queue || []).filter(q => {
     const k = productKey(q);
-    if (histKeySet.has(k)) return false;     // já enviado → fora
-    if (queueSeen.has(k)) return false;      // duplicata interna → fora
+    if (histKeySet.has(k)) return false;
+    if (queueSeen.has(k)) return false;
     queueSeen.add(k);
     return true;
   });
@@ -167,41 +128,59 @@ async function refillQueue(group) {
     console.log(`[scheduler] "${group.name}": removidas ${removedFromQueue} duplicatas/já-enviados da fila`);
   }
 
-  const newItems = [];
-  const inQueueOrNew = new Set([...queueSeen]);
-  for (const cat of cats) {
-    const all = await scrapeCategoryShared(cat, sources);
-    const filtered = applyFilters(all, filters);
-    let added = 0, skippedQueue = 0, skippedCd = 0;
-    for (const p of filtered) {
-      const k = productKey(p);
-      if (inQueueOrNew.has(k)) { skippedQueue++; continue; }
-      if (sentRecentlyKeys.has(k)) { skippedCd++; continue; }
-      inQueueOrNew.add(k);
-      added++;
-      newItems.push({
-        key: k,
-        name: p.name,
-        link: p.link,
-        img: p.img,
-        price: p.price,
-        originalPrice: p.originalPrice,
-        discount: p.discount,
-        store: p.store,
-        category: cat,
-        addedAt: new Date().toISOString(),
-      });
-    }
-    console.log(`[scheduler] "${group.name}" / ${cat || "geral"}: scrape=${all.length}, pós-filtros=${filtered.length}, +${added} novos (já na fila: ${skippedQueue}, em cooldown ${cdMin / 60 / 24}d: ${skippedCd})`);
+  // Mesma limpeza pra pending (descarta já-enviados e duplicatas)
+  const pendingSeen = new Set();
+  const cleanedPending = (group.pending || []).filter(p => {
+    const k = productKey(p);
+    if (histKeySet.has(k)) return false;
+    if (queueSeen.has(k)) return false;
+    if (pendingSeen.has(k)) return false;
+    pendingSeen.add(k);
+    return true;
+  });
+
+  // Exclui da query: tudo que está no queue + pending + cooldown
+  const excludeKeys = new Set([...queueSeen, ...pendingSeen, ...sentRecentlyKeys, ...histKeySet]);
+
+  const candidates = catalog.query({
+    categories: cats.length ? cats : null,
+    sources,
+    excludeKeys,
+    filters,
+    limit: 100,
+  });
+
+  const newItems = candidates.map(p => ({
+    id: p.key,    // a UI de pending busca por `id`
+    key: p.key,
+    name: p.name,
+    link: p.link,
+    img: p.img,
+    price: p.price,
+    originalPrice: p.originalPrice,
+    discount: p.discount,
+    store: p.store,
+    category: typeof p.category === "string" ? p.category : (p.category?.id || null),
+    rating: p.rating ?? null,
+    reviewsCount: p.reviewsCount ?? null,
+    sold: p.sold ?? null,
+    freeShipping: p.freeShipping ?? false,
+    seller: p.seller ?? null,
+    addedAt: new Date().toISOString(),
+  }));
+
+  if (newItems.length || removedFromQueue > 0) {
+    console.log(`[scheduler] "${group.name}": +${newItems.length} → ${target} (cats=${cats.join(",") || "todas"}, sources=${sources.join(",")})`);
   }
-  return { cleanedQueue, newItems, removedFromQueue };
+
+  return { cleanedQueue, cleanedPending, newItems, target, removedFromQueue };
 }
 
 // Atualiza métricas após um envio
 function bumpMetrics(group, ok) {
   if (!ok) return {};
   const now = new Date();
-  const dayIdx = (now.getDay() + 6) % 7; // segunda=0
+  const dayIdx = (now.getDay() + 6) % 7;
   const last = group.history && group.history[0];
   const lastDay = last ? new Date(last.sentAt).toDateString() : null;
   const today = now.toDateString();
@@ -219,8 +198,7 @@ function bumpMetrics(group, ok) {
   };
 }
 
-// Faz o envio de UM item para todos os grupos vinculados — sem checar janela/intervalo.
-// Devolve o patch a aplicar no estado (queue/history/lastSend/...) ou null se nada saiu.
+// Faz o envio de UM item para todos os grupos vinculados
 async function sendItem(userId, group, whatsappGroups, item) {
   const linkedIds = group.whatsappGroupIds || [];
   if (!linkedIds.length) {
@@ -231,16 +209,20 @@ async function sendItem(userId, group, whatsappGroups, item) {
     throw new Error("Grupos vinculados não encontrados.");
   }
 
-  // Se afiliados ML estão configurados e o produto é do ML, troca o link cru
-  // pelo link curto de afiliado. Se falhar (cookie expirado, etc), usa o link
-  // original — melhor enviar sem comissão do que perder a oferta.
   let itemForSend = item;
   if (item.store === "Mercado Livre" && item.link) {
     const aff = await affiliate.gerarLinkAfiliadoML(item.link);
     if (aff) {
       itemForSend = { ...item, link: aff };
-    } else if (affiliate.status().configured) {
+    } else if (affiliate.status().ml.configured) {
       console.warn(`[scheduler] afiliado ML falhou pra "${item.name?.slice(0, 40)}" — enviando com link original`);
+    }
+  } else if (item.store === "Amazon" && item.link) {
+    const aff = affiliate.gerarLinkAfiliadoAmazon(item.link);
+    if (aff) {
+      itemForSend = { ...item, link: aff };
+    } else if (affiliate.status().amazon.configured) {
+      console.warn(`[scheduler] afiliado Amazon falhou pra "${item.name?.slice(0, 40)}" — enviando com link original`);
     }
   }
 
@@ -281,13 +263,15 @@ async function sendItem(userId, group, whatsappGroups, item) {
     throw new Error(errors.length ? `Nenhum envio teve sucesso. ${errors[0]}` : "Nenhum envio teve sucesso.");
   }
 
-  // Remove o item da queue (procura pela key) e adiciona ao history
   const newQueue = (group.queue || []).filter(q => q.key !== item.key);
   const history = [{
     key: item.key,
     name: item.name,
     link: item.link,
+    img: item.img || null,
+    store: item.store || null,
     price: item.price,
+    originalPrice: item.originalPrice ?? null,
     discount: item.discount,
     sentAt: new Date().toISOString(),
     groupCount: sentCount,
@@ -297,29 +281,20 @@ async function sendItem(userId, group, whatsappGroups, item) {
   return { ...metrics, queue: newQueue, history, sentCount };
 }
 
-// Verifica janela/intervalo e despacha o próximo item — usado pelo loop automático
+// Verifica janela/intervalo e despacha o próximo item
 async function dispatchOne(userId, group, whatsappGroups, numbers) {
   const queue = group.queue || [];
   if (!queue.length) return null;
 
   const now = new Date();
   const win = activeWindow(now, group.schedule);
-  if (!win) {
-    console.log(`[scheduler] "${group.name}": fora de janela (agora ${hhmm(now)}, janelas: ${(group.schedule?.windows || []).map(w => w.from + "-" + w.to).join(", ")})`);
-    return null;
-  }
+  if (!win) return null;
 
   const interval = Number(win.interval) || 30;
   const since = minutesSince(group.lastSend);
-  if (since < interval) {
-    console.log(`[scheduler] "${group.name}": último envio há ${since.toFixed(1)}min, intervalo ${interval}min — aguardando`);
-    return null;
-  }
+  if (since < interval) return null;
 
-  if (!(group.whatsappGroupIds || []).length) {
-    console.log(`[scheduler] "${group.name}": ${queue.length} item(s) na fila mas nenhum grupo de WhatsApp vinculado`);
-    return null;
-  }
+  if (!(group.whatsappGroupIds || []).length) return null;
 
   try {
     return await sendItem(userId, group, whatsappGroups, queue[0]);
@@ -329,17 +304,32 @@ async function dispatchOne(userId, group, whatsappGroups, numbers) {
   }
 }
 
-// API pública para o botão "Enviar agora": dispara o próximo item ignorando janela e intervalo,
-// mas atualiza lastSend → o próximo automático conta a partir desse envio.
+// API pública para "Enviar agora": dispara o próximo item ignorando janela e intervalo.
 async function sendNextNow(userId, groupId) {
   const state = storage.loadState(userId);
   const group = (state.groups || []).find(g => g.id === groupId);
   if (!group) throw new Error("Campanha não encontrada");
+  if (group.paused) {
+    throw new Error("Campanha pausada: retome a campanha pra enviar.");
+  }
   if (groupPausedByAffiliate(group)) {
     throw new Error("Campanha pausada: configure o afiliado do Mercado Livre (tag + cookie) em Configurações.");
   }
-  const queue = group.queue || [];
-  if (!queue.length) throw new Error("Fila vazia");
+
+  // Tenta refill se queue está vazia — "enviar agora" é ação manual do user,
+  // então força os itens pra queue mesmo se a campanha está em modo de revisão.
+  let queue = group.queue || [];
+  if (!queue.length) {
+    const { cleanedQueue, newItems } = refillQueue(group);
+    const refilled = [...cleanedQueue, ...newItems];
+    if (refilled.length) {
+      await storage.updateGroupOps(userId, groupId, { queue: refilled });
+      queue = refilled;
+      group.queue = refilled;
+    }
+  }
+
+  if (!queue.length) throw new Error("Fila vazia — sem produtos no catálogo que passem nos filtros desta campanha. Peça pro admin atualizar o catálogo (página Scraping) ou afrouxe os filtros.");
 
   const result = await sendItem(userId, group, state.whatsappGroups || [], queue[0]);
   if (!result) throw new Error("Nenhum envio realizado");
@@ -354,46 +344,39 @@ async function sendNextNow(userId, groupId) {
   return { sent: result.sentCount, lastSend: result.lastSend, queueSize: result.queue.length };
 }
 
-// Processa um grupo: refill + dispatch. Persiste ops via storage.
+// Processa um grupo: refill + dispatch
 async function processGroup(userId, group, whatsappGroups, numbers) {
   const updates = {};
   const now = new Date();
 
+  if (group.paused) {
+    return;
+  }
   if (groupPausedByAffiliate(group)) {
-    console.log(`[scheduler] "${group.name}": pausado — afiliado ML não configurado (tag/cookie ausentes)`);
     return;
   }
 
-  // Scrape se houver horário configurado batendo agora
-  const auto = group.scraping?.auto;
-  const times = group.scraping?.times || [];
-  const dKey = todayKey(now);
-  const cur = hhmm(now);
-
-  let shouldRefill = false;
-  if (auto && times.includes(cur)) {
-    const fireKey = `${userId}::${group.id}::${cur}`;
-    if (scrapeFiredMin.get(fireKey) !== dKey) {
-      scrapeFiredMin.set(fireKey, dKey);
-      shouldRefill = true;
-    }
-  }
-  // Se a fila está vazia E estamos numa janela de envio, faz refill oportunista
-  if (!shouldRefill && (group.queue || []).length === 0 && activeWindow(now, group.schedule)) {
-    shouldRefill = true;
-  }
-
-  if (shouldRefill) {
-    const { cleanedQueue, newItems, removedFromQueue } = await refillQueue(group);
-    if (newItems.length || removedFromQueue > 0) {
-      updates.queue = [...cleanedQueue, ...newItems];
-      if (newItems.length) {
-        console.log(`[scheduler] +${newItems.length} itens na fila de "${group.name}" (user ${userId})`);
+  // Refill se a campanha precisa de itens — leve porque consulta catálogo.
+  // O "buffer" é queue + pending: se auto-aprova vai direto pra queue, senão pra
+  // pending pro usuário revisar. Em ambos os casos, queremos manter ~5 itens
+  // no buffer pra cobrir a janela.
+  const queueLen = (group.queue || []).length;
+  const pendingLen = (group.pending || []).length;
+  const inWindow = !!activeWindow(now, group.schedule);
+  if ((queueLen + pendingLen < REFILL_THRESHOLD) && inWindow) {
+    const { cleanedQueue, cleanedPending, newItems, target, removedFromQueue } = refillQueue(group);
+    if (newItems.length || removedFromQueue > 0 || cleanedPending.length !== (group.pending || []).length) {
+      if (target === "queue") {
+        updates.queue = [...cleanedQueue, ...newItems];
+        if (cleanedPending.length !== (group.pending || []).length) updates.pending = cleanedPending;
+      } else {
+        updates.pending = [...cleanedPending, ...newItems];
+        if (removedFromQueue > 0) updates.queue = cleanedQueue;
       }
     }
   }
 
-  // Dispatch
+  // Dispatch (só consome de queue — pending precisa de aprovação manual)
   const groupForDispatch = updates.queue ? { ...group, queue: updates.queue } : group;
   const res = await dispatchOne(userId, groupForDispatch, whatsappGroups, numbers);
   if (res) Object.assign(updates, res);
@@ -434,7 +417,6 @@ function start() {
   if (_interval) return;
   console.log(`[scheduler] iniciando (tick ${TICK_MS / 1000}s)`);
   _interval = setInterval(tick, TICK_MS);
-  // primeiro tick logo no boot, com delay pra deixar Baileys subir
   setTimeout(tick, 5000);
 }
 
@@ -443,4 +425,41 @@ function stop() {
   _interval = null;
 }
 
-module.exports = { start, stop, tick, sendNextNow };
+// API pública pro botão "Buscar agora do catálogo" — força refill imediato.
+// Aceita overrides opcionais (filters/sources/categories) pra usar valores
+// que ainda não foram persistidos (UI mudou, mas debounce de save ainda não rodou).
+async function refillNow(userId, groupId, overrides = {}) {
+  const state = storage.loadState(userId);
+  const group = (state.groups || []).find(g => g.id === groupId);
+  if (!group) throw new Error("Campanha não encontrada");
+
+  const merged = { ...group };
+  if (overrides && (overrides.filters || overrides.sources || overrides.categories)) {
+    merged.scraping = {
+      ...(group.scraping || {}),
+      ...(overrides.sources !== undefined ? { sources: overrides.sources } : {}),
+      ...(overrides.filters !== undefined ? { filters: overrides.filters } : {}),
+    };
+    if (Array.isArray(overrides.categories)) merged.categories = overrides.categories;
+  }
+
+  const { cleanedQueue, cleanedPending, newItems, target, removedFromQueue } = refillQueue(merged);
+  const updates = {};
+  if (target === "queue") {
+    updates.queue = [...cleanedQueue, ...newItems];
+    if (cleanedPending.length !== (group.pending || []).length) updates.pending = cleanedPending;
+  } else {
+    updates.pending = [...cleanedPending, ...newItems];
+    if (cleanedQueue.length !== (group.queue || []).length) updates.queue = cleanedQueue;
+  }
+  await storage.updateGroupOps(userId, groupId, updates);
+  return {
+    target,
+    queueSize: (updates.queue || group.queue || []).length,
+    pendingSize: (updates.pending || group.pending || []).length,
+    added: newItems.length,
+    removed: removedFromQueue,
+  };
+}
+
+module.exports = { start, stop, tick, sendNextNow, refillNow };

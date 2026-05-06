@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, CATEGORIES, categoryLabel, categoryColor, formatPrice, getGroupCategories, getGroupStats, computeQueueETA, formatETA } from "../data/constants";
-import { fetchOfertas, createWAGroup, leaveWAGroup, getWAInvite, revokeWAInvite, broadcastWA, sendWAText, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups } from "../data/api";
+import { createWAGroup, leaveWAGroup, revokeWAInvite, broadcastWA, sendWAText, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupHistory, approvePendingItem, rejectPendingItem } from "../data/api";
 import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
 
 const TEMPLATE_VARS = [
@@ -25,12 +25,78 @@ const renderTemplate = (tpl) => {
   if (!tpl) return "";
   return tpl.replace(/\{(\w+)\}/g, (_, k) => TEMPLATE_PREVIEW_DATA[k] ?? `{${k}}`);
 };
+
+// Renderiza a formatação que o WhatsApp aplica (*negrito*, _itálico_, ~riscado~, `mono`)
+// como elementos React. Processa linha por linha pra preservar quebras.
+const FORMAT_RE = /(\*[^*\n]+\*|_[^_\n]+_|~[^~\n]+~|`[^`\n]+`)/g;
+function renderWhatsappFormatted(text) {
+  if (!text) return null;
+  const lines = text.split("\n");
+  return lines.map((line, li) => {
+    const parts = line.split(FORMAT_RE).filter(p => p !== undefined);
+    return (
+      <div key={li}>
+        {parts.length === 0
+          ? " "
+          : parts.map((part, i) => {
+              if (part.startsWith("*") && part.endsWith("*") && part.length > 2) return <strong key={i}>{part.slice(1, -1)}</strong>;
+              if (part.startsWith("_") && part.endsWith("_") && part.length > 2) return <em key={i}>{part.slice(1, -1)}</em>;
+              if (part.startsWith("~") && part.endsWith("~") && part.length > 2) return <del key={i}>{part.slice(1, -1)}</del>;
+              if (part.startsWith("`") && part.endsWith("`") && part.length > 2) return <code key={i} style={{ padding: "0 4px", borderRadius: 3, fontFamily: "monospace" }}>{part.slice(1, -1)}</code>;
+              return <span key={i}>{part || " "}</span>;
+            })}
+      </div>
+    );
+  });
+}
+
+// Modelos pré-prontos pra o usuário começar de algum lugar.
+const MESSAGE_PRESETS = [
+  {
+    id: "default",
+    name: "Padrão",
+    desc: "Estrutura completa com emojis",
+    template: `🔥 OFERTA IMPERDÍVEL!
+
+📦 {produto}
+🏪 {loja}
+
+💰 De: {preco_antigo}
+✅ Por: {preco}
+🏷️ Desconto: -{desconto}
+
+🛒 Compre aqui: {link}`,
+  },
+  {
+    id: "urgent",
+    name: "Promoção relâmpago",
+    desc: "Tom de urgência, cria pressão",
+    template: `⚡ *PROMOÇÃO RELÂMPAGO!*
+
+{produto}
+
+~{preco_antigo}~  →  *{preco}*
+🔻 *{desconto}* de desconto
+
+👉 {link}
+
+_Aproveite antes que acabe!_`,
+  },
+];
+
+// Botões de formatação (estilo WhatsApp) — wraps a seleção do textarea com os marcadores.
+const FORMAT_BUTTONS = [
+  { token: "*", label: "B", title: "Negrito (*texto*)", style: { fontWeight: 700 } },
+  { token: "_", label: "I", title: "Itálico (_texto_)", style: { fontStyle: "italic" } },
+  { token: "~", label: "S", title: "Riscado (~texto~)", style: { textDecoration: "line-through" } },
+  { token: "`", label: "</>", title: "Monoespaço (`texto`)", style: { fontFamily: "monospace", fontSize: 11 } },
+];
 import Badge from "./ui/Badge";
 import StatCard from "./ui/StatCard";
 import MiniBar from "./ui/MiniBar";
-import Toggle from "./ui/Toggle";
 import Tabs from "./ui/Tabs";
 import Modal from "./ui/Modal";
+import Toggle from "./ui/Toggle";
 import { ProductRow } from "./ui/ProductCard";
 
 // Marca um valor "vazio" como — para o card mostrar todos os campos sempre.
@@ -129,6 +195,9 @@ function QueueItemCard({ item, idx, eta, onRemove, onDragStart, onDragOver, onDr
           <QueueField label="Preço" value={fmtBR(item.price)} />
           <QueueField label="Preço antigo" value={fmtBR(item.originalPrice)} />
           <QueueField label="Desconto" value={discountStr} />
+          <QueueField label="Vendidos" value={item.sold} />
+          <QueueField label="Avaliação" value={item.rating ? `★ ${item.rating}${item.reviewsCount ? ` (${item.reviewsCount})` : ""}` : null} />
+          <QueueField label="Frete grátis" value={item.freeShipping ? "Sim" : null} />
           <QueueField label="Adicionado" value={addedAtStr} />
         </div>
       </div>
@@ -136,7 +205,7 @@ function QueueItemCard({ item, idx, eta, onRemove, onDragStart, onDragOver, onDr
   );
 }
 
-export default function GroupDashboard({ group, numbers, whatsappGroups = [], affiliateConfigured = true, onBack, onUpdate, onDelete, onCreateWhatsappGroup, onDeleteWhatsappGroup, onUpdateWhatsappGroup, onGoToSettings }) {
+export default function GroupDashboard({ group, numbers, whatsappGroups = [], affiliateConfigured = true, onBack, onUpdate, onDelete, onCreateWhatsappGroup, onDeleteWhatsappGroup, onUpdateWhatsappGroup, onGoToSettings, customTemplates = [], onAddCustomTemplate, onDeleteCustomTemplate, onUpdateCustomTemplate }) {
   const [tab, setTab] = useState("overview");
   const [sched, setSched] = useState(group.schedule);
   const [scraping, setScraping] = useState(group.scraping);
@@ -149,31 +218,99 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     messageTemplate: group.messageTemplate,
   });
   const [saved, setSaved] = useState(false);
-  const [scrapingRunning, setScrapingRunning] = useState(false);
-  const [newTime, setNewTime] = useState("08:00");
   const [showDelete, setShowDelete] = useState(false);
-  const [showLinkModal, setShowLinkModal] = useState(false);
+  // Modal "Adicionar grupo": null = fechado, "choose" | "create" | "existing"
+  const [addStep, setAddStep] = useState(null);
+  const [addExistingNumberId, setAddExistingNumberId] = useState(null);
+  const [addExistingSearch, setAddExistingSearch] = useState("");
   const [waGroupsByNumber, setWaGroupsByNumber] = useState({}); // numberId -> [{jid, name, members}]
   const [loadingWAGroups, setLoadingWAGroups] = useState(false);
   const [waGroupsError, setWaGroupsError] = useState(null);
   const [importingJid, setImportingJid] = useState(null);
-  const [showCreateWGModal, setShowCreateWGModal] = useState(false);
   const [confirmDeleteWG, setConfirmDeleteWG] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
   const [newWGForm, setNewWGForm] = useState({ name: "", numberIds: numbers[0]?.id ? [numbers[0].id] : [], participants: "" });
   const [creatingWG, setCreatingWG] = useState(false);
   const [createWGError, setCreateWGError] = useState(null);
-  const [showPreview, setShowPreview] = useState(false);
   const [sendStatus, setSendStatus] = useState({}); // wgId -> "sending" | "sent" | "error:..."
   const [sendingNow, setSendingNow] = useState(false);
   const [sendNowMsg, setSendNowMsg] = useState(null);
+  const [refilling, setRefilling] = useState(false);
+  const [refillMsg, setRefillMsg] = useState(null);
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [confirmDeleteTpl, setConfirmDeleteTpl] = useState(null);
+  // Aba de modelo selecionada (presets + customs). Inicia tentando casar com o template do grupo.
+  const initialActiveTplKey = (() => {
+    if (group.messageTemplate) {
+      const preset = MESSAGE_PRESETS.find(p => p.template === group.messageTemplate);
+      if (preset) return `preset:${preset.id}`;
+      const custom = customTemplates.find(t => t.template === group.messageTemplate);
+      if (custom) return `custom:${custom.id}`;
+    }
+    return MESSAGE_PRESETS[0] ? `preset:${MESSAGE_PRESETS[0].id}` : null;
+  })();
+  const [activeTplKey, setActiveTplKey] = useState(initialActiveTplKey);
+  const [customNameDraft, setCustomNameDraft] = useState("");
+  const [confirmClearHistory, setConfirmClearHistory] = useState(false);
+  const [clearingHistory, setClearingHistory] = useState(false);
   const dragIdxRef = useRef(null);
   const [dragIdx, setDragIdx] = useState(null);
   const [dragOverIdx, setDragOverIdx] = useState(null);
 
-  // Sincroniza queue/pending/history quando o polling do App atualiza o grupo
-  useEffect(() => { setQueue(group.queue || []); }, [group.queue]);
-  useEffect(() => { setPending(group.pending || []); }, [group.pending]);
+  // Sincroniza queue/pending quando o polling do App atualiza o grupo.
+  // Usa as keys/ids dos itens como dep (não a referência do array) — assim o sync
+  // só dispara quando o conteúdo realmente mudou, e não a cada poll.
+  const queueKeySig = (group.queue || []).map(q => q.key ?? q.id ?? q.name).join("|");
+  const pendingKeySig = (group.pending || []).map(p => p.key ?? p.id ?? p.name).join("|");
+  useEffect(() => { setQueue(group.queue || []); }, [queueKeySig]);
+  useEffect(() => { setPending(group.pending || []); }, [pendingKeySig]);
+
+  async function handleClearHistory() {
+    setClearingHistory(true);
+    try {
+      await clearGroupHistory(group.id);
+      onUpdate(group.id, {
+        history: [],
+        sentToday: 0,
+        sentWeek: 0,
+        weekData: [0, 0, 0, 0, 0, 0, 0],
+        lastSend: "—",
+      });
+      setConfirmClearHistory(false);
+    } catch (err) {
+      alert(`Erro: ${err.message}`);
+    } finally {
+      setClearingHistory(false);
+    }
+  }
+
+  async function triggerRefill() {
+    if (refilling) return;
+    setRefilling(true);
+    setRefillMsg(null);
+    try {
+      // Manda filtros + sources + categories atuais como override pra usar valores
+      // que ainda podem não ter sido persistidos (debounce do auto-save)
+      const r = await refillQueueNow(group.id, {
+        filters: scraping.filters,
+        sources: scraping.sources,
+        categories: groupInfo.categories,
+      });
+      const ops = await loadAppOps();
+      const o = (ops.groups || []).find(g => g.id === group.id);
+      if (o) onUpdate(group.id, { queue: o.queue });
+      const parts = [];
+      if (r.added > 0) parts.push(`+${r.added} novo${r.added !== 1 ? "s" : ""}`);
+      if (r.removed > 0) parts.push(`-${r.removed} duplicado${r.removed !== 1 ? "s" : ""}`);
+      if (parts.length === 0) parts.push("nada novo no catálogo que passe nos filtros");
+      setRefillMsg({ type: r.added > 0 ? "ok" : "warn", text: `${parts.join(", ")} · fila tem ${r.queueSize} item(ns)` });
+      setTimeout(() => setRefillMsg(null), 5000);
+    } catch (err) {
+      setRefillMsg({ type: "err", text: err.message });
+    } finally {
+      setRefilling(false);
+    }
+  }
 
   async function triggerSendNow() {
     if (sendingNow || queue.length === 0) return;
@@ -223,6 +360,92 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     }
   };
 
+  // Envolve a seleção atual do textarea com `marker` (*, _, ~, `).
+  // Sem seleção: insere "markermarker" e posiciona o cursor entre os dois.
+  const wrapSelectionWith = (marker) => {
+    const ta = templateRef.current;
+    const cur = groupInfo.messageTemplate || "";
+    if (!ta || typeof ta.selectionStart !== "number") {
+      setGroupInfo(g => ({ ...g, messageTemplate: cur + marker + marker }));
+      return;
+    }
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    const selected = cur.slice(start, end);
+    const next = cur.slice(0, start) + marker + selected + marker + cur.slice(end);
+    setGroupInfo(g => ({ ...g, messageTemplate: next }));
+    requestAnimationFrame(() => {
+      ta.focus();
+      const newStart = start + marker.length;
+      const newEnd = newStart + selected.length;
+      ta.setSelectionRange(newStart, newEnd);
+    });
+  };
+
+  // Lista de abas de modelo (presets + customs). Cada aba é uma "página" estilo Chrome.
+  const allTabs = [
+    ...MESSAGE_PRESETS.map(p => ({ key: `preset:${p.id}`, kind: "preset", id: p.id, name: p.name, template: p.template })),
+    ...customTemplates.map(t => ({ key: `custom:${t.id}`, kind: "custom", id: t.id, name: t.name, template: t.template })),
+  ];
+  const activeTab = allTabs.find(t => t.key === activeTplKey) || null;
+  const isCustomTab = activeTab?.kind === "custom";
+  // "Dirty" = editor diverge do template salvo da aba ativa, OU o nome custom foi renomeado.
+  const isDirty = !!activeTab && (
+    groupInfo.messageTemplate !== activeTab.template ||
+    (isCustomTab && customNameDraft.trim().length > 0 && customNameDraft.trim() !== activeTab.name)
+  );
+
+  // Sincroniza o draft do nome quando troca de aba (ou quando a aba ativa é renomeada via save).
+  useEffect(() => {
+    setCustomNameDraft(isCustomTab ? activeTab.name : "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab?.key, activeTab?.name]);
+
+  const handleTabClick = (t) => {
+    setActiveTplKey(t.key);
+    setGroupInfo(g => ({ ...g, messageTemplate: t.template }));
+  };
+
+  // "+" cria um novo modelo custom usando o conteúdo atual do editor como semente
+  // (assim "fork" de um preset com edições é natural).
+  const handleNewTab = () => {
+    const base = "Novo modelo";
+    let name = base;
+    let n = 1;
+    while (customTemplates.some(t => t.name === name)) {
+      n++;
+      name = `${base} ${n}`;
+    }
+    const seed = (groupInfo.messageTemplate && groupInfo.messageTemplate.trim()) ? groupInfo.messageTemplate : DEFAULT_MESSAGE_TEMPLATE;
+    const newId = onAddCustomTemplate?.(name, seed);
+    if (newId) {
+      setActiveTplKey(`custom:${newId}`);
+      setGroupInfo(g => ({ ...g, messageTemplate: seed }));
+      requestAnimationFrame(() => { templateRef.current?.focus(); });
+    }
+  };
+
+  // Salva alterações na aba custom ativa (presets são read-only).
+  const saveActiveTab = () => {
+    if (!activeTab || !isDirty || !isCustomTab) return;
+    onUpdateCustomTemplate?.(activeTab.id, {
+      name: customNameDraft.trim() || activeTab.name,
+      template: groupInfo.messageTemplate,
+    });
+  };
+
+  // Quando deleta a aba custom ativa, pula pra primeira aba disponível.
+  const onConfirmedDeleteCustom = (tplId) => {
+    onDeleteCustomTemplate?.(tplId);
+    if (activeTplKey === `custom:${tplId}`) {
+      const fallback = MESSAGE_PRESETS[0];
+      if (fallback) {
+        setActiveTplKey(`preset:${fallback.id}`);
+        setGroupInfo(g => ({ ...g, messageTemplate: fallback.template }));
+      }
+    }
+  };
+
   const copyInvite = (wg) => {
     if (!wg?.inviteLink) return;
     if (typeof navigator !== "undefined" && navigator.clipboard) {
@@ -235,7 +458,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const primaryCat = groupInfo.categories[0] || getGroupCategories(group)[0];
   const barColor = primaryCat === "gamer" ? "#378ADD" : PRIMARY;
   const linkedWGs = whatsappGroups.filter(w => groupInfo.whatsappGroupIds.includes(w.id));
-  const availableWGs = whatsappGroups.filter(w => !groupInfo.whatsappGroupIds.includes(w.id));
   const stats = getGroupStats({ whatsappGroupIds: groupInfo.whatsappGroupIds, scraping: { sources: scraping.sources } }, whatsappGroups, { affiliateConfigured });
 
   const toggleCategory = (id) => setGroupInfo(g => {
@@ -250,36 +472,27 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const linkWG = (wgId) => setGroupInfo(g => ({ ...g, whatsappGroupIds: [...g.whatsappGroupIds, wgId] }));
   const unlinkWG = (wgId) => setGroupInfo(g => ({ ...g, whatsappGroupIds: g.whatsappGroupIds.filter(id => id !== wgId) }));
 
-  // Abre o modal e busca grupos reais do WhatsApp em todos os números conectados.
-  // Mostra tanto os já cadastrados no Nimbus quanto os que existem no WhatsApp mas não foram importados.
-  const openLinkModal = async () => {
-    setShowLinkModal(true);
+  const closeAddModal = () => {
+    setAddStep(null);
+    setAddExistingNumberId(null);
+    setAddExistingSearch("");
     setWaGroupsError(null);
-    const connectedNumbers = numbers.filter(n => n.status === "connected");
-    if (connectedNumbers.length === 0) return;
+  };
+
+  // Carrega os grupos do WhatsApp de UM número (lazy — só quando o usuário escolhe ele).
+  const loadGroupsForNumber = async (numberId) => {
+    setAddExistingNumberId(numberId);
+    setAddExistingSearch("");
+    setWaGroupsError(null);
+    if (waGroupsByNumber[numberId]) return; // já carregado nesta sessão do modal
     setLoadingWAGroups(true);
     try {
-      const entries = await Promise.all(connectedNumbers.map(async n => {
-        try {
-          const list = await listWAGroups(n.id);
-          return [n.id, list];
-        } catch (err) {
-          return [n.id, { __error: err.message || "Falha ao listar" }];
-        }
-      }));
-      const map = {};
-      const errs = [];
-      for (const [nid, val] of entries) {
-        if (val && val.__error) {
-          const num = numbers.find(n => n.id === nid);
-          errs.push(`${num?.label || nid}: ${val.__error}`);
-          map[nid] = [];
-        } else {
-          map[nid] = val;
-        }
-      }
-      setWaGroupsByNumber(map);
-      if (errs.length > 0) setWaGroupsError(errs.join(" · "));
+      const list = await listWAGroups(numberId);
+      setWaGroupsByNumber(m => ({ ...m, [numberId]: list }));
+    } catch (err) {
+      const num = numbers.find(n => n.id === numberId);
+      setWaGroupsError(`${num?.label || numberId}: ${err.message || "Falha ao listar grupos"}`);
+      setWaGroupsByNumber(m => ({ ...m, [numberId]: [] }));
     } finally {
       setLoadingWAGroups(false);
     }
@@ -297,9 +510,16 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         inviteLink: null,
       });
       setGroupInfo(g => ({ ...g, whatsappGroupIds: [...g.whatsappGroupIds, newId] }));
+      closeAddModal();
     } finally {
       setImportingJid(null);
     }
+  };
+
+  // Vincula à campanha um grupo já cadastrado no Nimbus
+  const linkAndClose = (wgId) => {
+    linkWG(wgId);
+    closeAddModal();
   };
 
   const submitCreateWG = async () => {
@@ -344,7 +564,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         setCreateWGError(`Falhou em ${errors.length} número(s):\n${errors.join("\n")}`);
         if (created.length === 0) return;
       }
-      setShowCreateWGModal(false);
+      closeAddModal();
       setNewWGForm({ name: "", numberIds: numbers[0]?.id ? [numbers[0].id] : [], participants: "" });
     } finally {
       setCreatingWG(false);
@@ -475,17 +695,39 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     return times;
   };
 
-  const approveProduct = pid => {
-    const p = pending.find(x => x.id === pid);
-    if (!p) return;
-    setQueue(q => {
-      const newQueue = [...q, { ...p }];
-      const times = computeSendTimes(newQueue.length);
-      return newQueue.map((item, i) => ({ ...item, sendAt: times[i] }));
-    });
-    setPending(ps => ps.filter(x => x.id !== pid));
+  const refreshOps = async () => {
+    try {
+      const ops = await loadAppOps();
+      const o = (ops.groups || []).find(g => g.id === group.id);
+      if (o) onUpdate(group.id, { queue: o.queue, pending: o.pending });
+    } catch {}
   };
-  const rejectProduct = pid => setPending(ps => ps.filter(x => x.id !== pid));
+  const approveProduct = async (pid) => {
+    const p = pending.find(x => (x.id ?? x.key) === pid);
+    if (!p) return;
+    // optimistic
+    setPending(ps => ps.filter(x => (x.id ?? x.key) !== pid));
+    setQueue(q => [...q, { ...p }]);
+    try {
+      await approvePendingItem(group.id, p.id ?? p.key);
+      await refreshOps();
+    } catch (err) {
+      alert(`Erro ao aprovar: ${err.message}`);
+      await refreshOps();
+    }
+  };
+  const rejectProduct = async (pid) => {
+    const p = pending.find(x => (x.id ?? x.key) === pid);
+    if (!p) return;
+    setPending(ps => ps.filter(x => (x.id ?? x.key) !== pid));
+    try {
+      await rejectPendingItem(group.id, p.id ?? p.key);
+      await refreshOps();
+    } catch (err) {
+      alert(`Erro ao rejeitar: ${err.message}`);
+      await refreshOps();
+    }
+  };
   const removeFromQueue = qid => setQueue(q => {
     const newQueue = q.filter(i => (i.id ?? i.key) !== qid);
     const times = computeSendTimes(newQueue.length);
@@ -521,84 +763,13 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     onUpdate(group.id, { queue: next });
   };
 
-  const runScraping = async () => {
-    setScrapingRunning(true);
-    try {
-      const { minDiscount, minPrice, maxPrice, minRating, minSales, keywords } = scraping.filters;
-      const cats = groupInfo.categories.length > 0 ? groupInfo.categories : [primaryCat];
-      const results = await Promise.all(cats.map(cat => fetchOfertas({ category: cat, minDiscount, minPrice, maxPrice, limit: 50, refresh: true, sources: scraping.sources || ["Mercado Livre"] })));
-      const seen = new Set();
-      const merged = [];
-      for (const r of results) {
-        for (const p of r.products) {
-          const key = p.link || p.name;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          merged.push(p);
-        }
-      }
-
-      // Aplicar filtros client-side que o backend não suporta
-      let filtered = merged;
-      if (minRating > 0) {
-        filtered = filtered.filter(p => p.rating && p.rating >= minRating);
-      }
-      if (minSales > 0) {
-        filtered = filtered.filter(p => {
-          if (!p.sold) return false;
-          const m = p.sold.match(/[\d.]+/);
-          return m ? parseInt(m[0].replace(/\./g, "")) >= minSales : false;
-        });
-      }
-      if (keywords && keywords.trim()) {
-        const kws = keywords.split(",").map(k => k.trim().toLowerCase()).filter(Boolean);
-        if (kws.length > 0) {
-          filtered = filtered.filter(p => {
-            const name = p.name.toLowerCase();
-            return kws.some(kw => name.includes(kw));
-          });
-        }
-      }
-
-      const sliced = filtered.slice(0, 20);
-      const times = computeSendTimes(sliced.length);
-      const newProducts = sliced.map((p, i) => ({
-        id: Date.now() + Math.random(),
-        name: p.name,
-        price: p.price,
-        originalPrice: p.originalPrice,
-        discount: p.discount,
-        store: p.store,
-        img: p.img,
-        rating: p.rating,
-        freeShipping: p.freeShipping,
-        sold: p.sold,
-        link: p.link,
-        category: p.category || null,
-        addedAt: new Date().toISOString(),
-        sendAt: times[i],
-      }));
-      if (scraping.mode === "auto") {
-        setQueue(newProducts);
-        setPending([]);
-      } else {
-        setPending(newProducts);
-        setQueue([]);
-      }
-    } catch (err) {
-      console.error("Erro no scraping:", err);
-    } finally {
-      setScrapingRunning(false);
-    }
-  };
-
   const save = () => { onUpdate(group.id, { schedule: sched, scraping, queue, pending, ...groupInfo }); setSaved(true); setTimeout(() => setSaved(false), 2000); };
 
   const groupTabs = [
     { id: "overview", label: "Visão geral" },
     { id: "manage", label: "Gerenciar" },
-    { id: "whatsapp", label: `WhatsApp (${stats.count})` },
-    { id: "scraping", label: "Busca de Produtos" },
+    { id: "messages", label: "Modelos Mensagens" },
+    { id: "whatsapp", label: `Grupos (${stats.count})` },
     { id: "queue", label: `Fila (${queue.length})`, dot: pending.length > 0 },
     { id: "schedule", label: "Disparos" },
     { id: "history", label: "Histórico" },
@@ -612,6 +783,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           <h2 style={{ fontSize: 18, fontWeight: 500, marginBottom: 6 }}>{groupInfo.name}</h2>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {groupInfo.categories.map(c => <Badge key={c} color={categoryColor(c)}>{categoryLabel(c)}</Badge>)}
+            {stats.pausedManual && <Badge color="amber">Pausada</Badge>}
             {stats.pausedByAffiliate && <Badge color="amber">Pausado · sem afiliado ML</Badge>}
             {stats.status === "empty"
               ? <Badge color="gray">Sem grupos do WhatsApp</Badge>
@@ -621,14 +793,27 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={runScraping} disabled={scrapingRunning} style={{ padding: "7px 14px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer", opacity: scrapingRunning ? 0.6 : 1 }}>
-            {scrapingRunning ? "⟳ Buscando..." : "⟳ Buscar agora"}
-          </button>
-          <button disabled={stats.count === 0} style={{ padding: "7px 14px", borderRadius: 8, background: stats.count === 0 ? "var(--color-border-secondary)" : PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: stats.count === 0 ? "not-allowed" : "pointer", fontWeight: 500 }}>
-            Enviar agora{stats.count > 1 ? ` (${stats.count})` : ""}
+          <button
+            onClick={() => onUpdate(group.id, { paused: !group.paused })}
+            title={group.paused ? "Retomar campanha" : "Pausar envios desta campanha"}
+            style={{ padding: "7px 14px", borderRadius: 8, background: group.paused ? PRIMARY : "var(--color-background-secondary)", color: group.paused ? "#fff" : "var(--color-text-primary)", border: group.paused ? "none" : "0.5px solid var(--color-border-tertiary)", fontSize: 13, cursor: "pointer", fontWeight: 500 }}
+          >
+            {group.paused ? "▶ Retomar" : "⏸ Pausar"}
           </button>
         </div>
       </div>
+
+      {stats.pausedManual && (
+        <div style={{ background: "#FEF3C7", border: "0.5px solid #F4D08A", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 16 }}>⏸</span>
+          <span style={{ fontSize: 13, color: "#854F0B", flex: 1, minWidth: 200 }}>
+            Esta campanha está <strong>pausada manualmente</strong> — não vai buscar produtos nem enviar mensagens até ser retomada.
+          </span>
+          <button onClick={() => onUpdate(group.id, { paused: false })} style={{ padding: "6px 12px", borderRadius: 8, background: "#854F0B", color: "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
+            Retomar
+          </button>
+        </div>
+      )}
 
       {stats.pausedByAffiliate && (
         <div style={{ background: "#FEF3C7", border: "0.5px solid #F4D08A", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -652,7 +837,16 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             <StatCard label="Envios hoje" value={group.sentToday} color={PRIMARY_DARK} />
             <StatCard label="Envios semana" value={group.sentWeek} />
             <StatCard label="Na fila" value={queue.length} sub={pending.length > 0 ? `${pending.length} aguardando revisão` : undefined} color={pending.length > 0 ? "#854F0B" : undefined} />
-            <StatCard label="Último envio" value={group.lastSend} />
+            {(() => {
+              const d = group.lastSend && group.lastSend !== "—" ? new Date(group.lastSend) : null;
+              const valid = d && !isNaN(d.getTime());
+              const today = valid && d.toDateString() === new Date().toDateString();
+              const value = valid
+                ? (today ? d.toTimeString().slice(0, 5) : formatETA(d))
+                : "—";
+              const sub = valid && today ? "hoje" : (valid ? d.toLocaleDateString("pt-BR") : undefined);
+              return <StatCard label="Último envio" value={value} sub={sub} />;
+            })()}
           </div>
           <div className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
             <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
@@ -660,10 +854,16 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               <MiniBar data={group.weekData} color={barColor} />
             </div>
             <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-              <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 10, color: "var(--color-text-secondary)" }}>Scraping</div>
-              <div style={{ fontSize: 13, marginBottom: 6 }}>{scraping.auto ? `Auto — ${scraping.times.join(", ")}` : "Manual"}</div>
-              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 4 }}>Modo: {scraping.mode === "auto" ? "Entrada automática" : scraping.mode === "manual" ? "Revisão manual" : "Auto com revisão"}</div>
-              <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Fontes: {scraping.sources.join(", ")}</div>
+              <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 10, color: "var(--color-text-secondary)" }}>Filtros do catálogo</div>
+              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 4 }}>
+                Categorias: {(groupInfo.categories || []).map(c => categoryLabel(c)).join(", ") || "—"}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 4 }}>
+                Lojas: {(scraping.sources || []).join(", ") || "todas"}
+              </div>
+              {scraping.filters?.minDiscount > 0 && (
+                <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Desconto mín: {scraping.filters.minDiscount}%</div>
+              )}
             </div>
           </div>
         </div>
@@ -697,55 +897,8 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             </div>
           </div>
 
-
-          <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10, gap: 10, flexWrap: "wrap" }}>
-              <div>
-                <div style={{ fontWeight: 500, marginBottom: 4 }}>Modelo de mensagem</div>
-                <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
-                  Como cada produto será enviado nos grupos. Clique numa variável para inseri-la onde o cursor estiver.
-                </div>
-              </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                <button onClick={() => setShowPreview(p => !p)} style={{ padding: "5px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: "pointer" }}>{showPreview ? "Editar" : "👁 Preview"}</button>
-                <button onClick={() => setGroupInfo(g => ({ ...g, messageTemplate: DEFAULT_MESSAGE_TEMPLATE }))} style={{ padding: "5px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: "pointer" }}>Restaurar padrão</button>
-              </div>
-            </div>
-
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
-              {TEMPLATE_VARS.map(v => (
-                <button
-                  key={v.token}
-                  onClick={() => insertTemplateVar(v.token)}
-                  title={`Inserir ${v.desc}`}
-                  style={{ padding: "4px 10px", borderRadius: 6, border: `0.5px solid ${PRIMARY}`, background: PRIMARY_LIGHT, color: PRIMARY_DARK, fontSize: 11, fontFamily: "monospace", cursor: "pointer", fontWeight: 500 }}
-                >
-                  {v.token}
-                </button>
-              ))}
-            </div>
-
-            {showPreview ? (
-              <div style={{ width: "100%", minHeight: 160, padding: 12, borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "#E1F5EE", fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.5, fontFamily: "inherit" }}>
-                {renderTemplate(groupInfo.messageTemplate) || <span style={{ color: "var(--color-text-secondary)" }}>Modelo vazio.</span>}
-                <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 10, paddingTop: 8, borderTop: "0.5px solid rgba(0,0,0,0.06)" }}>
-                  Pré-visualização com dados de exemplo
-                </div>
-              </div>
-            ) : (
-              <textarea
-                ref={templateRef}
-                value={groupInfo.messageTemplate}
-                onChange={e => setGroupInfo(g => ({ ...g, messageTemplate: e.target.value }))}
-                style={{ width: "100%", padding: 10, borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, resize: "vertical", minHeight: 160, boxSizing: "border-box", fontFamily: "inherit", lineHeight: 1.5 }}
-                placeholder={DEFAULT_MESSAGE_TEMPLATE}
-              />
-            )}
-          </div>
-
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <button onClick={save} style={{ padding: "9px 24px", borderRadius: 8, background: saved ? "#3B6D11" : PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>{saved ? "✓ Salvo!" : "Salvar alterações"}</button>
-            <button style={{ padding: "9px 18px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Pausar grupo</button>
             <button onClick={() => setShowDelete(true)} style={{ padding: "9px 18px", borderRadius: 8, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>Excluir grupo</button>
           </div>
 
@@ -764,18 +917,199 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         </div>
       )}
 
-      {tab === "whatsapp" && (() => {
-        const linkedNumberIds = [...new Set(linkedWGs.map(w => w.numberId))];
-        const linkedNumbers = numbers.filter(n => linkedNumberIds.includes(n.id));
-        return (
+      {tab === "messages" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div style={{ display: "flex", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
-            <StatCard label="Números vinculados" value={linkedNumbers.length} color={PRIMARY_DARK} />
-            <StatCard label="Grupos vinculados" value={stats.count} />
-            <StatCard label="Total de membros" value={stats.members} />
-            <StatCard label="Conectados" value={`${stats.connected}/${stats.count}`} color={stats.status === "connected" ? undefined : "#854F0B"} />
+          <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontWeight: 500, marginBottom: 4 }}>Modelo de mensagem</div>
+              <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                Cada aba é um modelo. Clique em + pra criar um novo, edite à esquerda — a prévia atualiza enquanto você digita.
+              </div>
+            </div>
+
+            {/* Abas estilo Chrome — modelos prontos + meus modelos + (+) */}
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 2, borderBottom: "0.5px solid var(--color-border-tertiary)", marginBottom: 14, overflowX: "auto", paddingTop: 2 }}>
+              {allTabs.map(t => {
+                const isActive = t.key === activeTplKey;
+                const tabIsDirty = isActive && isDirty;
+                return (
+                  <div
+                    key={t.key}
+                    onClick={() => handleTabClick(t)}
+                    title={t.kind === "preset" ? `${t.name} (modelo pronto)` : t.name}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 6,
+                      padding: "7px 12px",
+                      borderTopLeftRadius: 8, borderTopRightRadius: 8,
+                      borderTop: `0.5px solid ${isActive ? "var(--color-border-tertiary)" : "transparent"}`,
+                      borderLeft: `0.5px solid ${isActive ? "var(--color-border-tertiary)" : "transparent"}`,
+                      borderRight: `0.5px solid ${isActive ? "var(--color-border-tertiary)" : "transparent"}`,
+                      borderBottom: isActive ? "0.5px solid var(--color-background-primary)" : "0.5px solid transparent",
+                      background: isActive ? "var(--color-background-primary)" : "transparent",
+                      color: isActive ? "var(--color-text-primary)" : "var(--color-text-secondary)",
+                      fontWeight: isActive ? 500 : 400,
+                      fontSize: 12,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                      marginBottom: -1,
+                      flexShrink: 0,
+                      maxWidth: 200,
+                    }}
+                  >
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {t.name}{tabIsDirty ? " •" : ""}
+                    </span>
+                    {t.kind === "custom" && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setConfirmDeleteTpl(t); }}
+                        title="Excluir modelo"
+                        style={{ background: "transparent", border: "none", padding: "0 4px", cursor: "pointer", color: "var(--color-text-secondary)", fontSize: 16, lineHeight: 1, marginLeft: 2, borderRadius: 4 }}
+                      >×</button>
+                    )}
+                  </div>
+                );
+              })}
+              <button
+                onClick={handleNewTab}
+                title="Criar novo modelo (a partir do conteúdo atual)"
+                style={{
+                  padding: "6px 12px",
+                  borderTopLeftRadius: 8, borderTopRightRadius: 8,
+                  border: "0.5px dashed var(--color-border-secondary)",
+                  borderBottom: "none",
+                  background: "transparent",
+                  color: PRIMARY_DARK,
+                  fontSize: 16,
+                  lineHeight: 1,
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                  marginBottom: -1,
+                  flexShrink: 0,
+                  fontWeight: 500,
+                  marginLeft: 4,
+                }}
+              >+</button>
+            </div>
+
+            {/* Linha do nome do modelo (só editável em customs) + botão "Salvar alterações" */}
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12, alignItems: "flex-end" }}>
+              <div style={{ flex: "1 1 240px", minWidth: 180 }}>
+                <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Nome do modelo</label>
+                {isCustomTab ? (
+                  <input
+                    value={customNameDraft}
+                    onChange={e => setCustomNameDraft(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") saveActiveTab(); }}
+                    placeholder="Ex: Eletrônicos com urgência"
+                    style={{ width: "100%", height: 36, padding: "0 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", color: "var(--color-text-primary)", fontSize: 13, boxSizing: "border-box" }}
+                  />
+                ) : (
+                  <div
+                    title="Modelos prontos não podem ser renomeados — clique em + pra criar um novo a partir deste"
+                    style={{ width: "100%", height: 36, padding: "0 10px", borderRadius: 8, border: "0.5px dashed var(--color-border-tertiary)", background: "transparent", color: "var(--color-text-secondary)", fontSize: 13, boxSizing: "border-box", display: "flex", alignItems: "center", fontStyle: "italic" }}
+                  >
+                    {activeTab ? `${activeTab.name} · modelo pronto` : "—"}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={saveActiveTab}
+                disabled={!isDirty || !isCustomTab}
+                title={!isCustomTab
+                  ? "Modelos prontos não podem ser editados — clique em + pra criar um novo a partir deste"
+                  : (isDirty ? "Salvar alterações neste modelo" : "Sem alterações pra salvar")}
+                style={{
+                  height: 36, padding: "0 18px", borderRadius: 8,
+                  border: "none",
+                  background: (isDirty && isCustomTab) ? PRIMARY : "var(--color-background-secondary)",
+                  color: (isDirty && isCustomTab) ? "#fff" : "var(--color-text-secondary)",
+                  fontSize: 13, fontWeight: 500,
+                  cursor: (isDirty && isCustomTab) ? "pointer" : "not-allowed",
+                  opacity: (isDirty && isCustomTab) ? 1 : 0.55,
+                }}
+              >
+                Salvar alterações
+              </button>
+            </div>
+
+            {/* Toolbar: formatação + variáveis */}
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6, alignItems: "center" }}>
+              <span style={{ fontSize: 11, color: "var(--color-text-secondary)", marginRight: 4 }}>Formatar:</span>
+              {FORMAT_BUTTONS.map(b => (
+                <button
+                  key={b.token}
+                  onClick={() => wrapSelectionWith(b.token)}
+                  title={b.title}
+                  style={{ minWidth: 30, padding: "4px 10px", borderRadius: 6, border: "0.5px solid var(--color-border-secondary)", background: "var(--color-background-secondary)", color: "var(--color-text-primary)", fontSize: 12, cursor: "pointer", ...b.style }}
+                >
+                  {b.label}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
+              <span style={{ fontSize: 11, color: "var(--color-text-secondary)", marginRight: 4 }}>Inserir:</span>
+              {TEMPLATE_VARS.map(v => (
+                <button
+                  key={v.token}
+                  onClick={() => insertTemplateVar(v.token)}
+                  title={`Inserir ${v.desc}`}
+                  style={{ padding: "4px 10px", borderRadius: 6, border: `0.5px solid ${PRIMARY}`, background: PRIMARY_LIGHT, color: PRIMARY_DARK, fontSize: 11, fontFamily: "monospace", cursor: "pointer", fontWeight: 500 }}
+                >
+                  {v.token}
+                </button>
+              ))}
+            </div>
+
+            {/* Editor + Preview lado a lado */}
+            <div className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 4 }}>Editor</div>
+                <textarea
+                  ref={templateRef}
+                  value={groupInfo.messageTemplate}
+                  onChange={e => setGroupInfo(g => ({ ...g, messageTemplate: e.target.value }))}
+                  style={{ width: "100%", padding: 10, borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, resize: "vertical", minHeight: 260, boxSizing: "border-box", fontFamily: "inherit", lineHeight: 1.5 }}
+                  placeholder={DEFAULT_MESSAGE_TEMPLATE}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 4 }}>Prévia (como aparece no WhatsApp)</div>
+                <div className="wa-preview" style={{ width: "100%", minHeight: 260, padding: 12, borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.5, fontFamily: "inherit", boxSizing: "border-box" }}>
+                  {groupInfo.messageTemplate
+                    ? renderWhatsappFormatted(renderTemplate(groupInfo.messageTemplate))
+                    : <span style={{ opacity: 0.6, fontStyle: "italic" }}>Modelo vazio. Comece a digitar à esquerda.</span>}
+                </div>
+                <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 6 }}>
+                  Pré-visualização usa dados de exemplo. As variáveis são substituídas pelos dados reais no envio.
+                </div>
+              </div>
+            </div>
           </div>
 
+          <button onClick={save} style={{ alignSelf: "flex-start", padding: "9px 24px", borderRadius: 8, background: saved ? "#3B6D11" : PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>{saved ? "✓ Salvo!" : "Salvar mensagem"}</button>
+
+          {confirmDeleteTpl && (
+            <Modal title="Excluir modelo?" onClose={() => setConfirmDeleteTpl(null)} danger>
+              <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+                <strong style={{ color: "var(--color-text-primary)" }}>{confirmDeleteTpl.name}</strong> será removido da sua lista. Campanhas que estão usando esse modelo continuam com o texto que já tinham — só some da lista.
+              </p>
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button onClick={() => setConfirmDeleteTpl(null)} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+                <button
+                  onClick={() => { onConfirmedDeleteCustom(confirmDeleteTpl.id); setConfirmDeleteTpl(null); }}
+                  style={{ padding: "8px 16px", borderRadius: 8, background: "#E24B4A", color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}
+                >
+                  Sim, excluir
+                </button>
+              </div>
+            </Modal>
+          )}
+        </div>
+      )}
+
+      {tab === "whatsapp" && (() => {
+        return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
             <div>
               <div style={{ fontSize: 14, fontWeight: 500 }}>Grupos do WhatsApp</div>
@@ -789,8 +1123,12 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                   {broadcasting ? "⟳ Enviando..." : `📤 Enviar a todos (${linkedWGs.length})`}
                 </button>
               )}
-              <button onClick={openLinkModal} disabled={numbers.length === 0 && availableWGs.length === 0} style={{ padding: "7px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: (numbers.length === 0 && availableWGs.length === 0) ? "not-allowed" : "pointer", opacity: (numbers.length === 0 && availableWGs.length === 0) ? 0.5 : 1 }}>+ Vincular existente</button>
-              <button onClick={() => setShowCreateWGModal(true)} disabled={numbers.length === 0} title={numbers.length === 0 ? "Conecte um número primeiro" : ""} style={{ padding: "7px 12px", borderRadius: 8, background: numbers.length === 0 ? "var(--color-border-secondary)" : PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: numbers.length === 0 ? "not-allowed" : "pointer", fontWeight: 500 }}>+ Criar grupo</button>
+              <button
+                onClick={() => setAddStep("choose")}
+                disabled={numbers.length === 0}
+                title={numbers.length === 0 ? "Conecte um número de WhatsApp primeiro" : "Adicionar grupo a esta campanha"}
+                style={{ padding: "7px 12px", borderRadius: 8, background: numbers.length === 0 ? "var(--color-border-secondary)" : PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: numbers.length === 0 ? "not-allowed" : "pointer", fontWeight: 500 }}
+              >+ Adicionar grupo</button>
             </div>
           </div>
 
@@ -800,8 +1138,8 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               <div style={{ fontWeight: 500, color: "var(--color-text-primary)", marginBottom: 6 }}>Nenhum grupo do WhatsApp vinculado</div>
               <div style={{ fontSize: 12, marginBottom: 14 }}>Crie um novo grupo ou vincule um existente para começar a enviar mensagens.</div>
               {numbers.length === 0
-                ? <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Conecte um número do WhatsApp na aba <strong>WhatsApp</strong> do menu para criar grupos.</div>
-                : <button onClick={() => setShowCreateWGModal(true)} style={{ padding: "8px 18px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>+ Criar primeiro grupo</button>
+                ? <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Conecte um número do WhatsApp na aba <strong>WhatsApp</strong> do menu para adicionar grupos.</div>
+                : <button onClick={() => setAddStep("choose")} style={{ padding: "8px 18px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>+ Adicionar primeiro grupo</button>
               }
             </div>
           ) : (
@@ -882,115 +1220,170 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             </div>
           )}
 
-          {showLinkModal && (() => {
-            const cadastradosJids = new Set(whatsappGroups.map(w => w.id));
-            // Grupos reais do WhatsApp (em todos números conectados) que ainda NÃO estão no Nimbus
-            const importableByNumber = Object.entries(waGroupsByNumber)
-              .map(([nid, list]) => [nid, (list || []).filter(g => !cadastradosJids.has(g.jid))])
-              .filter(([, list]) => list.length > 0);
-            const totalImportable = importableByNumber.reduce((s, [, l]) => s + l.length, 0);
-            return (
-            <Modal title="Vincular grupo do WhatsApp" onClose={() => setShowLinkModal(false)}>
-              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
-                Vincule um grupo já cadastrado no Nimbus, ou importe direto do seu WhatsApp.
+          {addStep === "choose" && (
+            <Modal title="Adicionar grupo" onClose={closeAddModal}>
+              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>
+                Como você quer adicionar um grupo a esta campanha?
               </div>
-
-              {/* Seção 1: já cadastrados no Nimbus */}
-              <div style={{ marginBottom: 18 }}>
-                <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6, color: "var(--color-text-secondary)" }}>
-                  Já cadastrados no Nimbus {availableWGs.length > 0 && `(${availableWGs.length})`}
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <button
+                  onClick={() => setAddStep("create")}
+                  disabled={numbers.length === 0}
+                  style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "14px 16px", borderRadius: 10, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", cursor: numbers.length === 0 ? "not-allowed" : "pointer", textAlign: "left", opacity: numbers.length === 0 ? 0.5 : 1 }}
+                >
+                  <span style={{ fontSize: 22 }}>➕</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 2 }}>Criar grupo novo</div>
+                    <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                      Cria um grupo novo no WhatsApp e já vincula a esta campanha.
+                    </div>
+                  </div>
+                </button>
+                <button
+                  onClick={() => setAddStep("existing")}
+                  disabled={numbers.length === 0}
+                  style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "14px 16px", borderRadius: 10, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", cursor: numbers.length === 0 ? "not-allowed" : "pointer", textAlign: "left", opacity: numbers.length === 0 ? 0.5 : 1 }}
+                >
+                  <span style={{ fontSize: 22 }}>🔗</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 2 }}>Adicionar grupo existente</div>
+                    <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                      Escolha um número e selecione um dos grupos do WhatsApp dele.
+                    </div>
+                  </div>
+                </button>
+              </div>
+              {numbers.length === 0 && (
+                <div style={{ fontSize: 11, color: "#854F0B", marginTop: 12, padding: "8px 10px", background: "#FEF3C7", borderRadius: 8 }}>
+                  Conecte um número de WhatsApp na aba <strong>WhatsApp</strong> antes de adicionar grupos.
                 </div>
-                {availableWGs.length === 0 ? (
-                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)", padding: "10px 0", fontStyle: "italic" }}>
-                    Nenhum grupo disponível — todos já estão vinculados.
-                  </div>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 200, overflowY: "auto" }}>
-                    {availableWGs.map(w => {
-                      const number = numbers.find(n => n.id === w.numberId);
-                      return (
-                        <div key={w.id} onClick={() => { linkWG(w.id); setShowLinkModal(false); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, border: "0.5px solid var(--color-border-tertiary)", cursor: "pointer", background: "var(--color-background-secondary)" }}>
-                          <span style={{ width: 8, height: 8, borderRadius: "50%", background: w.status === "connected" ? PRIMARY : "#E24B4A", flexShrink: 0 }} />
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 13, fontWeight: 500 }}>{w.name}</div>
-                            <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
-                              {w.members} membros · via {number ? number.label : "?"}
-                            </div>
-                          </div>
-                          <span style={{ fontSize: 11, color: PRIMARY_DARK, fontWeight: 500 }}>+ Vincular</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* Seção 2: grupos reais do WhatsApp ainda não importados */}
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6, color: "var(--color-text-secondary)" }}>
-                  Importar do seu WhatsApp {totalImportable > 0 && `(${totalImportable})`}
-                </div>
-                {numbers.filter(n => n.status === "connected").length === 0 ? (
-                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)", padding: "10px 0", fontStyle: "italic" }}>
-                    Conecte um número para listar grupos do seu WhatsApp.
-                  </div>
-                ) : loadingWAGroups ? (
-                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)", padding: "10px 0" }}>
-                    ⟳ Carregando grupos do WhatsApp...
-                  </div>
-                ) : totalImportable === 0 ? (
-                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)", padding: "10px 0", fontStyle: "italic" }}>
-                    Nenhum grupo novo encontrado no WhatsApp.
-                  </div>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 280, overflowY: "auto" }}>
-                    {importableByNumber.map(([nid, list]) => {
-                      const num = numbers.find(n => n.id === nid);
-                      return (
-                        <div key={nid}>
-                          <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 4 }}>
-                            📱 {num?.label || nid} — {num?.phone}
-                          </div>
-                          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                            {list.map(g => {
-                              const importing = importingJid === g.jid;
-                              return (
-                                <div key={g.jid} onClick={() => !importing && importAndLink(nid, g)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 10, border: "0.5px dashed var(--color-border-tertiary)", cursor: importing ? "wait" : "pointer", background: "var(--color-background-primary)", opacity: importing ? 0.6 : 1 }}>
-                                  <span style={{ fontSize: 14 }}>📥</span>
-                                  <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div style={{ fontSize: 13, fontWeight: 500 }}>{g.name || "(sem nome)"}</div>
-                                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
-                                      {g.members} membro{g.members !== 1 ? "s" : ""}
-                                    </div>
-                                  </div>
-                                  <span style={{ fontSize: 11, color: PRIMARY_DARK, fontWeight: 500 }}>
-                                    {importing ? "⟳ Importando..." : "Importar e vincular"}
-                                  </span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                {waGroupsError && (
-                  <div style={{ fontSize: 11, color: "#A32D2D", marginTop: 8, padding: "6px 10px", background: "#FCEBEB", borderRadius: 6 }}>
-                    {waGroupsError}
-                  </div>
-                )}
-              </div>
-
-              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
-                <button onClick={() => setShowLinkModal(false)} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Fechar</button>
-              </div>
+              )}
             </Modal>
+          )}
+
+          {addStep === "existing" && (() => {
+            const cadastradosByJid = new Map(whatsappGroups.map(w => [w.id, w]));
+            const linkedSet = new Set(groupInfo.whatsappGroupIds);
+            const connectedNumbers = numbers.filter(n => n.status === "connected");
+            const selectedNum = numbers.find(n => n.id === addExistingNumberId);
+            const rawList = addExistingNumberId ? (waGroupsByNumber[addExistingNumberId] || []) : [];
+            const q = addExistingSearch.trim().toLowerCase();
+            const filtered = rawList
+              .filter(g => !q || (g.name || "").toLowerCase().includes(q))
+              .map(g => {
+                const existing = cadastradosByJid.get(g.jid);
+                return {
+                  ...g,
+                  alreadyInNimbus: !!existing,
+                  alreadyLinked: existing ? linkedSet.has(existing.id) : false,
+                  nimbusId: existing?.id || null,
+                };
+              });
+            return (
+              <Modal title="Adicionar grupo existente" onClose={closeAddModal}>
+                {!addExistingNumberId ? (
+                  <>
+                    <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
+                      Selecione o número de WhatsApp pra listar os grupos dele.
+                    </div>
+                    {connectedNumbers.length === 0 ? (
+                      <div style={{ fontSize: 12, color: "#854F0B", padding: "10px 12px", background: "#FEF3C7", borderRadius: 8 }}>
+                        Nenhum número conectado. Conecte um número primeiro.
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 320, overflowY: "auto" }}>
+                        {connectedNumbers.map(n => (
+                          <button
+                            key={n.id}
+                            onClick={() => loadGroupsForNumber(n.id)}
+                            style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", cursor: "pointer", textAlign: "left" }}
+                          >
+                            <span style={{ width: 8, height: 8, borderRadius: "50%", background: PRIMARY, flexShrink: 0 }} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 13, fontWeight: 500 }}>{n.label}</div>
+                              <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{n.phone}</div>
+                            </div>
+                            <span style={{ fontSize: 11, color: PRIMARY_DARK, fontWeight: 500 }}>Listar grupos →</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, fontSize: 12, color: "var(--color-text-secondary)" }}>
+                      <button onClick={() => { setAddExistingNumberId(null); setAddExistingSearch(""); setWaGroupsError(null); }} style={{ padding: "4px 10px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: "pointer" }}>← Trocar número</button>
+                      <span>📱 {selectedNum?.label} <span style={{ color: "var(--color-text-secondary)" }}>· {selectedNum?.phone}</span></span>
+                    </div>
+                    <input
+                      autoFocus
+                      value={addExistingSearch}
+                      onChange={e => setAddExistingSearch(e.target.value)}
+                      placeholder="Buscar grupo pelo nome..."
+                      style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", marginBottom: 10 }}
+                    />
+                    {loadingWAGroups ? (
+                      <div style={{ fontSize: 12, color: "var(--color-text-secondary)", padding: "20px 0", textAlign: "center" }}>⟳ Carregando grupos do WhatsApp...</div>
+                    ) : waGroupsError ? (
+                      <div style={{ fontSize: 12, color: "#A32D2D", padding: "10px 12px", background: "#FCEBEB", borderRadius: 8 }}>{waGroupsError}</div>
+                    ) : rawList.length === 0 ? (
+                      <div style={{ fontSize: 12, color: "var(--color-text-secondary)", padding: "20px 0", textAlign: "center", fontStyle: "italic" }}>Nenhum grupo encontrado neste número.</div>
+                    ) : filtered.length === 0 ? (
+                      <div style={{ fontSize: 12, color: "var(--color-text-secondary)", padding: "20px 0", textAlign: "center", fontStyle: "italic" }}>Nenhum grupo bate com "{addExistingSearch}".</div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 360, overflowY: "auto" }}>
+                        {filtered.map(g => {
+                          const importing = importingJid === g.jid;
+                          const onClick = g.alreadyLinked ? null
+                            : g.alreadyInNimbus ? () => linkAndClose(g.nimbusId)
+                            : () => importAndLink(addExistingNumberId, g);
+                          const actionLabel = g.alreadyLinked ? "✓ Já nesta campanha"
+                            : importing ? "⟳ Adicionando..."
+                            : g.alreadyInNimbus ? "+ Vincular"
+                            : "+ Adicionar";
+                          return (
+                            <div
+                              key={g.jid}
+                              onClick={onClick || undefined}
+                              style={{
+                                display: "flex", alignItems: "center", gap: 10,
+                                padding: "10px 12px", borderRadius: 10,
+                                border: "0.5px solid var(--color-border-tertiary)",
+                                background: g.alreadyLinked ? "var(--color-background-primary)" : "var(--color-background-secondary)",
+                                cursor: !onClick || importing ? "default" : "pointer",
+                                opacity: g.alreadyLinked ? 0.5 : (importing ? 0.6 : 1),
+                              }}
+                            >
+                              <span style={{ fontSize: 16 }}>👥</span>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 13, fontWeight: 500 }}>{g.name || "(sem nome)"}</div>
+                                <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                                  {g.members} membro{g.members !== 1 ? "s" : ""}
+                                  {g.alreadyInNimbus && !g.alreadyLinked && " · já cadastrado no Nimbus"}
+                                </div>
+                              </div>
+                              <span style={{ fontSize: 11, color: g.alreadyLinked ? "var(--color-text-secondary)" : PRIMARY_DARK, fontWeight: 500 }}>
+                                {actionLabel}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </>
+                )}
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
+                  <button onClick={closeAddModal} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Fechar</button>
+                </div>
+              </Modal>
             );
           })()}
 
-          {showCreateWGModal && (
-            <Modal title="Criar grupo no WhatsApp" onClose={() => setShowCreateWGModal(false)}>
+          {addStep === "create" && (
+            <Modal title="Criar grupo no WhatsApp" onClose={closeAddModal}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                <button onClick={() => setAddStep("choose")} style={{ padding: "4px 10px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: "pointer" }}>← Voltar</button>
+              </div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14, lineHeight: 1.5 }}>
                 Um novo grupo será criado <strong>de fato no WhatsApp</strong> e vinculado a esta campanha. O WhatsApp exige pelo menos um participante além de você.
               </div>
@@ -1052,7 +1445,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 )}
               </div>
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 18 }}>
-                <button onClick={() => setShowCreateWGModal(false)} disabled={creatingWG} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+                <button onClick={closeAddModal} disabled={creatingWG} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
                 <button onClick={submitCreateWG} disabled={!newWGForm.name.trim() || (newWGForm.numberIds || []).length === 0 || creatingWG} style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: (!newWGForm.name.trim() || (newWGForm.numberIds || []).length === 0 || creatingWG) ? 0.5 : 1 }}>
                   {creatingWG ? "⟳ Criando..." : (newWGForm.numberIds || []).length > 1 ? `Criar e vincular (${newWGForm.numberIds.length})` : "Criar e vincular"}
                 </button>
@@ -1075,84 +1468,51 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         );
       })()}
 
-      {tab === "scraping" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-              <div>
-                <div style={{ fontWeight: 500 }}>Scraping automático</div>
-                <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>Busca produtos automaticamente nos horários configurados</div>
-              </div>
-              <Toggle value={scraping.auto} onChange={v => setScraping(s => ({ ...s, auto: v }))} />
-            </div>
-            {scraping.auto && (
-              <div>
-                <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 8 }}>Horários de scraping</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
-                  {scraping.times.map((t, i) => (
-                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--color-background-secondary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 8, padding: "5px 10px" }}>
-                      <span style={{ fontSize: 13, fontWeight: 500 }}>{t}</span>
-                      <button onClick={() => setScraping(s => ({ ...s, times: s.times.filter((_, j) => j !== i) }))} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 14, color: "var(--color-text-secondary)", lineHeight: 1, padding: 0 }}>&times;</button>
-                    </div>
-                  ))}
-                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <input type="time" value={newTime} onChange={e => setNewTime(e.target.value)} style={{ padding: "5px 8px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13 }} />
-                    <button onClick={() => { if (!scraping.times.includes(newTime)) setScraping(s => ({ ...s, times: [...s.times, newTime].sort() })); }} style={{ padding: "5px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>+ Adicionar</button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-            <div style={{ fontWeight: 500, marginBottom: 4 }}>Modo de entrada na fila</div>
-            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>Como os produtos encontrados entram na fila de envio</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {[
-                { id: "auto", label: "Automático", desc: "Produto aprovado pelos filtros entra direto na fila" },
-                { id: "manual", label: "Revisão manual", desc: "Você aprova cada produto antes de entrar na fila" },
-                { id: "both", label: "Automático com revisão", desc: "Entra na fila, mas você pode rejeitar antes do envio", recommended: true },
-              ].map(opt => (
-                <div key={opt.id} onClick={() => setScraping(s => ({ ...s, mode: opt.id }))} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", borderRadius: 10, border: `0.5px solid ${scraping.mode === opt.id ? PRIMARY : "var(--color-border-tertiary)"}`, background: scraping.mode === opt.id ? PRIMARY_LIGHT : "transparent", cursor: "pointer" }}>
-                  <div style={{ width: 16, height: 16, borderRadius: "50%", border: `2px solid ${scraping.mode === opt.id ? PRIMARY : "var(--color-border-secondary)"}`, background: scraping.mode === opt.id ? PRIMARY : "transparent", flexShrink: 0, marginTop: 1 }} />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500, color: scraping.mode === opt.id ? PRIMARY_DARK : "var(--color-text-primary)", display: "flex", alignItems: "center", gap: 6 }}>
-                      {opt.label}
-                      {opt.recommended && <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "#EAF3DE", color: "#3B6D11", fontWeight: 500 }}>Recomendado</span>}
-                    </div>
-                    <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>{opt.desc}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div style={{ display: "flex", gap: 10 }}>
-            <button onClick={save} style={{ padding: "9px 24px", borderRadius: 8, background: saved ? "#3B6D11" : PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>{saved ? "✓ Salvo!" : "Salvar configurações"}</button>
-            <button onClick={runScraping} disabled={scrapingRunning} style={{ padding: "9px 18px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer", opacity: scrapingRunning ? 0.6 : 1 }}>{scrapingRunning ? "⟳ Buscando..." : "⟳ Executar scraping agora"}</button>
-          </div>
-        </div>
-      )}
-
       {tab === "queue" && (
         <div>
           <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 20 }}>
-            <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-              <div style={{ fontWeight: 500, marginBottom: 4 }}>Fontes de busca</div>
-              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
-                Selecione as lojas onde a campanha vai procurar ofertas.
+            <div className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+              <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+                <div style={{ fontWeight: 500, marginBottom: 4 }}>Fontes de busca</div>
+                <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
+                  Selecione as lojas onde a campanha vai procurar ofertas.
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {allSources.map(src => {
+                    const active = scraping.sources.includes(src);
+                    return <div key={src} onClick={() => setScraping(s => ({ ...s, sources: active ? s.sources.filter(x => x !== src) : [...s.sources, src] }))} style={{ padding: "6px 14px", borderRadius: 8, border: `0.5px solid ${active ? PRIMARY : "var(--color-border-tertiary)"}`, background: active ? PRIMARY_LIGHT : "transparent", color: active ? PRIMARY_DARK : "var(--color-text-secondary)", fontSize: 13, cursor: "pointer", fontWeight: active ? 500 : 400 }}>{active ? "✓ " : ""}{src}</div>;
+                  })}
+                </div>
+                {scraping.sources.length === 0 && (
+                  <div style={{ marginTop: 10, fontSize: 11, color: "#A32D2D" }}>Selecione ao menos uma fonte para o scraping funcionar.</div>
+                )}
               </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {allSources.map(src => {
-                  const active = scraping.sources.includes(src);
-                  return <div key={src} onClick={() => setScraping(s => ({ ...s, sources: active ? s.sources.filter(x => x !== src) : [...s.sources, src] }))} style={{ padding: "6px 14px", borderRadius: 8, border: `0.5px solid ${active ? PRIMARY : "var(--color-border-tertiary)"}`, background: active ? PRIMARY_LIGHT : "transparent", color: active ? PRIMARY_DARK : "var(--color-text-secondary)", fontSize: 13, cursor: "pointer", fontWeight: active ? 500 : 400 }}>{active ? "✓ " : ""}{src}</div>;
-                })}
+
+              <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 500, marginBottom: 4 }}>Auto-aprovação</div>
+                    <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                      {scraping.auto !== false
+                        ? "Produtos novos do scraping entram direto na fila e são enviados automaticamente."
+                        : "Produtos novos ficam aguardando revisão. Você precisa aprovar cada um antes do envio."}
+                    </div>
+                  </div>
+                  <Toggle value={scraping.auto !== false} onChange={v => setScraping(s => ({ ...s, auto: v }))} />
+                </div>
               </div>
-              {scraping.sources.length === 0 && (
-                <div style={{ marginTop: 10, fontSize: 11, color: "#A32D2D" }}>Selecione ao menos uma fonte para o scraping funcionar.</div>
-              )}
             </div>
 
+            <button
+              onClick={() => setShowAdvancedFilters(v => !v)}
+              style={{ alignSelf: "flex-start", padding: "8px 14px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}
+            >
+              <span style={{ display: "inline-block", transition: "transform 0.15s", transform: showAdvancedFilters ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
+              {showAdvancedFilters ? "Ocultar filtros avançados" : "Mostrar filtros avançados"}
+              <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>(palavras-chave + qualidade)</span>
+            </button>
+
+            {showAdvancedFilters && <>
             <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
               <div style={{ fontWeight: 500, marginBottom: 4 }}>Palavras-chave</div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 10 }}>
@@ -1184,10 +1544,16 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               {(() => {
                 const PRICE_MAX = 10000;
                 const PRICE_STEP = 50;
+                const rawMax = scraping.filters?.maxPrice;
+                const maxIsUnlimited = rawMax == null || !Number.isFinite(Number(rawMax)) || Number(rawMax) >= PRICE_MAX;
                 const minP = Math.max(0, Math.min(PRICE_MAX, Number(scraping.filters?.minPrice ?? 0)));
-                const maxP = Math.max(minP, Math.min(PRICE_MAX, Number(scraping.filters?.maxPrice ?? PRICE_MAX)));
-                const setMin = (v) => setScraping(s => ({ ...s, filters: { ...s.filters, minPrice: Math.min(v, (s.filters?.maxPrice ?? PRICE_MAX) - PRICE_STEP) } }));
-                const setMax = (v) => setScraping(s => ({ ...s, filters: { ...s.filters, maxPrice: Math.max(v, (s.filters?.minPrice ?? 0) + PRICE_STEP) } }));
+                const maxP = maxIsUnlimited ? PRICE_MAX : Math.max(minP, Math.min(PRICE_MAX, Number(rawMax)));
+                const setMin = (v) => setScraping(s => ({ ...s, filters: { ...s.filters, minPrice: Math.min(v, (Number(s.filters?.maxPrice) || PRICE_MAX) - PRICE_STEP) } }));
+                // Slider no máximo = sem limite (salva null pro backend ignorar o filtro)
+                const setMax = (v) => setScraping(s => {
+                  const adjusted = Math.max(v, (s.filters?.minPrice ?? 0) + PRICE_STEP);
+                  return { ...s, filters: { ...s.filters, maxPrice: adjusted >= PRICE_MAX ? null : adjusted } };
+                });
                 const leftPct = (minP / PRICE_MAX) * 100;
                 const rightPct = 100 - (maxP / PRICE_MAX) * 100;
                 return (
@@ -1220,29 +1586,47 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               <div className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
                 {[
                   { label: "Desconto mínimo", key: "minDiscount", min: 0, max: 80, unit: "%", step: 5 },
-                  { label: "Avaliação mínima", key: "minRating", min: 1, max: 5, unit: "★", step: 0.1 },
+                  { label: "Avaliação mínima", key: "minRating", min: 0, max: 5, unit: "★", step: 0.5 },
                   { label: "Vendas mínimas", key: "minSales", min: 0, max: 1000, unit: " vendas", step: 10 },
                 ].map(({ label, key, min, max, unit, step, prefix }) => {
                   const value = Number(scraping.filters[key] ?? 0);
+                  const isDisabled = value === 0;
+                  const displayValue = isDisabled
+                    ? "Sem filtro"
+                    : (prefix ? `${unit} ${value.toLocaleString("pt-BR")}` : `${value}${unit}`);
                   return (
                     <div key={key}>
                       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
                         <label style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>{label}</label>
-                        <span style={{ fontSize: 13, fontWeight: 500 }}>{prefix ? `${unit} ${value.toLocaleString("pt-BR")}` : `${value}${unit}`}</span>
+                        <span style={{ fontSize: 13, fontWeight: 500, color: isDisabled ? "var(--color-text-secondary)" : undefined, fontStyle: isDisabled ? "italic" : "normal" }}>{displayValue}</span>
                       </div>
                       <input type="range" min={min} max={max} step={step} value={value} onChange={e => setScraping(s => ({ ...s, filters: { ...s.filters, [key]: Number(e.target.value) } }))} style={{ width: "100%" }} />
                       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2 }}>
-                        <span>{prefix ? `${unit} ${min}` : `${min}${unit}`}</span><span>{prefix ? `${unit} ${max.toLocaleString("pt-BR")}` : `${max}${unit}`}</span>
+                        <span>{min === 0 ? "Sem filtro" : (prefix ? `${unit} ${min}` : `${min}${unit}`)}</span><span>{prefix ? `${unit} ${max.toLocaleString("pt-BR")}` : `${max}${unit}`}</span>
                       </div>
                     </div>
                   );
                 })}
               </div>
+              <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 10, padding: "6px 10px", background: "var(--color-background-secondary)", borderRadius: 6 }}>
+                ⚠️ Filtros de Avaliação e Vendas excluem produtos sem essa info — alguns produtos da Amazon não vêm com rating extraído.
+              </div>
             </div>
+            </>}
 
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
               <button onClick={save} style={{ padding: "9px 24px", borderRadius: 8, background: saved ? "#3B6D11" : PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>{saved ? "✓ Salvo!" : "Salvar configurações"}</button>
-              <button onClick={runScraping} disabled={scrapingRunning} style={{ padding: "9px 18px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer", opacity: scrapingRunning ? 0.6 : 1 }}>{scrapingRunning ? "⟳ Buscando..." : "⟳ Buscar produtos agora"}</button>
+              <button onClick={triggerRefill} disabled={refilling} style={{ padding: "9px 18px", borderRadius: 8, border: `0.5px solid ${PRIMARY}`, background: "transparent", color: PRIMARY_DARK, fontSize: 13, cursor: refilling ? "wait" : "pointer", fontWeight: 500, opacity: refilling ? 0.6 : 1 }}>
+                {refilling ? "⟳ Buscando..." : "↻ Buscar do catálogo"}
+              </button>
+              {refillMsg && (
+                <span style={{ fontSize: 12, color: refillMsg.type === "err" ? "#A32D2D" : refillMsg.type === "warn" ? "#854F0B" : PRIMARY_DARK }}>
+                  {refillMsg.text}
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 8 }}>
+              💡 Os filtros são aplicados sobre o catálogo central. A fila também é reabastecida automaticamente nos horários de envio.
             </div>
           </div>
 
@@ -1254,21 +1638,24 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                   <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>Produtos do scraping que precisam de aprovação</div>
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
-                  <button onClick={() => { [...pending].forEach(p => approveProduct(p.id)); }} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY_LIGHT, color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Aprovar todos</button>
-                  <button onClick={() => setPending([])} style={{ padding: "5px 12px", borderRadius: 7, background: "#FCEBEB", color: "#A32D2D", border: "0.5px solid #F7C1C1", fontSize: 12, cursor: "pointer" }}>Rejeitar todos</button>
+                  <button onClick={() => { [...pending].forEach(p => approveProduct(p.id ?? p.key)); }} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY_LIGHT, color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Aprovar todos</button>
+                  <button onClick={() => { [...pending].forEach(p => rejectProduct(p.id ?? p.key)); }} style={{ padding: "5px 12px", borderRadius: 7, background: "#FCEBEB", color: "#A32D2D", border: "0.5px solid #F7C1C1", fontSize: 12, cursor: "pointer" }}>Rejeitar todos</button>
                 </div>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {pending.map(p => (
-                  <ProductRow
-                    key={p.id}
-                    product={p}
-                    actions={<>
-                      <button onClick={() => approveProduct(p.id)} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY_LIGHT, color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Aprovar</button>
-                      <button onClick={() => rejectProduct(p.id)} style={{ padding: "5px 10px", borderRadius: 7, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 12, cursor: "pointer" }}>Rejeitar</button>
-                    </>}
-                  />
-                ))}
+                {pending.map(p => {
+                  const pid = p.id ?? p.key;
+                  return (
+                    <ProductRow
+                      key={pid}
+                      product={p}
+                      actions={<>
+                        <button onClick={() => approveProduct(pid)} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY_LIGHT, color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Aprovar</button>
+                        <button onClick={() => rejectProduct(pid)} style={{ padding: "5px 10px", borderRadius: 7, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 12, cursor: "pointer" }}>Rejeitar</button>
+                      </>}
+                    />
+                  );
+                })}
               </div>
               <div style={{ margin: "20px 0 12px", borderTop: "0.5px solid var(--color-border-tertiary)" }} />
             </div>
@@ -1288,9 +1675,9 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               {queue.length > 0 && (
                 <button
                   onClick={triggerSendNow}
-                  disabled={sendingNow || (group.whatsappGroupIds || []).length === 0 || stats.pausedByAffiliate}
-                  title={stats.pausedByAffiliate ? "Configure o afiliado do Mercado Livre em Configurações" : (group.whatsappGroupIds || []).length === 0 ? "Vincule um grupo de WhatsApp primeiro" : "Envia o próximo produto agora e reseta o intervalo"}
-                  style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY, color: "#fff", border: "none", fontSize: 12, cursor: (sendingNow || !(group.whatsappGroupIds || []).length || stats.pausedByAffiliate) ? "not-allowed" : "pointer", fontWeight: 500, opacity: (sendingNow || !(group.whatsappGroupIds || []).length || stats.pausedByAffiliate) ? 0.5 : 1 }}
+                  disabled={sendingNow || (group.whatsappGroupIds || []).length === 0 || stats.paused}
+                  title={stats.pausedManual ? "Campanha pausada — retome pra enviar" : stats.pausedByAffiliate ? "Configure o afiliado do Mercado Livre em Configurações" : (group.whatsappGroupIds || []).length === 0 ? "Vincule um grupo de WhatsApp primeiro" : "Envia o próximo produto agora e reseta o intervalo"}
+                  style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY, color: "#fff", border: "none", fontSize: 12, cursor: (sendingNow || !(group.whatsappGroupIds || []).length || stats.paused) ? "not-allowed" : "pointer", fontWeight: 500, opacity: (sendingNow || !(group.whatsappGroupIds || []).length || stats.paused) ? 0.5 : 1 }}
                 >
                   {sendingNow ? "⟳ Enviando..." : "▶ Enviar próximo agora"}
                 </button>
@@ -1306,20 +1693,13 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           {queue.length === 0 ? (
             <div style={{ textAlign: "center", padding: "30px 20px", background: "var(--color-background-secondary)", borderRadius: 12 }}>
               <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Fila vazia</div>
-              {scraping.auto ? (
-                <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
-                  Scraping automático está ativo — novos produtos vão entrar nas próximas verificações ({(scraping.times || []).join(", ") || "horários configurados"}). Você também pode buscar agora no botão acima.
-                </div>
-              ) : (
-                <>
-                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
-                    Scraping automático está <strong style={{ color: "#854F0B" }}>desligado</strong>. Para completar o turno, ligue o automático ou rode o scraping manualmente.
-                  </div>
-                  <button onClick={runScraping} disabled={scrapingRunning} style={{ padding: "7px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: scrapingRunning ? 0.6 : 1 }}>
-                    {scrapingRunning ? "⟳ Buscando..." : "Buscar produtos agora"}
-                  </button>
-                </>
-              )}
+              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>
+                A fila é reabastecida automaticamente do catálogo nos horários de envio.
+                Use o botão abaixo pra puxar agora aplicando os filtros desta campanha.
+              </div>
+              <button onClick={triggerRefill} disabled={refilling} style={{ padding: "8px 18px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: refilling ? "wait" : "pointer", fontWeight: 500, opacity: refilling ? 0.6 : 1 }}>
+                {refilling ? "⟳ Buscando..." : "↻ Buscar do catálogo agora"}
+              </button>
             </div>
           ) : (() => {
             const etas = computeQueueETA(group);
@@ -1400,26 +1780,80 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
       {tab === "history" && (
         <div>
-          <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 14 }}>Histórico de envios</div>
-          {group.history.length === 0
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 500 }}>Histórico de envios</div>
+              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                {(group.history || []).length} envio{(group.history || []).length !== 1 ? "s" : ""} registrado{(group.history || []).length !== 1 ? "s" : ""}
+              </div>
+            </div>
+            {(group.history || []).length > 0 && (
+              <button onClick={() => setConfirmClearHistory(true)} style={{ padding: "6px 12px", borderRadius: 7, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 12, cursor: "pointer" }}>
+                🗑 Limpar histórico
+              </button>
+            )}
+          </div>
+          {(group.history || []).length === 0
             ? <div style={{ textAlign: "center", padding: "40px 0", color: "var(--color-text-secondary)", fontSize: 13, background: "var(--color-background-secondary)", borderRadius: 12 }}>Nenhum envio registrado.</div>
             : <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, overflow: "hidden" }}>
-              {group.history.map((h, i) => (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderBottom: i < group.history.length - 1 ? "0.5px solid var(--color-border-tertiary)" : "none" }}>
-                  <div style={{ fontSize: 11, color: "var(--color-text-secondary)", minWidth: 44 }}>{h.time}</div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{h.name}</div>
-                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{h.store}</div>
+              {group.history.map((h, i) => {
+                const sent = h.sentAt ? new Date(h.sentAt) : null;
+                const sentValid = sent && !isNaN(sent.getTime());
+                const dateStr = sentValid ? sent.toLocaleDateString("pt-BR") : (h.time || "—");
+                const timeStr = sentValid ? sent.toTimeString().slice(0, 5) : "";
+                const priceStr = h.price != null ? formatPrice(Number(h.price)) : (typeof h.price === "string" ? h.price : "—");
+                const oldPriceStr = h.originalPrice != null ? formatPrice(Number(h.originalPrice)) : null;
+                const discountNum = typeof h.discount === "number" ? h.discount : (h.discount ? parseInt(String(h.discount).replace(/\D/g, ""), 10) : null);
+                return (
+                  <div key={h.key || i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderBottom: i < group.history.length - 1 ? "0.5px solid var(--color-border-tertiary)" : "none" }}>
+                    <div style={{ width: 48, height: 48, borderRadius: 8, background: "var(--color-background-secondary)", flexShrink: 0, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      {h.img
+                        ? <img src={h.img} alt={h.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { e.target.style.display = "none"; }} />
+                        : <span style={{ fontSize: 18, color: "var(--color-text-secondary)" }}>📦</span>
+                      }
+                    </div>
+                    <div style={{ minWidth: 64, fontSize: 11, color: "var(--color-text-secondary)", lineHeight: 1.3 }}>
+                      <div>{dateStr}</div>
+                      {timeStr && <div style={{ fontWeight: 500, color: "var(--color-text-primary)" }}>{timeStr}</div>}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      {h.link
+                        ? <a href={h.link} target="_blank" rel="noreferrer" style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-primary)", textDecoration: "none", display: "block", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={h.name}>{h.name}</a>
+                        : <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={h.name}>{h.name}</div>
+                      }
+                      <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                        {h.store || "—"}
+                        {h.groupCount > 0 && <> · enviado pra {h.groupCount} grupo{h.groupCount !== 1 ? "s" : ""}</>}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right", flexShrink: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 500, color: PRIMARY_DARK }}>{priceStr}</div>
+                      {oldPriceStr && <div style={{ fontSize: 11, color: "var(--color-text-secondary)", textDecoration: "line-through" }}>{oldPriceStr}</div>}
+                      {discountNum > 0 && <Badge color="green">-{discountNum}%</Badge>}
+                    </div>
                   </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: 13, fontWeight: 500, color: PRIMARY_DARK }}>{h.price}</div>
-                    <Badge color="green">-{h.discount}</Badge>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           }
         </div>
+      )}
+
+      {confirmClearHistory && (
+        <Modal title="Limpar histórico de envios?" onClose={() => setConfirmClearHistory(false)} danger>
+          <p style={{ fontSize: 13, marginBottom: 12, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+            Todo o histórico desta campanha será apagado, incluindo as métricas de envios (hoje/semana).
+          </p>
+          <p style={{ fontSize: 13, marginBottom: 16, color: "#854F0B", lineHeight: 1.5, background: "#FEF3C7", padding: "8px 10px", borderRadius: 8 }}>
+            ⚠️ Atenção: produtos que estavam em <strong>cooldown</strong> voltam a ser elegíveis pra envio imediatamente.
+          </p>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button onClick={() => setConfirmClearHistory(false)} disabled={clearingHistory} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+            <button onClick={handleClearHistory} disabled={clearingHistory} style={{ padding: "8px 16px", borderRadius: 8, background: "#E24B4A", color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: clearingHistory ? 0.6 : 1 }}>
+              {clearingHistory ? "Limpando..." : "Limpar histórico"}
+            </button>
+          </div>
+        </Modal>
       )}
     </div>
   );

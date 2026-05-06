@@ -3,7 +3,7 @@ import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, CATEGORIES } from "..
 import Badge from "../components/ui/Badge";
 import Toggle from "../components/ui/Toggle";
 import Modal from "../components/ui/Modal";
-import { authUpdate, authChangePassword, getAffiliateStatus, saveAffiliate, clearAffiliate, testAffiliate } from "../data/api";
+import { authUpdate, authChangePassword, getAffiliateStatus, saveAffiliate, clearAffiliate, testAffiliate, saveAmazonAffiliate, clearAmazonAffiliate, testAmazonAffiliate } from "../data/api";
 import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
 
 export default function PageSettings({ user, setUser, onLogout, settings = {}, setSettings = () => {}, onAffiliateChange }) {
@@ -67,7 +67,7 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
     { id: "notifications", label: "Notificações" },
     { id: "sources", label: "Fontes e categorias" },
     { id: "template", label: "Modelo padrão" },
-    { id: "affiliate", label: "Afiliados ML" },
+    { id: "affiliate", label: "Afiliados" },
     { id: "appearance", label: "Aparência" },
     { id: "danger", label: "Zona de perigo" },
   ];
@@ -81,14 +81,77 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
   const [affTesting, setAffTesting] = useState(false);
   const [affTestUrl, setAffTestUrl] = useState("");
 
+  // Afiliados Amazon
+  const [amzTag, setAmzTag] = useState("");
+  const [amzMsg, setAmzMsg] = useState(null);
+  const [amzSaving, setAmzSaving] = useState(false);
+  const [amzTesting, setAmzTesting] = useState(false);
+  const [amzTestUrl, setAmzTestUrl] = useState("");
+
   useEffect(() => {
     if (section !== "affiliate") return;
     getAffiliateStatus().then(s => {
       setAffStatus(s);
       if (s.tag) setAffTag(s.tag);
+      if (s.amazon?.tag) setAmzTag(s.amazon.tag);
       if (onAffiliateChange) onAffiliateChange(!!s.configured);
     }).catch(() => {});
   }, [section]);
+
+  async function handleSaveAmazon() {
+    setAmzSaving(true);
+    setAmzMsg(null);
+    try {
+      const s = await saveAmazonAffiliate(amzTag.trim());
+      setAffStatus(s);
+      setAmzMsg({ type: "ok", text: "Salvo!" });
+    } catch (err) {
+      setAmzMsg({ type: "err", text: err.message });
+    } finally {
+      setAmzSaving(false);
+    }
+  }
+
+  async function handleTestAmazon() {
+    setAmzTesting(true);
+    setAmzMsg(null);
+    try {
+      const url = amzTestUrl.trim();
+      if (!url) {
+        setAmzMsg({ type: "err", text: "Cole uma URL de produto da Amazon pra testar." });
+        setAmzTesting(false);
+        return;
+      }
+      if (!/amazon\.com/i.test(url) && !/amzn\./i.test(url)) {
+        setAmzMsg({ type: "err", text: "URL inválida — precisa ser de amazon.com.br (ou link curto amzn.to)." });
+        setAmzTesting(false);
+        return;
+      }
+      const r = await testAmazonAffiliate(url);
+      setAmzMsg({ type: "ok", text: "Funcionou! Link gerado:", link: r.shortUrl });
+      const s = await getAffiliateStatus();
+      setAffStatus(s);
+    } catch (err) {
+      setAmzMsg({ type: "err", text: err.message });
+    } finally {
+      setAmzTesting(false);
+    }
+  }
+
+  async function handleClearAmazon() {
+    setAmzSaving(true);
+    setAmzMsg(null);
+    try {
+      const s = await clearAmazonAffiliate();
+      setAffStatus(s);
+      setAmzTag("");
+      setAmzMsg({ type: "ok", text: "Configuração apagada." });
+    } catch (err) {
+      setAmzMsg({ type: "err", text: err.message });
+    } finally {
+      setAmzSaving(false);
+    }
+  }
 
   async function handleSaveAffiliate() {
     setAffSaving(true);
@@ -397,6 +460,95 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
                     {affStatus.lastSuccessAt && <div>✓ Último sucesso: {new Date(affStatus.lastSuccessAt).toLocaleString("pt-BR")}</div>}
                     {affStatus.lastFailureAt && <div style={{ color: "#A32D2D" }}>✗ Última falha: {new Date(affStatus.lastFailureAt).toLocaleString("pt-BR")} — {affStatus.lastFailureReason}</div>}
                     {affStatus.updatedAt && <div>Cookie atualizado em: {new Date(affStatus.updatedAt).toLocaleString("pt-BR")}</div>}
+                  </div>
+                )}
+              </div>
+
+              {/* Afiliados Amazon */}
+              <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ fontWeight: 500 }}>Afiliados Amazon</div>
+                  {affStatus?.amazon && (
+                    <Badge color={affStatus.amazon.configured ? "green" : "gray"}>
+                      {affStatus.amazon.configured ? "Configurado" : "Não configurado"}
+                    </Badge>
+                  )}
+                </div>
+                <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14, lineHeight: 1.5 }}>
+                  Quando configurado, todo link da Amazon enviado vira um link curto no formato
+                  {" "}<code style={{ background: "var(--color-background-secondary)", padding: "1px 4px", borderRadius: 4 }}>amazon.com.br/dp/ASIN?tag=SUA-TAG</code>.
+                  Diferente do ML, a Amazon não precisa de cookie — só da TAG.
+                </div>
+
+                <div>
+                  <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>TAG de afiliado</label>
+                  <input
+                    value={amzTag}
+                    onChange={e => setAmzTag(e.target.value)}
+                    placeholder="ex: pedroguterres-20"
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", fontFamily: "monospace" }}
+                  />
+                  <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4 }}>
+                    Pega em <a href="https://afiliados.amazon.com.br" target="_blank" rel="noreferrer" style={{ color: PRIMARY }}>afiliados.amazon.com.br</a>.
+                    Costuma terminar em <code>-20</code>.
+                  </div>
+                </div>
+
+                {affStatus?.amazon?.configured && (
+                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: "0.5px solid var(--color-border-tertiary)" }}>
+                    <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
+                      URL de produto pra testar
+                    </label>
+                    <input
+                      value={amzTestUrl}
+                      onChange={e => setAmzTestUrl(e.target.value)}
+                      placeholder="https://www.amazon.com.br/produto-xyz/dp/B0..."
+                      style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 12, boxSizing: "border-box", fontFamily: "monospace" }}
+                    />
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4 }}>
+                      Cole o link de um produto da Amazon. O sistema extrai o ASIN e gera o link curto com sua tag.
+                    </div>
+                  </div>
+                )}
+
+                {amzMsg && (
+                  <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: amzMsg.type === "ok" ? PRIMARY_LIGHT : "#FCEBEB", color: amzMsg.type === "ok" ? PRIMARY_DARK : "#A32D2D", wordBreak: "break-all" }}>
+                    {amzMsg.text}
+                    {amzMsg.link && (
+                      <>
+                        {" "}
+                        <a
+                          href={amzMsg.link}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ color: PRIMARY_DARK, textDecoration: "underline", fontFamily: "monospace" }}
+                        >
+                          {amzMsg.link}
+                        </a>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+                  <button onClick={handleSaveAmazon} disabled={amzSaving || !amzTag.trim()} style={{ padding: "7px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: (amzSaving || !amzTag.trim()) ? 0.6 : 1 }}>
+                    {amzSaving ? "Salvando..." : "Salvar"}
+                  </button>
+                  <button onClick={handleTestAmazon} disabled={amzTesting || !affStatus?.amazon?.configured || !amzTestUrl.trim()} title={!affStatus?.amazon?.configured ? "Salve a tag primeiro" : !amzTestUrl.trim() ? "Cole uma URL de produto pra testar" : "Gera um link de teste"} style={{ padding: "7px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: (!affStatus?.amazon?.configured || !amzTestUrl.trim()) ? "not-allowed" : "pointer", opacity: (!affStatus?.amazon?.configured || !amzTestUrl.trim() || amzTesting) ? 0.5 : 1 }}>
+                    {amzTesting ? "Testando..." : "Testar transformação"}
+                  </button>
+                  {affStatus?.amazon?.configured && (
+                    <button onClick={handleClearAmazon} disabled={amzSaving} style={{ padding: "7px 16px", borderRadius: 8, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 13, cursor: "pointer", marginLeft: "auto" }}>
+                      Apagar
+                    </button>
+                  )}
+                </div>
+
+                {affStatus?.amazon && (affStatus.amazon.lastSuccessAt || affStatus.amazon.lastFailureAt) && (
+                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: "0.5px solid var(--color-border-tertiary)", fontSize: 11, color: "var(--color-text-secondary)", lineHeight: 1.6 }}>
+                    {affStatus.amazon.lastSuccessAt && <div>✓ Último sucesso: {new Date(affStatus.amazon.lastSuccessAt).toLocaleString("pt-BR")}</div>}
+                    {affStatus.amazon.lastFailureAt && <div style={{ color: "#A32D2D" }}>✗ Última falha: {new Date(affStatus.amazon.lastFailureAt).toLocaleString("pt-BR")} — {affStatus.amazon.lastFailureReason}</div>}
+                    {affStatus.amazon.updatedAt && <div>Tag atualizada em: {new Date(affStatus.amazon.updatedAt).toLocaleString("pt-BR")}</div>}
                   </div>
                 )}
               </div>

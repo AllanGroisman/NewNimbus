@@ -4,6 +4,7 @@ import { allSources } from "./data/constants";
 
 const DEFAULT_SETTINGS = {
   messageTemplate: DEFAULT_MESSAGE_TEMPLATE,
+  customTemplates: [],
   notifications: { email: true, push: false, weeklyReport: true, pendingReview: true },
   sources: allSources,
   theme: "auto",
@@ -16,10 +17,15 @@ import PageProducts from "./pages/Products";
 import PageWhatsApp from "./pages/WhatsApp";
 import PageSettings from "./pages/Settings";
 import PageSubscription from "./pages/Subscription";
+import PageAdminScraper from "./pages/AdminScraper";
+import PageAdminUsers from "./pages/AdminUsers";
 import Login from "./pages/Login";
 
 const SAVE_DEBOUNCE_MS = 800;
-const OPS_POLL_MS = 30 * 1000;
+// Polling de OPS: agressivo enquanto a aba está em foco, pausa quando oculta.
+// 3 s mantém UI quase live sem encher o servidor; afiliado fica em 30 s pq muda raro.
+const OPS_POLL_MS = 3 * 1000;
+const AFFILIATE_POLL_MS = 30 * 1000;
 // Campos por grupo gerenciados pelo scheduler — atualizados por polling
 const OPS_FIELDS = ["queue", "pending", "history", "sentToday", "sentWeek", "weekData", "lastSend", "avgDiscount"];
 
@@ -90,10 +96,13 @@ export default function App() {
 
   // Polling: pega dados operacionais (queue/history/métricas) que o scheduler
   // atualiza no servidor. Faz merge sem sobrescrever campos editáveis localmente.
+  // Pausa quando a aba está oculta e força um pull ao voltar o foco.
   useEffect(() => {
     if (!user || !stateLoadedRef.current) return;
     let cancelled = false;
+    let timer = null;
     async function pull() {
+      if (cancelled || (typeof document !== "undefined" && document.hidden)) return;
       try {
         const ops = await loadAppOps();
         if (cancelled) return;
@@ -111,9 +120,20 @@ export default function App() {
         // ignora — próxima rodada tenta de novo
       }
     }
-    const id = setInterval(pull, OPS_POLL_MS);
+    const start = () => { if (!timer) timer = setInterval(pull, OPS_POLL_MS); };
+    const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
+    const onVisibility = () => {
+      if (document.hidden) { stop(); }
+      else { pull(); start(); }
+    };
+    start();
     pull();
-    return () => { cancelled = true; clearInterval(id); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      stop();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [user]);
 
   // Polling do status de afiliado — quando muda em Configurações, o badge
@@ -121,7 +141,9 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
+    let timer = null;
     async function pull() {
+      if (cancelled || (typeof document !== "undefined" && document.hidden)) return;
       try {
         const s = await getAffiliateStatus();
         if (!cancelled) setAffiliateConfigured(!!s?.configured);
@@ -129,9 +151,20 @@ export default function App() {
         // silencioso
       }
     }
-    const id = setInterval(pull, OPS_POLL_MS);
+    const start = () => { if (!timer) timer = setInterval(pull, AFFILIATE_POLL_MS); };
+    const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
+    const onVisibility = () => {
+      if (document.hidden) stop();
+      else { pull(); start(); }
+    };
+    start();
     pull();
-    return () => { cancelled = true; clearInterval(id); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      stop();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [user]);
 
   async function handleLogin(loggedUser) {
@@ -177,6 +210,39 @@ export default function App() {
     setGroups(gs => gs.filter(g => g.id !== gid));
     setSelectedGroup(null);
     setPage("dashboard");
+  };
+
+  // Modelos de mensagem salvos pelo usuário — disponíveis em todas as campanhas.
+  const addCustomTemplate = (name, template) => {
+    const cleanName = String(name || "").trim();
+    if (!cleanName || !template) return null;
+    const id = `tpl_${Date.now()}`;
+    setSettings(s => ({
+      ...s,
+      customTemplates: [...(s.customTemplates || []), { id, name: cleanName, template }],
+    }));
+    return id;
+  };
+  const deleteCustomTemplate = (id) => {
+    setSettings(s => ({
+      ...s,
+      customTemplates: (s.customTemplates || []).filter(t => t.id !== id),
+    }));
+  };
+  const updateCustomTemplate = (id, patch) => {
+    setSettings(s => ({
+      ...s,
+      customTemplates: (s.customTemplates || []).map(t => {
+        if (t.id !== id) return t;
+        const next = { ...t };
+        if (patch.name != null) {
+          const cleanName = String(patch.name).trim();
+          if (cleanName) next.name = cleanName;
+        }
+        if (patch.template != null) next.template = patch.template;
+        return next;
+      }),
+    }));
   };
 
   const createWhatsappGroup = ({ id, name, numberId, members = 0, inviteLink, linkToAppGroupId }) => {
@@ -228,9 +294,10 @@ export default function App() {
     return <Login onLogin={handleLogin} />;
   }
 
+  const fallbackPage = <PageDashboard groups={groups} whatsappGroups={whatsappGroups} onSelectGroup={handleSelectGroup} onCreateGroup={handleCreateGroup} affiliateConfigured={affiliateConfigured} onGoToSettings={() => setPage("settings")} />;
   const pageMap = {
     dashboard: <PageDashboard groups={groups} whatsappGroups={whatsappGroups} onSelectGroup={handleSelectGroup} onCreateGroup={handleCreateGroup} affiliateConfigured={affiliateConfigured} onGoToSettings={() => setPage("settings")} />,
-    products: <PageProducts />,
+    products: user?.role === "admin" ? <PageProducts /> : fallbackPage,
     whatsapp: <PageWhatsApp
       numbers={numbers}
       setNumbers={setNumbers}
@@ -243,6 +310,8 @@ export default function App() {
     />,
     settings: <PageSettings user={user} setUser={setUser} onLogout={handleLogout} settings={settings} setSettings={setSettings} onAffiliateChange={setAffiliateConfigured} />,
     subscription: <PageSubscription />,
+    "admin-scraper": user?.role === "admin" ? <PageAdminScraper /> : fallbackPage,
+    "admin-users":   user?.role === "admin" ? <PageAdminUsers currentUser={user} /> : fallbackPage,
   };
 
   return (
@@ -253,6 +322,7 @@ export default function App() {
         groups={groups}
         whatsappGroups={whatsappGroups}
         affiliateConfigured={affiliateConfigured}
+        user={user}
         onNavigate={(id) => { setPage(id); setSelectedGroup(null); }}
         onSelectGroup={handleSelectGroup}
         onLogout={handleLogout}
@@ -262,6 +332,7 @@ export default function App() {
       <div className="main-content" style={{ flex: 1, padding: "20px 24px", minWidth: 0, overflowY: "auto" }}>
         {selectedGroup
           ? <GroupDashboard
+              key={selectedGroup.id}
               group={selectedGroup}
               numbers={numbers}
               whatsappGroups={whatsappGroups}
@@ -273,6 +344,10 @@ export default function App() {
               onDeleteWhatsappGroup={deleteWhatsappGroup}
               onUpdateWhatsappGroup={updateWhatsappGroup}
               onGoToSettings={() => setPage("settings")}
+              customTemplates={settings.customTemplates || []}
+              onAddCustomTemplate={addCustomTemplate}
+              onDeleteCustomTemplate={deleteCustomTemplate}
+              onUpdateCustomTemplate={updateCustomTemplate}
             />
           : pageMap[page] || pageMap["dashboard"]
         }

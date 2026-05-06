@@ -24,6 +24,7 @@ export const makeEmptyGroup = ({ id, name, categories, template }) => ({
   categories,
   whatsappGroupIds: [],
   messageTemplate: template || DEFAULT_MESSAGE_TEMPLATE,
+  paused: false,
   sentToday: 0,
   sentWeek: 0,
   avgDiscount: "—",
