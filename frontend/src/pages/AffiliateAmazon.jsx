@@ -3,7 +3,7 @@ import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../data/constants";
 import Badge from "../components/ui/Badge";
 import { getAffiliateStatus, saveAmazonAffiliate, clearAmazonAffiliate, testAmazonAffiliate } from "../data/api";
 
-export default function PageAffiliateAmazon() {
+export default function PageAffiliateAmazon({ onAffiliateChange }) {
   const [affStatus, setAffStatus] = useState(null);
   const [amzTag, setAmzTag] = useState("");
   const [amzMsg, setAmzMsg] = useState(null);
@@ -15,7 +15,9 @@ export default function PageAffiliateAmazon() {
     getAffiliateStatus().then(s => {
       setAffStatus(s);
       if (s.amazon?.tag) setAmzTag(s.amazon.tag);
+      if (onAffiliateChange) onAffiliateChange(s);
     }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function handleSave() {
@@ -24,6 +26,7 @@ export default function PageAffiliateAmazon() {
     try {
       const s = await saveAmazonAffiliate(amzTag.trim());
       setAffStatus(s);
+      if (onAffiliateChange) onAffiliateChange(s);
       setAmzMsg({ type: "ok", text: "Salvo!" });
     } catch (err) {
       setAmzMsg({ type: "err", text: err.message });
@@ -51,6 +54,7 @@ export default function PageAffiliateAmazon() {
       setAmzMsg({ type: "ok", text: "Funcionou! Link gerado:", link: r.shortUrl });
       const s = await getAffiliateStatus();
       setAffStatus(s);
+      if (onAffiliateChange) onAffiliateChange(s);
     } catch (err) {
       setAmzMsg({ type: "err", text: err.message });
     } finally {
@@ -65,6 +69,7 @@ export default function PageAffiliateAmazon() {
       const s = await clearAmazonAffiliate();
       setAffStatus(s);
       setAmzTag("");
+      if (onAffiliateChange) onAffiliateChange(s);
       setAmzMsg({ type: "ok", text: "Configuração apagada." });
     } catch (err) {
       setAmzMsg({ type: "err", text: err.message });

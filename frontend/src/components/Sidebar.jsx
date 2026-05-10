@@ -1,6 +1,6 @@
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, sidebarItems, getGroupStats } from "../data/constants";
 
-export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = [], affiliateConfigured = true, user, onNavigate, onSelectGroup, onLogout, mobileOpen, onToggleMobile }) {
+export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = [], affiliateConfigured = true, affiliateStatus, user, onNavigate, onSelectGroup, onLogout, mobileOpen, onToggleMobile }) {
   const nav = (id) => { onNavigate(id); onToggleMobile(false); };
   const selGroup = (g) => { onSelectGroup(g); onToggleMobile(false); };
   const isAdmin = user?.role === "admin";
@@ -8,21 +8,45 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
   const visibleItems = sidebarItems.filter(it => !it.adminOnly);
   const adminItems = sidebarItems.filter(it => it.adminOnly);
 
-  const renderItem = (item) => (
-    <button
-      key={item.id}
-      onClick={() => nav(item.id)}
-      style={{
-        display: "flex", alignItems: "center", gap: 10, padding: "9px 16px",
-        background: page === item.id && !selectedGroup ? PRIMARY_LIGHT : "transparent",
-        border: "none", cursor: "pointer", textAlign: "left",
-        color: page === item.id && !selectedGroup ? PRIMARY_DARK : "var(--color-text-secondary)",
-        fontWeight: page === item.id && !selectedGroup ? 500 : 400, fontSize: 13,
-      }}
-    >
-      <span style={{ fontSize: 14 }}>{item.icon}</span>{item.label}
-    </button>
-  );
+  // Alerta de afiliado por aba — vermelho quando a loja não está configurada.
+  // Shopee ainda não tem integração, então vai sempre acender enquanto o backend não suportar.
+  const affiliateAlert = {
+    "mercado-livre": affiliateStatus ? !affiliateStatus.ml : false,
+    "amazon":        affiliateStatus ? !affiliateStatus.amazon : false,
+    "shopee":        affiliateStatus ? !affiliateStatus.shopee : false,
+  };
+
+  const renderItem = (item) => {
+    const isActive = page === item.id && !selectedGroup;
+    const showAlert = !!affiliateAlert[item.id];
+    return (
+      <button
+        key={item.id}
+        onClick={() => nav(item.id)}
+        title={showAlert ? "Afiliado não configurado" : undefined}
+        style={{
+          display: "flex", alignItems: "center", gap: 10, padding: "9px 16px",
+          background: isActive ? PRIMARY_LIGHT : "transparent",
+          border: "none", cursor: "pointer", textAlign: "left",
+          color: isActive ? PRIMARY_DARK : (showAlert ? "#A32D2D" : "var(--color-text-secondary)"),
+          fontWeight: isActive ? 500 : 400, fontSize: 13,
+        }}
+      >
+        <span style={{ fontSize: 14 }}>{item.icon}</span>
+        <span style={{ flex: 1 }}>{item.label}</span>
+        {showAlert && (
+          <span
+            aria-label="Afiliado não configurado"
+            style={{
+              width: 14, height: 14, borderRadius: "50%", background: "#E24B4A",
+              color: "#fff", fontSize: 10, fontWeight: 700, lineHeight: "14px",
+              textAlign: "center", flexShrink: 0,
+            }}
+          >!</span>
+        )}
+      </button>
+    );
+  };
 
   const sidebarContent = (
     <>

@@ -16,7 +16,7 @@ export default function PageAffiliateML({ onAffiliateChange }) {
     getAffiliateStatus().then(s => {
       setAffStatus(s);
       if (s.tag) setAffTag(s.tag);
-      if (onAffiliateChange) onAffiliateChange(!!s.configured);
+      if (onAffiliateChange) onAffiliateChange(s);
     }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -31,7 +31,7 @@ export default function PageAffiliateML({ onAffiliateChange }) {
       const s = await saveAffiliate(payload);
       setAffStatus(s);
       setAffCookie("");
-      if (onAffiliateChange) onAffiliateChange(!!s.configured);
+      if (onAffiliateChange) onAffiliateChange(s);
       setAffMsg({ type: "ok", text: "Salvo!" });
     } catch (err) {
       setAffMsg({ type: "err", text: err.message });
@@ -73,7 +73,7 @@ export default function PageAffiliateML({ onAffiliateChange }) {
       const s = await clearAffiliate();
       setAffStatus(s);
       setAffTag(""); setAffCookie("");
-      if (onAffiliateChange) onAffiliateChange(!!s.configured);
+      if (onAffiliateChange) onAffiliateChange(s);
       setAffMsg({ type: "ok", text: "Configuração apagada." });
     } catch (err) {
       setAffMsg({ type: "err", text: err.message });

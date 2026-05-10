@@ -4,18 +4,19 @@ export const PRIMARY_LIGHT = "#E1F5EE";
 
 export const allSources = ["Mercado Livre", "Amazon", "Shopee", "Americanas"];
 
-// Categorias — mapeia id → label e cor do badge
+// Categorias — mapeia id → label, cor do badge e ícone (emoji)
 // IMPORTANTE: manter em sincronia com backend/scraper.js → CATEGORIES
 export const CATEGORIES = {
-  gamer:       { label: "Gamer",       color: "blue" },
-  bebe:        { label: "Bebê",        color: "teal" },
-  eletronicos: { label: "Eletrônicos", color: "purple" },
-  casa:        { label: "Casa",        color: "amber" },
-  beleza:      { label: "Beleza",      color: "green" },
+  gamer:       { label: "Gamer",       color: "blue",   icon: "🎮" },
+  bebe:        { label: "Bebê",        color: "teal",   icon: "👶" },
+  eletronicos: { label: "Eletrônicos", color: "purple", icon: "📱" },
+  casa:        { label: "Casa",        color: "amber",  icon: "🏠" },
+  beleza:      { label: "Beleza",      color: "green",  icon: "💄" },
 };
 
 export const categoryLabel = (id) => CATEGORIES[id]?.label || id;
 export const categoryColor = (id) => CATEGORIES[id]?.color || "gray";
+export const categoryIcon  = (id) => CATEGORIES[id]?.icon || "•";
 
 // Retrocompatibilidade: aceita `categories` (array) ou `category` (string legado)
 export const getGroupCategories = (group) => {
@@ -140,7 +141,7 @@ export function formatETA(d, now = new Date()) {
 }
 
 export const sidebarItems = [
-  { id: "dashboard", icon: "▦", label: "Dashboard geral" },
+  { id: "dashboard", icon: "▦", label: "Visão Geral" },
   { id: "whatsapp", icon: "◎", label: "WhatsApp" },
   { id: "mercado-livre", icon: "◆", label: "Mercado Livre" },
   { id: "amazon", icon: "◇", label: "Amazon" },

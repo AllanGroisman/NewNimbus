@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, CATEGORIES, categoryLabel, categoryColor, formatPrice, getGroupCategories, getGroupStats, computeQueueETA, formatETA } from "../data/constants";
+import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, getGroupCategories, getGroupStats, computeQueueETA, formatETA } from "../data/constants";
 import { createWAGroup, leaveWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupHistory, approvePendingItem, rejectPendingItem } from "../data/api";
 import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
 
@@ -419,6 +419,20 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     }
   };
 
+  // "Criar a partir deste": copia o template SALVO da aba ativa (ignora edições
+  // não salvas no editor) e abre uma nova aba com nome "{nome} (cópia)" único.
+  const duplicateActiveTemplate = () => {
+    if (!activeTab) return;
+    const newName = suggestUniqueTemplateName(`${activeTab.name} (cópia)`);
+    const seed = activeTab.template || DEFAULT_MESSAGE_TEMPLATE;
+    const newId = onAddCustomTemplate?.(newName, seed);
+    if (newId) {
+      setActiveTplKey(`custom:${newId}`);
+      setGroupInfo(g => ({ ...g, messageTemplate: seed }));
+      requestAnimationFrame(() => { templateRef.current?.focus(); });
+    }
+  };
+
   // Sugere um nome único pra novos modelos baseados no nome atual da aba.
   const suggestUniqueTemplateName = (base) => {
     const cleanBase = String(base || "Novo modelo").trim() || "Novo modelo";
@@ -509,6 +523,43 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     setCopiedId(wg.id);
     setTimeout(() => setCopiedId(c => c === wg.id ? null : c), 1500);
   };
+
+  // Calcula o próximo "#N" pra clonar um grupo. Tira sufixo "#N" prévio do nome
+  // base (clonar X #2 vira X #3, não X #2 #1).
+  const computeCloneName = (originalName) => {
+    const base = String(originalName || "Grupo").replace(/\s*#\d+\s*$/, "").trim() || "Grupo";
+    const re = new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+#(\\d+)$`);
+    let maxN = 1;
+    let baseExists = false;
+    for (const w of whatsappGroups) {
+      if (w.name === base) baseExists = true;
+      const m = w.name && w.name.match(re);
+      if (m) maxN = Math.max(maxN, Number(m[1]));
+    }
+    const n = baseExists ? maxN + 1 : maxN;
+    return `${base} #${n}`;
+  };
+
+  // Abre o modal de criação pré-preenchido com nome "X #N" e mesmo número.
+  // Participantes ficam vazios — WhatsApp exige ao menos 1 participante além de ti.
+  const cloneGroup = (wg) => {
+    setNewWGForm({
+      name: computeCloneName(wg.name),
+      numberIds: wg.numberId ? [wg.numberId] : (numbers[0]?.id ? [numbers[0].id] : []),
+      participants: "",
+    });
+    setAddStep("create");
+  };
+
+  // Edição da descrição (estado local — guarda só no Nimbus, não no WhatsApp).
+  const [editingDescId, setEditingDescId] = useState(null);
+  const [descDraft, setDescDraft] = useState("");
+  const startEditDesc = (wg) => { setEditingDescId(wg.id); setDescDraft(wg.description || ""); };
+  const saveDesc = (wg) => {
+    onUpdateWhatsappGroup?.(wg.id, { description: descDraft });
+    setEditingDescId(null);
+  };
+  const cancelEditDesc = () => { setEditingDescId(null); setDescDraft(""); };
 
   const primaryCat = groupInfo.categories[0] || getGroupCategories(group)[0];
   const barColor = primaryCat === "gamer" ? "#378ADD" : PRIMARY;
@@ -780,11 +831,17 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   // suficiente porque todos os objetos são produzidos por código com keys
   // em ordem estável.
   const stableJSON = (v) => JSON.stringify(v ?? null);
+  // Cooldown vive no `sched` mas é editado na aba Gerenciar — separamos o dirty
+  // dele do dirty das janelas pra cada aba reagir ao que ela mostra.
+  const cooldownDirty = sched?.cooldownValue !== group.schedule?.cooldownValue
+    || sched?.cooldownUnit !== group.schedule?.cooldownUnit;
+  const windowsDirty = stableJSON(sched?.windows) !== stableJSON(group.schedule?.windows);
   const manageDirty = groupInfo.name !== group.name
-    || stableJSON(groupInfo.categories) !== stableJSON(getGroupCategories(group));
+    || stableJSON(groupInfo.categories) !== stableJSON(getGroupCategories(group))
+    || cooldownDirty;
   const scrapingDirty = stableJSON(scraping) !== stableJSON(group.scraping);
   const filtersDirty = stableJSON(scraping?.filters) !== stableJSON(group.scraping?.filters);
-  const scheduleDirty = stableJSON(sched) !== stableJSON(group.schedule);
+  const scheduleDirty = windowsDirty;
 
   // Estilos compartilhados pros botões de salvar — desabilitado quando não dirty.
   const saveBtnStyle = (dirty) => ({
@@ -814,7 +871,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         <div>
           <h2 style={{ fontSize: 18, fontWeight: 500, marginBottom: 6 }}>{groupInfo.name}</h2>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {groupInfo.categories.map(c => <Badge key={c} color={categoryColor(c)}>{categoryLabel(c)}</Badge>)}
+            {groupInfo.categories.map(c => <Badge key={c} color={categoryColor(c)}><span style={{ marginRight: 4 }}>{categoryIcon(c)}</span>{categoryLabel(c)}</Badge>)}
             {stats.pausedManual && <Badge color="amber">Pausada</Badge>}
             {stats.pausedByAffiliate && <Badge color="amber">Pausado · sem afiliado ML</Badge>}
             {stats.status === "empty"
@@ -824,19 +881,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             {stats.count > 0 && <Badge color="gray">{stats.members} membros</Badge>}
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button
-            onClick={() => {
-              // Retomar é seguro — pausar pede confirmação
-              if (group.paused) onUpdate(group.id, { paused: false });
-              else setConfirmPause(true);
-            }}
-            title={group.paused ? "Retomar campanha" : "Pausar envios desta campanha"}
-            style={{ padding: "7px 14px", borderRadius: 8, background: group.paused ? PRIMARY : "var(--color-background-secondary)", color: group.paused ? "#fff" : "var(--color-text-primary)", border: group.paused ? "none" : "0.5px solid var(--color-border-tertiary)", fontSize: 13, cursor: "pointer", fontWeight: 500 }}
-          >
-            {group.paused ? "▶ Retomar" : "⏸ Pausar"}
-          </button>
-        </div>
       </div>
 
       {stats.pausedManual && (
@@ -845,8 +889,8 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           <span style={{ fontSize: 13, color: "#854F0B", flex: 1, minWidth: 200 }}>
             Esta campanha está <strong>pausada manualmente</strong> — não vai buscar produtos nem enviar mensagens até ser retomada.
           </span>
-          <button onClick={() => onUpdate(group.id, { paused: false })} style={{ padding: "6px 12px", borderRadius: 8, background: "#854F0B", color: "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
-            Retomar
+          <button onClick={() => onUpdate(group.id, { paused: false })} style={{ padding: "6px 12px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
+            ▶ Retomar
           </button>
         </div>
       )}
@@ -892,7 +936,9 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
               <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 10, color: "var(--color-text-secondary)" }}>Filtros do catálogo</div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 4 }}>
-                Categorias: {(groupInfo.categories || []).map(c => categoryLabel(c)).join(", ") || "—"}
+                Categorias: {(groupInfo.categories || []).length === 0
+                  ? "—"
+                  : (groupInfo.categories || []).map(c => `${categoryIcon(c)} ${categoryLabel(c)}`).join(", ")}
               </div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 4 }}>
                 Lojas: {(scraping.sources || []).join(", ") || "todas"}
@@ -958,9 +1004,37 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
       {tab === "manage" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {/* Status + ação de pausa: lugar mais natural pra ligar/desligar a campanha
+              (antes ficava no header, mas é uma config, não navegação). */}
+          <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+              {group.paused
+                ? <span style={{ width: 11, height: 11, borderRadius: "50%", background: "#EF9F27", flexShrink: 0 }} />
+                : <span className="live-dot" />}
+              <div>
+                <div style={{ fontWeight: 500 }}>{group.paused ? "Campanha pausada" : "Campanha em execução"}</div>
+                <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                  {group.paused
+                    ? "Não busca produtos novos nem envia mensagens enquanto estiver pausada."
+                    : "Busca produtos do catálogo nos horários definidos e envia para os grupos vinculados."}
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                if (group.paused) onUpdate(group.id, { paused: false });
+                else setConfirmPause(true);
+              }}
+              title={group.paused ? "Retomar campanha" : "Pausar envios desta campanha"}
+              style={{ padding: "8px 18px", borderRadius: 8, background: group.paused ? PRIMARY : "#E24B4A", color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, flexShrink: 0 }}
+            >
+              {group.paused ? "▶ Retomar" : "⏸ Pausar"}
+            </button>
+          </div>
+
           <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-            <div style={{ fontWeight: 500, marginBottom: 4 }}>Informações do grupo</div>
-            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>Nome, categoria e dados principais</div>
+            <div style={{ fontWeight: 500, marginBottom: 4 }}>Informações da campanha</div>
+            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>Nome e categorias</div>
             <div style={{ marginBottom: 14 }}>
               <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Nome da campanha</label>
               <input value={groupInfo.name} onChange={e => setGroupInfo(g => ({ ...g, name: e.target.value }))} placeholder="Ex: Tech BR" style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }} />
@@ -976,12 +1050,27 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                       onClick={() => toggleCategory(id)}
                       style={{ padding: "6px 14px", borderRadius: 8, border: `0.5px solid ${active ? PRIMARY : "var(--color-border-tertiary)"}`, background: active ? PRIMARY_LIGHT : "transparent", color: active ? PRIMARY_DARK : "var(--color-text-secondary)", fontSize: 13, cursor: "pointer", fontWeight: active ? 500 : 400, userSelect: "none" }}
                     >
-                      {active ? "✓ " : ""}{categoryLabel(id)}
+                      {active ? "✓ " : ""}<span style={{ marginRight: 4 }}>{categoryIcon(id)}</span>{categoryLabel(id)}
                     </div>
                   );
                 })}
               </div>
             </div>
+          </div>
+
+          {/* Cooldown: movido da aba Janelas — é uma regra de produto, não de horário */}
+          <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Tempo de espera para reenvio</div>
+            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>Quanto tempo um produto aguarda antes de poder ser enviado novamente</div>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <input type="number" min={1} value={sched.cooldownValue} onChange={e => setSched(s => ({ ...s, cooldownValue: Number(e.target.value) }))} style={{ width: 80, padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 15, fontWeight: 500, textAlign: "center" }} />
+              <div style={{ display: "flex", gap: 6 }}>
+                {["horas", "dias", "semanas"].map(u => (
+                  <button key={u} onClick={() => setSched(s => ({ ...s, cooldownUnit: u }))} style={{ padding: "7px 14px", borderRadius: 8, border: `0.5px solid ${sched.cooldownUnit === u ? PRIMARY : "var(--color-border-tertiary)"}`, background: sched.cooldownUnit === u ? PRIMARY_LIGHT : "transparent", color: sched.cooldownUnit === u ? PRIMARY_DARK : "var(--color-text-secondary)", fontSize: 13, cursor: "pointer", fontWeight: sched.cooldownUnit === u ? 500 : 400 }}>{u}</button>
+                ))}
+              </div>
+            </div>
+            <div style={{ marginTop: 10, fontSize: 12, color: "var(--color-text-secondary)" }}>Produto enviado hoje só poderá ser reenviado após {sched.cooldownValue} {sched.cooldownUnit}.</div>
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -993,7 +1082,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             >
               {saved ? "✓ Salvo!" : "Salvar alterações"}
             </button>
-            <button onClick={() => setShowDelete(true)} style={{ padding: "9px 18px", borderRadius: 8, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>Excluir grupo</button>
+            <button onClick={() => setShowDelete(true)} style={{ padding: "9px 18px", borderRadius: 8, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 13, cursor: "pointer", fontWeight: 500, marginLeft: "auto" }}>Excluir campanha</button>
           </div>
 
           {showDelete && (
@@ -1144,6 +1233,22 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 {activeTabIsActive
                   ? <><span style={{ width: 8, height: 8, borderRadius: "50%", background: PRIMARY }} /> Ativo na campanha</>
                   : "Ativar este modelo"}
+              </button>
+              <button
+                onClick={duplicateActiveTemplate}
+                disabled={!activeTab}
+                title="Cria um novo modelo customizado usando o conteúdo salvo deste como ponto de partida"
+                style={{
+                  height: 36, padding: "0 16px", borderRadius: 8,
+                  border: "0.5px solid var(--color-border-secondary)",
+                  background: "transparent",
+                  color: "var(--color-text-primary)",
+                  fontSize: 13, fontWeight: 500,
+                  cursor: activeTab ? "pointer" : "not-allowed",
+                  opacity: activeTab ? 1 : 0.55,
+                }}
+              >
+                ⎘ Criar a partir deste
               </button>
               <button
                 onClick={openSaveTplDialog}
@@ -1317,19 +1422,79 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                   <div key={w.id} style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12, gap: 12, flexWrap: "wrap" }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
                           <span style={{ width: 9, height: 9, borderRadius: "50%", background: connected ? PRIMARY : "#E24B4A", flexShrink: 0 }} />
                           <span style={{ fontSize: 14, fontWeight: 500 }}>{w.name}</span>
                           <Badge color={connected ? "green" : "red"}>{connected ? "Conectado" : "Desconectado"}</Badge>
                         </div>
-                        <div style={{ fontSize: 12, color: "var(--color-text-secondary)", display: "flex", gap: 12, flexWrap: "wrap" }}>
-                          <span>👥 {w.members} membros</span>
-                          <span>📱 via {number ? number.label : "número removido"}</span>
-                          <span>🗓 Criado {w.createdAt}</span>
-                          {w.sentToday !== undefined && <span>📨 {w.sentToday} envios hoje</span>}
-                          {w.lastSend && <span>⏱ Último: {w.lastSend}</span>}
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+                            gap: 10,
+                            background: "var(--color-background-secondary)",
+                            border: "0.5px solid var(--color-border-tertiary)",
+                            borderRadius: 10,
+                            padding: "10px 12px",
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>Membros</div>
+                            <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-primary)" }}>{w.members ?? 0}</div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>Número WhatsApp</div>
+                            <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={number ? `${number.label} · ${number.phone || ""}` : "número removido"}>
+                              {number ? number.label : <span style={{ color: "#A32D2D", fontStyle: "italic" }}>removido</span>}
+                            </div>
+                            {number?.phone && <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 1 }}>{number.phone}</div>}
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>Adicionado</div>
+                            <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-primary)" }}>{w.createdAt || "—"}</div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>Envios hoje</div>
+                            <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-primary)" }}>{w.sentToday ?? 0}</div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>Último envio</div>
+                            <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-primary)" }}>{w.lastSend && w.lastSend !== "—" ? w.lastSend : <span style={{ color: "var(--color-text-secondary)", fontWeight: 400 }}>nenhum</span>}</div>
+                          </div>
                         </div>
                       </div>
+                    </div>
+
+                    {/* Descrição (nota local — não sincroniza com WhatsApp) */}
+                    <div style={{ marginTop: 12, marginBottom: 12 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                        <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 500 }}>Descrição</div>
+                        {editingDescId !== w.id && (
+                          <button onClick={() => startEditDesc(w)} title="Editar descrição" style={{ background: "transparent", border: "none", padding: 0, color: PRIMARY_DARK, fontSize: 11, cursor: "pointer", fontWeight: 500 }}>
+                            ✎ {w.description ? "editar" : "adicionar"}
+                          </button>
+                        )}
+                      </div>
+                      {editingDescId === w.id ? (
+                        <>
+                          <textarea
+                            autoFocus
+                            value={descDraft}
+                            onChange={e => setDescDraft(e.target.value)}
+                            rows={2}
+                            placeholder="Notas internas sobre este grupo (visível só no Nimbus)"
+                            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `0.5px solid ${PRIMARY}`, background: "var(--color-background-secondary)", fontSize: 13, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }}
+                          />
+                          <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                            <button onClick={() => saveDesc(w)} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY, color: "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Salvar</button>
+                            <button onClick={cancelEditDesc} style={{ padding: "5px 12px", borderRadius: 7, background: "transparent", color: "var(--color-text-primary)", border: "0.5px solid var(--color-border-secondary)", fontSize: 12, cursor: "pointer" }}>Cancelar</button>
+                          </div>
+                        </>
+                      ) : (
+                        <div style={{ fontSize: 13, color: w.description ? "var(--color-text-primary)" : "var(--color-text-secondary)", fontStyle: w.description ? "normal" : "italic", whiteSpace: "pre-wrap", lineHeight: 1.4 }}>
+                          {w.description || "—"}
+                        </div>
+                      )}
                     </div>
 
                     {w.inviteLink && (
@@ -1360,6 +1525,14 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                       {w.inviteLink && <button onClick={() => refreshInvite(w)} style={{ padding: "6px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: "pointer" }}>Renovar link</button>}
+                      <button
+                        onClick={() => cloneGroup(w)}
+                        disabled={numbers.length === 0}
+                        title={numbers.length === 0 ? "Conecte um número de WhatsApp primeiro" : `Criar um novo grupo "${computeCloneName(w.name)}" com a mesma configuração`}
+                        style={{ padding: "6px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 12, cursor: numbers.length === 0 ? "not-allowed" : "pointer", opacity: numbers.length === 0 ? 0.5 : 1 }}
+                      >
+                        ⎘ Criar cópia
+                      </button>
                       <div style={{ flex: 1 }} />
                       <button onClick={() => unlinkWG(w.id)} style={{ padding: "6px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: "pointer" }}>Desvincular</button>
                       <button onClick={() => setConfirmDeleteWG(w)} style={{ padding: "6px 12px", borderRadius: 7, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 12, cursor: "pointer" }}>Excluir</button>
@@ -1931,7 +2104,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 {sched.windows.length > 1 && <button onClick={() => removeWindow(w.id)} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 12, color: "#A32D2D" }}>Remover</button>}
               </div>
               <div className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-                {[["Início", "from", "time"], ["Fim", "to", "time"], ["Intervalo", "interval", "select"]].map(([label, field, type]) => (
+                {[["Início", "from", "time"], ["Fim", "to", "time"], ["Intervalo entre produtos", "interval", "select"]].map(([label, field, type]) => (
                   <div key={field}>
                     <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>{label}</label>
                     {type === "time"
@@ -1943,23 +2116,10 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               </div>
             </div>
           ))}
-          <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-            <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Tempo de espera para reenvio</div>
-            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>Quanto tempo um produto aguarda antes de poder ser enviado novamente</div>
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <input type="number" min={1} value={sched.cooldownValue} onChange={e => setSched(s => ({ ...s, cooldownValue: Number(e.target.value) }))} style={{ width: 80, padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 15, fontWeight: 500, textAlign: "center" }} />
-              <div style={{ display: "flex", gap: 6 }}>
-                {["horas", "dias", "semanas"].map(u => (
-                  <button key={u} onClick={() => setSched(s => ({ ...s, cooldownUnit: u }))} style={{ padding: "7px 14px", borderRadius: 8, border: `0.5px solid ${sched.cooldownUnit === u ? PRIMARY : "var(--color-border-tertiary)"}`, background: sched.cooldownUnit === u ? PRIMARY_LIGHT : "transparent", color: sched.cooldownUnit === u ? PRIMARY_DARK : "var(--color-text-secondary)", fontSize: 13, cursor: "pointer", fontWeight: sched.cooldownUnit === u ? 500 : 400 }}>{u}</button>
-                ))}
-              </div>
-            </div>
-            <div style={{ marginTop: 10, fontSize: 12, color: "var(--color-text-secondary)" }}>Produto enviado hoje só poderá ser reenviado após {sched.cooldownValue} {sched.cooldownUnit}.</div>
-          </div>
           <button
             onClick={save}
             disabled={!scheduleDirty && !saved}
-            title={scheduleDirty ? "Salvar configurações de janelas/cooldown" : "Sem alterações pra salvar"}
+            title={scheduleDirty ? "Salvar janelas de envio" : "Sem alterações pra salvar"}
             style={{ ...saveBtnStyle(scheduleDirty), alignSelf: "flex-start" }}
           >
             {saved ? "✓ Salvo!" : "Salvar configurações"}

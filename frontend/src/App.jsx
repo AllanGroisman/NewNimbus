@@ -42,7 +42,18 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [bootstrapping, setBootstrapping] = useState(true);
   const [mobileMenu, setMobileMenu] = useState(false);
-  const [affiliateConfigured, setAffiliateConfigured] = useState(true);
+  // Status de afiliado por loja — controla badge "pausado" (ML) e alertas no sidebar.
+  // Default true pra ML/Amazon evita "flash vermelho" antes do primeiro fetch.
+  // Shopee fica sempre como "não configurado" enquanto a integração não existe.
+  const [affiliateStatus, setAffiliateStatus] = useState({ ml: true, amazon: true, shopee: false });
+  const affiliateConfigured = !!affiliateStatus.ml;
+  const applyAffiliateStatus = (s) => {
+    setAffiliateStatus({
+      ml: !!(s?.ml?.configured ?? s?.configured),
+      amazon: !!s?.amazon?.configured,
+      shopee: !!s?.shopee?.configured,
+    });
+  };
 
   // Controla se já carregamos o estado do servidor — só começamos a salvar depois disso
   const stateLoadedRef = useRef(false);
@@ -149,7 +160,7 @@ export default function App() {
       if (cancelled || (typeof document !== "undefined" && document.hidden)) return;
       try {
         const s = await getAffiliateStatus();
-        if (!cancelled) setAffiliateConfigured(!!s?.configured);
+        if (!cancelled) applyAffiliateStatus(s);
       } catch {
         // silencioso
       }
@@ -297,24 +308,19 @@ export default function App() {
     return <Login onLogin={handleLogin} />;
   }
 
-  const fallbackPage = <PageDashboard groups={groups} whatsappGroups={whatsappGroups} onSelectGroup={handleSelectGroup} onCreateGroup={handleCreateGroup} affiliateConfigured={affiliateConfigured} onGoToSettings={() => setPage("settings")} />;
+  const fallbackPage = <PageDashboard groups={groups} whatsappGroups={whatsappGroups} onSelectGroup={handleSelectGroup} onCreateGroup={handleCreateGroup} onUpdate={handleUpdate} affiliateConfigured={affiliateConfigured} onGoToSettings={() => setPage("settings")} />;
   const pageMap = {
-    dashboard: <PageDashboard groups={groups} whatsappGroups={whatsappGroups} onSelectGroup={handleSelectGroup} onCreateGroup={handleCreateGroup} affiliateConfigured={affiliateConfigured} onGoToSettings={() => setPage("settings")} />,
+    dashboard: <PageDashboard groups={groups} whatsappGroups={whatsappGroups} onSelectGroup={handleSelectGroup} onCreateGroup={handleCreateGroup} onUpdate={handleUpdate} affiliateConfigured={affiliateConfigured} onGoToSettings={() => setPage("settings")} />,
     products: user?.role === "admin" ? <PageProducts /> : fallbackPage,
     whatsapp: <PageWhatsApp
       numbers={numbers}
       setNumbers={setNumbers}
-      groups={groups}
       whatsappGroups={whatsappGroups}
-      onCreateWhatsappGroup={createWhatsappGroup}
-      onDeleteWhatsappGroup={deleteWhatsappGroup}
-      onSetWhatsappGroupStatus={setWhatsappGroupStatus}
-      onUpdateWhatsappGroup={updateWhatsappGroup}
     />,
-    settings: <PageSettings user={user} setUser={setUser} onLogout={handleLogout} settings={settings} setSettings={setSettings} onAffiliateChange={setAffiliateConfigured} />,
+    settings: <PageSettings user={user} setUser={setUser} onLogout={handleLogout} settings={settings} setSettings={setSettings} onAffiliateChange={applyAffiliateStatus} />,
     subscription: <PageSubscription />,
-    "mercado-livre": <PageAffiliateML onAffiliateChange={setAffiliateConfigured} />,
-    "amazon": <PageAffiliateAmazon />,
+    "mercado-livre": <PageAffiliateML onAffiliateChange={applyAffiliateStatus} />,
+    "amazon": <PageAffiliateAmazon onAffiliateChange={applyAffiliateStatus} />,
     "shopee": <PageAffiliateShopee />,
     "admin-scraper": user?.role === "admin" ? <PageAdminScraper /> : fallbackPage,
     "admin-users":   user?.role === "admin" ? <PageAdminUsers currentUser={user} /> : fallbackPage,
@@ -328,6 +334,7 @@ export default function App() {
         groups={groups}
         whatsappGroups={whatsappGroups}
         affiliateConfigured={affiliateConfigured}
+        affiliateStatus={affiliateStatus}
         user={user}
         onNavigate={(id) => { setPage(id); setSelectedGroup(null); }}
         onSelectGroup={handleSelectGroup}

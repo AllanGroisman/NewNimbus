@@ -192,7 +192,7 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {Object.values(CATEGORIES).map(c => (
                     <div key={c.label} style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--color-background-secondary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 8, padding: "5px 10px", fontSize: 13 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: PRIMARY }} />{c.label}
+                      <span style={{ fontSize: 14 }}>{c.icon}</span>{c.label}
                     </div>
                   ))}
                 </div>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, CATEGORIES } from "../data/constants";
+import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, CATEGORIES, categoryIcon } from "../data/constants";
 import { adminCatalog, adminScraperConfig, adminRunScraper, adminScraperStatus } from "../data/api";
 import { ProductGridCard } from "../components/ui/ProductCard";
 
@@ -210,7 +210,7 @@ ${cards}
             key={c.id}
             onClick={() => setActiveCat(c.id)}
             style={catBtnStyle(activeCat === c.id)}
-          >{c.label}</button>
+          ><span style={{ marginRight: 4 }}>{categoryIcon(c.id)}</span>{c.label}</button>
         ))}
       </div>
 
@@ -267,7 +267,7 @@ ${cards}
           <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Filtros ativos:</span>
           {activeCat !== "all" && (
             <span onClick={() => setActiveCat("all")} style={chipStyle}>
-              {available.categories.find(c => c.id === activeCat)?.label || activeCat} ✕
+              {categoryIcon(activeCat)} {available.categories.find(c => c.id === activeCat)?.label || activeCat} ✕
             </span>
           )}
           {storeFilter !== "all" && (
