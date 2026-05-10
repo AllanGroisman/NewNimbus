@@ -73,6 +73,16 @@ export async function sendNextNow(groupId) {
 export async function refillQueueNow(groupId, overrides) {
   return http("POST", `/api/state/groups/${groupId}/refill`, overrides || {});
 }
+// Busca metadados de uma URL (scraping on-demand) — pré-preenche o form de manual add
+export async function fetchUrlMetadata(url) {
+  return http("POST", "/api/scraper/fetch-url", { url });
+}
+// Adiciona um produto manualmente à fila/pending da campanha.
+// `payload` = { url, overrides: { name, price, originalPrice, discount, img, store, category }, force? }
+// Tratamento especial: 409 (duplicata) é jogado como erro com code; cooldown vem como { inCooldown: true } no JSON.
+export async function manualAddToQueue(groupId, payload) {
+  return http("POST", `/api/state/groups/${groupId}/manual-add`, payload || {});
+}
 // Limpa o histórico de envios da campanha (reseta cooldown — produtos voltam a ser elegíveis)
 export async function clearGroupHistory(groupId) {
   return http("DELETE", `/api/state/groups/${groupId}/history`);

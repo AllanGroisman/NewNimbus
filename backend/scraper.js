@@ -2,6 +2,16 @@ const puppeteer = require("puppeteer");
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
+// URLs de imagem da Amazon vêm com "size descriptor" tipo `._AC_UY218_QL90_.jpg`
+// que serve thumbnails minúsculos. Removendo o descriptor, a CDN serve a imagem
+// em resolução nativa (geralmente quadrada 1500×1500) — fica nítida no WhatsApp
+// e enquadra direito na prévia. Funciona pra m.media-amazon.com e ssl-images-amazon.com.
+function upgradeAmazonImageUrl(url) {
+  if (!url || typeof url !== "string") return url;
+  if (!/(media-amazon|ssl-images-amazon)\.com/i.test(url)) return url;
+  return url.replace(/\._[A-Za-z0-9_,]+_(?=\.(?:jpg|jpeg|png|webp|gif)(?:\?|$))/i, "");
+}
+
 // Categorias suportadas. Cada categoria mapeia pra um identificador por loja.
 // - mlCode: ID da categoria do Mercado Livre (na URL de ofertas)
 // - amzKeyword: termo de busca usado no Amazon BR (porque a Amazon não tem
@@ -230,6 +240,8 @@ async function scrapeAmazon({ category, limit = 100 } = {}) {
 
     // Remove patrocinados — costumam não ser as melhores ofertas
     const cleaned = raw.filter(p => !p.sponsored);
+    // Sobe a resolução das imagens (Amazon serve thumb minúsculo no card)
+    for (const p of cleaned) p.img = upgradeAmazonImageUrl(p.img);
     cleaned.sort((a, b) => (b.discount || 0) - (a.discount || 0));
     return cleaned.slice(0, limit);
   } finally {
@@ -304,6 +316,152 @@ function parseSold(s) {
   return Math.round(n);
 }
 
+// ────────────────────────────────────────────────────────────────────────
+// Scraping de UMA página — usado pelo "Adicionar link manualmente" da fila.
+// Tenta seletores conhecidos por loja; cai pra OG tags em casos genéricos.
+// ────────────────────────────────────────────────────────────────────────
+
+function detectStore(url) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    if (/mercadolivre|mercadolibre/.test(host) || /merc\.li|mlb\.li/.test(host)) return "Mercado Livre";
+    if (/amazon|amzn/.test(host)) return "Amazon";
+    if (/shopee/.test(host)) return "Shopee";
+    if (/americanas/.test(host)) return "Americanas";
+    if (/magazineluiza|magalu/.test(host)) return "Magazine Luiza";
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function scrapeSingleProduct(url) {
+  if (!url || typeof url !== "string" || !url.trim()) {
+    throw new Error("URL inválida");
+  }
+  const cleanUrl = url.trim();
+  const store = detectStore(cleanUrl);
+
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+  });
+  try {
+    const page = await browser.newPage();
+    await page.setUserAgent(UA);
+    await page.setExtraHTTPHeaders({ "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8" });
+    await page.goto(cleanUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+    // Pequena espera pra conteúdo dinâmico (preço por JS é comum)
+    await new Promise(r => setTimeout(r, 1500));
+
+    // Em ML/Amazon, espera o seletor principal aparecer (com timeout curto)
+    if (store === "Mercado Livre") {
+      try { await page.waitForSelector(".ui-pdp-title, h1", { timeout: 5000 }); } catch {}
+    } else if (store === "Amazon") {
+      try { await page.waitForSelector("#productTitle, h1#title", { timeout: 5000 }); } catch {}
+      const isCaptcha = await page.evaluate(() => /enter the characters|captcha|robot check/i.test(document.body?.innerText || ""));
+      if (isCaptcha) throw new Error("Amazon retornou CAPTCHA — tente daqui a alguns minutos.");
+    }
+
+    const data = await page.evaluate((store) => {
+      const meta = (sel) => document.querySelector(sel)?.getAttribute("content")?.trim() || null;
+      const ogTitle = meta('meta[property="og:title"]') || meta('meta[name="og:title"]') || document.title?.trim() || null;
+      const ogImage = meta('meta[property="og:image"]') || meta('meta[name="og:image"]') || null;
+      const ogPrice = meta('meta[property="product:price:amount"]') || meta('meta[property="og:price:amount"]') || null;
+
+      const parsePrice = (s) => {
+        if (!s) return null;
+        const m = String(s).replace(/\s+/g, "").match(/R\$([\d.]+)(?:,(\d{1,2}))?/i);
+        if (!m) return null;
+        const integer = m[1].replace(/\./g, "");
+        const cents = m[2] || "00";
+        const v = parseFloat(`${integer}.${cents}`);
+        return isNaN(v) ? null : v;
+      };
+
+      let name = null, price = null, originalPrice = null, discount = null, img = null;
+
+      if (store === "Mercado Livre") {
+        const titleEl = document.querySelector("h1.ui-pdp-title, .ui-pdp-title");
+        name = titleEl?.textContent?.trim() || ogTitle;
+        // Preço atual: primeiro andes-money-amount NÃO marcado como previous
+        const curWrap = document.querySelector(".ui-pdp-price__main-container") || document;
+        const curFrac = curWrap.querySelector(".andes-money-amount:not(.andes-money-amount--previous) .andes-money-amount__fraction");
+        const curCents = curWrap.querySelector(".andes-money-amount:not(.andes-money-amount--previous) .andes-money-amount__cents");
+        if (curFrac) {
+          const f = curFrac.textContent.trim().replace(/\./g, "");
+          const c = curCents ? curCents.textContent.trim() : "00";
+          price = parseFloat(`${f}.${c}`);
+        }
+        const prevFrac = document.querySelector(".andes-money-amount--previous .andes-money-amount__fraction");
+        const prevCents = document.querySelector(".andes-money-amount--previous .andes-money-amount__cents");
+        if (prevFrac) {
+          const f = prevFrac.textContent.trim().replace(/\./g, "");
+          const c = prevCents ? prevCents.textContent.trim() : "00";
+          originalPrice = parseFloat(`${f}.${c}`);
+        }
+        const discEl = document.querySelector(".andes-money-amount__discount, .ui-pdp-price__second-line .andes-money-amount__discount");
+        if (discEl) {
+          const m = discEl.textContent.match(/(\d+)%/);
+          if (m) discount = parseInt(m[1], 10);
+        }
+        const imgEl = document.querySelector(".ui-pdp-gallery__figure img, figure.ui-pdp-gallery__figure img, .ui-pdp-image");
+        img = imgEl?.getAttribute("src") || imgEl?.getAttribute("data-zoom") || ogImage;
+      } else if (store === "Amazon") {
+        const titleEl = document.querySelector("#productTitle, h1#title span, h1#title");
+        name = titleEl?.textContent?.trim() || ogTitle;
+        const priceCurrentEl = document.querySelector(".a-price[data-a-color='base']:not(.a-text-price) .a-offscreen")
+                            || document.querySelector(".priceToPay .a-offscreen")
+                            || document.querySelector("#corePrice_feature_div .a-offscreen")
+                            || document.querySelector(".a-price:not(.a-text-price) .a-offscreen");
+        if (priceCurrentEl) price = parsePrice(priceCurrentEl.textContent);
+        const priceOriginalEl = document.querySelector(".a-price.a-text-price[data-a-strike='true'] .a-offscreen")
+                             || document.querySelector(".basisPrice .a-offscreen");
+        if (priceOriginalEl) originalPrice = parsePrice(priceOriginalEl.textContent);
+        if (originalPrice && price && originalPrice > price && originalPrice < price * 20) {
+          discount = Math.round((1 - price / originalPrice) * 100);
+        }
+        const imgEl = document.querySelector("#landingImage, #imgBlkFront, #main-image");
+        img = imgEl?.getAttribute("src") || imgEl?.getAttribute("data-old-hires") || ogImage;
+      } else {
+        // Genérico (Shopee/Americanas/etc) — só OG + busca por R$ no texto
+        name = ogTitle;
+        img = ogImage;
+        if (ogPrice) {
+          const v = parseFloat(String(ogPrice).replace(",", "."));
+          if (!isNaN(v)) price = v;
+        }
+        if (price == null) {
+          const text = document.body?.innerText || "";
+          const m = text.match(/R\$\s*([\d.]+)(?:,(\d{1,2}))?/);
+          if (m) {
+            const integer = m[1].replace(/\./g, "");
+            const cents = m[2] || "00";
+            const v = parseFloat(`${integer}.${cents}`);
+            if (!isNaN(v)) price = v;
+          }
+        }
+      }
+
+      return { name, price, originalPrice, discount, img };
+    }, store);
+
+    return {
+      name: data.name || null,
+      link: cleanUrl,
+      price: data.price ?? null,
+      originalPrice: data.originalPrice ?? null,
+      discount: data.discount ?? null,
+      img: store === "Amazon" ? upgradeAmazonImageUrl(data.img) : (data.img || null),
+      store: store || null,
+      scrapedAt: new Date().toISOString(),
+    };
+  } finally {
+    await browser.close();
+  }
+}
+
 async function autoScroll(page) {
   await page.evaluate(async () => {
     await new Promise((resolve) => {
@@ -323,4 +481,4 @@ async function autoScroll(page) {
   await new Promise(r => setTimeout(r, 1000));
 }
 
-module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, applyFilters, normalizeSource, CATEGORIES, STORES };
+module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, applyFilters, normalizeSource, CATEGORIES, STORES };

@@ -1,6 +1,6 @@
 const express = require("express");
 const cors = require("cors");
-const { CATEGORIES, STORES } = require("./scraper");
+const { CATEGORIES, STORES, scrapeSingleProduct } = require("./scraper");
 const wa = require("./whatsapp");
 const auth = require("./auth");
 const storage = require("./storage");
@@ -234,6 +234,39 @@ app.delete("/api/state/groups/:gid/history", auth.requireAuth, async (req, res) 
     res.json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+// Busca metadados de uma URL única (Puppeteer) — usado pelo "Adicionar link".
+// Não bloqueia em erro: devolve campos null pra UI deixar editar manualmente.
+app.post("/api/scraper/fetch-url", auth.requireAuth, async (req, res) => {
+  try {
+    const url = req.body?.url;
+    if (!url || typeof url !== "string" || !url.trim()) {
+      return res.status(400).json({ error: "URL obrigatória" });
+    }
+    const data = await scrapeSingleProduct(url.trim());
+    res.json(data);
+  } catch (err) {
+    console.error("[fetch-url]", err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Adiciona um produto manualmente à fila/pending da campanha.
+// Body: { url, overrides: { name, price, originalPrice, discount, img, store, category }, force? }
+// Resposta:
+//  - { ok: true, target, item, ... } quando adicionado
+//  - { inCooldown: true, lastSentAt, cooldownMinutes, cooldownLabel } pedindo confirmação (UI manda force=true depois)
+//  - 400 com error em duplicata na fila/pending ou validação
+app.post("/api/state/groups/:gid/manual-add", auth.requireAuth, async (req, res) => {
+  try {
+    const groupId = isNaN(Number(req.params.gid)) ? req.params.gid : Number(req.params.gid);
+    const r = await scheduler.manualAdd(req.user.id, groupId, req.body || {});
+    res.json(r);
+  } catch (err) {
+    const status = err.code === "duplicate_queue" || err.code === "duplicate_pending" ? 409 : 400;
+    res.status(status).json({ error: err.message, code: err.code || null });
   }
 });
 

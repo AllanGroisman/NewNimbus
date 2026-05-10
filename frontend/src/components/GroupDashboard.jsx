@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, getGroupCategories, getGroupStats, computeQueueETA, formatETA } from "../data/constants";
-import { createWAGroup, leaveWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupHistory, approvePendingItem, rejectPendingItem } from "../data/api";
+import { createWAGroup, leaveWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupHistory, approvePendingItem, rejectPendingItem, fetchUrlMetadata, manualAddToQueue } from "../data/api";
 import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
 
 const TEMPLATE_VARS = [
@@ -334,6 +334,100 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       setSendingNow(false);
     }
   }
+  // ── Adicionar link manualmente ──────────────────────────────────────────
+  // Modal aberto = objeto com o form; null = fechado.
+  const emptyManualForm = { url: "", name: "", price: "", originalPrice: "", discount: "", img: "", store: "", category: "" };
+  const [manualForm, setManualForm] = useState(null);
+  const [manualFetching, setManualFetching] = useState(false);
+  const [manualSubmitting, setManualSubmitting] = useState(false);
+  const [manualMsg, setManualMsg] = useState(null); // { type: "ok"|"err"|"warn", text }
+  // Quando o backend devolve { inCooldown: true }, guardamos pra confirmar com force=true
+  const [manualCooldown, setManualCooldown] = useState(null);
+
+  const openManualAdd = () => {
+    setManualForm({
+      ...emptyManualForm,
+      category: (groupInfo.categories || [])[0] || "",
+    });
+    setManualMsg(null);
+    setManualCooldown(null);
+  };
+  const closeManualAdd = () => {
+    setManualForm(null);
+    setManualMsg(null);
+    setManualCooldown(null);
+  };
+  const updateManualField = (field, value) => setManualForm(f => f ? { ...f, [field]: value } : f);
+
+  const fetchManualMetadata = async () => {
+    if (!manualForm?.url?.trim() || manualFetching) return;
+    setManualFetching(true);
+    setManualMsg(null);
+    try {
+      const data = await fetchUrlMetadata(manualForm.url.trim());
+      setManualForm(f => ({
+        ...f,
+        url: data.link || f.url,
+        name: data.name || f.name,
+        img: data.img || f.img,
+        price: data.price != null ? String(data.price) : f.price,
+        originalPrice: data.originalPrice != null ? String(data.originalPrice) : f.originalPrice,
+        discount: data.discount != null ? String(data.discount) : f.discount,
+        store: data.store || f.store,
+      }));
+      const missing = [];
+      if (!data.name) missing.push("nome");
+      if (data.price == null) missing.push("preço");
+      setManualMsg(missing.length
+        ? { type: "warn", text: `Dados parciais. Preencha manualmente: ${missing.join(", ")}.` }
+        : { type: "ok", text: "Dados carregados. Revise antes de adicionar." });
+    } catch (err) {
+      setManualMsg({ type: "err", text: `Falha ao buscar dados: ${err.message}. Preencha manualmente.` });
+    } finally {
+      setManualFetching(false);
+    }
+  };
+
+  const submitManualAdd = async (force = false) => {
+    if (!manualForm || manualSubmitting) return;
+    if (!manualForm.url.trim()) { setManualMsg({ type: "err", text: "Informe o link do produto." }); return; }
+    if (!manualForm.name.trim()) { setManualMsg({ type: "err", text: "Informe o nome do produto." }); return; }
+    setManualSubmitting(true);
+    setManualMsg(null);
+    try {
+      const payload = {
+        url: manualForm.url.trim(),
+        force,
+        overrides: {
+          name: manualForm.name.trim(),
+          price: manualForm.price !== "" ? Number(manualForm.price) : null,
+          originalPrice: manualForm.originalPrice !== "" ? Number(manualForm.originalPrice) : null,
+          discount: manualForm.discount !== "" ? Number(manualForm.discount) : null,
+          img: manualForm.img.trim() || null,
+          store: manualForm.store.trim() || null,
+          category: manualForm.category || null,
+        },
+      };
+      const r = await manualAddToQueue(group.id, payload);
+      if (r.inCooldown) {
+        setManualCooldown(r);
+        return;
+      }
+      // Sucesso — atualiza UI imediatamente e fecha
+      const ops = await loadAppOps();
+      const o = (ops.groups || []).find(g => g.id === group.id);
+      if (o) onUpdate(group.id, { queue: o.queue, pending: o.pending });
+      const targetLabel = r.target === "pending" ? "aguardando revisão" : "fila";
+      setRefillMsg({ type: "ok", text: `Produto adicionado à ${targetLabel}.` });
+      setTimeout(() => setRefillMsg(null), 4000);
+      closeManualAdd();
+    } catch (err) {
+      setManualMsg({ type: "err", text: err.message });
+    } finally {
+      setManualSubmitting(false);
+    }
+  };
+
   const templateRef = useRef(null);
 
   const insertTemplateVar = (token) => {
@@ -1974,6 +2068,9 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               <button onClick={triggerRefill} disabled={refilling} style={{ padding: "9px 18px", borderRadius: 8, border: `0.5px solid ${PRIMARY}`, background: "transparent", color: PRIMARY_DARK, fontSize: 13, cursor: refilling ? "wait" : "pointer", fontWeight: 500, opacity: refilling ? 0.6 : 1 }}>
                 {refilling ? "⟳ Buscando..." : "↻ Buscar do catálogo"}
               </button>
+              <button onClick={openManualAdd} style={{ padding: "9px 18px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>
+                + Adicionar link manualmente
+              </button>
               {refillMsg && (
                 <span style={{ fontSize: 12, color: refillMsg.type === "err" ? "#A32D2D" : refillMsg.type === "warn" ? "#854F0B" : PRIMARY_DARK }}>
                   {refillMsg.text}
@@ -2235,6 +2332,151 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             >
               Sim, limpar
             </button>
+          </div>
+        </Modal>
+      )}
+
+      {manualForm && (
+        <Modal title="Adicionar produto manualmente" onClose={closeManualAdd}>
+          <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12, lineHeight: 1.5 }}>
+            Cole a URL do produto, clique <strong>Buscar dados</strong> pra puxar nome/preço/imagem automaticamente, revise os campos e adicione à fila.
+            Tudo é editável — se a busca falhar, preencha manualmente.
+          </div>
+
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Link do produto</label>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                autoFocus
+                value={manualForm.url}
+                onChange={e => updateManualField("url", e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") fetchManualMetadata(); }}
+                placeholder="https://..."
+                style={{ flex: 1, padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", fontFamily: "monospace" }}
+              />
+              <button
+                onClick={fetchManualMetadata}
+                disabled={!manualForm.url.trim() || manualFetching}
+                title="Abre a página com Puppeteer e extrai nome/preço/imagem (5–15s)"
+                style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: PRIMARY, color: "#fff", fontSize: 13, cursor: (!manualForm.url.trim() || manualFetching) ? "not-allowed" : "pointer", fontWeight: 500, opacity: (!manualForm.url.trim() || manualFetching) ? 0.6 : 1, whiteSpace: "nowrap" }}
+              >
+                {manualFetching ? "⟳ Buscando..." : "Buscar dados"}
+              </button>
+            </div>
+          </div>
+
+          {manualMsg && (
+            <div style={{ marginBottom: 12, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: manualMsg.type === "ok" ? PRIMARY_LIGHT : manualMsg.type === "warn" ? "#FEF3C7" : "#FCEBEB", color: manualMsg.type === "ok" ? PRIMARY_DARK : manualMsg.type === "warn" ? "#854F0B" : "#A32D2D" }}>
+              {manualMsg.text}
+            </div>
+          )}
+
+          <div className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Nome do produto *</label>
+              <input
+                value={manualForm.name}
+                onChange={e => updateManualField("name", e.target.value)}
+                placeholder="Ex: Smartphone Samsung Galaxy A55 256GB"
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Preço (R$)</label>
+              <input
+                type="number" min={0} step="0.01"
+                value={manualForm.price}
+                onChange={e => updateManualField("price", e.target.value)}
+                placeholder="1899.00"
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Preço original (R$)</label>
+              <input
+                type="number" min={0} step="0.01"
+                value={manualForm.originalPrice}
+                onChange={e => updateManualField("originalPrice", e.target.value)}
+                placeholder="2499.00"
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Desconto (%)</label>
+              <input
+                type="number" min={0} max={99}
+                value={manualForm.discount}
+                onChange={e => updateManualField("discount", e.target.value)}
+                placeholder="24"
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Loja</label>
+              <select
+                value={manualForm.store}
+                onChange={e => updateManualField("store", e.target.value)}
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13 }}
+              >
+                <option value="">— escolher —</option>
+                {allSources.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>URL da imagem</label>
+              <input
+                value={manualForm.img}
+                onChange={e => updateManualField("img", e.target.value)}
+                placeholder="https://..."
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 12, boxSizing: "border-box", fontFamily: "monospace" }}
+              />
+              {manualForm.img && (
+                <div style={{ marginTop: 6, padding: 6, borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", display: "inline-block" }}>
+                  <img src={manualForm.img} alt="" style={{ maxWidth: 100, maxHeight: 100, objectFit: "contain", display: "block" }} onError={e => { e.target.style.display = "none"; }} />
+                </div>
+              )}
+            </div>
+            {(groupInfo.categories || []).length > 1 && (
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Categoria</label>
+                <select
+                  value={manualForm.category}
+                  onChange={e => updateManualField("category", e.target.value)}
+                  style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13 }}
+                >
+                  {(groupInfo.categories || []).map(c => <option key={c} value={c}>{categoryLabel(c)}</option>)}
+                </select>
+              </div>
+            )}
+          </div>
+
+          {manualCooldown && (
+            <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 8, background: "#FEF3C7", border: "0.5px solid #F4D08A", fontSize: 12, color: "#854F0B", lineHeight: 1.5 }}>
+              ⚠️ Este produto já foi enviado em <strong>{new Date(manualCooldown.lastSentAt).toLocaleString("pt-BR")}</strong> e ainda está dentro do tempo de espera para reenvio
+              {manualCooldown.cooldownLabel ? <> ({manualCooldown.cooldownLabel})</> : null}.
+              Tem certeza que quer adicionar mesmo assim?
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16, flexWrap: "wrap" }}>
+            <button onClick={closeManualAdd} disabled={manualSubmitting} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+            {manualCooldown ? (
+              <button
+                onClick={() => submitManualAdd(true)}
+                disabled={manualSubmitting}
+                style={{ padding: "8px 16px", borderRadius: 8, background: "#E24B4A", color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: manualSubmitting ? 0.6 : 1 }}
+              >
+                {manualSubmitting ? "⟳ Adicionando..." : "Adicionar mesmo assim"}
+              </button>
+            ) : (
+              <button
+                onClick={() => submitManualAdd(false)}
+                disabled={manualSubmitting || !manualForm.url.trim() || !manualForm.name.trim()}
+                style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: (manualSubmitting || !manualForm.url.trim() || !manualForm.name.trim()) ? 0.6 : 1 }}
+              >
+                {manualSubmitting ? "⟳ Adicionando..." : "Adicionar à fila"}
+              </button>
+            )}
           </div>
         </Modal>
       )}

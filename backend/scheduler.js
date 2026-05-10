@@ -1,5 +1,5 @@
 const crypto = require("crypto");
-const { normalizeSource } = require("./scraper");
+const { normalizeSource, upgradeAmazonImageUrl } = require("./scraper");
 const wa = require("./whatsapp");
 const storage = require("./storage");
 const catalog = require("./catalog");
@@ -224,6 +224,12 @@ async function sendItem(userId, group, whatsappGroups, item) {
     } else if (affiliate.status().amazon.configured) {
       console.warn(`[scheduler] afiliado Amazon falhou pra "${item.name?.slice(0, 40)}" — enviando com link original`);
     }
+  }
+  // Defesa: itens já no catálogo/fila podem ter URL de thumb da Amazon — sobe pra
+  // resolução nativa antes de mandar pro WhatsApp pra a prévia ficar enquadrada.
+  if (itemForSend.img) {
+    const upgraded = upgradeAmazonImageUrl(itemForSend.img);
+    if (upgraded !== itemForSend.img) itemForSend = { ...itemForSend, img: upgraded };
   }
 
   const text = renderTemplate(group.messageTemplate, itemForSend);
@@ -462,4 +468,87 @@ async function refillNow(userId, groupId, overrides = {}) {
   };
 }
 
-module.exports = { start, stop, tick, sendNextNow, refillNow };
+// Adiciona um produto manualmente (URL + dados editados pelo usuário) à fila ou
+// pending da campanha. Verifica duplicata e cooldown — em cooldown, devolve
+// `{ inCooldown: true, lastSentAt }` pra UI confirmar antes (a menos que `force`).
+async function manualAdd(userId, groupId, payload = {}) {
+  const { url, overrides = {}, force = false } = payload;
+  const state = storage.loadState(userId);
+  const group = (state.groups || []).find(g => g.id === groupId);
+  if (!group) throw new Error("Campanha não encontrada");
+
+  const cleanUrl = String(url || overrides.link || "").trim();
+  const cleanName = String(overrides.name || "").trim();
+  if (!cleanUrl) throw new Error("Informe o link do produto.");
+  if (!cleanName) throw new Error("Informe o nome do produto.");
+
+  const item = {
+    name: cleanName,
+    link: cleanUrl,
+    img: overrides.img ? String(overrides.img).trim() : null,
+    price: overrides.price != null && overrides.price !== "" ? Number(overrides.price) : null,
+    originalPrice: overrides.originalPrice != null && overrides.originalPrice !== "" ? Number(overrides.originalPrice) : null,
+    discount: overrides.discount != null && overrides.discount !== "" ? Number(overrides.discount) : null,
+    store: overrides.store ? String(overrides.store).trim() : null,
+    category: overrides.category || (Array.isArray(group.categories) ? group.categories[0] : null) || null,
+    rating: null,
+    reviewsCount: null,
+    sold: null,
+    freeShipping: false,
+    seller: null,
+    addedAt: new Date().toISOString(),
+    manual: true,
+  };
+  // Sanitiza NaN
+  for (const k of ["price", "originalPrice", "discount"]) {
+    if (item[k] != null && (typeof item[k] !== "number" || isNaN(item[k]))) item[k] = null;
+  }
+
+  const key = productKey(item);
+  item.id = key;
+  item.key = key;
+
+  // Duplicata na fila ou pending — sempre bloqueia (não tem por que adicionar de novo)
+  const inQueue = (group.queue || []).some(q => (q.key || productKey(q)) === key);
+  if (inQueue) {
+    const err = new Error("Este produto já está na fila desta campanha.");
+    err.code = "duplicate_queue";
+    throw err;
+  }
+  const inPending = (group.pending || []).some(p => (p.key || productKey(p)) === key);
+  if (inPending) {
+    const err = new Error("Este produto já está aguardando revisão nesta campanha.");
+    err.code = "duplicate_pending";
+    throw err;
+  }
+
+  // Cooldown: produto enviado dentro do limite da campanha. UI confirma.
+  const cdMin = cooldownMinutes(group.schedule);
+  if (cdMin > 0) {
+    const recent = (group.history || [])
+      .map(h => ({ k: h.key || productKey(h), sentAt: h.sentAt, name: h.name }))
+      .find(h => h.k === key && minutesSince(h.sentAt) < cdMin);
+    if (recent && !force) {
+      return {
+        inCooldown: true,
+        lastSentAt: recent.sentAt,
+        cooldownMinutes: cdMin,
+        cooldownLabel: `${group.schedule?.cooldownValue || ""} ${group.schedule?.cooldownUnit || ""}`.trim(),
+      };
+    }
+  }
+
+  const target = isAutoApprove(group) ? "queue" : "pending";
+  const newList = [...(group[target] || []), item];
+  await storage.updateGroupOps(userId, groupId, { [target]: newList });
+
+  return {
+    ok: true,
+    target,
+    item,
+    queueSize: target === "queue" ? newList.length : (group.queue || []).length,
+    pendingSize: target === "pending" ? newList.length : (group.pending || []).length,
+  };
+}
+
+module.exports = { start, stop, tick, sendNextNow, refillNow, manualAdd };
