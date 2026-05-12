@@ -1,5 +1,7 @@
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
 const { CATEGORIES, STORES, scrapeSingleProduct } = require("./scraper");
 const wa = require("./whatsapp");
 const auth = require("./auth");
@@ -8,18 +10,191 @@ const scheduler = require("./scheduler");
 const affiliate = require("./affiliate");
 const catalog = require("./catalog");
 const adminScraper = require("./admin-scraper");
+const appConfig = require("./app-config");
+const { backendName } = require("./db");
+const queueMod = require("./queue");
+const logger = require("./logger");
+const metrics = require("./metrics");
+const sentry = require("./sentry");
+
+// Sentry init (Fase 4) — no-op se SENTRY_DSN não estiver definido
+sentry.init({ context: "server" });
+
+// Process-level error handlers — captura tudo que escapa de async/promises.
+process.on("unhandledRejection", (reason, promise) => {
+  logger.error({ err: reason, type: "unhandledRejection" }, "Promise rejeitada sem catch");
+  sentry.captureException(reason instanceof Error ? reason : new Error(String(reason)), {
+    tags: { type: "unhandledRejection" },
+  });
+});
+process.on("uncaughtException", (err) => {
+  logger.fatal({ err, type: "uncaughtException" }, "Exceção não tratada — process vai sair");
+  sentry.captureException(err, { tags: { type: "uncaughtException" } });
+  // Não chama process.exit imediatamente — deixa pino e Sentry fazer flush
+  Promise.allSettled([sentry.flush(2000)]).then(() => setTimeout(() => process.exit(1), 500));
+});
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-app.use(cors());
+// ────────────────────────────────────────────────────────────────────────
+// Hardening (Fase 0)
+// ────────────────────────────────────────────────────────────────────────
+
+// Helmet — headers de segurança HTTP padrão.
+app.use(helmet({
+  // Frontend (Vite) e fetch da própria SPA precisam abrir cross-origin pra
+  // imagens dos produtos (Amazon/ML thumbnails). Mantemos COEP/CORP relaxados.
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+}));
+
+// CORS allowlist via env. Default em dev: aceita tudo (mantém comportamento legado).
+// Em produção: defina NIMBUS_CORS_ORIGINS=https://app.x.com,https://admin.x.com
+// Patterns suportados: domínio exato OU "*.dominio.com" (wildcard de subdomínio).
+const CORS_ORIGINS = String(process.env.NIMBUS_CORS_ORIGINS || "")
+  .split(",").map(s => s.trim()).filter(Boolean);
+
+function originAllowed(origin) {
+  if (!CORS_ORIGINS.length) return true; // dev mode (sem env definida)
+  if (!origin) return true; // requests same-origin / curl
+  for (const pat of CORS_ORIGINS) {
+    if (pat === origin) return true;
+    if (pat.startsWith("*.")) {
+      const suffix = pat.slice(1); // ".dominio.com"
+      if (origin.endsWith(suffix)) return true;
+    }
+  }
+  return false;
+}
+
+app.use(cors({
+  origin: (origin, cb) => {
+    if (originAllowed(origin)) return cb(null, true);
+    cb(new Error(`Origin não permitido: ${origin}`));
+  },
+  credentials: true,
+}));
+
 app.use(express.json({ limit: "2mb" }));
+
+// Métricas Prometheus (Fase 4) — instrumenta TODOS os requests.
+app.use(metrics.httpMiddleware);
+
+// /metrics — texto plano formato Prometheus. Sem auth (é interno; em prod
+// ficar atrás de allowlist no nginx/LB).
+app.get("/metrics", metrics.handler);
+
+// Rate limiters — protege endpoints sensíveis. Janelas em minutos.
+// Confiamos em X-Forwarded-For atrás de proxy/ngrok (trust proxy = 1 hop).
+app.set("trust proxy", 1);
+
+// Em testes (NODE_ENV=test) os limiters viram no-op pra não estourar registrando users.
+const skipLimitInTests = () => process.env.NODE_ENV === "test";
+const loginLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: skipLimitInTests,
+  message: { error: "Muitas tentativas de login. Aguarde 1 minuto." },
+});
+const registerLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: skipLimitInTests,
+  message: { error: "Muitas tentativas de cadastro. Aguarde 1 minuto." },
+});
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300, // generoso pra polling do frontend (state/ops a cada 30s × várias abas)
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: skipLimitInTests,
+  message: { error: "Limite de requisições atingido. Aguarde 1 minuto." },
+});
+app.use("/api/", apiLimiter);
+
+// ────────────────────────────────────────────────────────────────────────
+// Health check — endpoint público pra load balancers / monitoring
+// ────────────────────────────────────────────────────────────────────────
+
+app.get("/healthz", async (req, res) => {
+  const checks = {};
+  let healthy = true;
+
+  // Storage: tenta uma operação leve
+  try {
+    await storage.listAllUserIds();
+    checks.storage = { ok: true, backend: backendName() };
+  } catch (err) {
+    healthy = false;
+    checks.storage = { ok: false, backend: backendName(), error: err.message };
+  }
+
+  // Scheduler: ticou recentemente?
+  const sched = scheduler.status();
+  checks.scheduler = sched;
+  if (!sched.healthy && sched.running) healthy = false;
+
+  // WhatsApp: contagem de sessões (não falha health se 0 — válido em deploy novo).
+  // Em redis mode, lê do cache de session-status; em memory, lê direto da memória.
+  try { checks.whatsapp = await wa.status(); } catch (err) { checks.whatsapp = { error: err.message }; }
+
+  // Queue (Fase 2): backend + contagens. Falha health se redis configurado mas down.
+  try {
+    checks.queue = await queueMod.status();
+    if (checks.queue && checks.queue.ok === false) healthy = false;
+    // Atualiza gauges Prometheus (cardinalidade controlada)
+    if (checks.queue?.send?.counts) {
+      for (const [state, n] of Object.entries(checks.queue.send.counts)) {
+        metrics.queueDepth.set({ queue: "send", state }, n);
+      }
+    }
+    if (checks.queue?.control?.counts) {
+      for (const [state, n] of Object.entries(checks.queue.control.counts)) {
+        metrics.queueDepth.set({ queue: "control", state }, n);
+      }
+    }
+  } catch (err) {
+    healthy = false;
+    checks.queue = { backend: queueMod.backendName(), ok: false, error: err.message };
+  }
+
+  // Worker heartbeat (Fase 4) — em redis mode, server lê do Redis
+  if (queueMod.isRedis()) {
+    try {
+      const heartbeat = require("./worker-heartbeat");
+      const age = await heartbeat.ageSeconds();
+      checks.worker = age == null ? { alive: false, ageSeconds: null } : { alive: age < 30, ageSeconds: age };
+      metrics.workerHeartbeatAge.set(age ?? NaN);
+      if (!checks.worker.alive) healthy = false;
+    } catch (err) {
+      checks.worker = { alive: false, error: err.message };
+    }
+  }
+
+  // Admin scraper: status (informativo, não afeta health)
+  checks.adminScraper = {
+    running: adminScraper.status().running,
+    lastRun: adminScraper.status().lastRun,
+    lastError: adminScraper.status().lastError,
+  };
+
+  res.status(healthy ? 200 : 503).json({
+    status: healthy ? "ok" : "degraded",
+    uptime: Math.round(process.uptime()),
+    checks,
+  });
+});
 
 // ────────────────────────────────────────────────────────────────────────
 // Auth
 // ────────────────────────────────────────────────────────────────────────
 
-app.post("/api/auth/register", async (req, res) => {
+app.post("/api/auth/register", registerLimiter, async (req, res) => {
   try {
     const { name, email, password, phone } = req.body || {};
     const user = await auth.register({ name, email, password, phone });
@@ -30,7 +205,7 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 
-app.post("/api/auth/login", async (req, res) => {
+app.post("/api/auth/login", loginLimiter, async (req, res) => {
   try {
     const { email, password } = req.body || {};
     const result = await auth.login({ email, password });
@@ -66,8 +241,12 @@ app.post("/api/auth/password", auth.requireAuth, async (req, res) => {
 // Persistência de estado da app por usuário
 // ────────────────────────────────────────────────────────────────────────
 
-app.get("/api/state", auth.requireAuth, (req, res) => {
-  res.json(storage.loadState(req.user.id));
+app.get("/api/state", auth.requireAuth, async (req, res) => {
+  try {
+    res.json(await storage.loadState(req.user.id));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.put("/api/state", auth.requireAuth, async (req, res) => {
@@ -79,8 +258,12 @@ app.put("/api/state", auth.requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/state/ops", auth.requireAuth, (req, res) => {
-  res.json(storage.loadOps(req.user.id));
+app.get("/api/state/ops", auth.requireAuth, async (req, res) => {
+  try {
+    res.json(await storage.loadOps(req.user.id));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ────────────────────────────────────────────────────────────────────────
@@ -185,7 +368,7 @@ app.post("/api/state/groups/:gid/pending/:pid/approve", auth.requireAuth, async 
   try {
     const groupId = isNaN(Number(req.params.gid)) ? req.params.gid : Number(req.params.gid);
     const pid = req.params.pid;
-    const state = storage.loadState(req.user.id);
+    const state = await storage.loadState(req.user.id);
     const group = (state.groups || []).find(g => g.id === groupId);
     if (!group) return res.status(404).json({ error: "Campanha não encontrada" });
     const idx = (group.pending || []).findIndex(p => String(p.id ?? p.key) === String(pid));
@@ -205,7 +388,7 @@ app.delete("/api/state/groups/:gid/pending/:pid", auth.requireAuth, async (req, 
   try {
     const groupId = isNaN(Number(req.params.gid)) ? req.params.gid : Number(req.params.gid);
     const pid = req.params.pid;
-    const state = storage.loadState(req.user.id);
+    const state = await storage.loadState(req.user.id);
     const group = (state.groups || []).find(g => g.id === groupId);
     if (!group) return res.status(404).json({ error: "Campanha não encontrada" });
     const newPending = (group.pending || []).filter(p => String(p.id ?? p.key) !== String(pid));
@@ -287,7 +470,7 @@ app.post("/api/state/groups/:gid/refill", auth.requireAuth, async (req, res) => 
 // Ofertas — agora lê do CATÁLOGO global (preenchido pelo admin-scraper)
 // ────────────────────────────────────────────────────────────────────────
 
-app.get("/api/ofertas", auth.requireAuth, (req, res) => {
+app.get("/api/ofertas", auth.requireAuth, async (req, res) => {
   try {
     const category = req.query.category || null;
     const minDiscount = parseInt(req.query.minDiscount) || 0;
@@ -298,20 +481,23 @@ app.get("/api/ofertas", auth.requireAuth, (req, res) => {
       ? String(req.query.sources).split(",").map(s => s.trim()).filter(Boolean)
       : null;
 
-    const products = catalog.query({
-      categories: category ? [category] : null,
-      sources,
-      filters: { minDiscount, minPrice, maxPrice },
-      limit,
-      sortBy: "discount_desc",
-    });
+    const [products, catalogStats] = await Promise.all([
+      catalog.query({
+        categories: category ? [category] : null,
+        sources,
+        filters: { minDiscount, minPrice, maxPrice },
+        limit,
+        sortBy: "discount_desc",
+      }),
+      catalog.getStats(),
+    ]);
 
     res.json({
       total: products.length,
       category,
       sources,
       products,
-      catalogStats: catalog.getStats(),
+      catalogStats,
     });
   } catch (err) {
     console.error("[ofertas] Erro:", err.message);
@@ -324,22 +510,30 @@ app.get("/api/categories", (req, res) => {
   res.json(cats);
 });
 
-app.get("/api/status", (req, res) => {
-  const s = catalog.getStats();
-  res.json({
-    status: "ok",
-    categories: Object.keys(CATEGORIES),
-    catalog: s,
-    adminScraper: adminScraper.status(),
-  });
+app.get("/api/status", async (req, res) => {
+  try {
+    const s = await catalog.getStats();
+    res.json({
+      status: "ok",
+      categories: Object.keys(CATEGORIES),
+      catalog: s,
+      adminScraper: adminScraper.status(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ────────────────────────────────────────────────────────────────────────
 // Admin — gerenciamento de usuários
 // ────────────────────────────────────────────────────────────────────────
 
-app.get("/api/admin/users", auth.requireAuth, auth.requireAdmin, (req, res) => {
-  res.json({ users: auth.listUsers() });
+app.get("/api/admin/users", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    res.json({ users: await auth.listUsers() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.delete("/api/admin/users/:id", auth.requireAuth, auth.requireAdmin, async (req, res) => {
@@ -347,8 +541,8 @@ app.delete("/api/admin/users/:id", auth.requireAuth, auth.requireAdmin, async (r
     if (req.params.id === req.user.id) {
       return res.status(400).json({ error: "Você não pode excluir a si mesmo" });
     }
-    auth.deleteUser(req.params.id);
-    storage.clearState(req.params.id);
+    await auth.deleteUser(req.params.id);
+    await storage.clearState(req.params.id);
     res.json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -365,13 +559,13 @@ app.patch("/api/admin/users/:id/password", auth.requireAuth, auth.requireAdmin, 
   }
 });
 
-app.patch("/api/admin/users/:id/role", auth.requireAuth, auth.requireAdmin, (req, res) => {
+app.patch("/api/admin/users/:id/role", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
     const { role } = req.body || {};
     if (req.params.id === req.user.id && role !== "admin") {
       return res.status(400).json({ error: "Você não pode rebaixar a si mesmo" });
     }
-    const user = auth.setUserRole(req.params.id, role);
+    const user = await auth.setUserRole(req.params.id, role);
     res.json({ user });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -419,7 +613,7 @@ app.get("/api/admin/scraper/status", auth.requireAuth, auth.requireAdmin, (req, 
 });
 
 // Lista paginada do catálogo, com filtros opcionais — visualização do admin
-app.get("/api/admin/catalog", auth.requireAuth, auth.requireAdmin, (req, res) => {
+app.get("/api/admin/catalog", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const pageSize = Math.min(200, Math.max(10, parseInt(req.query.pageSize) || 50));
@@ -428,7 +622,7 @@ app.get("/api/admin/catalog", auth.requireAuth, auth.requireAdmin, (req, res) =>
     const search = (req.query.q || "").toString().trim().toLowerCase();
     const sortBy = req.query.sortBy || "lastSeen_desc";
 
-    let items = catalog.query({
+    let items = await catalog.query({
       categories: category ? [category] : null,
       sources: source ? [source] : null,
       limit: 0,
@@ -444,7 +638,7 @@ app.get("/api/admin/catalog", auth.requireAuth, auth.requireAdmin, (req, res) =>
       pageSize,
       total,
       items: slice,
-      stats: catalog.getStats(),
+      stats: await catalog.getStats(),
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -452,17 +646,58 @@ app.get("/api/admin/catalog", auth.requireAuth, auth.requireAdmin, (req, res) =>
 });
 
 // ────────────────────────────────────────────────────────────────────────
+// Admin — fila DLQ (envios que falharam definitivamente)
+// ────────────────────────────────────────────────────────────────────────
+
+app.get("/api/admin/queue/failed", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    if (!queueMod.isRedis()) return res.json({ items: [], note: "queue=memory; sem DLQ" });
+    const queue = req.query.queue === "control" ? "control" : "send";
+    const start = Math.max(0, parseInt(req.query.start) || 0);
+    const end = Math.min(start + 199, parseInt(req.query.end) || (start + 49));
+    const items = await queueMod.listFailed({ queue, start, end });
+    res.json({ queue, start, end, items });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/queue/failed/:id/retry", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const queue = req.body?.queue === "control" ? "control" : "send";
+    const r = await queueMod.retryFailed(req.params.id, { queue });
+    res.json(r);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete("/api/admin/queue/failed/:id", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const queue = req.query.queue === "control" ? "control" : "send";
+    const r = await queueMod.removeFailed(req.params.id, { queue });
+    res.json(r);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────
 // WhatsApp (Baileys)
 // ────────────────────────────────────────────────────────────────────────
 
-app.get("/api/whatsapp/sessions", auth.requireAuth, (req, res) => {
-  res.json(wa.listSessions(req.user.id));
+app.get("/api/whatsapp/sessions", auth.requireAuth, async (req, res) => {
+  try {
+    res.json(await wa.listSessions(req.user.id));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post("/api/whatsapp/sessions/:id", auth.requireAuth, async (req, res) => {
   try {
     await wa.startSession(req.user.id, req.params.id);
-    const s = wa.getSession(req.user.id, req.params.id);
+    const s = await wa.getSession(req.user.id, req.params.id);
     res.json({ ok: true, id: req.params.id, status: s?.status });
   } catch (err) {
     console.error("[whatsapp] startSession:", err);
@@ -470,16 +705,20 @@ app.post("/api/whatsapp/sessions/:id", auth.requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/whatsapp/sessions/:id", auth.requireAuth, (req, res) => {
-  const s = wa.getSession(req.user.id, req.params.id);
-  if (!s) return res.status(404).json({ error: "Sessão não encontrada" });
-  res.json({
-    id: s.numberId,
-    status: s.status,
-    qr: s.qrDataUrl || null,
-    info: s.info || null,
-    lastError: s.lastError || null,
-  });
+app.get("/api/whatsapp/sessions/:id", auth.requireAuth, async (req, res) => {
+  try {
+    const s = await wa.getSession(req.user.id, req.params.id);
+    if (!s) return res.status(404).json({ error: "Sessão não encontrada" });
+    res.json({
+      id: s.numberId,
+      status: s.status,
+      qr: s.qrDataUrl || null,
+      info: s.info || null,
+      lastError: s.lastError || null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.delete("/api/whatsapp/sessions/:id", auth.requireAuth, async (req, res) => {
@@ -591,15 +830,54 @@ app.post("/api/whatsapp/sessions/:id/broadcast", auth.requireAuth, async (req, r
 
 // ────────────────────────────────────────────────────────────────────────
 
-app.listen(PORT, () => {
-  console.log(`Nimbus Backend rodando em http://localhost:${PORT}`);
-  console.log(`  GET  /api/ofertas?category=gamer&minDiscount=20&limit=10`);
-  console.log(`  GET  /api/status`);
-  console.log(`  GET  /api/admin/scraper/config (admin)`);
-  console.log(`  POST /api/admin/scraper/run    (admin)`);
-  console.log(`  GET  /api/admin/users          (admin)`);
+async function boot() {
+  // Pré-aquece cache de config (afiliado, scraper-config) — necessário pra
+  // affiliate.status() / adminScraper.readConfig() funcionarem sync no modo PG.
+  await appConfig.warmup();
 
-  wa.restoreSessions();
-  scheduler.start();
-  adminScraper.start();
-});
+  // Inicializa fila de envios (Fase 2). Server é só PRODUCER — quem registra
+  // workers é o backend/worker.js (em redis mode). Em memory é no-op.
+  await queueMod.init({ producer: true, consumer: false });
+
+  const server = app.listen(PORT, () => {
+    console.log(`Nimbus Backend rodando em http://localhost:${PORT} [storage=${backendName()} queue=${queueMod.backendName()}]`);
+    console.log(`  GET  /api/ofertas?category=gamer&minDiscount=20&limit=10`);
+    console.log(`  GET  /api/status`);
+    console.log(`  GET  /api/admin/scraper/config (admin)`);
+    console.log(`  POST /api/admin/scraper/run    (admin)`);
+    console.log(`  GET  /api/admin/users          (admin)`);
+
+    if (queueMod.isRedis()) {
+      // Redis mode: worker.js owna Baileys + processa filas. Server é proxy.
+      console.log(`[server] modo redis: rode 'node worker.js' em paralelo (Baileys + workers)`);
+    } else {
+      // Memory mode (legado): single process owna tudo.
+      wa.restoreSessions().catch(err => console.error("[server] restoreSessions:", err.message));
+    }
+    scheduler.start();
+    adminScraper.start();
+  });
+
+  // Shutdown limpo — drena worker (jobs em-vôo terminam) antes de derrubar HTTP
+  const shutdown = async (signal) => {
+    console.log(`[server] ${signal} recebido, encerrando...`);
+    scheduler.stop();
+    server.close(() => console.log("[server] HTTP fechado"));
+    try { await queueMod.close(); console.log("[server] queue fechada"); } catch {}
+    setTimeout(() => process.exit(0), 2000);
+  };
+  process.once("SIGTERM", () => shutdown("SIGTERM"));
+  process.once("SIGINT", () => shutdown("SIGINT"));
+}
+
+// Em testes (NODE_ENV=test) o app é exportado sem rodar boot() — quem importa
+// é responsável por chamar appConfig.warmup() e queueMod.init() (ou não, se
+// não precisar). Sem isso o supertest fica esperando o listener.
+if (require.main === module) {
+  boot().catch(err => {
+    console.error("[boot] falha fatal:", err);
+    process.exit(1);
+  });
+}
+
+module.exports = { app, boot };

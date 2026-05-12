@@ -1,9 +1,12 @@
-const crypto = require("crypto");
 const { normalizeSource, upgradeAmazonImageUrl } = require("./scraper");
 const wa = require("./whatsapp");
 const storage = require("./storage");
 const catalog = require("./catalog");
 const affiliate = require("./affiliate");
+const queueMod = require("./queue");
+const { productKey } = require("./product-key");
+const metrics = require("./metrics");
+const log = require("./logger").child({ module: "scheduler" });
 
 // Cadência do loop principal (em ms). Roda janelas de envio.
 const TICK_MS = 30 * 1000;
@@ -44,24 +47,6 @@ function cooldownMinutes(schedule) {
   return v * 60 * 24; // dias (default)
 }
 
-// Mesma chave do catalog.js — duplicada aqui pra evitar circular import
-function productKey(p) {
-  const link = p.link || "";
-  const decoded = (() => { try { return decodeURIComponent(link); } catch { return link; } })();
-  const m = decoded.match(/\/p\/MLB(\d+)/i)
-        || decoded.match(/\/MLB-?(\d{6,})-/i)
-        || decoded.match(/produto\.mercadolivre\.com\.br\/MLB-?(\d{6,})/i);
-  if (m) return crypto.createHash("md5").update("MLB" + m[1]).digest("hex");
-  if (link) {
-    try {
-      const u = new URL(link);
-      return crypto.createHash("md5").update(u.origin + u.pathname).digest("hex");
-    } catch {}
-  }
-  const nm = (p.name || "").toLowerCase().replace(/\s+/g, " ").trim();
-  return crypto.createHash("md5").update(`${nm}|${p.store || ""}`).digest("hex");
-}
-
 function renderTemplate(template, p) {
   const fmt = v => v != null ? `R$ ${Number(v).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` : "—";
   return String(template || "")
@@ -98,7 +83,7 @@ function isAutoApprove(group) {
 // Aplica filtros da campanha e exclui keys já no queue/pending/history (cooldown).
 // Retorna { cleanedQueue, cleanedPending, newItems, target, removedFromQueue }.
 // `target` = "queue" ou "pending" (pra onde os newItems vão).
-function refillQueue(group) {
+async function refillQueue(group) {
   const cats = Array.isArray(group.categories) && group.categories.length
     ? group.categories
     : (group.category ? [group.category] : []);
@@ -142,7 +127,7 @@ function refillQueue(group) {
   // Exclui da query: tudo que está no queue + pending + cooldown
   const excludeKeys = new Set([...queueSeen, ...pendingSeen, ...sentRecentlyKeys, ...histKeySet]);
 
-  const candidates = catalog.query({
+  const candidates = await catalog.query({
     categories: cats.length ? cats : null,
     sources,
     excludeKeys,
@@ -256,10 +241,10 @@ async function sendItem(userId, group, whatsappGroups, item) {
           await wa.sendText(userId, numberId, w.jid, text);
         }
         sentCount++;
-        console.log(`[scheduler] enviado "${item.name?.slice(0, 40)}..." → ${w.name} (${w.jid})`);
+        log.info({ item: item.name?.slice(0, 60), waGroup: w.name, jid: w.jid, userId, numberId }, "envio ok");
         await new Promise(r => setTimeout(r, 4000));
       } catch (err) {
-        console.error(`[scheduler] falha enviando p/ ${w.name} (${w.jid}): ${err.message}`);
+        log.error({ err, waGroup: w.name, jid: w.jid, userId, numberId, item: item.name?.slice(0, 60) }, "falha envio");
         errors.push(`${w.name}: ${err.message}`);
       }
     }
@@ -287,7 +272,11 @@ async function sendItem(userId, group, whatsappGroups, item) {
   return { ...metrics, queue: newQueue, history, sentCount };
 }
 
-// Verifica janela/intervalo e despacha o próximo item
+// Verifica janela/intervalo e despacha o próximo item.
+// Em modo redis: pop + lastSend são persistidos antes de enfileirar (evita que o
+// próximo tick re-enfileire o mesmo item enquanto o job não foi processado).
+// O worker depois persiste history + métricas via processSendJob().
+// Em modo memory: comportamento legado — sendItem inline, retorna updates.
 async function dispatchOne(userId, group, whatsappGroups, numbers) {
   const queue = group.queue || [];
   if (!queue.length) return null;
@@ -302,17 +291,72 @@ async function dispatchOne(userId, group, whatsappGroups, numbers) {
 
   if (!(group.whatsappGroupIds || []).length) return null;
 
+  const item = queue[0];
+
+  if (queueMod.isRedis()) {
+    const newQueue = queue.slice(1);
+    const lastSend = now.toISOString();
+    await storage.updateGroupOps(userId, group.id, { queue: newQueue, lastSend });
+    try {
+      await queueMod.enqueueSend({ userId, groupId: group.id, item });
+      try { metrics.schedulerEnqueuedTotal.inc({ target: "queue" }); } catch {}
+    } catch (err) {
+      log.error({ err, userId, groupId: group.id, group: group.name }, "falha enfileirando");
+      // Restaura o item na frente da queue pra não perder. lastSend fica setada
+      // pra dar uma janela antes de tentar de novo (evita loop apertado).
+      await storage.updateGroupOps(userId, group.id, { queue: [item, ...newQueue] });
+    }
+    return null; // updates já foram persistidos
+  }
+
   try {
-    return await sendItem(userId, group, whatsappGroups, queue[0]);
+    return await sendItem(userId, group, whatsappGroups, item);
   } catch (err) {
-    console.error(`[scheduler] dispatchOne "${group.name}":`, err.message);
+    log.error({ err, userId, groupId: group.id, group: group.name }, "dispatchOne falhou");
     return null;
+  }
+}
+
+// Handler do worker (BullMQ em modo redis; chamado inline em memory).
+// Recebe o item já popado da queue pelo producer, faz o envio e persiste
+// history + métricas. NÃO sobrescreve queue nem lastSend (já foram setadas).
+async function processSendJob(job) {
+  const { userId, groupId, item } = job.data || {};
+  if (!userId || groupId === undefined || groupId === null || !item) {
+    throw new Error(`job inválido: userId/groupId/item ausentes`);
+  }
+  const start = process.hrtime.bigint();
+  const store = (item.store || "unknown").toLowerCase().replace(/\s+/g, "");
+  // Conta retries (BullMQ chama o handler com attemptsMade contendo a tentativa atual >0 quando é retry)
+  if (job.attemptsMade > 0) {
+    try { metrics.sendRetryTotal.inc(); } catch {}
+  }
+  try {
+    const state = await storage.loadState(userId);
+    const group = (state.groups || []).find(g => g.id === groupId);
+    if (!group) throw new Error(`campanha ${groupId} não encontrada`);
+
+    const result = await sendItem(userId, group, state.whatsappGroups || [], item);
+    await storage.updateGroupOps(userId, groupId, {
+      history: result.history,
+      sentToday: result.sentToday,
+      sentWeek: result.sentWeek,
+      weekData: result.weekData,
+    });
+    try {
+      metrics.sendsTotal.inc({ status: "ok", store });
+      metrics.sendDuration.observe(Number(process.hrtime.bigint() - start) / 1e9);
+    } catch {}
+    return { sent: result.sentCount, item: item.name?.slice(0, 60) };
+  } catch (err) {
+    try { metrics.sendsTotal.inc({ status: "fail", store }); } catch {}
+    throw err;
   }
 }
 
 // API pública para "Enviar agora": dispara o próximo item ignorando janela e intervalo.
 async function sendNextNow(userId, groupId) {
-  const state = storage.loadState(userId);
+  const state = await storage.loadState(userId);
   const group = (state.groups || []).find(g => g.id === groupId);
   if (!group) throw new Error("Campanha não encontrada");
   if (group.paused) {
@@ -326,7 +370,7 @@ async function sendNextNow(userId, groupId) {
   // então força os itens pra queue mesmo se a campanha está em modo de revisão.
   let queue = group.queue || [];
   if (!queue.length) {
-    const { cleanedQueue, newItems } = refillQueue(group);
+    const { cleanedQueue, newItems } = await refillQueue(group);
     const refilled = [...cleanedQueue, ...newItems];
     if (refilled.length) {
       await storage.updateGroupOps(userId, groupId, { queue: refilled });
@@ -370,7 +414,7 @@ async function processGroup(userId, group, whatsappGroups, numbers) {
   const pendingLen = (group.pending || []).length;
   const inWindow = !!activeWindow(now, group.schedule);
   if ((queueLen + pendingLen < REFILL_THRESHOLD) && inWindow) {
-    const { cleanedQueue, cleanedPending, newItems, target, removedFromQueue } = refillQueue(group);
+    const { cleanedQueue, cleanedPending, newItems, target, removedFromQueue } = await refillQueue(group);
     if (newItems.length || removedFromQueue > 0 || cleanedPending.length !== (group.pending || []).length) {
       if (target === "queue") {
         updates.queue = [...cleanedQueue, ...newItems];
@@ -393,13 +437,17 @@ async function processGroup(userId, group, whatsappGroups, numbers) {
 }
 
 let _running = false;
+let _lastTickAt = null;
+let _lastTickError = null;
 async function tick() {
   if (_running) return;
   _running = true;
+  const start = process.hrtime.bigint();
+  let tickStatus = "ok";
   try {
-    const userIds = storage.listAllUserIds();
+    const userIds = await storage.listAllUserIds();
     for (const userId of userIds) {
-      const state = storage.loadState(userId);
+      const state = await storage.loadState(userId);
       const groups = state.groups || [];
       const whatsappGroups = state.whatsappGroups || [];
       const numbers = state.numbers || [];
@@ -407,21 +455,45 @@ async function tick() {
         try {
           await processGroup(userId, g, whatsappGroups, numbers);
         } catch (err) {
-          console.error(`[scheduler] erro em ${userId}/${g.id}:`, err.message);
+          log.error({ err, userId, groupId: g.id }, "processGroup erro");
         }
       }
     }
   } catch (err) {
-    console.error("[scheduler] tick:", err.message);
+    _lastTickError = err.message;
+    tickStatus = "error";
+    log.error({ err }, "tick falhou");
   } finally {
+    _lastTickAt = new Date().toISOString();
     _running = false;
+    const dur = Number(process.hrtime.bigint() - start) / 1e9;
+    try {
+      metrics.schedulerTicksTotal.inc({ status: tickStatus });
+      metrics.schedulerTickDuration.observe(dur);
+    } catch {}
   }
+}
+
+function status() {
+  const lastMs = _lastTickAt ? Date.now() - new Date(_lastTickAt).getTime() : null;
+  return {
+    running: !!_interval,
+    lastTickAt: _lastTickAt,
+    lastTickError: _lastTickError,
+    msSinceLastTick: lastMs,
+    tickIntervalMs: TICK_MS,
+    // saudável se ticou nos últimos 2 intervalos
+    healthy: lastMs != null && lastMs < TICK_MS * 2,
+  };
 }
 
 let _interval = null;
 function start() {
   if (_interval) return;
-  console.log(`[scheduler] iniciando (tick ${TICK_MS / 1000}s)`);
+  console.log(`[scheduler] iniciando (tick ${TICK_MS / 1000}s, queue=${queueMod.backendName()})`);
+  // Em redis mode, o WORKER (backend/worker.js) registra processSendJob via
+  // queue.setSendHandler. O server não precisa registrar nada — só enfileira.
+  // Em memory mode, dispatchOne chama sendItem inline (handler não é usado).
   _interval = setInterval(tick, TICK_MS);
   setTimeout(tick, 5000);
 }
@@ -435,7 +507,7 @@ function stop() {
 // Aceita overrides opcionais (filters/sources/categories) pra usar valores
 // que ainda não foram persistidos (UI mudou, mas debounce de save ainda não rodou).
 async function refillNow(userId, groupId, overrides = {}) {
-  const state = storage.loadState(userId);
+  const state = await storage.loadState(userId);
   const group = (state.groups || []).find(g => g.id === groupId);
   if (!group) throw new Error("Campanha não encontrada");
 
@@ -449,7 +521,7 @@ async function refillNow(userId, groupId, overrides = {}) {
     if (Array.isArray(overrides.categories)) merged.categories = overrides.categories;
   }
 
-  const { cleanedQueue, cleanedPending, newItems, target, removedFromQueue } = refillQueue(merged);
+  const { cleanedQueue, cleanedPending, newItems, target, removedFromQueue } = await refillQueue(merged);
   const updates = {};
   if (target === "queue") {
     updates.queue = [...cleanedQueue, ...newItems];
@@ -473,7 +545,7 @@ async function refillNow(userId, groupId, overrides = {}) {
 // `{ inCooldown: true, lastSentAt }` pra UI confirmar antes (a menos que `force`).
 async function manualAdd(userId, groupId, payload = {}) {
   const { url, overrides = {}, force = false } = payload;
-  const state = storage.loadState(userId);
+  const state = await storage.loadState(userId);
   const group = (state.groups || []).find(g => g.id === groupId);
   if (!group) throw new Error("Campanha não encontrada");
 
@@ -551,4 +623,4 @@ async function manualAdd(userId, groupId, payload = {}) {
   };
 }
 
-module.exports = { start, stop, tick, sendNextNow, refillNow, manualAdd };
+module.exports = { start, stop, tick, sendNextNow, refillNow, manualAdd, status, processSendJob };

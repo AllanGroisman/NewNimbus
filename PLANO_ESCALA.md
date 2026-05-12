@@ -1,174 +1,238 @@
 # Plano de evolução para escala — Nimbus
 
-Documento gerado em 2026-05-10.
-
-## Diagnóstico atual
-
-A arquitetura atual funciona bem para dezenas de usuários (beta fechado), mas
-tem decisões que quebram em larga escala:
-
-- **Persistência em arquivos JSON** — cada save reescreve o arquivo inteiro,
-  sem índices, sem backup nativo. Catálogo é um único arquivo carregado
-  inteiro a cada query.
-- **Processo único** — API, scheduler, scraper (Puppeteer) e sessões WhatsApp
-  (Baileys) rodam no mesmo processo Node. Restart derruba tudo. O mutex em
-  memória (`storage.js:27`) impede subir múltiplas instâncias sem corromper
-  estado.
-- **`fs.writeFileSync` síncrono** bloqueia o event loop sob carga.
-- **Scheduler O(N usuários × grupos)** a cada 30s, em série. Com 1000 usuários
-  estoura o tick e ticks são silenciosamente pulados (flag `_running`).
-- **Baileys em processo único** — ~100-300 sessões por processo é o teto
-  realista. Risco adicional de banimento (não é API oficial).
-- **Sem observabilidade**: zero métricas, sem health check real, logs em
-  `console.log` sem rotação.
-- **Sem rate limiting**, CORS aberto, sem testes.
-- **`productKey` duplicada** em `scheduler.js` e `catalog.js` — bomba-relógio.
+Documento criado em 2026-05-10. **Última atualização: 2026-05-11** (Fases 0, 1, 2, 2.1, 3 e 4 entregues).
 
 ---
 
-## Fase 0 — Hardening (3-5 dias, sem mudar arquitetura)
+## Status executivo
 
-Reduz risco hoje sem reescrever nada. Aguenta com tranquilidade ~50-100
-usuários ativos.
+| Fase | Original (estimado) | Status real | Esforço gasto |
+|---|---|---|---|
+| 0 — Hardening | 3-5 dias | ✅ Entregue (faltam 2 itens não-bloqueantes) | 1 sessão |
+| 1 — Postgres | 1-2 semanas | ✅ Entregue + migrado | 1 sessão |
+| 2 — Workers + fila (BullMQ) | 1 semana | ✅ Entregue | 1 sessão |
+| 2.1 — Worker em processo separado | (não estava no plano) | ✅ Entregue | 1 sessão |
+| 3 — Baileys distribuído (caminho A) | 2 semanas | ✅ Auth state em PG entregue. Sticky routing pendente. | 1 sessão |
+| 3 — WhatsApp Cloud API (caminho B) | — | ❌ Descartado pela escolha de manter Baileys |
+| 4 — Observabilidade | paralelo | ✅ Entregue (Sentry pendente apenas o DSN do user) | 1 sessão |
 
-- **Rate limit** em `/api/auth/login`, `/api/auth/register`
-  (`express-rate-limit`, 10 req/min/IP).
-- **CORS allowlist** no lugar de `cors()` aberto (`server.js:15`).
-- **Helmet** (`app.use(helmet())`).
-- **Backup automático** de `backend/data/` — cron 15min, retenção 7 dias,
-  espelho em S3/B2.
-- **PM2** com `--max-memory-restart 1G` e logs rotacionados.
-- **Health check real** `/healthz`: valida acesso a disco + status do
-  scheduler + sessões ativas.
-- **Sentry** (ou similar) pra `unhandledRejection`/`uncaughtException`.
-- **`fs.writeFileSync` → `fs.promises.writeFile`** em `storage.js`,
-  `catalog.js`, `affiliate.js`, `admin-scraper.js`.
+> O plano original previa "ir ao ar em larga escala em 2-3 meses". Estamos com a estrutura técnica entregue em ~1 semana. O que falta não bloqueia escala — são afinações operacionais.
 
 ---
 
-## Fase 1 — Postgres no lugar de JSON (1-2 semanas)
+## Diagnóstico atual (atualizado)
 
-Passo que destrava tudo. Sem ele, nada de horizontal scaling.
+A arquitetura **mudou drasticamente** desde o diagnóstico inicial. O que era frágil:
 
-### Modelagem mínima
-
-```
-users(id, email, name, phone, password_hash, role, created_at)
-user_state(user_id PK, settings jsonb, updated_at)
-groups(id, user_id FK, name, schedule jsonb, scraping jsonb,
-       categories jsonb, message_template, paused, ...)
-group_history(id, group_id FK, product_key, name, link, sent_at, ...)
-       -- index (group_id, sent_at)
-group_queue(id, group_id FK, position, payload jsonb)
-group_pending(id, group_id FK, payload jsonb)
-whatsapp_groups(id, user_id FK, jid, number_id, name, ...)
-numbers(id, user_id FK, ...)
-catalog(key PK, name, link, img, price, original_price, discount,
-        store, category, rating, sold, first_seen_at, last_seen_at,
-        payload jsonb)
-       -- indexes: (category, discount DESC), (store), (last_seen_at)
-affiliate_config(scope PK, payload jsonb)
-```
-
-### Estratégia sem reescrever rotas
-
-- Manter `storage.js`/`catalog.js` como interface (`loadState`, `saveState`,
-  `query`, etc.) e trocar a implementação interna.
-- Script one-shot que lê `data/state/*.json` + `data/catalog.json` e popula
-  o Postgres.
-- Feature flag `STORAGE_BACKEND=json|pg` pra rollback rápido nos primeiros
-  dias.
-
-### Ganhos imediatos
-
-- `OPS_FIELDS` deixa de existir como hack — queue/history/pending viram
-  tabelas. Frontend e scheduler escrevem em colunas diferentes, sem
-  conflito.
-- Scheduler tick deixa de ler arquivos: `SELECT g.* FROM groups WHERE NOT
-  paused AND <janela ativa>`. O(N) vira O(grupos ativos *na janela*), com
-  índice.
-- Catálogo deixa de ser carregado inteiro: `query()` vira SQL com índices.
-  Suporta milhões de produtos.
-- Backup, replicação, point-in-time recovery: grátis com Postgres
-  gerenciado (Neon, Supabase, RDS).
-- Pode subir 2+ instâncias do backend atrás de um LB sem corromper estado.
+| Era assim (2026-05-10) | Está assim agora (2026-05-11) |
+|---|---|
+| Arquivos JSON síncronos | Postgres via Prisma (com fallback `STORAGE_BACKEND=json`) |
+| `fs.writeFileSync` no event loop | Tudo `fs/promises` async; PG-only quando ativo |
+| Single process (API+scheduler+Baileys) | 2 processos (server + worker), com facade `WORKER_PROCESS` |
+| Scheduler O(usuários × grupos) síncrono | Producer pop+enqueue → BullMQ workers paralelos |
+| Sessões Baileys em arquivo no disco local | Em Postgres (`baileys_auth`) — trocar de máquina não perde sessão |
+| Sem health check | `/healthz` 200/503 com storage, scheduler, queue, worker, sessões |
+| Zero observabilidade | `/metrics` Prometheus + Sentry skeleton + pino estruturado |
+| Sem rate limit / CORS aberto | Rate limit em login/register/global + CORS allowlist + Helmet |
+| Backup só local (zero) | Backup local 15min (PM2) + remoto S3-compatível 1h (PM2) |
+| Sem retry de envio | BullMQ retry 5× exponencial + DLQ com endpoints admin |
+| `productKey` duplicada em 2 arquivos | Módulo único `product-key.js` |
 
 ---
 
-## Fase 2 — Scheduler em workers + fila (Redis + BullMQ, ~1 semana)
+## ✅ Fase 0 — Hardening
 
-`scheduler.js` deixa de ser loop monolítico:
+**Entregue:**
+- Rate limit: `/api/auth/login` (10/min/IP), `/api/auth/register` (5/min/IP), global `/api/*` (300/min/IP)
+- CORS allowlist via `NIMBUS_CORS_ORIGINS` (suporta `*.dominio.com`)
+- Helmet com CORP relaxado pra thumbnails de produto
+- `fs.writeFileSync` → `fs.promises` em todos os módulos de persistência
+- Health check real `/healthz` (verifica storage + scheduler + WhatsApp + queue + worker)
+- Process error handlers (`unhandledRejection`, `uncaughtException`) com pino + Sentry
+- PM2 `ecosystem.config.js` com `max_memory_restart: 1G`
+- Backup local automático (PM2 cron 15min, retenção 96 snapshots)
 
-- **Producer** (1 processo, leve): a cada 30s consulta no Postgres "que
-  envios estão devidos agora" e enfileira jobs em BullMQ — 1 job =
-  `(userId, groupId, productKey)`.
-- **Workers de envio** (N processos, escaláveis): consomem da fila, fazem
-  o envio Baileys, escrevem `group_history`. Retry automático,
-  dead-letter queue.
-- **Workers de refill** (separado): job `refill_queue` acionado quando
-  `group_queue.len < 5`.
-
-Ganhos: adiciona workers conforme volume cresce, sem tocar no producer.
-Falha de um worker não derruba o sistema. Métricas grátis (BullMQ tem
-dashboard).
-
----
-
-## Fase 3 — Isolar Baileys (~2 semanas)
-
-Ponto mais difícil — sessão WhatsApp é stateful (websocket vivo).
-
-### Caminho A — manter Baileys, distribuir
-
-- Auth state em Postgres (substituir `useMultiFileAuthState` por adapter
-  Postgres — implementações abertas existem).
-- "WhatsApp workers" dedicados (processos separados, 1 worker = ~50-100
-  sessões).
-- **Sticky routing**: tabela `session_routes(session_id PK, worker_id,
-  last_heartbeat)` em Redis. API/jobs enviam pra `worker_id` correto.
-  Workers fazem heartbeat; se cai, outro worker assume (re-login
-  automático).
-- Scraper sai do processo principal pra container separado (Puppeteer
-  não pode dividir RAM com sessões Baileys).
-
-### Caminho B — WhatsApp Cloud API oficial
-
-- Decisão de produto, não técnica. Resolve banimento, escalabilidade,
-  multi-tenant. Custo: ~$0.005-0.08 por mensagem (varia por país/tipo).
-  Para SaaS pago, costuma compensar.
-- Reescreve `whatsapp.js` (interface fica igual: `sendText`, `sendImage`).
-  Remove toda a complexidade de sessão/QR.
-
-**Recomendação**: avaliar B antes de investir em A. Se o modelo de
-negócio aguenta o custo por mensagem, pula a complexidade toda.
+**Pendente (não-bloqueante):**
+- ⏸️ Sentry — código pronto, falta apenas o DSN do usuário (criar conta em sentry.io e colar `SENTRY_DSN` no env)
+- ⏸️ Backup remoto — código pronto, falta credenciais S3/B2/R2 (criar bucket e colar `BACKUP_S3_*` no env)
 
 ---
 
-## Fase 4 — Observabilidade e operação (paralelo)
+## ✅ Fase 1 — Postgres no lugar de JSON
 
-- **Logs estruturados**: `pino` no lugar de `console.log`, com
-  `userId`/`groupId`/`requestId`.
-- **Métricas Prometheus**: requests/s, latência p95, jobs na fila,
-  sessões ativas, taxa de envio, falhas Baileys.
-- **Dashboards Grafana**: 1 pra produto (envios/dia, ofertas no catálogo),
-  1 pra infra.
-- **Alertas**: sessão WhatsApp caída >5min, scraper sem run há >2h, fila
-  BullMQ empilhando, taxa de erro >1%.
-- **Testes**: integração nas rotas críticas (auth, manual-add, send-now),
-  unit nos cálculos de cooldown/janela.
+**Entregue:**
+- Schema Prisma com 12 modelos (`User`, `UserState`, `Group`, `GroupHistory`, `GroupQueueItem`, `GroupPendingItem`, `WhatsappGroup`, `WhatsappNumber`, `CatalogProduct`, `AppConfig`, `BaileysAuth` + relacionamentos)
+- Façades em `storage.js`, `catalog.js`, `auth.js`, `app-config.js` que selecionam `*-json.js` ou `*-pg.js` em runtime via `STORAGE_BACKEND`
+- Singleton Prisma client em `db.js`
+- Script `migrate-json-to-pg.js` idempotente (suporta `--dry-run`)
+- Cache em memória pra interfaces sync no boot (warmup)
+- Docker Compose com Postgres 16 + healthcheck
+
+**Migração rodada:** 2 usuários, 955 produtos, 4 grupos com queue/pending/history completos.
+
+**Ganho conceitual:** O hack `OPS_FIELDS` (que protegia campos do scheduler do save do frontend) deixou de ser necessário internamente — `queue`, `pending`, `history` viraram tabelas dedicadas.
 
 ---
 
-## Resumo: ordem e justificativa
+## ✅ Fase 2 — Workers + fila (BullMQ + Redis)
 
-| Fase | Esforço | Desbloqueia |
+**Entregue:**
+- `queue.js` facade com `QUEUE_BACKEND=memory|redis`
+- Producer/consumer split em `scheduler.js` — `dispatchOne` popa item + atualiza `lastSend` antes de enfileirar
+- Handler `processSendJob` extraído pra ser chamável pelo worker
+- Retry exponencial 5× (5s → 10s → 20s → 40s → 80s)
+- Rate limiter BullMQ: 1 job/s por worker
+- Docker Compose com Redis 7-alpine
+
+**Ganho:** Mensagens não somem em restart, retry automático, observabilidade da fila.
+
+---
+
+## ✅ Fase 2.1 — Worker em processo separado (extensão do plano)
+
+**Entregue:**
+- `worker.js` — entry point separado que owna Baileys + consome filas
+- `whatsapp.js` virou facade — resolve `whatsapp-local.js` (worker) ou `whatsapp-proxy.js` (server)
+- Control queue `nimbus.control` pra RPC server↔worker via `waitUntilFinished`
+- `session-status.js` — cache Redis com snapshot de cada sessão (status, QR, info) — server lê sem RPC
+- PM2 entry pra `nimbus-worker`
+- `start.bat` detecta `QUEUE_BACKEND=redis` e sobe 4 terminais (Backend, Worker, Frontend, ngrok)
+
+**Ganho:** Server pode reiniciar sem matar Baileys; foundation pra sharding.
+
+---
+
+## ✅ Fase 3 — Baileys distribuído (caminho A escolhido)
+
+**Entregue:**
+- Schema `BaileysAuth(sessionId, keyType, keyId, value)` com PK composta
+- `baileys-auth-pg.js` — adapter `useDatabaseAuthState` que substitui `useMultiFileAuthState` quando `STORAGE_BACKEND=pg`
+- Encoding com `BufferJSON.replacer/reviver` (suporta os Buffer do Signal protocol)
+- Script `migrate-auth-to-pg.js` (idempotente, `--dry-run`) — migrou 1599 chaves de uma sessão real
+- `whatsapp-local.js` lê auth de PG ou disco transparente
+
+**Pendente (Phase 2.2 / 3.1 — futuro quando volume justificar):**
+- Sticky routing por número entre múltiplos workers
+- Tabela `session_routes(session_id, worker_id, last_heartbeat)`
+- Re-eleição automática se worker cai
+
+---
+
+## ✅ Fase 4 — Observabilidade
+
+**Entregue:**
+- **Métricas Prometheus** em `/metrics`:
+  - `nimbus_http_requests_total{method,route,status}` (counter)
+  - `nimbus_http_request_duration_seconds` (histogram)
+  - `nimbus_scheduler_ticks_total{status}` (counter)
+  - `nimbus_scheduler_tick_duration_seconds` (histogram)
+  - `nimbus_scheduler_enqueued_total{target}` (counter)
+  - `nimbus_sends_total{status,store}` (counter)
+  - `nimbus_send_duration_seconds` (histogram)
+  - `nimbus_send_retry_total` (counter)
+  - `nimbus_queue_depth{queue,state}` (gauge)
+  - `nimbus_whatsapp_sessions{status}` (gauge)
+  - `nimbus_worker_heartbeat_age_seconds` (gauge)
+  - `nimbus_catalog_products{store}` (gauge)
+  - `nimbus_catalog_scrape_runs_total{status}` (counter)
+- **Sentry skeleton** — `sentry.js`. Captura `unhandledRejection`, `uncaughtException`, falhas terminais de jobs. No-op sem `SENTRY_DSN`.
+- **DLQ** — jobs falhos ficam até `removeOnFail.count: 500`. Endpoints admin: `GET /api/admin/queue/failed`, `POST /api/admin/queue/failed/:id/retry`, `DELETE /api/admin/queue/failed/:id`.
+- **Heartbeat do worker** — escreve em `nimbus:worker:heartbeat` (Redis, TTL 60s) a cada 5s. Server checa em `/healthz` — se >30s, marca worker como morto e devolve 503.
+- **Logs estruturados pino** — `scheduler.js`, `queue.js` migrados pra `logger.child({module})` com campos `userId`, `groupId`, `waGroup`, `jid`, `item`. Pronto pra ingestion em Datadog/Loki/CloudWatch.
+
+**Pendente (não-bloqueante):**
+- ⏸️ Dashboards Grafana — quando o produto pedir; Prometheus já tá pronto pra alimentar
+- ⏸️ Alertas — quando o produto pedir; pode ser Alertmanager (Prom) ou Sentry rules
+- ⏸️ Testes — não foram feitos. Acoplamento baixo facilita adicionar quando necessário.
+
+---
+
+## Capacidade hoje
+
+| Métrica | Antes (2026-05-10) | Agora (2026-05-11) |
 |---|---|---|
-| 0 — Hardening | 3-5 dias | Aguenta beta com segurança |
-| 1 — Postgres | 1-2 sem | Multi-instance + remove hack OPS_FIELDS |
-| 2 — Workers + fila | 1 sem | Scheduler horizontal |
-| 3 — Baileys isolado / Cloud API | 2 sem | WhatsApp escala |
-| 4 — Observabilidade | paralelo | Operar em produção sem rezar |
+| Usuários simultâneos | ~50 (chutão) | **centenas** (Postgres + queue) |
+| Sessões WhatsApp/processo | ~100-300 | **mesmo teto**, mas restart sem perda + sharding viável |
+| Crash de processo | perde mensagens em-vôo | **zero perda** (BullMQ persiste) |
+| Restart do server | derruba tudo | **só HTTP** — worker + Baileys continuam |
+| Crash de SSD | perde tudo | **backup local 15min + remoto 1h** (quando S3 envs setadas) |
+| Visibilidade | telefone do cliente | `/healthz` + `/metrics` + Sentry + logs estruturados |
 
-**Caminho realista para "ir ao ar em larga escala em 2-3 meses"**:
-Fase 0 → Fase 1 → avaliar Cloud API. Fases 2 e 3A só fazem sentido se
-for ficar com Baileys.
+---
+
+## Próximos passos (em ordem de retorno)
+
+### Tier 1 — Operacional, fechar loops abertos (1-2 dias somados)
+
+1. **Sentry**: criar conta em sentry.io (free tier 5k erros/mês), pegar DSN, colar em `.env`. **Imediato**: passa a ver erros antes do cliente avisar.
+2. **Backup remoto**: criar bucket no Backblaze B2 (10GB grátis, melhor custo) ou Cloudflare R2 (10GB grátis), colar 5 envs `BACKUP_S3_*`. **Imediato**: protege contra crash de SSD.
+3. **Validar auth-pg em uso real** alguns dias. Quando confiar, mover `auth_states/` pra `auth_states.bak/` (não deletar imediatamente).
+
+### Tier 2 — Quando volume justificar (1-2 semanas cada)
+
+4. **Phase 2.2 — sticky routing**: ao passar de ~50 sessões, shardar entre múltiplos workers. Tabela `session_routes`, re-eleição automática.
+5. **Dashboards Grafana**: 1 dashboard de produto (envios/dia, ofertas no catálogo, taxa de aprovação), 1 de infra (latência, queue depth, sessões).
+6. **Alertas Alertmanager**: sessão WhatsApp caída >5min, scraper sem run há >2h, fila empilhando >100, worker heartbeat >60s, taxa de erro >1%.
+
+### Tier 3 — Decisões de produto (não-técnicas)
+
+7. **Avaliar WhatsApp Cloud API** quando o modelo de negócio aguentar ~$0.005-0.08/mensagem. Resolveria de vez o risco de banimento Baileys e simplificaria muito a stack (remove auth state, remove sticky routing, remove restoreSessions, remove worker dedicado em parte). Caminho não-trivial: reescrever `whatsapp-local.js` mantendo a interface.
+
+8. **Multi-tenant real** com isolation: tenant_id em todas as tabelas, row-level security no Postgres, quotas por usuário (envios/dia, sessões max). Hoje os usuários são separados só por `userId` em coluna — funciona mas não impede SQL malicioso.
+
+### Tier 4 — Qualidade de código (paralelo, quando incomodar)
+
+9. **Testes integração** nas rotas críticas (auth, manual-add, send-now, queue/failed)
+10. **Testes unit** em cooldown/janela/productKey/refillQueue
+11. **TypeScript** no backend (frontend já usa JSDoc parcial)
+
+---
+
+## Arquivos relevantes
+
+```
+backend/
+├── server.js                    HTTP API (producer)
+├── worker.js                    Processo separado (Baileys + queue consumers)
+├── scheduler.js                 Tick + processSendJob (handler)
+├── queue.js                     Facade memory/redis (BullMQ)
+├── storage.js → storage-{json,pg}.js              Persistência usuário/grupos
+├── catalog.js → catalog-{json,pg}.js              Catálogo global
+├── auth.js → auth-{json,pg}.js                    Auth (JWT + bcrypt)
+├── app-config.js → app-config-{json,pg}.js        KV de configs
+├── whatsapp.js → whatsapp-{local,proxy}.js        Facade Baileys local/RPC
+├── baileys-auth-pg.js           Adapter useDatabaseAuthState
+├── session-status.js            Cache Redis de status das sessões
+├── worker-heartbeat.js          Heartbeat worker→Redis, server lê
+├── product-key.js               Hash MD5 estável (deduplicado)
+├── metrics.js                   Prometheus client
+├── sentry.js                    Sentry skeleton (no-op sem DSN)
+├── logger.js                    pino estruturado
+├── db.js                        Prisma singleton
+├── prisma/schema.prisma         12 modelos
+├── ecosystem.config.js          PM2: server + worker + 2 backups
+├── scripts/
+│   ├── backup-data.js           Local (cron 15min)
+│   ├── backup-remote.js         S3-compatível (cron 1h)
+│   ├── migrate-json-to-pg.js    Migra dados JSON→PG
+│   └── migrate-auth-to-pg.js    Migra auth_states/→PG
+
+docker-compose.yml               Postgres 16 + Redis 7
+start.bat                        Sobe 3-4 terminais conforme QUEUE_BACKEND
+```
+
+---
+
+## Resumo dos rollbacks
+
+Cada fase tem um botão de pânico. Documentado pra reduzir risco operacional.
+
+| Fase | Como reverter |
+|---|---|
+| 1 — Postgres | `STORAGE_BACKEND=json` no env. Dados antigos ainda em `backend/data/`. App volta a ler do disco. |
+| 2 — Queue Redis | `QUEUE_BACKEND=memory` no env. Scheduler volta a enviar inline. Jobs em-vôo no Redis ficam órfãos (drenar antes em prod). |
+| 2.1 — Worker process | `QUEUE_BACKEND=memory` (engloba o de cima). Server faz tudo no mesmo processo. |
+| 3 — Auth Baileys PG | `STORAGE_BACKEND=json` (engloba). OU manter PG mas deletar adapter — voltar pra `useMultiFileAuthState`. |
+| 4 — Observabilidade | `SENTRY_DSN=` vazio (no-op). `/metrics` é endpoint inofensivo, deixar ligado. |
+
+Tudo é feature flag. Nenhuma migration destrutiva. Postgres não foi normalizado a ponto de não dar pra exportar de volta pra JSON se necessário (`payload jsonb` preserva os campos originais).

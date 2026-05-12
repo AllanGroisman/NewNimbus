@@ -1,11 +1,8 @@
-const fs = require("fs");
-const path = require("path");
+const appConfig = require("./app-config");
 
-// Config persistida em data/affiliate.json. Schema novo:
+// Config persistida via app-config (key "affiliate"). Schema:
 // { ml: { tag, cookie, updatedAt }, amazon: { tag, updatedAt } }
 // Lê também o schema antigo flat { tag, cookie, updatedAt } como ML.
-const DATA_DIR = path.join(__dirname, "data");
-const CONFIG_FILE = path.join(DATA_DIR, "affiliate.json");
 
 const ML_ENDPOINT = "https://www.mercadolivre.com.br/affiliate-program/api/v2/affiliates/createLink";
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -27,14 +24,11 @@ let amazonLastSuccessAt = null;
 // ────────────────────────────────────────────────────────────────────────
 
 function readRaw() {
-  if (!fs.existsSync(CONFIG_FILE)) return {};
-  try { return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8")); }
-  catch { return {}; }
+  return appConfig.get("affiliate") || {};
 }
 
 function writeRaw(obj) {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(obj, null, 2), { mode: 0o600 });
+  appConfig.set("affiliate", obj, { mode: 0o600 });
 }
 
 function readMLConfig() {
@@ -106,7 +100,7 @@ function clearMLConfig() {
   const raw = readRaw();
   delete raw.tag; delete raw.cookie; delete raw.updatedAt; delete raw.ml;
   if (Object.keys(raw).length) writeRaw(raw);
-  else if (fs.existsSync(CONFIG_FILE)) fs.unlinkSync(CONFIG_FILE);
+  else appConfig.del("affiliate");
   mlCache.clear();
   mlLastFailureAt = null;
   mlLastFailureReason = null;
@@ -116,7 +110,7 @@ function clearAmazonConfig() {
   const raw = readRaw();
   delete raw.amazon;
   if (Object.keys(raw).length) writeRaw(raw);
-  else if (fs.existsSync(CONFIG_FILE)) fs.unlinkSync(CONFIG_FILE);
+  else appConfig.del("affiliate");
   amazonCache.clear();
   amazonLastFailureAt = null;
   amazonLastFailureReason = null;

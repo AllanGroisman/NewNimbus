@@ -1,0 +1,240 @@
+// Schema Prisma — Nimbus
+// Substitui a persistência em JSON por Postgres.
+// Toda interface pública dos módulos (storage.js, catalog.js, auth.js, etc)
+// é mantida; só a implementação muda quando STORAGE_BACKEND=pg.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Auth
+// ────────────────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String
+  phone        String?
+  passwordHash String
+  role         String   @default("user") // "user" | "admin"
+  createdAt    DateTime @default(now())
+
+  state          UserState?
+  groups         Group[]
+  whatsappGroups WhatsappGroup[]
+  numbers        WhatsappNumber[]
+
+  @@map("users")
+}
+
+// Settings + metadata por usuário. Tudo que não é "ops" e não tem cardinalidade
+// alta vai pra cá como jsonb. Groups/whatsappGroups/numbers são tabelas próprias.
+model UserState {
+  userId    String   @id
+  settings  Json     @default("{}")
+  updatedAt DateTime @default(now()) @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_state")
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Campanhas (groups)
+// ────────────────────────────────────────────────────────────────────────
+
+model Group {
+  // ID legado é numérico (Date.now() do frontend). Mantemos como BigInt
+  // pra não quebrar referências persistidas no frontend.
+  id              BigInt @id
+  userId          String
+  name            String
+  messageTemplate String @default("")
+  paused          Boolean @default(false)
+
+  // Campos estruturados como jsonb — formato e tamanho variáveis,
+  // gravados em bloco pela UI:
+  //   categories:        ["gamer", "bebe", ...]
+  //   whatsappGroupIds:  ["120363...@g.us", ...]
+  //   schedule:          { windows, cooldownValue, cooldownUnit }
+  //   scraping:          { auto, sources, filters, mode, times }
+  categories       Json @default("[]")
+  whatsappGroupIds Json @default("[]")
+  schedule         Json @default("{}")
+  scraping         Json @default("{}")
+
+  // Ops — só o scheduler/worker escreve. Coluna separada da config do usuário
+  // elimina a race condition que hoje exige o hack OPS_FIELDS.
+  sentToday    Int      @default(0)
+  sentWeek     Int      @default(0)
+  weekData     Json     @default("[0,0,0,0,0,0,0]")
+  lastSend     String   @default("—") // ISO ou "—" pra compat com UI atual
+  avgDiscount  String   @default("—")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  history GroupHistory[]
+  queue   GroupQueueItem[]
+  pending GroupPendingItem[]
+
+  @@index([userId])
+  @@index([paused])
+  @@map("groups")
+}
+
+// Histórico de envios — cardinalidade alta, vira tabela.
+// Index (groupId, sentAt DESC) cobre a query principal: "últimos 200 do grupo".
+model GroupHistory {
+  id         BigInt   @id @default(autoincrement())
+  groupId    BigInt
+  productKey String
+  name       String
+  link       String
+  img        String?
+  store      String?
+  price      Float?
+  originalPrice Float?
+  discount   Int?
+  sentAt     DateTime
+  groupCount Int      @default(1)
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@index([groupId, sentAt(sort: Desc)])
+  @@index([groupId, productKey])
+  @@map("group_history")
+}
+
+// Fila de envio — itens já aprovados, esperando janela.
+// `position` mantém ordem de chegada (FIFO). `payload` guarda o item completo.
+model GroupQueueItem {
+  id         BigInt   @id @default(autoincrement())
+  groupId    BigInt
+  productKey String
+  position   Int      @default(0)
+  payload    Json     // item completo (name, link, price, etc) — usado no envio
+  addedAt    DateTime @default(now())
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, productKey])
+  @@index([groupId, position])
+  @@map("group_queue")
+}
+
+// Pendentes de aprovação manual.
+model GroupPendingItem {
+  id         BigInt   @id @default(autoincrement())
+  groupId    BigInt
+  productKey String
+  payload    Json
+  addedAt    DateTime @default(now())
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, productKey])
+  @@index([groupId])
+  @@map("group_pending")
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// WhatsApp
+// ────────────────────────────────────────────────────────────────────────
+
+// Grupos de WhatsApp vinculados (resultado de listGroups + escolhas do usuário).
+// Não confundir com Group (campanha) — aqui é o grupo do app WhatsApp em si.
+model WhatsappGroup {
+  // ID gerado pelo frontend (Date.now() ou uuid) — string pra aceitar ambos.
+  id        String  @id
+  userId    String
+  numberId  String   // sessão Baileys que controla esse grupo
+  jid       String   // ex "120363...@g.us"
+  name      String
+  metadata  Json     @default("{}")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("whatsapp_groups")
+}
+
+// Números de WhatsApp do usuário (sessões Baileys).
+model WhatsappNumber {
+  id        String  @id
+  userId    String
+  label     String?
+  phone     String?
+  metadata  Json    @default("{}")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("whatsapp_numbers")
+}
+
+// Auth state Baileys em Postgres (Fase 3 — useDatabaseAuthState).
+// Substitui useMultiFileAuthState (auth_states/<userId>/<numberId>/*.json).
+// PK composta serializa por sessão+chave; valores codificados com BufferJSON.
+model BaileysAuth {
+  sessionId String   // formato: "<userId>::<numberId>"
+  keyType   String   // "creds" | "pre-key" | "session" | "sender-key" | "app-state-sync-key" | "app-state-sync-version" | "sender-key-memory"
+  keyId     String   // "" para creds; ID específico pras outras
+  value     String   // JSON.stringify(v, BufferJSON.replacer) — Bytea seria ainda melhor mas complica migração
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@id([sessionId, keyType, keyId])
+  @@index([sessionId])
+  @@map("baileys_auth")
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Catálogo global (compartilhado entre usuários)
+// ────────────────────────────────────────────────────────────────────────
+
+// Produto no catálogo. `key` é o productKey() — hash MD5 estável.
+// Campos planos (price, discount, category, store) pra suportar índices SQL —
+// o resto vai em `payload` (rating, sold, freeShipping, seller, etc).
+model CatalogProduct {
+  key           String   @id
+  name          String
+  link          String
+  img           String?
+  price         Float?
+  originalPrice Float?
+  discount      Int?
+  store         String?
+  category      String?
+  rating        Float?
+  sold          String?
+  payload       Json     @default("{}")
+  firstSeenAt   DateTime @default(now())
+  lastSeenAt    DateTime @default(now())
+
+  @@index([category, discount(sort: Desc)])
+  @@index([store])
+  @@index([lastSeenAt(sort: Desc)])
+  @@index([discount(sort: Desc)])
+  @@map("catalog_products")
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Configs globais (afiliado, scraper)
+// ────────────────────────────────────────────────────────────────────────
+
+// Key-value simples. Usado por affiliate.js e admin-scraper.js.
+// Keys: "affiliate.ml", "affiliate.amazon", "scraper.config", "scraper.runs.last"
+model AppConfig {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@map("app_config")
+}

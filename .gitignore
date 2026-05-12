@@ -46,7 +46,9 @@ backend/auth_states/
 
 # Dados da aplicação (usuários, estado, segredo JWT) — NUNCA versionar
 backend/data/
+backend/backups/
 **/data/
+**/backups/
 
 # Arquivos grandes / temporários
 frontTotal

@@ -1,12 +1,6 @@
-const fs = require("fs");
-const path = require("path");
 const { scrapeOfertas, CATEGORIES, STORES } = require("./scraper");
 const catalog = require("./catalog");
-
-const DATA_DIR = path.join(__dirname, "data");
-const CONFIG_FILE = path.join(DATA_DIR, "scraper-config.json");
-
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+const appConfig = require("./app-config");
 
 const DEFAULT_CONFIG = {
   enabled: false,
@@ -30,13 +24,9 @@ let _interval = null;
 let _runPromise = null;
 
 function readConfig() {
-  if (!fs.existsSync(CONFIG_FILE)) return { ...DEFAULT_CONFIG };
-  try {
-    const raw = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
-    return { ...DEFAULT_CONFIG, ...raw };
-  } catch {
-    return { ...DEFAULT_CONFIG };
-  }
+  const raw = appConfig.get("scraper-config");
+  if (!raw) return { ...DEFAULT_CONFIG };
+  return { ...DEFAULT_CONFIG, ...raw };
 }
 
 function writeConfig(cfg) {
@@ -53,9 +43,7 @@ function writeConfig(cfg) {
   merged.enabled = !!merged.enabled;
   merged.pruneAfterDays = Math.max(1, Number(merged.pruneAfterDays) || DEFAULT_CONFIG.pruneAfterDays);
 
-  const tmp = CONFIG_FILE + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(merged, null, 2));
-  fs.renameSync(tmp, CONFIG_FILE);
+  appConfig.set("scraper-config", merged);
   scheduleNext();
   return merged;
 }
