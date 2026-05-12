@@ -669,8 +669,19 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     return { ...g, categories: [...g.categories, id] };
   });
 
-  const linkWG = (wgId) => setGroupInfo(g => ({ ...g, whatsappGroupIds: [...g.whatsappGroupIds, wgId] }));
-  const unlinkWG = (wgId) => setGroupInfo(g => ({ ...g, whatsappGroupIds: g.whatsappGroupIds.filter(id => id !== wgId) }));
+  // Vincular/desvincular grupo WA: atualiza estado local (UI imediata) E propaga
+  // pro App via onUpdate — sem onUpdate, o auto-save do App nunca dispara e a
+  // alteração some quando o usuário navega entre abas.
+  const linkWG = (wgId) => {
+    const next = [...(groupInfo.whatsappGroupIds || []), wgId];
+    setGroupInfo(g => ({ ...g, whatsappGroupIds: next }));
+    onUpdate(group.id, { whatsappGroupIds: next });
+  };
+  const unlinkWG = (wgId) => {
+    const next = (groupInfo.whatsappGroupIds || []).filter(id => id !== wgId);
+    setGroupInfo(g => ({ ...g, whatsappGroupIds: next }));
+    onUpdate(group.id, { whatsappGroupIds: next });
+  };
 
   const closeAddModal = () => {
     setAddStep(null);
@@ -709,7 +720,9 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         members: waGroup.members || 0,
         inviteLink: null,
       });
-      setGroupInfo(g => ({ ...g, whatsappGroupIds: [...g.whatsappGroupIds, newId] }));
+      const next = [...(groupInfo.whatsappGroupIds || []), newId];
+      setGroupInfo(g => ({ ...g, whatsappGroupIds: next }));
+      onUpdate(group.id, { whatsappGroupIds: next });
       closeAddModal();
     } finally {
       setImportingJid(null);
@@ -758,7 +771,9 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         }
       }
       if (created.length > 0) {
-        setGroupInfo(g => ({ ...g, whatsappGroupIds: [...g.whatsappGroupIds, ...created] }));
+        const next = [...(groupInfo.whatsappGroupIds || []), ...created];
+        setGroupInfo(g => ({ ...g, whatsappGroupIds: next }));
+        onUpdate(group.id, { whatsappGroupIds: next });
       }
       if (errors.length > 0) {
         setCreateWGError(`Falhou em ${errors.length} número(s):\n${errors.join("\n")}`);

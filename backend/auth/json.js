@@ -5,7 +5,7 @@ const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
-const DATA_DIR = process.env.NIMBUS_DATA_DIR || path.join(__dirname, "data");
+const DATA_DIR = process.env.NIMBUS_DATA_DIR || path.join(__dirname, "..", "data");
 const USERS_FILE = path.join(DATA_DIR, "users.json");
 const SECRET_FILE = path.join(DATA_DIR, ".jwt_secret");
 

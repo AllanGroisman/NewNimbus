@@ -1,6 +1,6 @@
 const { scrapeOfertas, CATEGORIES, STORES } = require("./scraper");
-const catalog = require("./catalog");
-const appConfig = require("./app-config");
+const catalog = require("../catalog");
+const appConfig = require("../config");
 
 const DEFAULT_CONFIG = {
   enabled: false,

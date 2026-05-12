@@ -39,7 +39,7 @@ ngrok http 5173
   - **Server** (`node server.js`): HTTP API + scheduler producer (popa item, enfileira). Não owna Baileys nesse modo.
   - **Worker** (`node worker.js`): owna Baileys (sessões + envios) + consome filas (`send-message` com retry 5×, e `control` pro RPC do server). Em PM2 sobe como `nimbus-worker`.
 
-  Filas BullMQ no Redis. Worker publica status das sessões no Redis (`nimbus:session:<userId>:<numberId>`) — `whatsapp-proxy.js` no server lê desse cache pra responder QR/status sem RPC.
+  Filas BullMQ no Redis. Worker publica status das sessões no Redis (`nimbus:session:<userId>:<numberId>`) — `whatsapp/proxy.js` no server lê desse cache pra responder QR/status sem RPC.
 
 Pra subir em modo PG + Redis localmente:
 
@@ -104,7 +104,7 @@ Cobertura: auth (register/login/me/admin), state com a **corrida do OPS_FIELDS**
 `start.bat` **não** roda testes — sobe direto. Pra rodar testes antes de subir, encadeie: `test.bat && start.bat`.
 
 Mudanças no backend que sustentam os testes (importantes ao mexer):
-- Módulos JSON (`storage-json.js`, `auth-json.js`, `catalog-json.js`, `app-config-json.js`) leem `NIMBUS_DATA_DIR` (default: `backend/data/`).
+- Módulos JSON (`storage/json.js`, `auth/json.js`, `catalog/json.js`, `config/json.js`) leem `NIMBUS_DATA_DIR` (default: `backend/data/`).
 - `server.js` exporta `{ app, boot }` e só chama `boot()` quando `require.main === module` (supertest carrega o app sem bindar porta).
 - Rate limiters no `server.js` viram no-op quando `NODE_ENV === "test"`.
 
@@ -140,22 +140,22 @@ Variáveis de ambiente relevantes (lidas pelo backend):
 ### Camadas
 
 - **Frontend** (`frontend/src/`): SPA React 19 com Vite. Sem TypeScript, sem framework de CSS — estilos inline + CSS variables para tema claro/escuro. Sem axios — usa `fetch` nativo.
-- **Backend** (`backend/`): Express 5 (`server.js`) é só roteamento — toda lógica fica em módulos: `auth.js`, `storage.js`, `scheduler.js`, `whatsapp.js`, `scraper.js`, `affiliate.js`, `catalog.js`, `admin-scraper.js`, `app-config.js`, `logger.js`. **Os módulos de persistência (`storage`, `catalog`, `auth`, `app-config`) são façades que selecionam a implementação JSON ou Postgres em runtime via `STORAGE_BACKEND`** — o sufixo `-json.js` / `-pg.js` indica a implementação. `db.js` exporta o cliente Prisma singleton e o helper `isPg()`. **Toda IO de arquivo é async (`fs/promises`)** desde a Fase 0 — `writeFileSync` foi removido pra não bloquear o event loop. Reads em hot path (users, catalog, app-config) usam cache em memória populado por `warmup()` no boot.
+- **Backend** (`backend/`): Express 5 (`server.js`) é só roteamento. Lógica fica em pastas por feature: `auth/`, `storage/`, `catalog/`, `config/`, `whatsapp/`, `scraping/` (`scraper.js`, `admin.js`, `affiliate.js`) e `infra/` (`logger.js`, `metrics.js`, `sentry.js`, `queue.js`, `session-status.js`, `worker-heartbeat.js`). `scheduler.js` e `db.js` ficam na raiz porque são compartilhados. **As pastas `storage/`, `catalog/`, `auth/` e `config/` são façades que selecionam a implementação JSON ou Postgres em runtime via `STORAGE_BACKEND`** — `index.js` decide entre `json.js` e `pg.js`. `db.js` exporta o cliente Prisma singleton e o helper `isPg()`. **Toda IO de arquivo é async (`fs/promises`)** desde a Fase 0 — `writeFileSync` foi removido pra não bloquear o event loop. Reads em hot path (users, catalog, app-config) usam cache em memória populado por `warmup()` no boot.
 - **Persistência (JSON, default)**: arquivos JSON em `backend/data/` (gitignored). Não há banco. Os credenciais Baileys ficam em `backend/auth_states/<numberId>/` (também gitignored).
 - **Persistência (Postgres, Fase 1)**: schema em `backend/prisma/schema.prisma`, dev local via `docker compose up -d`. Mesma interface pública dos módulos — server.js não muda. `OPS_FIELDS` deixa de ser necessário internamente porque `queue/pending/history` viram tabelas dedicadas (sem race com saveState do frontend).
-- **Fila de envios (Fase 2)**: `backend/queue.js` é facade `memory|redis`. Em modo `redis`, BullMQ persiste jobs no Redis. Scheduler vira producer (`dispatchOne` popa item + atualiza `lastSend` antes de enfileirar). `processSendJob` (handler) faz o envio + persiste history/métricas, com retry exponencial (5 tentativas, 5s→80s).
-- **Worker process (Fase 2.1)**: em modo `redis`, `backend/worker.js` é processo separado que owna Baileys + consome as filas (`send-message` e `control`). `backend/whatsapp.js` é facade — resolve pra `whatsapp-local.js` no worker (`WORKER_PROCESS=true`) e pra `whatsapp-proxy.js` no server. Server proxy usa `queue.callControl` (BullMQ RPC com `waitUntilFinished`) pra ops e `session-status.read` (cache Redis populado pelo worker) pra status/QR. Em modo `memory`, server faz tudo no mesmo processo (worker.js ignorado).
+- **Fila de envios (Fase 2)**: `backend/infra/queue.js` é facade `memory|redis`. Em modo `redis`, BullMQ persiste jobs no Redis. Scheduler vira producer (`dispatchOne` popa item + atualiza `lastSend` antes de enfileirar). `processSendJob` (handler) faz o envio + persiste history/métricas, com retry exponencial (5 tentativas, 5s→80s).
+- **Worker process (Fase 2.1)**: em modo `redis`, `backend/worker.js` é processo separado que owna Baileys + consome as filas (`send-message` e `control`). `backend/whatsapp/index.js` é facade — resolve pra `whatsapp/local.js` no worker (`WORKER_PROCESS=true`) e pra `whatsapp/proxy.js` no server. Server proxy usa `queue.callControl` (BullMQ RPC com `waitUntilFinished`) pra ops e `session-status.read` (cache Redis populado pelo worker) pra status/QR. Em modo `memory`, server faz tudo no mesmo processo (worker.js ignorado).
 
 ### Fluxos críticos para entender antes de mexer
 
-**1. Autenticação (JWT + bcrypt).** `auth.js` mantém `data/users.json` e o segredo JWT em `data/.jwt_secret` (gerado uma vez, modo 0600). TTL de 30 dias. Toda rota usa o middleware `auth.requireAuth` que injeta `req.user = { id, name, email, role }`. Em 401 o frontend dispara `nimbus:unauthorized` e volta pra tela de login. `auth.requireAdmin` exige `role === "admin"`. A função `syncRole()` é chamada no login/`requireAuth` e promove para admin se o email estiver em `ADMIN_EMAILS` — mas nunca rebaixa automaticamente (evita lockout). Para desenvolvimento local, a env `ADMIN_EMAILS` é a única forma sustentável de virar admin.
+**1. Autenticação (JWT + bcrypt).** `auth/` mantém `data/users.json` e o segredo JWT em `data/.jwt_secret` (gerado uma vez, modo 0600). TTL de 30 dias. Toda rota usa o middleware `auth.requireAuth` que injeta `req.user = { id, name, email, role }`. Em 401 o frontend dispara `nimbus:unauthorized` e volta pra tela de login. `auth.requireAdmin` exige `role === "admin"`. A função `syncRole()` é chamada no login/`requireAuth` e promove para admin se o email estiver em `ADMIN_EMAILS` — mas nunca rebaixa automaticamente (evita lockout). Para desenvolvimento local, a env `ADMIN_EMAILS` é a única forma sustentável de virar admin.
 
 **2. Estado por usuário (frontend ↔ scheduler).** Esta é a parte mais sutil do sistema. O estado da app de cada usuário é um único JSON em `backend/data/state/<userId>.json` contendo `groups`, `numbers`, `whatsappGroups`, `settings`. **Existem dois escritores concorrentes**:
 
 - O **frontend** salva via `PUT /api/state` com debounce de 800ms sempre que algo muda (ver `App.jsx`).
 - O **scheduler** (`backend/scheduler.js`) escreve campos operacionais por grupo a cada tick (30s).
 
-`storage.js` resolve o conflito com:
+`storage/` resolve o conflito com:
 - Mutex por `userId` (`withLock`) que serializa leituras/escritas.
 - Lista `OPS_FIELDS = ["queue", "pending", "history", "sentToday", "sentWeek", "weekData", "lastSend", "avgDiscount"]` que SÓ o scheduler escreve. Em `saveState()` (chamado pelo PUT do frontend), esses campos são preservados do disco para evitar que o auto-save do frontend sobrescreva o trabalho do scheduler.
 - Escrita atômica via `.tmp` + rename.
@@ -164,21 +164,21 @@ O frontend espelha `OPS_FIELDS` em `App.jsx` (linha 30) e nunca os envia no save
 
 **3. Catálogo global (admin-scraper) → fila por campanha (scheduler).** Há um único catálogo de produtos compartilhado por todos os usuários (`backend/data/catalog.json`):
 
-- `admin-scraper.js` roda periodicamente (configurável pelo admin via `/api/admin/scraper/*`) e dá upsert no catálogo.
-- `catalog.js` mantém um mutex global e indexa produtos por `productKey()` (hash MD5 derivado do MLB id quando possível, com fallback pra origin+pathname). **A mesma `productKey()` está duplicada em `scheduler.js` para evitar import circular — qualquer mudança precisa ser feita nos dois lugares.**
-- O scheduler, no tick, lê do catálogo, aplica filtros da campanha, e popula `group.queue`. Quando entra na janela horária, dispara via `whatsapp.js` (Baileys).
+- `scraping/admin.js` roda periodicamente (configurável pelo admin via `/api/admin/scraper/*`) e dá upsert no catálogo.
+- `catalog/` mantém um mutex global e indexa produtos por `productKey()` em `catalog/product-key.js` (hash MD5 derivado do MLB id quando possível, com fallback pra origin+pathname). Hoje o scheduler importa essa função direto de `./catalog/product-key` — não há mais duplicação.
+- O scheduler, no tick, lê do catálogo, aplica filtros da campanha, e popula `group.queue`. Quando entra na janela horária, dispara via `whatsapp/` (Baileys).
 - Endpoint `GET /api/ofertas` lê do catálogo (não scrape on-demand).
 
-**4. Gating por afiliado.** Campanhas que dependem do Mercado Livre ficam pausadas (não scrape, não envia) enquanto não houver TAG + cookie configurados em `affiliate.js`. O frontend usa o helper `groupUsesML()` em `data/constants.js` e mostra banner. Se o cookie estiver presente mas expirado, cai para o link cru — mas se nunca foi configurado, não envia. Cache de 7 dias por link cru → short_url.
+**4. Gating por afiliado.** Campanhas que dependem do Mercado Livre ficam pausadas (não scrape, não envia) enquanto não houver TAG + cookie configurados em `scraping/affiliate.js`. O frontend usa o helper `groupUsesML()` em `data/constants.js` e mostra banner. Se o cookie estiver presente mas expirado, cai para o link cru — mas se nunca foi configurado, não envia. Cache de 7 dias por link cru → short_url.
 
-**5. Sincronia frontend ↔ backend de categorias e fontes.** `frontend/src/data/constants.js` (`CATEGORIES`, `allSources`) e `backend/scraper.js` (`CATEGORIES`, `STORES`) precisam ser mantidos em sincronia manualmente. O comentário no constants.js avisa, mas é fácil esquecer ao adicionar uma categoria nova.
+**5. Sincronia frontend ↔ backend de categorias e fontes.** `frontend/src/data/constants.js` (`CATEGORIES`, `allSources`) e `backend/scraping/scraper.js` (`CATEGORIES`, `STORES`) precisam ser mantidos em sincronia manualmente. O comentário no constants.js avisa, mas é fácil esquecer ao adicionar uma categoria nova.
 
 **6. WhatsApp (Baileys).** Persistência da sessão depende de `STORAGE_BACKEND`:
 
 - `STORAGE_BACKEND=json` (legado) — arquivos em `backend/auth_states/<userId>/<numberId>/` via `useMultiFileAuthState`.
-- `STORAGE_BACKEND=pg` (Fase 3) — tabela `baileys_auth` (sessionId, keyType, keyId, value) via `useDatabaseAuthState` em `baileys-auth-pg.js`. Permite trocar de máquina sem perder sessão.
+- `STORAGE_BACKEND=pg` (Fase 3) — tabela `baileys_auth` (sessionId, keyType, keyId, value) via `useDatabaseAuthState` em `auth/baileys-pg.js`. Permite trocar de máquina sem perder sessão.
 
-`whatsapp-local.js` mantém o mapa de sessões em memória do processo; `restoreSessions()` religa as existentes. QR code é convertido pra data URL via `qrcode`. Em modo `memory`, isso roda no server. Em modo `redis` (Fase 2.1), roda no `worker.js` — server vê tudo via `whatsapp-proxy.js` (RPC pra ops, cache Redis pra status/QR). Broadcasts adicionam intervalo (default 4s) entre envios para reduzir risco de bloqueio.
+`whatsapp/local.js` mantém o mapa de sessões em memória do processo; `restoreSessions()` religa as existentes. QR code é convertido pra data URL via `qrcode`. Em modo `memory`, isso roda no server. Em modo `redis` (Fase 2.1), roda no `worker.js` — server vê tudo via `whatsapp/proxy.js` (RPC pra ops, cache Redis pra status/QR). Broadcasts adicionam intervalo (default 4s) entre envios para reduzir risco de bloqueio.
 
 Pra migrar sessões existentes de arquivo pra Postgres: `cd backend && npm run migrate-auth` (idempotente, suporta `--dry-run`).
 
@@ -195,7 +195,7 @@ Fluxo end-to-end de um envio agendado:
 
 Fluxo de uma op manual via API (ex: usuário clica "Conectar WhatsApp"):
 
-1. Server endpoint chama `wa.startSession(userId, numberId)` — facade resolve pra `whatsapp-proxy.startSession`
+1. Server endpoint chama `wa.startSession(userId, numberId)` — facade resolve pra `whatsapp/proxy.startSession`
 2. Proxy faz `queue.callControl("startSession", [userId, numberId])` → enfileira na control queue + aguarda via `waitUntilFinished` (timeout 30s)
 3. Worker consome o job → chama `wa.startSession` local → Baileys cria socket → `connection.update` events disparam → `publishStatus` escreve no Redis
 4. Worker job retorna snapshot inicial; proxy devolve pra endpoint; endpoint responde HTTP
@@ -211,4 +211,4 @@ Fluxo de uma op manual via API (ex: usuário clica "Conectar WhatsApp"):
 - O frontend chama `/api/*` (caminhos relativos) — Vite faz proxy para `localhost:3001`. Não há lógica de URL absoluta nem CORS em dev.
 - Token JWT vai em `localStorage["nimbus.token"]` (ver `frontend/src/data/api.js`). Toda request via helper `http()`, que injeta `Authorization: Bearer` e trata 401.
 - `backend/data/` e `backend/auth_states/` estão no `.gitignore` — nunca versionar nada de lá.
-- Persistência: sempre escrever em `.tmp` e renomear (atômico). Padrão usado em `storage.js`, `catalog.js`, `admin-scraper.js`, `affiliate.js`.
+- Persistência: sempre escrever em `.tmp` e renomear (atômico). Padrão usado em `storage/json.js`, `catalog/json.js`, `scraping/admin.js`, `scraping/affiliate.js`.

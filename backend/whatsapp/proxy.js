@@ -10,8 +10,8 @@
 // do Redis). server.js precisa usar `await` — funciona em ambos modos porque
 // `await` em valor não-Promise resolve imediatamente.
 
-const queue = require("./queue");
-const sessionStatus = require("./session-status");
+const queue = require("../infra/queue");
+const sessionStatus = require("../infra/session-status");
 
 // Utilitários puros — duplicados aqui pra evitar require do local (que carregaria Baileys).
 function normalizePhone(p) { return String(p).replace(/\D/g, ""); }

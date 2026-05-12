@@ -3,7 +3,7 @@
 // pelo schema (queue/pending/history em tabelas próprias, sentToday/lastSend em
 // colunas dedicadas). O hack OPS_FIELDS deixa de ser necessário internamente,
 // mas mantemos a constante exportada pra compat com o frontend.
-const { prisma } = require("./db");
+const { prisma } = require("../db");
 
 const OPS_FIELDS = ["queue", "pending", "history", "sentToday", "sentWeek", "weekData", "lastSend", "avgDiscount"];
 

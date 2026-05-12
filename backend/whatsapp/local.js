@@ -8,7 +8,7 @@ const PUBLISH_STATUS = (process.env.QUEUE_BACKEND || "memory").toLowerCase() ===
   && process.env.WORKER_PROCESS === "true";
 let _sessionStatus = null;
 function sessionStatus() {
-  if (!_sessionStatus) _sessionStatus = require("./session-status");
+  if (!_sessionStatus) _sessionStatus = require("../infra/session-status");
   return _sessionStatus;
 }
 function publishStatus(session) {
@@ -36,7 +36,7 @@ try {
 
 const { default: makeWASocket, DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion } = baileys;
 
-const AUTH_DIR = path.join(__dirname, "auth_states");
+const AUTH_DIR = path.join(__dirname, "..", "auth_states");
 if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
 
 // Auth state em Postgres (Fase 3) quando STORAGE_BACKEND=pg.
@@ -44,7 +44,7 @@ if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
 const USE_PG_AUTH = (process.env.STORAGE_BACKEND || "json").toLowerCase() === "pg";
 let _pgAuth = null;
 function pgAuth() {
-  if (!_pgAuth) _pgAuth = require("./baileys-auth-pg");
+  if (!_pgAuth) _pgAuth = require("../auth/baileys-pg");
   return _pgAuth;
 }
 
@@ -266,7 +266,7 @@ async function restoreSessions() {
   let pairs = [];
   if (USE_PG_AUTH) {
     try {
-      const { prisma } = require("./db");
+      const { prisma } = require("../db");
       const rows = await prisma().baileysAuth.findMany({
         where: { keyType: "creds" },
         select: { sessionId: true },

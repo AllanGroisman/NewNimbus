@@ -1,4 +1,4 @@
-const appConfig = require("./app-config");
+const appConfig = require("../config");
 
 // Config persistida via app-config (key "affiliate"). Schema:
 // { ml: { tag, cookie, updatedAt }, amazon: { tag, updatedAt } }

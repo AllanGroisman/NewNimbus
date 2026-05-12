@@ -2,7 +2,7 @@ const fs = require("fs");
 const fsp = require("fs/promises");
 const path = require("path");
 
-const DATA_DIR = process.env.NIMBUS_DATA_DIR || path.join(__dirname, "data");
+const DATA_DIR = process.env.NIMBUS_DATA_DIR || path.join(__dirname, "..", "data");
 const STATE_DIR = path.join(DATA_DIR, "state");
 
 if (!fs.existsSync(STATE_DIR)) fs.mkdirSync(STATE_DIR, { recursive: true });

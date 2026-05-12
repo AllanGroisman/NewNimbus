@@ -1,0 +1,47 @@
+# backend/
+
+Servidor Node.js do Nimbus. Recebe as chamadas do frontend, faz scraping, agenda os envios e fala com o WhatsApp.
+
+## Arquivos na raiz desta pasta
+
+- **`server.js`** — ponto de entrada do HTTP. Define todas as rotas `/api/*` e sobe o Express. Roda no `node server.js`.
+- **`worker.js`** — processo separado que cuida do WhatsApp + consome a fila de envios. Só roda quando `QUEUE_BACKEND=redis`. No modo `memory`, o `server.js` já faz tudo.
+- **`scheduler.js`** — o "cérebro" do sistema. A cada 30s, decide quais grupos têm que receber mensagem agora, popula a fila de produtos por grupo e dispara o envio.
+- **`db.js`** — cria o cliente do Postgres (Prisma) uma vez só e exporta pra quem precisar. Também tem o helper `isPg()`.
+- **`ecosystem.config.js`** — receita do PM2 (em produção, sobe `server`, `worker` e os jobs de backup juntos).
+- **`package.json`** — dependências e scripts (`npm run prisma:migrate`, `npm run backup`, etc).
+- **`.env.example`** — exemplo de variáveis de ambiente. Copia pra `.env` e ajusta.
+
+## Pastas — uma por área do código
+
+| Pasta | O que tem ali |
+|---|---|
+| **`storage/`** | Estado de cada usuário (grupos, números, configs). Tem versão JSON (arquivos) e PG (Postgres). |
+| **`auth/`** | Login, registro, JWT, bcrypt. Também tem a versão Postgres das sessões do Baileys. |
+| **`catalog/`** | Catálogo global de produtos (compartilhado entre todos os usuários). |
+| **`config/`** | Configs globais salvas como chave-valor (tag de afiliado, config do scraper). |
+| **`whatsapp/`** | Tudo que fala com o WhatsApp (Baileys): sessões, envio, QR code. |
+| **`scraping/`** | Puppeteer (scraper de ML e Amazon), conversão pra link de afiliado e o agendador do admin-scraper. |
+| **`infra/`** | "Encanamento": logger, métricas Prometheus, Sentry, fila BullMQ, heartbeat do worker. |
+| **`scripts/`** | Scripts manuais (backup, migração JSON→PG, migração de sessões Baileys). |
+| **`prisma/`** | Schema do banco + migrations geradas pelo Prisma. |
+
+## Pastas geradas em runtime (no `.gitignore`)
+
+- **`data/`** — dados em JSON (modo `STORAGE_BACKEND=json`).
+- **`auth_states/`** — credenciais das sessões do Baileys (modo `STORAGE_BACKEND=json`).
+- **`backups/`** — snapshots dos backups locais.
+- **`logs/`** — logs do PM2 em produção.
+- **`node_modules/`** — pacotes do npm.
+
+## Modo "façade" (storage / auth / catalog / config / whatsapp)
+
+Algumas dessas pastas têm 3 arquivos com a mesma cara: `index.js`, `json.js`, `pg.js`. Funciona assim:
+
+- `index.js` é a "fachada": ele olha a variável `STORAGE_BACKEND` e decide se vai usar a versão JSON ou Postgres.
+- `json.js` é a versão "rápida pra desenvolver" — salva tudo em arquivos `.json` em `data/`.
+- `pg.js` é a versão de produção — fala com o Postgres via Prisma.
+
+O resto do código sempre faz `require("./storage")` e nem percebe qual versão tá rodando. Trocar é só mudar a env var.
+
+A mesma ideia vale pro `whatsapp/`: `index.js` decide entre `local.js` (Baileys de verdade, no processo) e `proxy.js` (espelho via fila Redis, usado pelo `server` quando o `worker` é quem segura o Baileys).

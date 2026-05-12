@@ -3,7 +3,7 @@ const fsp = require("fs/promises");
 const path = require("path");
 const { productKey } = require("./product-key");
 
-const DATA_DIR = process.env.NIMBUS_DATA_DIR || path.join(__dirname, "data");
+const DATA_DIR = process.env.NIMBUS_DATA_DIR || path.join(__dirname, "..", "data");
 const CATALOG_FILE = path.join(DATA_DIR, "catalog.json");
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });

@@ -18,14 +18,14 @@ process.env.WORKER_PROCESS = "true";
 
 require("dotenv").config();
 
-const queue = require("./queue");
-const wa = require("./whatsapp");          // resolve pra whatsapp-local
+const queue = require("./infra/queue");
+const wa = require("./whatsapp");          // resolve pra whatsapp/local
 const scheduler = require("./scheduler");
-const appConfig = require("./app-config");
+const appConfig = require("./config");
 const { backendName } = require("./db");
-const logger = require("./logger");
-const sentry = require("./sentry");
-const heartbeat = require("./worker-heartbeat");
+const logger = require("./infra/logger");
+const sentry = require("./infra/sentry");
+const heartbeat = require("./infra/worker-heartbeat");
 
 sentry.init({ context: "worker" });
 

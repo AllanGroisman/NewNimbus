@@ -1,4 +1,4 @@
-const { prisma } = require("./db");
+const { prisma } = require("../db");
 
 // Cache write-through em memória. Mantemos a interface SÍNCRONA pra não obrigar
 // affiliate.js / admin-scraper.js a virar async (e suas rotas idem).

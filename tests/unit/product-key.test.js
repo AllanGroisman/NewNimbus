@@ -10,7 +10,7 @@ import { createRequire } from "module";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
-const { productKey } = require(path.resolve(__dirname, "..", "..", "backend", "product-key.js"));
+const { productKey } = require(path.resolve(__dirname, "..", "..", "backend", "catalog", "product-key.js"));
 
 describe("productKey", () => {
   it("usa MLB id da URL quando disponivel (formato /p/MLB...)", () => {

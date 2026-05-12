@@ -8,5 +8,5 @@ const isWorker = process.env.WORKER_PROCESS === "true";
 const isRedis = (process.env.QUEUE_BACKEND || "memory").toLowerCase() === "redis";
 
 module.exports = (isRedis && !isWorker)
-  ? require("./whatsapp-proxy")
-  : require("./whatsapp-local");
+  ? require("./proxy")
+  : require("./local");

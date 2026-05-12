@@ -1,12 +1,12 @@
-const { normalizeSource, upgradeAmazonImageUrl } = require("./scraper");
+const { normalizeSource, upgradeAmazonImageUrl } = require("./scraping/scraper");
 const wa = require("./whatsapp");
 const storage = require("./storage");
 const catalog = require("./catalog");
-const affiliate = require("./affiliate");
-const queueMod = require("./queue");
-const { productKey } = require("./product-key");
-const metrics = require("./metrics");
-const log = require("./logger").child({ module: "scheduler" });
+const affiliate = require("./scraping/affiliate");
+const queueMod = require("./infra/queue");
+const { productKey } = require("./catalog/product-key");
+const metrics = require("./infra/metrics");
+const log = require("./infra/logger").child({ module: "scheduler" });
 
 // Cadência do loop principal (em ms). Roda janelas de envio.
 const TICK_MS = 30 * 1000;

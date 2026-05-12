@@ -21,11 +21,11 @@ const require = createRequire(import.meta.url);
 const backendDir = path.resolve(__dirname, "..", "..", "backend");
 
 const { app } = require(path.join(backendDir, "server.js"));
-const auth = require(path.join(backendDir, "auth.js"));
-const storage = require(path.join(backendDir, "storage.js"));
-const catalog = require(path.join(backendDir, "catalog.js"));
+const auth = require(path.join(backendDir, "auth"));
+const storage = require(path.join(backendDir, "storage"));
+const catalog = require(path.join(backendDir, "catalog"));
 const scheduler = require(path.join(backendDir, "scheduler.js"));
-const affiliate = require(path.join(backendDir, "affiliate.js"));
+const affiliate = require(path.join(backendDir, "scraping", "affiliate.js"));
 
 function uniqueEmail(prefix = "user") {
   return `${prefix}-${crypto.randomBytes(4).toString("hex")}@test.local`;

@@ -2,20 +2,20 @@ const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
-const { CATEGORIES, STORES, scrapeSingleProduct } = require("./scraper");
+const { CATEGORIES, STORES, scrapeSingleProduct } = require("./scraping/scraper");
 const wa = require("./whatsapp");
 const auth = require("./auth");
 const storage = require("./storage");
 const scheduler = require("./scheduler");
-const affiliate = require("./affiliate");
+const affiliate = require("./scraping/affiliate");
 const catalog = require("./catalog");
-const adminScraper = require("./admin-scraper");
-const appConfig = require("./app-config");
+const adminScraper = require("./scraping/admin");
+const appConfig = require("./config");
 const { backendName } = require("./db");
-const queueMod = require("./queue");
-const logger = require("./logger");
-const metrics = require("./metrics");
-const sentry = require("./sentry");
+const queueMod = require("./infra/queue");
+const logger = require("./infra/logger");
+const metrics = require("./infra/metrics");
+const sentry = require("./infra/sentry");
 
 // Sentry init (Fase 4) — no-op se SENTRY_DSN não estiver definido
 sentry.init({ context: "server" });
@@ -166,7 +166,7 @@ app.get("/healthz", async (req, res) => {
   // Worker heartbeat (Fase 4) — em redis mode, server lê do Redis
   if (queueMod.isRedis()) {
     try {
-      const heartbeat = require("./worker-heartbeat");
+      const heartbeat = require("./infra/worker-heartbeat");
       const age = await heartbeat.ageSeconds();
       checks.worker = age == null ? { alive: false, ageSeconds: null } : { alive: age < 30, ageSeconds: age };
       metrics.workerHeartbeatAge.set(age ?? NaN);

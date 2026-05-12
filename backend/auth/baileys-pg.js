@@ -10,7 +10,7 @@
 //   - Múltiplos workers podem ler do mesmo storage (Phase 2.2 — sticky routing)
 
 const { initAuthCreds, BufferJSON, proto } = require("@whiskeysockets/baileys");
-const { prisma } = require("./db");
+const { prisma } = require("../db");
 
 // Encode/decode do valor — BufferJSON suporta os Buffer nodes do Signal protocol
 function encode(value) {

@@ -9,7 +9,7 @@ import { createRequire } from "module";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
-const affiliate = require(path.resolve(__dirname, "..", "..", "backend", "affiliate.js"));
+const affiliate = require(path.resolve(__dirname, "..", "..", "backend", "scraping", "affiliate.js"));
 
 describe("extractASIN", () => {
   it("formato /dp/ASIN", () => {

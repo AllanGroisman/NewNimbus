@@ -1,6 +1,6 @@
 // Implementação Postgres do catálogo. Mesma interface pública de catalog-json.js,
 // mas tudo async (Prisma).
-const { prisma } = require("./db");
+const { prisma } = require("../db");
 const { productKey } = require("./product-key");
 
 function storeToId(store) {

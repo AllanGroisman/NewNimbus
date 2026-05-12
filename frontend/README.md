@@ -1,16 +1,36 @@
-# React + Vite
+# frontend/
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+SPA em **React 19 + Vite** que o usuário enxerga no navegador. Não tem TypeScript, não tem framework de CSS — estilos vão inline ou via `App.css` / `index.css` com CSS variables pra tema claro/escuro.
 
-Currently, two official plugins are available:
+## Como rodar em dev
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```bash
+cd frontend
+npm install      # primeira vez
+npx vite --host  # sobe na porta 5173 com hot reload
+```
 
-## React Compiler
+O Vite faz proxy de `/api/*` pra `localhost:3001` (o backend), então você não precisa configurar URL absoluta nem CORS.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Scripts úteis
 
-## Expanding the ESLint configuration
+```bash
+npm run lint    # checa o código com ESLint
+npm run build   # build de produção pra dist/
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Estrutura
+
+- **`src/`** — todo o código React.
+- **`src/main.jsx`** — ponto de entrada. Monta o `<App />` na div `#root`.
+- **`src/App.jsx`** — componente raiz. Faz login/logout, carrega estado do usuário, faz polling do scheduler.
+- **`src/App.css`** / **`src/index.css`** — estilos globais (tema claro/escuro via CSS variables).
+- **`src/components/`** — componentes reutilizáveis (sidebar, QR code, dashboard de grupo).
+- **`src/pages/`** — uma página por rota (Dashboard, Settings, WhatsApp, Login, etc).
+- **`src/data/`** — helpers de dados: constantes (categorias, fontes), helper de API (`fetch` + token), dados mockados pra demo.
+- **`src/assets/`** — imagens/SVGs.
+- **`public/`** — arquivos servidos crus na raiz (favicon, etc).
+
+## Token JWT
+
+O token volta do `/api/auth/login` e é guardado em `localStorage["nimbus.token"]`. O helper `http()` em `src/data/api.js` injeta `Authorization: Bearer <token>` em todo request e trata 401 (dispara o evento `nimbus:unauthorized` que faz o `App.jsx` voltar pro login).

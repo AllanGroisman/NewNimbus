@@ -74,7 +74,7 @@ const mock = {
 };
 
 function installMock() {
-  const target = path.resolve(__dirname, "..", "..", "backend", "whatsapp.js");
+  const target = path.resolve(__dirname, "..", "..", "backend", "whatsapp", "index.js");
   require.cache[target] = {
     id: target,
     filename: target,
