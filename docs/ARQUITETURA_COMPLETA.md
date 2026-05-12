@@ -1,4 +1,4 @@
-# Nimbus — Documento técnico completo (snapshot 2026-05-11)
+# Nimbus — Documento técnico completo (snapshot 2026-05-12)
 
 > Este documento é auto-suficiente. Foi escrito pra ser colado num prompt de IA que vai analisar/auditar/sugerir mudanças no sistema sem ter acesso ao código. Se você é a IA lendo isto: aqui tem o que você precisa pra responder com precisão sobre a arquitetura. Quando o usuário pedir algo, **pergunte por arquivos específicos antes de assumir** — este doc cobre o quê e o porquê, não cada linha.
 
@@ -8,11 +8,16 @@
 
 **Nimbus** é uma plataforma SaaS para **automação de marketing por WhatsApp** voltada a divulgação de ofertas. Funcionamento:
 
-1. **Scraping** periódico (Mercado Livre + Amazon, via Puppeteer) popula um catálogo global de produtos com preço, desconto, categoria, etc.
-2. Cada **usuário** cria **campanhas** (chamadas internamente de "groups"). Uma campanha define: categorias de interesse, filtros (desconto mínimo, faixa de preço), template de mensagem, janelas horárias de envio, intervalo entre envios, cooldown de re-envio do mesmo produto, e os grupos de WhatsApp pra disparar.
-3. O **scheduler** roda a cada 30s. Pra cada campanha: preenche fila com produtos do catálogo que casam os filtros, e dispara mensagens dentro da janela horária.
+1. **Scraping** periódico popula um catálogo global de produtos com preço, desconto, categoria, etc. Fontes:
+   - **Mercado Livre** + **Amazon** via Puppeteer (browser headless)
+   - **Shopee** via Affiliate Open API (GraphQL, sem browser)
+2. Cada **usuário** cria **campanhas** (chamadas internamente de "groups"). Uma campanha define: categorias de interesse, fontes (`sources` — ml/amazon/shopee), filtros (desconto mínimo, faixa de preço, palavras-chave), template de mensagem, janelas horárias de envio, intervalo entre envios, cooldown de re-envio do mesmo produto, e os grupos de WhatsApp pra disparar.
+3. O **scheduler** roda a cada 30s. Pra cada campanha: preenche fila com produtos do catálogo que casam os filtros, remove itens stale (config mudou), e dispara mensagens dentro da janela horária.
 4. Envio via **Baileys** (biblioteca não-oficial WhatsApp Web). Sessões persistem em Postgres (Fase 3).
-5. **Afiliados**: links de Mercado Livre passam por gerador de short_url com tag de afiliado (cookie do MLA é necessário); Amazon recebe `?tag=` na URL.
+5. **Afiliados**: links passam por gerador de short_url com tag de afiliado:
+   - **Mercado Livre**: tag + cookie MLA (cookie expira; cai pra link cru se falhar)
+   - **Amazon**: tag injetada na URL (`?tag=...`)
+   - **Shopee**: App ID + App Secret via API GraphQL oficial (sem cookie, não expira)
 
 Stack alta:
 - Frontend: React 19 + Vite, ESM, sem TypeScript, sem framework CSS, fetch nativo
@@ -75,44 +80,51 @@ Stack alta:
 - `worker.js` — Processo separado. Seta `WORKER_PROCESS=true`, init queue (`consumer:true`), restoreSessions, registra `setSendHandler(processSendJob)` + `setControlHandler(handleControlJob)`, inicia heartbeat.
 
 ### Persistência (façades + impls)
-Padrão: `<modulo>.js` é facade que `require("<modulo>-json")` ou `require("<modulo>-pg")` baseado em `isPg()` de `db.js`.
+Padrão: cada feature é uma **pasta** com `index.js` (facade) + `json.js` + `pg.js`. O `index.js` carrega `json` ou `pg` baseado em `isPg()` de `db.js`.
 
-- `storage.js` → `storage-json.js` / `storage-pg.js` — estado por usuário (groups, settings, whatsappGroups, numbers, queue, pending, history, sentToday/Week, weekData, lastSend)
-- `catalog.js` → `catalog-json.js` / `catalog-pg.js` — catálogo global de produtos
-- `auth.js` → `auth-json.js` / `auth-pg.js` — users (JWT + bcrypt)
-- `app-config.js` → `app-config-json.js` / `app-config-pg.js` — KV (afiliado, scraper config)
+- `storage/{index,json,pg}.js` — estado por usuário (groups, settings, whatsappGroups, numbers, queue, pending, history, sentToday/Week, weekData, lastSend)
+- `catalog/{index,json,pg}.js` + `catalog/product-key.js` — catálogo global de produtos
+- `auth/{index,json,pg}.js` + `auth/baileys-pg.js` — users (JWT + bcrypt) e adapter Baileys ↔ Postgres
+- `config/{index,json,pg}.js` — KV (afiliado, scraper config)
 - `db.js` — singleton PrismaClient + `isPg()` + `backendName()`
 - `prisma/schema.prisma` — 12 modelos
 
 ### WhatsApp (Fase 2.1 + 3)
-- `whatsapp.js` — facade. Resolve `local` se `WORKER_PROCESS=true` ou modo memory; senão `proxy`.
-- `whatsapp-local.js` — owna sessões Baileys em mapa em memória. Em modo PG usa `useDatabaseAuthState` (`baileys-auth-pg.js`); senão `useMultiFileAuthState` em `auth_states/<userId>/<numberId>/`. Hooks `connection.update` publicam status no Redis (via `session-status.js`) quando `WORKER_PROCESS=true`.
-- `whatsapp-proxy.js` — usado pelo server em modo redis. Cada op (send, createGroup, listGroups, etc) vira `queue.callControl(op, args)` aguardando resposta via `waitUntilFinished` (timeouts 15-60s). Status reads (getSession, listSessions, status) leem direto do Redis cache.
-- `baileys-auth-pg.js` — adapter `useDatabaseAuthState(sessionId)`. Mirror exato de `useMultiFileAuthState`. PK composta `(sessionId, keyType, keyId)`. Encoding com `BufferJSON.replacer/reviver`. Trata `app-state-sync-key` com `proto.Message.AppStateSyncKeyData.fromObject`.
-- `session-status.js` — Redis-backed cache. Schema `nimbus:session:<userId>:<numberId>` → JSON `{numberId, status, qr, info, lastError, updatedAt}`. TTL 24h.
+- `whatsapp/index.js` — facade. Resolve `local` se `WORKER_PROCESS=true` ou modo memory; senão `proxy`.
+- `whatsapp/local.js` — owna sessões Baileys em mapa em memória. Em modo PG usa `useDatabaseAuthState` (`auth/baileys-pg.js`); senão `useMultiFileAuthState` em `auth_states/<userId>/<numberId>/`. Hooks `connection.update` publicam status no Redis (via `infra/session-status.js`) quando `WORKER_PROCESS=true`.
+- `whatsapp/proxy.js` — usado pelo server em modo redis. Cada op (send, createGroup, listGroups, etc) vira `queue.callControl(op, args)` aguardando resposta via `waitUntilFinished` (timeouts 15-60s). Status reads (getSession, listSessions, status) leem direto do Redis cache.
+- `auth/baileys-pg.js` — adapter `useDatabaseAuthState(sessionId)`. Mirror exato de `useMultiFileAuthState`. PK composta `(sessionId, keyType, keyId)`. Encoding com `BufferJSON.replacer/reviver`. Trata `app-state-sync-key` com `proto.Message.AppStateSyncKeyData.fromObject`.
+- `infra/session-status.js` — Redis-backed cache. Schema `nimbus:session:<userId>:<numberId>` → JSON `{numberId, status, qr, info, lastError, updatedAt}`. TTL 24h.
 
-### Fila (Fase 2)
-- `queue.js` — facade memory/redis com 2 filas BullMQ:
+### Fila (Fase 2) e infra de observabilidade
+Pasta `infra/` agrupa preocupações operacionais:
+
+- `infra/queue.js` — facade memory/redis com 2 filas BullMQ:
   - `nimbus.send-message` — envios (concurrency 1, limiter 1/s, attempts 5, backoff exp 5s base, removeOnComplete 200, removeOnFail 500)
   - `nimbus.control` — RPC server↔worker (concurrency 4, attempts 1)
   - Helpers: `init({producer, consumer})`, `setSendHandler`, `setControlHandler`, `enqueueSend`, `callControl`, `listFailed`, `retryFailed`, `removeFailed`, `status`, `close`
-- `worker-heartbeat.js` — escreve `nimbus:worker:heartbeat` a cada 5s, TTL 60s. Server lê `ageSeconds()` em /healthz.
+- `infra/worker-heartbeat.js` — escreve `nimbus:worker:heartbeat` a cada 5s, TTL 60s. Server lê `ageSeconds()` em `/healthz`.
+- `infra/metrics.js` — Prometheus client. Counters/Histograms/Gauges + `httpMiddleware` + `handler` pra `/metrics`.
+- `infra/sentry.js` — wrapper. `init({context})`, `captureException`, `captureMessage`, `flush`. No-op sem `SENTRY_DSN`.
+- `infra/logger.js` — pino. Pretty-print em dev, JSON em prod. `logger.child({module})` em quem migrou (scheduler, queue).
 
 ### Scheduler (Fase 2 modificada)
 - `scheduler.js` — exporta `start, stop, tick, sendNextNow, refillNow, manualAdd, status, processSendJob`. Producer flow:
   1. `tick()` (30s): pra cada user → loadState → pra cada group → `processGroup()`
-  2. `processGroup()`: `refillQueue` (consulta catálogo) + `dispatchOne`
+  2. `processGroup()`: **prune stale** (itens que não batem mais com `sources`/`categories`/`filters` atuais, preservando `manual: true`) → `refillQueue` (consulta catálogo) → `dispatchOne`
   3. `dispatchOne()`: se há item + janela ativa + intervalo respeitado → em redis: pop+lastSend+enqueue; em memory: sendItem inline
   4. `processSendJob(job)` (chamado pelo BullMQ Worker): loadState fresh → sendItem → updateGroupOps com history+métricas
+- Helpers internos: `campaignFilterCtx(group)`, `itemMatchesCampaign(item, ctx)` — predicado compartilhado por `refillQueue`, `processGroup` e `sendNextNow` pra remover/filtrar itens stale de forma consistente.
+
+### Scraping
+Pasta `scraping/`:
+
+- `scraping/affiliate.js` — gera shortlinks ML (cookie+tag), Amazon (tag), Shopee (App ID+Secret via GraphQL). Cache 7 dias por loja. Status reportado em `/api/affiliate`.
+- `scraping/scraper.js` — entrypoints `scrapeML` (Puppeteer), `scrapeAmazon` (Puppeteer), `scrapeShopee` (GraphQL via `affiliate.fetchShopeeOffers`), `scrapeOfertas` (agregador). Constantes `CATEGORIES` e `STORES` (precisam estar em sync com `frontend/src/data/constants.js`).
+- `scraping/admin.js` — orquestra runs periódicas, chamado por endpoints `/api/admin/scraper/*` (admin-only).
 
 ### Outros módulos
-- `affiliate.js` — gera shortlinks ML (cookie+tag) e Amazon (tag). Cache 7 dias. Status reportado em `/api/affiliate`.
-- `scraper.js` — Puppeteer pra ML/Amazon. Constantes `CATEGORIES` e `STORES` (precisam estar em sync com `frontend/src/data/constants.js`).
-- `admin-scraper.js` — orquestra runs periódicas, chamado por endpoints `/api/admin/scraper/*` (admin-only).
-- `product-key.js` — `productKey(p)` MD5 estável (MLB id se houver, senão origin+pathname, fallback nome+store). **PK do catálogo — não mudar sem regerar tudo.**
-- `metrics.js` — Prometheus client. Counters/Histograms/Gauges + `httpMiddleware` + `handler` pra /metrics.
-- `sentry.js` — wrapper. `init({context})`, `captureException`, `captureMessage`, `flush`. No-op sem `SENTRY_DSN`.
-- `logger.js` — pino. Pretty-print em dev, JSON em prod. `logger.child({module})` em quem migrou (scheduler, queue).
+- `catalog/product-key.js` — `productKey(p)` MD5 estável (MLB id se houver, ASIN pra Amazon, item id pra Shopee, fallback origin+pathname ou nome+store). **PK do catálogo — não mudar sem regerar tudo.**
 
 ### Scripts (`backend/scripts/`)
 - `migrate-json-to-pg.js` — migra `data/*.json` → Postgres (idempotente, `--dry-run`)
@@ -202,6 +214,8 @@ ADMIN_EMAILS=email1@x.com,email2@y.com     # promovidos a admin no login
 ML_AFFILIATE_TAG=...
 ML_AFFILIATE_COOKIE=...
 AMAZON_AFFILIATE_TAG=...
+SHOPEE_AFFILIATE_APP_ID=...                # se setado, força config Shopee via env (bloqueia escrita dinâmica)
+SHOPEE_AFFILIATE_APP_SECRET=...
 
 # Hardening
 NIMBUS_CORS_ORIGINS=https://app.x.com,https://*.x.com    # vazio = aceita tudo (dev)
@@ -261,11 +275,12 @@ Todos `/api/*` exigem `Authorization: Bearer <jwt>` exceto `auth/login` e `auth/
 - `GET /api/status`
 
 ### Afiliados
-- `GET /api/affiliate`
+- `GET /api/affiliate` — devolve status `{ml, amazon, shopee}` consolidado
 - `PUT /api/affiliate` (tag + cookie ML)
 - `DELETE /api/affiliate`
 - `POST /api/affiliate/test` (testa link ML real)
 - `PUT/DELETE/POST /api/affiliate/amazon[/test]`
+- `PUT/DELETE/POST /api/affiliate/shopee[/test]` — body `{appId, appSecret}` (PUT aceita só `appId` se já configurado)
 
 ### Scraper one-off
 - `POST /api/scraper/fetch-url` — Puppeteer scrape de URL única
@@ -320,14 +335,25 @@ JWT TTL 30 dias. Segredo em env `JWT_SECRET` ou auto-gerado em `data/.jwt_secret
 
 ### 7.3 Catálogo → fila por campanha
 - Scraper popula CatalogProduct (admin-scraper)
-- Scheduler tick: pra cada campanha → `refillQueue()` consulta catalog com filtros + dedup contra queue/pending/history (cooldown). Adiciona até `target` (queue se auto-aprovação, senão pending)
-- `dispatchOne()` na janela horária + intervalo: em redis pops+enqueue, em memory chama sendItem inline
+- Scheduler tick: pra cada campanha →
+  1. **Prune stale** — itens em `queue`/`pending` que não casam mais com `sources`/`categories`/`filters` atuais são removidos. Roda sempre, independente do threshold de refill. Items com `manual: true` (adicionados via "Adicionar produto" na UI) são preservados — usuário escolheu explicitamente, não é stale.
+  2. **`refillQueue()`** — consulta catalog com filtros + dedup contra queue/pending/history (cooldown) + reaplica o predicate stale. Adiciona até `target` (queue se auto-aprovação, senão pending).
+  3. **`dispatchOne()`** na janela horária + intervalo: em redis pops+enqueue, em memory chama sendItem inline.
+- `sendNextNow` (botão "Enviar agora") também roda prune antes de despachar — usuário não quer mandar item que já não bate com config.
+
+⚠️ **Regressão histórica**: antes do prune stale (commit anterior), trocar `sources` de `["ml","amazon"]` pra `["shopee"]` deixava ML/Amazon na fila — só novos itens eram filtrados. Resultado: usuário marcava "só Shopee" e via outras lojas sendo enviadas.
 
 ### 7.4 Gating por afiliado
-Campanhas que dependem de Mercado Livre **não enviam** se `affiliate.status().configured === false`. Frontend mostra banner via helper `groupUsesML()` em `data/constants.js`. Cache 7 dias por link cru → short_url.
+Campanhas pausam (não scrape, não envia) se uma loja com **gating** não está configurada:
+
+- **Mercado Livre** — exige tag + cookie. `groupUsesML()` em `data/constants.js` decide o banner.
+- **Shopee** — exige App ID + App Secret. `groupUsesShopee()` em `data/constants.js`.
+- **Amazon** — **não** tem gating: se afiliado não configurado, envia com link cru (sem tag).
+
+Lógica no backend em `scheduler.js → affiliateGate(group)`: retorna `{paused, reason}` consultando `affiliate.status()`. Frontend espelha em `getGroupStats({affiliateConfigured: {ml, shopee}})`. Cache 7 dias por link cru → short_url, por loja.
 
 ### 7.5 Sincronia frontend↔backend
-`frontend/src/data/constants.js` (`CATEGORIES`, `allSources`) e `backend/scraper.js` (`CATEGORIES`, `STORES`) são MANUALMENTE mantidos em sync. Comentário avisa.
+`frontend/src/data/constants.js` (`CATEGORIES`, `allSources`) e `backend/scraping/scraper.js` (`CATEGORIES`, `STORES`) são MANUALMENTE mantidos em sync. Comentário avisa. `allSources` no frontend usa rótulos amigáveis (`"Mercado Livre"`, `"Amazon"`, `"Shopee"`); o backend normaliza pra ids (`ml`/`amazon`/`shopee`) via `normalizeSource()`.
 
 ### 7.6 Envio agendado em modo redis (passo a passo)
 1. Server scheduler tick (30s) → processGroup → dispatchOne
@@ -388,7 +414,7 @@ Mais default node metrics (heap, gc, event loop lag) via `prom-client.collectDef
 
 Migrado pra `logger.child({module})`:
 - `scheduler.js` (`module: "scheduler"`) — campos típicos: `userId`, `groupId`, `group` (name), `waGroup`, `jid`, `item`, `err`
-- `queue.js` (`module: "queue"`) — campos: `queue` ("send"|"control"), `jobId`, `attempt`, `max`, `op`, `err`
+- `infra/queue.js` (`module: "queue"`) — campos: `queue` ("send"|"control"), `jobId`, `attempt`, `max`, `op`, `err`
 
 Outros módulos ainda têm `console.log/error` legados — não-bloqueante mas pode migrar depois.
 
@@ -466,7 +492,25 @@ npm run backup:remote    # sobe último snapshot pra S3-compatível (no-op sem e
 cd frontend && npm run lint
 ```
 
-Não há suíte de testes.
+### Testes (Vitest)
+```bat
+test.bat                  :: wrapper na raiz — roda tudo (~20s, 100+ testes)
+```
+
+Ou direto:
+```bash
+cd tests
+npm install                # primeira vez
+npm test                   # tudo
+npm run test:unit          # unitários (productKey, ASIN, Shopee parsing)
+npm run test:integration   # auth, state, catálogo, afiliados, scheduler
+npm run test:journey       # jornada completa (registro → afiliado → catálogo → campanha → refill → send-now → reset)
+npm run test:watch
+```
+
+Os testes rodam o backend inteiro em-memória com **Baileys mockado** e `NIMBUS_DATA_DIR` apontando pra tmpdir por worker — não tocam em `backend/data/`. Cobrem auth, state com a corrida do `OPS_FIELDS` (scheduler vs frontend), catálogo (upsert/query/filtros incluindo Shopee), afiliados ML/Amazon/Shopee, scheduler (`refillNow`/`manualAdd`/`sendNextNow`/`tick`, incluindo prune de itens stale), e jornada completa. **Fora do escopo**: scraping real (Puppeteer), WhatsApp real (Baileys substituído por mock que registra chamadas em `waCalls`), UI visual.
+
+`start.bat` **não** roda testes — sobe direto. Pra rodar antes de subir: `test.bat && start.bat`.
 
 ---
 
