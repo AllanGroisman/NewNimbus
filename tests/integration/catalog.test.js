@@ -2,7 +2,7 @@
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { request, app, createTestUser, catalog } from "../helpers/app.js";
-import { mlProduct, amazonProduct } from "../helpers/fixtures.js";
+import { mlProduct, amazonProduct, shopeeProduct } from "../helpers/fixtures.js";
 
 describe("catalog.upsertProducts", () => {
   it("insere novos e atualiza existentes (lastSeenAt move)", async () => {
@@ -52,6 +52,27 @@ describe("catalog.query — filtros", () => {
   it("filtra por sources (so amazon)", async () => {
     const items = await catalog.query({ sources: ["amazon"], limit: 100 });
     expect(items.every(p => p.store === "Amazon")).toBe(true);
+  });
+
+  it("filtra por sources (so shopee) — devolve apenas Shopee, NÃO todos", async () => {
+    // Regressão: storeToId não reconhecia 'shopee' → produtos com store=Shopee eram
+    // salvos como _null, e o filtro de source no PG não tinha branch pra shopee →
+    // o WHERE de store era pulado, retornando TODO o catálogo. Bug clássico de
+    // "filtro silenciosamente ignorado".
+    await catalog.upsertProducts([
+      shopeeProduct(801, { category: "beleza", discount: 40 }),
+      shopeeProduct(802, { category: "beleza", discount: 60 }),
+    ]);
+    const items = await catalog.query({ sources: ["shopee"], limit: 100 });
+    expect(items.length).toBeGreaterThan(0);
+    expect(items.every(p => p.store === "Shopee")).toBe(true);
+  });
+
+  it("source desconhecida devolve lista vazia (não 'todos os produtos')", async () => {
+    // Outro caso do mesmo bug: se a source não normaliza pra nada conhecido,
+    // o filtro tem que retornar vazio, não ignorar e devolver tudo.
+    const items = await catalog.query({ sources: ["loja-inexistente"], limit: 100 });
+    expect(items).toHaveLength(0);
   });
 
   it("sort discount_desc ordena do maior pro menor", async () => {

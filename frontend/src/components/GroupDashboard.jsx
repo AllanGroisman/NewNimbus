@@ -192,7 +192,7 @@ function QueueItemCard({ item, idx, eta, onRemove, onDragStart, onDragOver, onDr
   );
 }
 
-export default function GroupDashboard({ group, numbers, whatsappGroups = [], affiliateConfigured = true, onBack, onUpdate, onDelete, onCreateWhatsappGroup, onDeleteWhatsappGroup, onUpdateWhatsappGroup, onGoToSettings, customTemplates = [], onAddCustomTemplate, onDeleteCustomTemplate, onUpdateCustomTemplate }) {
+export default function GroupDashboard({ group, numbers, whatsappGroups = [], affiliateConfigured = true, affiliateStatus = null, onBack, onUpdate, onDelete, onCreateWhatsappGroup, onDeleteWhatsappGroup, onUpdateWhatsappGroup, onGoToSettings, onGoToAffiliate, customTemplates = [], onAddCustomTemplate, onDeleteCustomTemplate, onUpdateCustomTemplate }) {
   const [tab, setTab] = useState("overview");
   const [sched, setSched] = useState(group.schedule);
   const [scraping, setScraping] = useState(group.scraping);
@@ -658,7 +658,8 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const primaryCat = groupInfo.categories[0] || getGroupCategories(group)[0];
   const barColor = primaryCat === "gamer" ? "#378ADD" : PRIMARY;
   const linkedWGs = whatsappGroups.filter(w => groupInfo.whatsappGroupIds.includes(w.id));
-  const stats = getGroupStats({ whatsappGroupIds: groupInfo.whatsappGroupIds, scraping: { sources: scraping.sources } }, whatsappGroups, { affiliateConfigured });
+  // Passa objeto quando disponível (ml + shopee gating), senão fallback boolean (compat).
+  const stats = getGroupStats({ whatsappGroupIds: groupInfo.whatsappGroupIds, scraping: { sources: scraping.sources } }, whatsappGroups, { affiliateConfigured: affiliateStatus || affiliateConfigured });
 
   const toggleCategory = (id) => setGroupInfo(g => {
     const has = g.categories.includes(id);
@@ -982,7 +983,8 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {groupInfo.categories.map(c => <Badge key={c} color={categoryColor(c)}><span style={{ marginRight: 4 }}>{categoryIcon(c)}</span>{categoryLabel(c)}</Badge>)}
             {stats.pausedManual && <Badge color="amber">Pausada</Badge>}
-            {stats.pausedByAffiliate && <Badge color="amber">Pausado · sem afiliado ML</Badge>}
+            {stats.pausedByAffiliateML && <Badge color="amber">Pausado · sem afiliado ML</Badge>}
+            {stats.pausedByAffiliateShopee && <Badge color="amber">Pausado · sem afiliado Shopee</Badge>}
             {stats.status === "empty"
               ? <Badge color="gray">Sem grupos do WhatsApp</Badge>
               : <Badge color={stats.status === "connected" ? "green" : stats.status === "paused" ? "amber" : "red"}>{stats.connected}/{stats.count} conectados</Badge>
@@ -1004,15 +1006,29 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         </div>
       )}
 
-      {stats.pausedByAffiliate && (
+      {stats.pausedByAffiliateML && (
         <div style={{ background: "#FEF3C7", border: "0.5px solid #F4D08A", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ fontSize: 16 }}>⚠️</span>
           <span style={{ fontSize: 13, color: "#854F0B", flex: 1, minWidth: 200 }}>
-            Esta campanha está <strong>pausada</strong> — o afiliado do Mercado Livre não está configurado. Sem TAG e cookie, os links sairiam sem comissão.
+            Esta campanha está <strong>pausada</strong> — o afiliado do <strong>Mercado Livre</strong> não está configurado. Sem TAG e cookie, os links sairiam sem comissão.
           </span>
-          {onGoToSettings && (
-            <button onClick={onGoToSettings} style={{ padding: "6px 12px", borderRadius: 8, background: "#854F0B", color: "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
-              Configurar afiliado
+          {(onGoToAffiliate || onGoToSettings) && (
+            <button onClick={() => (onGoToAffiliate ? onGoToAffiliate("ml") : onGoToSettings())} style={{ padding: "6px 12px", borderRadius: 8, background: "#854F0B", color: "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
+              Configurar Mercado Livre
+            </button>
+          )}
+        </div>
+      )}
+
+      {stats.pausedByAffiliateShopee && (
+        <div style={{ background: "#FEF3C7", border: "0.5px solid #F4D08A", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 16 }}>⚠️</span>
+          <span style={{ fontSize: 13, color: "#854F0B", flex: 1, minWidth: 200 }}>
+            Esta campanha está <strong>pausada</strong> — o afiliado da <strong>Shopee</strong> não está configurado. Sem App ID e Secret, os links sairiam sem comissão.
+          </span>
+          {(onGoToAffiliate || onGoToSettings) && (
+            <button onClick={() => (onGoToAffiliate ? onGoToAffiliate("shopee") : onGoToSettings())} style={{ padding: "6px 12px", borderRadius: 8, background: "#854F0B", color: "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
+              Configurar Shopee
             </button>
           )}
         </div>
@@ -2143,7 +2159,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 <button
                   onClick={triggerSendNow}
                   disabled={sendingNow || (group.whatsappGroupIds || []).length === 0 || stats.paused}
-                  title={stats.pausedManual ? "Campanha pausada — retome pra enviar" : stats.pausedByAffiliate ? "Configure o afiliado do Mercado Livre em Configurações" : (group.whatsappGroupIds || []).length === 0 ? "Vincule um grupo de WhatsApp primeiro" : "Envia o próximo produto agora e reseta o intervalo"}
+                  title={stats.pausedManual ? "Campanha pausada — retome pra enviar" : stats.pausedByAffiliateML ? "Configure o afiliado do Mercado Livre" : stats.pausedByAffiliateShopee ? "Configure o afiliado da Shopee" : (group.whatsappGroupIds || []).length === 0 ? "Vincule um grupo de WhatsApp primeiro" : "Envia o próximo produto agora e reseta o intervalo"}
                   style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY, color: "#fff", border: "none", fontSize: 12, cursor: (sendingNow || !(group.whatsappGroupIds || []).length || stats.paused) ? "not-allowed" : "pointer", fontWeight: 500, opacity: (sendingNow || !(group.whatsappGroupIds || []).length || stats.paused) ? 0.5 : 1 }}
                 >
                   {sendingNow ? "⟳ Enviando..." : "▶ Enviar próximo agora"}

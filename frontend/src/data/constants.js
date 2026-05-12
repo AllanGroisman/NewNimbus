@@ -5,7 +5,7 @@ export const PRIMARY_LIGHT = "#E1F5EE";
 export const allSources = ["Mercado Livre", "Amazon", "Shopee", "Americanas"];
 
 // Categorias — mapeia id → label, cor do badge e ícone (emoji)
-// IMPORTANTE: manter em sincronia com backend/scraper.js → CATEGORIES
+// IMPORTANTE: manter em sincronia com backend/scraping/scraper.js → CATEGORIES
 export const CATEGORIES = {
   gamer:       { label: "Gamer",       color: "blue",   icon: "🎮" },
   bebe:        { label: "Bebê",        color: "teal",   icon: "👶" },
@@ -38,14 +38,27 @@ export const groupUsesML = (group) => {
   return srcs.includes("Mercado Livre");
 };
 
+// Grupo depende de afiliado Shopee? (só se Shopee aparecer explicitamente)
+export const groupUsesShopee = (group) => {
+  const srcs = group?.scraping?.sources;
+  if (!Array.isArray(srcs) || srcs.length === 0) return false;
+  return srcs.includes("Shopee");
+};
+
 // Estatísticas derivadas dos grupos de WhatsApp vinculados.
-// Se o grupo depende de ML e o afiliado não está configurado, status = "paused"
-// (o backend não envia até a tag/cookie estarem ok).
+// `affiliateConfigured` aceita boolean (compat antiga = só ML) OU objeto
+// `{ ml, shopee }` pra cobrir Shopee. Se o grupo depende de uma loja com gating
+// e o afiliado dela não está configurado, status = "paused" (o backend não
+// envia até estar ok).
 export const getGroupStats = (group, whatsappGroups = [], { affiliateConfigured = true } = {}) => {
   const linked = getLinkedWhatsapps(group, whatsappGroups);
   const members = linked.reduce((s, w) => s + (w.members || 0), 0);
   const connected = linked.filter(w => w.status === "connected").length;
-  const pausedByAffiliate = !affiliateConfigured && groupUsesML(group);
+  const mlOk = typeof affiliateConfigured === "object" ? !!affiliateConfigured.ml : !!affiliateConfigured;
+  const shopeeOk = typeof affiliateConfigured === "object" ? !!affiliateConfigured.shopee : true;
+  const pausedByAffiliateML = !mlOk && groupUsesML(group);
+  const pausedByAffiliateShopee = !shopeeOk && groupUsesShopee(group);
+  const pausedByAffiliate = pausedByAffiliateML || pausedByAffiliateShopee;
   const pausedManual = !!group?.paused;
   let status;
   if (pausedManual || pausedByAffiliate) status = "paused";
@@ -59,6 +72,8 @@ export const getGroupStats = (group, whatsappGroups = [], { affiliateConfigured 
     connected,
     status,
     pausedByAffiliate,
+    pausedByAffiliateML,
+    pausedByAffiliateShopee,
     pausedManual,
     paused: pausedManual || pausedByAffiliate,
   };

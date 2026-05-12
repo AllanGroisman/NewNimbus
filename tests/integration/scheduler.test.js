@@ -59,6 +59,71 @@ describe("scheduler.refillNow — popa do catalogo", () => {
     const r = await scheduler.refillNow(user.id, 102, { filters: { minDiscount: 99 } });
     expect(r.added).toBe(0);
   });
+
+  it("remove itens stale da fila quando sources muda (so Shopee, fila tem ML/Amazon)", async () => {
+    // Regressão: usuário marca apenas Shopee como source mas a fila continua
+    // trazendo itens de ML/Amazon adicionados quando a config era diferente.
+    const { user, auth } = await createTestUser();
+    const group = makeGroup({ id: 103, categories: ["gamer"], sources: ["ml"] });
+    await auth("put", "/api/state").send({ groups: [group] });
+
+    // Popula a fila com itens ML/Amazon + um manual ML (que deve sobreviver).
+    await storage.updateGroupOps(user.id, 103, {
+      queue: [
+        { id: "ml-x", key: "ml-x", name: "ML antigo", link: "https://ml.com/x", store: "Mercado Livre", category: "gamer", price: 100, discount: 50 },
+        { id: "amz-x", key: "amz-x", name: "Amazon antigo", link: "https://amz.com/x", store: "Amazon", category: "gamer", price: 80, discount: 40 },
+        { id: "manual-x", key: "manual-x", name: "Manual ML", link: "https://ml.com/m", store: "Mercado Livre", category: "gamer", price: 50, discount: 60, manual: true },
+      ],
+    });
+
+    // Usuário mudou pra Shopee apenas.
+    const updated = { ...group, scraping: { ...group.scraping, sources: ["shopee"] } };
+    await auth("put", "/api/state").send({ groups: [updated] });
+
+    await scheduler.refillNow(user.id, 103);
+
+    const state = await storage.loadState(user.id);
+    const g = state.groups.find(g => g.id === 103);
+    // ML e Amazon não-manuais devem ter sumido; manual sobrevive.
+    expect(g.queue.find(q => q.id === "ml-x")).toBeUndefined();
+    expect(g.queue.find(q => q.id === "amz-x")).toBeUndefined();
+    expect(g.queue.find(q => q.id === "manual-x")).toBeDefined();
+    // Nada de não-shopee/não-manual sobreviveu.
+    for (const item of g.queue) {
+      expect(item.manual === true || item.store === "Shopee").toBe(true);
+    }
+  });
+
+  it("tick remove stale mesmo quando buffer está acima do threshold (sem refill)", async () => {
+    // Outra ponta: se a fila tem >= REFILL_THRESHOLD itens, processGroup não
+    // chama refillQueue. Mesmo assim, itens stale devem ser removidos.
+    // Shopee precisa estar configurada (afiliate gate), e usamos sources=["amazon"]
+    // pra evitar gating (Amazon não tem gating) — o ponto é só validar a prune,
+    // independente de qual loja é a "nova".
+    const { user, auth } = await createTestUser();
+    const group = makeGroup({
+      id: 104,
+      categories: ["gamer"],
+      sources: ["amazon"],
+      // Janela ativa pra processGroup não retornar cedo.
+      schedule: { windows: [{ from: "00:00", to: "23:59", interval: 60 }], cooldownValue: 24, cooldownUnit: "horas" },
+    });
+    await auth("put", "/api/state").send({ groups: [group] });
+
+    // Popula com 6 itens ML (> REFILL_THRESHOLD=5) — todos stale pra source=amazon.
+    const staleQueue = Array.from({ length: 6 }, (_, i) => ({
+      id: `ml-${i}`, key: `ml-${i}`, name: `ML ${i}`,
+      link: `https://ml.com/${i}`, store: "Mercado Livre", category: "gamer",
+      price: 100, discount: 50,
+    }));
+    await storage.updateGroupOps(user.id, 104, { queue: staleQueue });
+
+    await scheduler.tick();
+
+    const state = await storage.loadState(user.id);
+    const g = state.groups.find(g => g.id === 104);
+    expect(g.queue.every(q => q.store !== "Mercado Livre")).toBe(true);
+  });
 });
 
 describe("scheduler.manualAdd — adicionar produto via URL", () => {
@@ -110,6 +175,7 @@ describe("scheduler.sendNextNow — envia primeiro item da queue", () => {
     const group = makeGroup({
       id: 300,
       whatsappGroupIds: ["wa-1"],
+      sources: ["amazon"],
     });
     await auth("put", "/api/state").send({ groups: [group], numbers, whatsappGroups: waGroups });
 
@@ -117,7 +183,7 @@ describe("scheduler.sendNextNow — envia primeiro item da queue", () => {
     await storage.updateGroupOps(user.id, 300, {
       queue: [{
         id: "i1", key: "i1", name: "Produto Envio", link: "https://www.amazon.com.br/dp/B0CSEND1234",
-        img: "https://example.com/img.jpg", price: 100, originalPrice: 200, discount: 50, store: "Amazon",
+        img: "https://example.com/img.jpg", price: 100, originalPrice: 200, discount: 50, store: "Amazon", category: "gamer",
       }],
     });
 
@@ -139,10 +205,10 @@ describe("scheduler.sendNextNow — envia primeiro item da queue", () => {
   it("dispara wa.sendText quando item nao tem img", async () => {
     const { user, auth } = await createTestUser();
     const waGroups = [makeWhatsAppGroup({ id: "wa-2", numberId: "num-2", jid: "fake2@g.us" })];
-    const group = makeGroup({ id: 301, whatsappGroupIds: ["wa-2"] });
+    const group = makeGroup({ id: 301, whatsappGroupIds: ["wa-2"], sources: ["amazon"] });
     await auth("put", "/api/state").send({ groups: [group], whatsappGroups: waGroups });
     await storage.updateGroupOps(user.id, 301, {
-      queue: [{ id: "i", key: "i", name: "Sem Imagem", link: "https://x.com/a", img: null, price: 10, discount: 10, store: "Amazon" }],
+      queue: [{ id: "i", key: "i", name: "Sem Imagem", link: "https://x.com/a", img: null, price: 10, discount: 10, store: "Amazon", category: "gamer" }],
     });
 
     await scheduler.sendNextNow(user.id, 301);
@@ -240,10 +306,10 @@ describe("POST /api/state/groups/:gid/send-now — endpoint HTTP", () => {
     affiliate.writeConfig({ tag: "t", cookie: "c" });
     const { user, auth } = await createTestUser();
     const waGroups = [makeWhatsAppGroup({ id: "wa-sn", numberId: "num-sn", jid: "sn@g.us" })];
-    const group = makeGroup({ id: 600, whatsappGroupIds: ["wa-sn"] });
+    const group = makeGroup({ id: 600, whatsappGroupIds: ["wa-sn"], sources: ["amazon"] });
     await auth("put", "/api/state").send({ groups: [group], whatsappGroups: waGroups });
     await storage.updateGroupOps(user.id, 600, {
-      queue: [{ id: "x", key: "x", name: "Manual Send", link: "https://x.com/a", img: null, price: 10, discount: 50, store: "Amazon" }],
+      queue: [{ id: "x", key: "x", name: "Manual Send", link: "https://x.com/a", img: null, price: 10, discount: 50, store: "Amazon", category: "gamer" }],
     });
     const r = await auth("post", "/api/state/groups/600/send-now");
     expect(r.status).toBe(200);

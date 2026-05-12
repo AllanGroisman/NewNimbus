@@ -65,11 +65,63 @@ function resolveSources(sources) {
   return ids.length ? [...new Set(ids)] : ["ml"];
 }
 
-// Grupo está pausado quando depende do ML mas o afiliado não está configurado.
-function groupPausedByAffiliate(group) {
+// Extrai cats/srcs/filters do grupo em formato canônico (Sets) pro itemMatchesCampaign.
+function campaignFilterCtx(group) {
+  const catList = Array.isArray(group.categories) && group.categories.length
+    ? group.categories
+    : (group.category ? [group.category] : []);
+  const cats = catList.length ? new Set(catList) : null;
+  const srcIds = resolveSources(group.scraping?.sources);
+  const srcs = srcIds.length ? new Set(srcIds) : null;
+  const filters = (group.scraping && group.scraping.filters) || {};
+  return { cats, srcs, filters };
+}
+
+// True se o item ainda passa nos filtros atuais da campanha (sources, categorias,
+// minDiscount, etc). Items adicionados manualmente (manual: true) sempre passam
+// — usuário escolheu adicionar, então não removemos por mudança de config.
+function itemMatchesCampaign(item, ctx) {
+  if (!item) return false;
+  if (item.manual) return true;
+  const { cats, srcs, filters } = ctx;
+  if (cats) {
+    const pcat = typeof item.category === "string" ? item.category : (item.category?.id || null);
+    if (!pcat || !cats.has(pcat)) return false;
+  }
+  if (srcs) {
+    const sid = catalog.storeToId ? catalog.storeToId(item.store) : null;
+    if (!sid || !srcs.has(sid)) return false;
+  }
+  const { minDiscount = 0, minPrice = 0, maxPrice, minRating = 0, keywords = "" } = filters || {};
+  if (minDiscount > 0 && (!item.discount || item.discount < minDiscount)) return false;
+  if (minPrice > 0 && (item.price == null || item.price < minPrice)) return false;
+  if (maxPrice != null && Number.isFinite(maxPrice) && maxPrice > 0 && (item.price == null || item.price > maxPrice)) return false;
+  if (minRating > 0 && (item.rating || 0) < minRating) return false;
+  if (keywords && String(keywords).trim()) {
+    const terms = String(keywords).toLowerCase().split(",").map(t => t.trim()).filter(Boolean);
+    if (terms.length && !terms.some(t => (item.name || "").toLowerCase().includes(t))) return false;
+  }
+  return true;
+}
+
+// Grupo está pausado quando depende de uma loja com gating (ML ou Shopee) e o
+// afiliado dela não está configurado. Amazon não pausa — cai pro link cru.
+// Retorna { paused, reason } pra o caller poder mostrar mensagem específica.
+function affiliateGate(group) {
   const sources = resolveSources(group.scraping?.sources);
-  if (!sources.includes("ml")) return false;
-  return !affiliate.status().configured;
+  const s = affiliate.status();
+  if (sources.includes("ml") && !s.ml.configured) {
+    return { paused: true, reason: "configure o afiliado do Mercado Livre (tag + cookie) em Configurações" };
+  }
+  if (sources.includes("shopee") && !s.shopee.configured) {
+    return { paused: true, reason: "configure o afiliado da Shopee (App ID + App Secret) em Configurações" };
+  }
+  return { paused: false, reason: null };
+}
+
+// Versão boolean pra callers que só querem saber se pausa.
+function groupPausedByAffiliate(group) {
+  return affiliateGate(group).paused;
 }
 
 // Auto-aprovação: produtos vão direto pra queue. Se false, vão pra pending pra
@@ -91,6 +143,7 @@ async function refillQueue(group) {
   const sources = resolveSources(group.scraping?.sources);
   const cdMin = cooldownMinutes(group.schedule);
   const target = isAutoApprove(group) ? "queue" : "pending";
+  const filterCtx = campaignFilterCtx(group);
 
   // Recalcula keys do history pra detectar duplicatas
   const historyKeys = (group.history || []).map(h => ({ k: productKey(h), sentAt: h.sentAt }));
@@ -99,27 +152,31 @@ async function refillQueue(group) {
   );
   const histKeySet = new Set(historyKeys.map(h => h.k));
 
-  // Limpa duplicatas + já-enviados de dentro da queue
+  // Limpa duplicatas, já-enviados e stale (config mudou — item não bate mais
+  // com sources/categorias/filtros atuais). Items manuais nunca são considerados
+  // stale, pois usuário adicionou explicitamente.
   const queueSeen = new Set();
   const cleanedQueue = (group.queue || []).filter(q => {
     const k = productKey(q);
     if (histKeySet.has(k)) return false;
     if (queueSeen.has(k)) return false;
+    if (!itemMatchesCampaign(q, filterCtx)) return false;
     queueSeen.add(k);
     return true;
   });
   const removedFromQueue = (group.queue || []).length - cleanedQueue.length;
   if (removedFromQueue > 0) {
-    console.log(`[scheduler] "${group.name}": removidas ${removedFromQueue} duplicatas/já-enviados da fila`);
+    console.log(`[scheduler] "${group.name}": removidos ${removedFromQueue} itens da fila (duplicatas/já-enviados/stale)`);
   }
 
-  // Mesma limpeza pra pending (descarta já-enviados e duplicatas)
+  // Mesma limpeza pra pending (descarta já-enviados, duplicatas e stale)
   const pendingSeen = new Set();
   const cleanedPending = (group.pending || []).filter(p => {
     const k = productKey(p);
     if (histKeySet.has(k)) return false;
     if (queueSeen.has(k)) return false;
     if (pendingSeen.has(k)) return false;
+    if (!itemMatchesCampaign(p, filterCtx)) return false;
     pendingSeen.add(k);
     return true;
   });
@@ -208,6 +265,13 @@ async function sendItem(userId, group, whatsappGroups, item) {
       itemForSend = { ...item, link: aff };
     } else if (affiliate.status().amazon.configured) {
       console.warn(`[scheduler] afiliado Amazon falhou pra "${item.name?.slice(0, 40)}" — enviando com link original`);
+    }
+  } else if (item.store === "Shopee" && item.link) {
+    const aff = await affiliate.gerarLinkAfiliadoShopee(item.link);
+    if (aff) {
+      itemForSend = { ...item, link: aff };
+    } else if (affiliate.status().shopee.configured) {
+      console.warn(`[scheduler] afiliado Shopee falhou pra "${item.name?.slice(0, 40)}" — enviando com link original`);
     }
   }
   // Defesa: itens já no catálogo/fila podem ter URL de thumb da Amazon — sobe pra
@@ -362,8 +426,18 @@ async function sendNextNow(userId, groupId) {
   if (group.paused) {
     throw new Error("Campanha pausada: retome a campanha pra enviar.");
   }
-  if (groupPausedByAffiliate(group)) {
-    throw new Error("Campanha pausada: configure o afiliado do Mercado Livre (tag + cookie) em Configurações.");
+  const gate = affiliateGate(group);
+  if (gate.paused) {
+    throw new Error(`Campanha pausada: ${gate.reason}.`);
+  }
+
+  // Limpa stale antes — usuário clicou "Enviar agora" esperando filtros atuais.
+  const filterCtx = campaignFilterCtx(group);
+  const origQueue = group.queue || [];
+  const prunedQueue = origQueue.filter(q => itemMatchesCampaign(q, filterCtx));
+  if (prunedQueue.length !== origQueue.length) {
+    await storage.updateGroupOps(userId, groupId, { queue: prunedQueue });
+    group.queue = prunedQueue;
   }
 
   // Tenta refill se queue está vazia — "enviar agora" é ação manual do user,
@@ -404,6 +478,23 @@ async function processGroup(userId, group, whatsappGroups, numbers) {
   }
   if (groupPausedByAffiliate(group)) {
     return;
+  }
+
+  // Sempre limpa itens stale (config mudou — sources/categorias/filtros não
+  // batem mais). Roda antes do refill+dispatch pra não enviar item que já não
+  // se encaixa na campanha. Refill abaixo pode reescrever updates.queue/pending
+  // com o resultado completo (stale + dup + novos), o que tá ok.
+  const filterCtx = campaignFilterCtx(group);
+  const origQ = group.queue || [];
+  const origP = group.pending || [];
+  const prunedQ = origQ.filter(q => itemMatchesCampaign(q, filterCtx));
+  const prunedP = origP.filter(p => itemMatchesCampaign(p, filterCtx));
+  const removedStale = (origQ.length - prunedQ.length) + (origP.length - prunedP.length);
+  if (removedStale > 0) {
+    console.log(`[scheduler] "${group.name}": removidos ${removedStale} itens stale (config mudou)`);
+    updates.queue = prunedQ;
+    updates.pending = prunedP;
+    group = { ...group, queue: prunedQ, pending: prunedP };
   }
 
   // Refill se a campanha precisa de itens — leve porque consulta catálogo.

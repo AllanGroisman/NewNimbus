@@ -1,15 +1,18 @@
+const crypto = require("crypto");
 const appConfig = require("../config");
 
 // Config persistida via app-config (key "affiliate"). Schema:
-// { ml: { tag, cookie, updatedAt }, amazon: { tag, updatedAt } }
+// { ml: { tag, cookie, updatedAt }, amazon: { tag, updatedAt }, shopee: { appId, appSecret, updatedAt } }
 // Lê também o schema antigo flat { tag, cookie, updatedAt } como ML.
 
 const ML_ENDPOINT = "https://www.mercadolivre.com.br/affiliate-program/api/v2/affiliates/createLink";
+const SHOPEE_ENDPOINT = "https://open-api.affiliate.shopee.com.br/graphql";
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias
 const mlCache = new Map();      // linkOriginal → { shortUrl, ts }
 const amazonCache = new Map();  // linkOriginal → { shortUrl, ts }
+const shopeeCache = new Map();  // linkOriginal → { shortUrl, ts }
 
 let mlLastFailureAt = null;
 let mlLastFailureReason = null;
@@ -18,6 +21,10 @@ let mlLastSuccessAt = null;
 let amazonLastFailureAt = null;
 let amazonLastFailureReason = null;
 let amazonLastSuccessAt = null;
+
+let shopeeLastFailureAt = null;
+let shopeeLastFailureReason = null;
+let shopeeLastSuccessAt = null;
 
 // ────────────────────────────────────────────────────────────────────────
 // Storage
@@ -56,6 +63,27 @@ function readAmazonConfig() {
     return { tag: raw.amazon.tag, source: "file", updatedAt: raw.amazon.updatedAt || null };
   }
   return { tag: null, source: null, updatedAt: null };
+}
+
+function readShopeeConfig() {
+  if (process.env.SHOPEE_AFFILIATE_APP_ID && process.env.SHOPEE_AFFILIATE_APP_SECRET) {
+    return {
+      appId: process.env.SHOPEE_AFFILIATE_APP_ID.trim(),
+      appSecret: process.env.SHOPEE_AFFILIATE_APP_SECRET,
+      source: "env",
+      updatedAt: null,
+    };
+  }
+  const raw = readRaw();
+  if (raw.shopee && (raw.shopee.appId || raw.shopee.appSecret)) {
+    return {
+      appId: raw.shopee.appId || null,
+      appSecret: raw.shopee.appSecret || null,
+      source: "file",
+      updatedAt: raw.shopee.updatedAt || null,
+    };
+  }
+  return { appId: null, appSecret: null, source: null, updatedAt: null };
 }
 
 function writeMLConfig({ tag, cookie }) {
@@ -116,6 +144,42 @@ function clearAmazonConfig() {
   amazonLastFailureReason = null;
 }
 
+function writeShopeeConfig({ appId, appSecret }) {
+  if (process.env.SHOPEE_AFFILIATE_APP_ID || process.env.SHOPEE_AFFILIATE_APP_SECRET) {
+    throw new Error("Configuração Shopee vem de variável de ambiente — desligue SHOPEE_AFFILIATE_APP_ID/SHOPEE_AFFILIATE_APP_SECRET pra usar config dinâmica.");
+  }
+  const cleanId = String(appId || "").trim();
+  const cleanSecret = String(appSecret || "").trim();
+  if (cleanId && !/^[a-zA-Z0-9_-]{4,64}$/.test(cleanId)) {
+    throw new Error("App ID inválido — use letras, números, hífen ou sublinhado.");
+  }
+  if (cleanSecret && cleanSecret.length < 16) {
+    throw new Error("App Secret muito curto — confira o valor copiado do painel.");
+  }
+  const raw = readRaw();
+  const cur = readShopeeConfig();
+  raw.shopee = {
+    appId: cleanId || cur.appId || null,
+    appSecret: cleanSecret || cur.appSecret || null,
+    updatedAt: new Date().toISOString(),
+  };
+  writeRaw(raw);
+  shopeeCache.clear();
+  shopeeLastFailureAt = null;
+  shopeeLastFailureReason = null;
+  return raw.shopee;
+}
+
+function clearShopeeConfig() {
+  const raw = readRaw();
+  delete raw.shopee;
+  if (Object.keys(raw).length) writeRaw(raw);
+  else appConfig.del("affiliate");
+  shopeeCache.clear();
+  shopeeLastFailureAt = null;
+  shopeeLastFailureReason = null;
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // Status
 // ────────────────────────────────────────────────────────────────────────
@@ -123,6 +187,7 @@ function clearAmazonConfig() {
 function status() {
   const ml = readMLConfig();
   const amazon = readAmazonConfig();
+  const shopee = readShopeeConfig();
   return {
     // Compat com UI antiga: campos top-level são do ML
     configured: !!(ml.tag && ml.cookie),
@@ -156,6 +221,19 @@ function status() {
       lastSuccessAt: amazonLastSuccessAt,
       lastFailureAt: amazonLastFailureAt,
       lastFailureReason: amazonLastFailureReason,
+    },
+    shopee: {
+      configured: !!(shopee.appId && shopee.appSecret),
+      appId: shopee.appId || null,
+      // Mostra só preview do secret pra UI confirmar sem expor o valor inteiro
+      appSecretLength: shopee.appSecret ? shopee.appSecret.length : 0,
+      appSecretPreview: shopee.appSecret ? shopee.appSecret.slice(0, 6) + "…" : null,
+      source: shopee.source,
+      updatedAt: shopee.updatedAt,
+      lastSuccessAt: shopeeLastSuccessAt,
+      lastFailureAt: shopeeLastFailureAt,
+      lastFailureReason: shopeeLastFailureReason,
+      healthy: !!(shopee.appId && shopee.appSecret) && (!shopeeLastFailureAt || (shopeeLastSuccessAt && new Date(shopeeLastSuccessAt) > new Date(shopeeLastFailureAt))),
     },
   };
 }
@@ -265,6 +343,150 @@ function gerarLinkAfiliadoAmazon(linkOriginal) {
 }
 
 // ────────────────────────────────────────────────────────────────────────
+// Shopee (Affiliate Open API — GraphQL)
+// ────────────────────────────────────────────────────────────────────────
+
+// Assina o request da Shopee. Pura — sem rede. Útil pra testar.
+//   header = sha256(appId + timestamp + payload + appSecret)
+//   payload é a string JSON enviada no body, EXATAMENTE como vai pra rede.
+// Retorna a string completa pra header Authorization.
+function signShopeeRequest({ appId, appSecret, timestamp, payload }) {
+  const base = String(appId) + String(timestamp) + String(payload) + String(appSecret);
+  const signature = crypto.createHash("sha256").update(base).digest("hex");
+  return `SHA256 Credential=${appId}, Timestamp=${timestamp}, Signature=${signature}`;
+}
+
+// Monta a mutation GraphQL pra gerar short link.
+// subIds são opcionais (tracking) — passamos vazios pra deixar o link genérico.
+function buildShopeeShortLinkPayload(originUrl) {
+  // Escapa aspas duplas e barras pra ficar dentro da string GraphQL
+  const safe = String(originUrl).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const query = `mutation{generateShortLink(input:{originUrl:"${safe}",subIds:["","","","",""]}){shortLink}}`;
+  return JSON.stringify({ query });
+}
+
+// Monta query GraphQL pro productOfferV2 — usada pra popular o catálogo.
+// sortType: 2=mais vendidos, 3=maior comissão, 4=maior desconto, 0=mais novos.
+// Default 4 (maior desconto) porque é o que faz sentido pra um app de ofertas.
+function buildShopeeProductOfferPayload({ keyword, page = 1, limit = 50, sortType = 4 }) {
+  const safe = String(keyword || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const query = `query{productOfferV2(keyword:"${safe}",sortType:${Number(sortType)},page:${Number(page)},limit:${Number(limit)}){nodes{itemId shopId productName productLink offerLink imageUrl price priceMin priceMax priceDiscountRate sales commissionRate ratingStar productCatIds} pageInfo{page limit hasNextPage}}}`;
+  return JSON.stringify({ query });
+}
+
+async function gerarLinkAfiliadoShopee(linkOriginal) {
+  if (!linkOriginal || typeof linkOriginal !== "string") return null;
+  const { appId, appSecret } = readShopeeConfig();
+  if (!appId || !appSecret) return null;
+
+  const cached = shopeeCache.get(linkOriginal);
+  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.shortUrl;
+
+  const timestamp = Math.floor(Date.now() / 1000);
+  const payload = buildShopeeShortLinkPayload(linkOriginal);
+  const authHeader = signShopeeRequest({ appId, appSecret, timestamp, payload });
+
+  try {
+    const res = await fetch(SHOPEE_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": authHeader,
+        "User-Agent": UA,
+      },
+      body: payload,
+    });
+
+    if (!res.ok) {
+      shopeeLastFailureAt = new Date().toISOString();
+      shopeeLastFailureReason = `HTTP ${res.status} — confira App ID/Secret no painel da Shopee`;
+      console.error(`[afiliados Shopee] ${shopeeLastFailureReason}`);
+      return null;
+    }
+
+    const data = await res.json();
+    if (data?.errors?.length) {
+      const msg = data.errors[0]?.message || "erro desconhecido";
+      shopeeLastFailureAt = new Date().toISOString();
+      shopeeLastFailureReason = `API: ${String(msg).slice(0, 120)}`;
+      console.warn(`[afiliados Shopee] ${shopeeLastFailureReason}`);
+      return null;
+    }
+    const short = data?.data?.generateShortLink?.shortLink || null;
+    if (!short) {
+      shopeeLastFailureAt = new Date().toISOString();
+      shopeeLastFailureReason = "Resposta sem shortLink — URL pode não ser de produto Shopee válido";
+      console.warn(`[afiliados Shopee] ${shopeeLastFailureReason}: ${JSON.stringify(data).slice(0, 200)}`);
+      return null;
+    }
+    shopeeCache.set(linkOriginal, { shortUrl: short, ts: Date.now() });
+    shopeeLastSuccessAt = new Date().toISOString();
+    shopeeLastFailureReason = null;
+    return short;
+  } catch (err) {
+    shopeeLastFailureAt = new Date().toISOString();
+    shopeeLastFailureReason = err.message;
+    console.error("[afiliados Shopee] erro:", err.message);
+    return null;
+  }
+}
+
+// Busca ofertas da Shopee via productOfferV2. Retorna array crus de nodes da API.
+// Não mapeia pro formato do Nimbus — quem usa (scraper.js) faz isso.
+// Devolve [] em qualquer erro (sem credenciais, HTTP fail, GraphQL error).
+// Trata 1 página por chamada — paginação fica com o caller.
+async function fetchShopeeOffers({ keyword, page = 1, limit = 50, sortType = 4 } = {}) {
+  if (!keyword) return { nodes: [], pageInfo: null };
+  const { appId, appSecret } = readShopeeConfig();
+  if (!appId || !appSecret) {
+    console.warn("[afiliados Shopee] fetchShopeeOffers: sem App ID/Secret — pulando");
+    return { nodes: [], pageInfo: null };
+  }
+
+  const timestamp = Math.floor(Date.now() / 1000);
+  const payload = buildShopeeProductOfferPayload({ keyword, page, limit, sortType });
+  const authHeader = signShopeeRequest({ appId, appSecret, timestamp, payload });
+
+  try {
+    const res = await fetch(SHOPEE_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": authHeader,
+        "User-Agent": UA,
+      },
+      body: payload,
+    });
+
+    if (!res.ok) {
+      shopeeLastFailureAt = new Date().toISOString();
+      shopeeLastFailureReason = `HTTP ${res.status} ao buscar ofertas`;
+      console.error(`[afiliados Shopee] ${shopeeLastFailureReason}`);
+      return { nodes: [], pageInfo: null };
+    }
+
+    const data = await res.json();
+    if (data?.errors?.length) {
+      const msg = data.errors[0]?.message || "erro desconhecido";
+      shopeeLastFailureAt = new Date().toISOString();
+      shopeeLastFailureReason = `productOfferV2: ${String(msg).slice(0, 160)}`;
+      console.warn(`[afiliados Shopee] ${shopeeLastFailureReason}`);
+      return { nodes: [], pageInfo: null };
+    }
+    const result = data?.data?.productOfferV2 || {};
+    const nodes = Array.isArray(result.nodes) ? result.nodes : [];
+    shopeeLastSuccessAt = new Date().toISOString();
+    shopeeLastFailureReason = null;
+    return { nodes, pageInfo: result.pageInfo || null };
+  } catch (err) {
+    shopeeLastFailureAt = new Date().toISOString();
+    shopeeLastFailureReason = err.message;
+    console.error("[afiliados Shopee] fetchShopeeOffers erro:", err.message);
+    return { nodes: [], pageInfo: null };
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────
 // API pública
 // ────────────────────────────────────────────────────────────────────────
 
@@ -280,6 +502,16 @@ module.exports = {
   writeAmazonConfig,
   clearAmazonConfig,
   extractASIN,
+  // Shopee
+  gerarLinkAfiliadoShopee,
+  fetchShopeeOffers,
+  readShopeeConfig,
+  writeShopeeConfig,
+  clearShopeeConfig,
+  // Exportados pra testes unitários (puros, sem rede)
+  signShopeeRequest,
+  buildShopeeShortLinkPayload,
+  buildShopeeProductOfferPayload,
   // Compat: nomes antigos apontam pra ML
   readConfig: readMLConfig,
   writeConfig: writeMLConfig,

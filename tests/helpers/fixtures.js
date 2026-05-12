@@ -40,6 +40,25 @@ function amazonProduct(i = 1, overrides = {}) {
   };
 }
 
+function shopeeProduct(i = 1, overrides = {}) {
+  const sellerId = 100000 + i;
+  const itemId = 7000000 + i;
+  return {
+    name: `Produto Shopee ${i}`,
+    link: `https://shopee.com.br/produto-${i}-i.${sellerId}.${itemId}`,
+    img: `https://cf.shopee.com.br/file/img-${i}`,
+    price: 30 + i,
+    originalPrice: 60 + i,
+    discount: 50,
+    store: "Shopee",
+    category: "beleza",
+    rating: 4.7,
+    soldCount: 500,
+    commissionRate: 5,
+    ...overrides,
+  };
+}
+
 function makeGroup(overrides = {}) {
   return {
     id: overrides.id || 1,
@@ -79,4 +98,4 @@ function makeWhatsAppGroup(overrides = {}) {
   };
 }
 
-export { mlProduct, amazonProduct, makeGroup, makeWhatsAppGroup };
+export { mlProduct, amazonProduct, shopeeProduct, makeGroup, makeWhatsAppGroup };

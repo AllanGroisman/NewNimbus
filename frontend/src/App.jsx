@@ -321,7 +321,7 @@ export default function App() {
     subscription: <PageSubscription />,
     "mercado-livre": <PageAffiliateML onAffiliateChange={applyAffiliateStatus} />,
     "amazon": <PageAffiliateAmazon onAffiliateChange={applyAffiliateStatus} />,
-    "shopee": <PageAffiliateShopee />,
+    "shopee": <PageAffiliateShopee onAffiliateChange={applyAffiliateStatus} />,
     "admin-scraper": user?.role === "admin" ? <PageAdminScraper /> : fallbackPage,
     "admin-users":   user?.role === "admin" ? <PageAdminUsers currentUser={user} /> : fallbackPage,
   };
@@ -350,6 +350,7 @@ export default function App() {
               numbers={numbers}
               whatsappGroups={whatsappGroups}
               affiliateConfigured={affiliateConfigured}
+              affiliateStatus={affiliateStatus}
               onBack={handleBack}
               onUpdate={handleUpdate}
               onDelete={handleDelete}
@@ -357,6 +358,7 @@ export default function App() {
               onDeleteWhatsappGroup={deleteWhatsappGroup}
               onUpdateWhatsappGroup={updateWhatsappGroup}
               onGoToSettings={() => setPage("settings")}
+              onGoToAffiliate={(provider) => setPage(provider === "shopee" ? "shopee" : "mercado-livre")}
               customTemplates={settings.customTemplates || []}
               onAddCustomTemplate={addCustomTemplate}
               onDeleteCustomTemplate={deleteCustomTemplate}

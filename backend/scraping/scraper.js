@@ -16,25 +16,28 @@ function upgradeAmazonImageUrl(url) {
 // - mlCode: ID da categoria do Mercado Livre (na URL de ofertas)
 // - amzKeyword: termo de busca usado no Amazon BR (porque a Amazon não tem
 //   "ofertas por categoria" como o ML — busca por keyword é o caminho viável)
+// - shopeeKeyword: keyword pro productOfferV2 da Shopee Affiliate Open API.
 const CATEGORIES = {
-  bebe:        { label: "Bebê",        mlCode: "MLB1384", amzKeyword: "bebê" },
-  gamer:       { label: "Gamer",       mlCode: "MLB1144", amzKeyword: "videogame" },
-  eletronicos: { label: "Eletrônicos", mlCode: "MLB1051", amzKeyword: "celular smartphone" },
-  casa:        { label: "Casa",        mlCode: "MLB1574", amzKeyword: "casa decoração" },
-  beleza:      { label: "Beleza",      mlCode: "MLB1246", amzKeyword: "beleza" },
+  bebe:        { label: "Bebê",        mlCode: "MLB1384", amzKeyword: "bebê",              shopeeKeyword: "bebê" },
+  gamer:       { label: "Gamer",       mlCode: "MLB1144", amzKeyword: "videogame",         shopeeKeyword: "gamer" },
+  eletronicos: { label: "Eletrônicos", mlCode: "MLB1051", amzKeyword: "celular smartphone", shopeeKeyword: "celular" },
+  casa:        { label: "Casa",        mlCode: "MLB1574", amzKeyword: "casa decoração",    shopeeKeyword: "casa decoração" },
+  beleza:      { label: "Beleza",      mlCode: "MLB1246", amzKeyword: "beleza",            shopeeKeyword: "beleza" },
 };
 
 // Lojas suportadas. id é o que vai em group.scraping.sources (após normalize).
 const STORES = {
   ml:     { id: "ml",     label: "Mercado Livre", scrape: scrapeML },
   amazon: { id: "amazon", label: "Amazon",        scrape: scrapeAmazon },
+  shopee: { id: "shopee", label: "Shopee",        scrape: scrapeShopee },
 };
 
-// Aceita "Mercado Livre" / "ml" / "MercadoLivre" e devolve "ml". Idem Amazon.
+// Aceita "Mercado Livre" / "ml" / "MercadoLivre" e devolve "ml". Idem Amazon e Shopee.
 function normalizeSource(s) {
   const k = String(s || "").toLowerCase().replace(/\s+/g, "");
   if (k === "ml" || k === "mercadolivre") return "ml";
   if (k === "amazon" || k === "amz") return "amazon";
+  if (k === "shopee") return "shopee";
   return null;
 }
 
@@ -247,6 +250,90 @@ async function scrapeAmazon({ category, limit = 100 } = {}) {
   } finally {
     await browser.close();
   }
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Shopee (via Affiliate Open API — GraphQL, sem browser)
+// ────────────────────────────────────────────────────────────────────────
+
+// Mapeia um node da API pro formato Nimbus.
+// Preços vêm em centavos como string ("1990" = R$19,90) na maioria dos casos,
+// mas alguns retornam decimal. Normalizamos pra Number aceitando ambos.
+function shopeeNodeToProduct(node, category) {
+  // Preço atual: prefere `price`, fallback pra `priceMin`
+  const priceRaw = node.price ?? node.priceMin ?? null;
+  // priceBeforeDiscount não vem direto no schema padrão; calculamos do desconto
+  const price = parsePrice(priceRaw);
+  const discount = Number(node.priceDiscountRate) || 0;
+  const originalPrice = (price && discount > 0 && discount < 100)
+    ? Math.round((price / (1 - discount / 100)) * 100) / 100
+    : null;
+
+  return {
+    name: String(node.productName || "").trim(),
+    link: String(node.offerLink || node.productLink || ""),
+    img: node.imageUrl || null,
+    store: "Shopee",
+    category: category || null,
+    price,
+    originalPrice,
+    discount,
+    rating: Number(node.ratingStar) || null,
+    reviewsCount: null,
+    seller: null,
+    freeShipping: false,
+    soldCount: Number(node.sales) || 0,
+    commissionRate: Number(node.commissionRate) || null,
+    scrapedAt: new Date().toISOString(),
+  };
+}
+
+// Aceita "1990" (centavos como string), 19.9 (real decimal), "19.90" — normaliza.
+// Heurística: se o número é inteiro e >= 1000, assume centavos e divide por 100.
+function parsePrice(raw) {
+  if (raw == null) return null;
+  const n = Number(raw);
+  if (!isFinite(n) || n <= 0) return null;
+  if (Number.isInteger(n) && n >= 1000) return n / 100;
+  return n;
+}
+
+async function scrapeShopee({ category, limit = 50 } = {}) {
+  // Lazy require pra não criar dependência circular no boot
+  const affiliate = require("./affiliate");
+
+  const cat = CATEGORIES[category];
+  const keyword = cat?.shopeeKeyword || cat?.label || category;
+  if (!keyword) {
+    console.warn("[scraper Shopee] sem keyword/categoria — pulando");
+    return [];
+  }
+
+  // API limita ~50 por página. Paginação simples se limit > 50.
+  const pageSize = Math.min(50, limit);
+  const products = [];
+  let page = 1;
+  let safety = 6;  // Máx 6 páginas (= 300 itens) pra não cobrar demais
+
+  while (products.length < limit && safety-- > 0) {
+    const { nodes, pageInfo } = await affiliate.fetchShopeeOffers({
+      keyword,
+      page,
+      limit: pageSize,
+      sortType: 4,  // 4 = maior desconto
+    });
+    if (!nodes.length) break;
+    for (const n of nodes) {
+      const p = shopeeNodeToProduct(n, category);
+      if (p.name && p.link) products.push(p);
+      if (products.length >= limit) break;
+    }
+    if (!pageInfo?.hasNextPage) break;
+    page++;
+  }
+
+  products.sort((a, b) => (b.discount || 0) - (a.discount || 0));
+  return products.slice(0, limit);
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -481,4 +568,4 @@ async function autoScroll(page) {
   await new Promise(r => setTimeout(r, 1000));
 }
 
-module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, applyFilters, normalizeSource, CATEGORIES, STORES };
+module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, applyFilters, normalizeSource, shopeeNodeToProduct, CATEGORIES, STORES };

@@ -152,6 +152,7 @@ function storeToId(store) {
   const k = String(store).toLowerCase().replace(/\s+/g, "");
   if (k === "ml" || k === "mercadolivre") return "ml";
   if (k === "amazon" || k === "amz") return "amazon";
+  if (k === "shopee") return "shopee";
   return null;
 }
 

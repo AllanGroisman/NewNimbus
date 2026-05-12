@@ -8,6 +8,7 @@ function storeToId(store) {
   const k = String(store).toLowerCase().replace(/\s+/g, "");
   if (k === "ml" || k === "mercadolivre") return "ml";
   if (k === "amazon" || k === "amz") return "amazon";
+  if (k === "shopee") return "shopee";
   return null;
 }
 
@@ -126,14 +127,18 @@ async function query({
     where.AND.push({ category: { in: categories } });
   }
   if (Array.isArray(sources) && sources.length) {
-    // Sources podem vir como ids ("ml", "amazon") ou rótulos ("Mercado Livre"). Normaliza.
+    // Sources podem vir como ids ("ml", "amazon", "shopee") ou rótulos ("Mercado Livre"). Normaliza.
     const wanted = new Set(sources.map(storeToId).filter(Boolean));
     // Convertemos pra lista de strings de store que dão match no DB.
-    // Na tabela, store guarda o rótulo ("Mercado Livre" / "Amazon"). Mapa reverso:
+    // Na tabela, store guarda o rótulo ("Mercado Livre" / "Amazon" / "Shopee"). Mapa reverso:
     const labels = [];
     if (wanted.has("ml")) labels.push("Mercado Livre");
     if (wanted.has("amazon")) labels.push("Amazon");
-    if (labels.length) where.AND.push({ store: { in: labels } });
+    if (wanted.has("shopee")) labels.push("Shopee");
+    // IMPORTANTE: se o usuário pediu sources mas NENHUM normalizou (ex: typo, ou
+    // store inexistente), retorna lista vazia. Sem esse guard, o filtro store
+    // seria pulado e a query devolveria TODOS os produtos — bug.
+    where.AND.push({ store: { in: labels.length ? labels : ["__never_matches__"] } });
   }
   if (excludeKeys) {
     const arr = excludeKeys instanceof Set ? [...excludeKeys] : (Array.isArray(excludeKeys) ? excludeKeys : []);

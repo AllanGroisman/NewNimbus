@@ -31,6 +31,23 @@ describe("productKey", () => {
     expect(productKey(a)).toBe(productKey(b));
   });
 
+  it("usa o padrão i.<sellerId>.<itemId> da Shopee como chave estável", () => {
+    const a = { link: "https://shopee.com.br/produto-nome-i.123456.7890123" };
+    const b = { link: "https://shopee.com.br/produto-nome-i.123456.7890123?sp_atk=abc&af_siteid=xyz" };
+    const c = { link: "https://shopee.com.br/outro-titulo-i.123456.7890123" };
+    expect(productKey(a)).toBe(productKey(b));
+    // Mesmo seller+item, título diferente — ainda é o mesmo produto
+    expect(productKey(a)).toBe(productKey(c));
+  });
+
+  it("difere produtos Shopee com sellerId/itemId distintos", () => {
+    const a = { link: "https://shopee.com.br/x-i.111.222" };
+    const b = { link: "https://shopee.com.br/x-i.111.333" };
+    const c = { link: "https://shopee.com.br/x-i.999.222" };
+    expect(productKey(a)).not.toBe(productKey(b));
+    expect(productKey(a)).not.toBe(productKey(c));
+  });
+
   it("difere entre URLs distintas", () => {
     const a = { link: "https://www.amazon.com.br/dp/B000000001" };
     const b = { link: "https://www.amazon.com.br/dp/B000000002" };

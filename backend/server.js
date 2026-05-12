@@ -351,6 +351,46 @@ app.post("/api/affiliate/amazon/test", auth.requireAuth, (req, res) => {
   }
 });
 
+// ─── Afiliado Shopee ───────────────────────────────────────────────────
+
+app.put("/api/affiliate/shopee", auth.requireAuth, (req, res) => {
+  try {
+    const { appId, appSecret } = req.body || {};
+    affiliate.writeShopeeConfig({ appId, appSecret });
+    res.json(affiliate.status());
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete("/api/affiliate/shopee", auth.requireAuth, (req, res) => {
+  try {
+    affiliate.clearShopeeConfig();
+    res.json(affiliate.status());
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/affiliate/shopee/test", auth.requireAuth, async (req, res) => {
+  try {
+    const url = req.body?.url;
+    if (!url || typeof url !== "string" || !url.trim()) {
+      return res.status(400).json({ error: "Forneça uma URL de produto da Shopee pra testar." });
+    }
+    const short = await affiliate.gerarLinkAfiliadoShopee(url.trim());
+    if (!short) {
+      const s = affiliate.status();
+      const reason = s.shopee.lastFailureReason
+        || (!s.shopee.configured ? "Configure App ID e App Secret da Shopee primeiro." : "Falha ao gerar link");
+      return res.status(400).json({ error: reason });
+    }
+    res.json({ ok: true, shortUrl: short });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Dispara envio do próximo item da fila imediatamente
 app.post("/api/state/groups/:gid/send-now", auth.requireAuth, async (req, res) => {
   try {

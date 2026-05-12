@@ -107,6 +107,11 @@ export async function saveAmazonAffiliate(tag)  { return http("PUT",    "/api/af
 export async function clearAmazonAffiliate()    { return http("DELETE", "/api/affiliate/amazon"); }
 export async function testAmazonAffiliate(url)  { return http("POST",   "/api/affiliate/amazon/test", url ? { url } : {}); }
 
+// ─── Afiliados Shopee ──────────────────────────────────────────────────
+export async function saveShopeeAffiliate({ appId, appSecret }) { return http("PUT",    "/api/affiliate/shopee", { appId, appSecret }); }
+export async function clearShopeeAffiliate()                    { return http("DELETE", "/api/affiliate/shopee"); }
+export async function testShopeeAffiliate(url)                  { return http("POST",   "/api/affiliate/shopee/test", url ? { url } : {}); }
+
 // ─── Scraping ──────────────────────────────────────────────────────────
 export async function fetchOfertas({ category, minDiscount = 0, minPrice = 0, maxPrice, limit = 50, refresh = false, sources } = {}) {
   const params = new URLSearchParams();

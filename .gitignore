@@ -19,6 +19,9 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# PM2 logs (produção)
+backend/logs/
+
 # Environment
 .env
 .env.local
@@ -29,6 +32,7 @@ pnpm-debug.log*
 Thumbs.db
 .idea/
 .vscode/
+.history/
 *.swp
 *.swo
 
@@ -40,15 +44,22 @@ Thumbs.db
 .cache/
 .puppeteer/
 
+# Cobertura de testes
+coverage/
+**/coverage/
+
+# Backups de merge / arquivos temporários do git
+*.bak
+*.orig
+*.rej
+
 # Credenciais WhatsApp (Baileys) — NUNCA versionar
 backend/auth_states/
-**/auth_states/
 
 # Dados da aplicação (usuários, estado, segredo JWT) — NUNCA versionar
+# Importante: regra específica ao backend pra NÃO bater em frontend/src/data/
 backend/data/
 backend/backups/
-**/data/
-**/backups/
 
 # Arquivos grandes / temporários
 frontTotal
