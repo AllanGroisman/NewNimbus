@@ -83,6 +83,17 @@ bash deploy/update.sh
 
 Faz `git pull`, reinstala deps que mudaram, roda migrations, rebuilda o frontend e dá `pm2 reload`.
 
+## Ligar / desligar
+
+Depois do `install.sh` ter rodado uma vez, pra ligar/desligar tudo:
+
+```bash
+bash deploy/start.sh   # sobe Postgres+Redis+backend+worker+nginx
+bash deploy/stop.sh    # para tudo (mantém instalado)
+```
+
+`start.sh` é idempotente — pode rodar mesmo se já estiver tudo no ar.
+
 ## Verificar se está tudo OK
 
 ```bash

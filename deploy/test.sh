@@ -124,21 +124,27 @@ sect "PM2"
 if pm2 ping >/dev/null 2>&1; then
   ok "daemon PM2 vivo"
 
+  PM2_JSON=$(pm2 jlist 2>/dev/null || echo "[]")
+
   check_pm2() {
     local app="$1"
-    local desc
-    desc=$(pm2 describe "$app" 2>/dev/null || echo "")
-    if [[ -z "$desc" ]]; then
-      bad "$app NÃO registrado no PM2"
-      return
-    fi
-    if echo "$desc" | grep -qE "status\s*│?\s*online"; then
-      ok "$app online"
-    else
-      local status
-      status=$(echo "$desc" | grep -oE "status\s*│?\s*[a-z]+" | head -1 | awk '{print $NF}')
-      bad "$app status=${status:-desconhecido}"
-    fi
+    local status
+    status=$(echo "$PM2_JSON" | node -e "
+let d='';
+process.stdin.on('data', c => d += c).on('end', () => {
+  try {
+    const arr = JSON.parse(d);
+    const p = arr.find(x => x.name === '$app');
+    console.log(p ? (p.pm2_env && p.pm2_env.status) || 'unknown' : 'missing');
+  } catch (e) { console.log('parse-error'); }
+});
+" 2>/dev/null)
+    case "$status" in
+      online)  ok   "$app online" ;;
+      missing) bad  "$app NÃO registrado no PM2" ;;
+      "")      bad  "$app status=desconhecido (node falhou no parse)" ;;
+      *)       bad  "$app status=$status" ;;
+    esac
   }
 
   check_pm2 "nimbus-backend"
