@@ -23,7 +23,8 @@ pnpm-debug.log*
 backend/logs/
 
 # Environment
-.env
+# .env é versionado de propósito (repo privado, vem pronto pra VPS).
+# Pra valores específicos de máquina/branch, use .env.local.
 .env.local
 .env.*.local
 

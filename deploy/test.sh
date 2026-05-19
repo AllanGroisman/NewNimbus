@@ -99,11 +99,14 @@ sect "Build do projeto"
   && ok "backend/.env existe" \
   || bad "backend/.env ausente — copie de .env.example"
 
-# Avisa se .env ainda tem placeholders inalterados
+# Avisa sobre estado do Stripe no .env
 if [[ -f "$REPO_DIR/backend/.env" ]]; then
-  if grep -q '^# STRIPE_SECRET_KEY=sk_test_' "$REPO_DIR/backend/.env" 2>/dev/null \
-     || ! grep -qE '^STRIPE_SECRET_KEY=sk_(live|test)_' "$REPO_DIR/backend/.env" 2>/dev/null; then
-    warn "STRIPE_SECRET_KEY ainda não configurada no .env (billing vai retornar 501)"
+  if grep -qE '^STRIPE_SECRET_KEY=sk_live_' "$REPO_DIR/backend/.env" 2>/dev/null; then
+    ok "Stripe em modo LIVE"
+  elif grep -qE '^STRIPE_SECRET_KEY=sk_test_' "$REPO_DIR/backend/.env" 2>/dev/null; then
+    warn "Stripe em modo TEST (trocar pra sk_live_ quando for vender de verdade)"
+  else
+    warn "STRIPE_SECRET_KEY não configurada (billing vai retornar 501)"
   fi
 fi
 

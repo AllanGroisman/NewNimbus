@@ -115,22 +115,13 @@ npm install --omit=dev
 npx prisma generate
 npx prisma migrate deploy
 
-# .env só se não existir
+# .env vem do repo. Se sumir por algum motivo, cai pro .env.example.
 if [[ ! -f .env ]]; then
+  echo "  backend/.env não encontrado — caindo pro .env.example"
   cp .env.example .env
-  # Patches pra prod
-  sed -i 's|^QUEUE_BACKEND=.*|QUEUE_BACKEND=redis|' .env
-  cat >> .env <<EOF
-
-# ─── Setado pelo install.sh ─────────────────────────────────────────
-NODE_ENV=production
-ADMIN_EMAILS=allangroisman@gmail.com
-LOG_LEVEL=info
-EOF
-  echo "  backend/.env criado a partir de .env.example."
-  echo "  >>> EDITE: STRIPE_*, NIMBUS_CORS_ORIGINS, e revise ADMIN_EMAILS <<<"
+  echo "  >>> EDITE backend/.env com STRIPE_*, ADMIN_EMAILS, etc. <<<"
 else
-  echo "  backend/.env já existe — preservado."
+  echo "  backend/.env já versionado no repo — usando."
 fi
 
 mkdir -p logs

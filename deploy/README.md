@@ -32,34 +32,20 @@ O script pede sudo quando precisa. Vai levar ~5–10 min (depende da velocidade 
 
 ### Depois da instalação
 
-**1. Edite `backend/.env`** pra setar as chaves de produção:
+O `backend/.env` **já vem do repo** com as chaves do Stripe (modo test), `QUEUE_BACKEND=redis`, `NODE_ENV=production`, `ADMIN_EMAILS`. Só precisa ajustar se for:
+
+- Trocar Stripe pra **modo live** (`sk_live_...`)
+- Apontar `STRIPE_SUCCESS_URL` / `STRIPE_CANCEL_URL` pra URL do ngrok ou domínio
+- Restringir `NIMBUS_CORS_ORIGINS`
+
+Pra editar:
 
 ```bash
 nano backend/.env
-```
-
-Mínimo recomendado:
-
-```env
-NIMBUS_CORS_ORIGINS=https://seu-dominio-ou-ngrok.com
-
-# Stripe (modo live ou test)
-STRIPE_SECRET_KEY=sk_live_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-STRIPE_PRICE_BASIC=price_...
-STRIPE_PRICE_PRO=price_...
-STRIPE_PRICE_BUSINESS=price_...
-STRIPE_SUCCESS_URL=https://seu-dominio/?checkout=success
-STRIPE_CANCEL_URL=https://seu-dominio/?checkout=cancel
-```
-
-Aí reinicia:
-
-```bash
 pm2 restart nimbus-backend nimbus-worker
 ```
 
-**2. Expõe com ngrok** (enquanto você não tem domínio):
+**Expõe com ngrok** (enquanto você não tem domínio):
 
 ```bash
 ngrok config add-authtoken SEU_TOKEN_NGROK
