@@ -18,6 +18,19 @@ const EMPTY_STATE = {
 // Helpers de (des)serialização
 // ────────────────────────────────────────────────────────────────────────
 
+// avgDiscount é gravado como string no PG (coluna String @default("—")) pra
+// suportar tanto o sentinel "—" quanto valores numéricos. Na leitura, coerce
+// pra número quando for numérico — mantém compat com o shape antigo do JSON
+// (que devolvia number) que o frontend espera.
+function parseAvgDiscount(v) {
+  if (v == null) return v;
+  if (typeof v === "number") return v;
+  const s = String(v);
+  if (s === "—" || s === "") return s;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : s;
+}
+
 // Group row + relações → shape que o frontend/scheduler esperam.
 // Inclui queue/pending/history "inline" como o JSON antigo.
 function groupRowToObject(row, queue = [], pending = [], history = []) {
@@ -34,7 +47,7 @@ function groupRowToObject(row, queue = [], pending = [], history = []) {
     sentWeek: row.sentWeek,
     weekData: row.weekData || [0, 0, 0, 0, 0, 0, 0],
     lastSend: row.lastSend,
-    avgDiscount: row.avgDiscount,
+    avgDiscount: parseAvgDiscount(row.avgDiscount),
     queue: queue.map(q => q.payload),
     pending: pending.map(p => p.payload),
     history: history.map(h => ({
@@ -105,14 +118,18 @@ async function loadState(userId) {
     (hByG.get(String(g.id)) || []).slice(0, 200),
   ));
 
-  return {
+  const result = {
     ...EMPTY_STATE,
     settings: stateRow?.settings || {},
     groups,
     whatsappGroups: waGroups.map(whatsappRowToObject),
     numbers: numbers.map(numberRowToObject),
-    updatedAt: stateRow?.updatedAt?.toISOString() || null,
   };
+  // updatedAt: só inclui se houver state row (mantém shape do JSON pro user vazio)
+  if (stateRow?.updatedAt) {
+    result.updatedAt = stateRow.updatedAt.toISOString();
+  }
+  return result;
 }
 
 // Save vindo do frontend — preserva ops do DB (não precisa do hack OPS_FIELDS porque
@@ -322,7 +339,7 @@ async function loadOps(userId) {
     sentWeek: g.sentWeek,
     weekData: g.weekData,
     lastSend: g.lastSend,
-    avgDiscount: g.avgDiscount,
+    avgDiscount: parseAvgDiscount(g.avgDiscount),
   }));
 
   // updatedAt: pega max(updatedAt) entre groups e user_state

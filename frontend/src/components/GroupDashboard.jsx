@@ -659,7 +659,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const barColor = primaryCat === "gamer" ? "#378ADD" : PRIMARY;
   const linkedWGs = whatsappGroups.filter(w => groupInfo.whatsappGroupIds.includes(w.id));
   // Passa objeto quando disponível (ml + shopee gating), senão fallback boolean (compat).
-  const stats = getGroupStats({ whatsappGroupIds: groupInfo.whatsappGroupIds, scraping: { sources: scraping.sources } }, whatsappGroups, { affiliateConfigured: affiliateStatus || affiliateConfigured });
+  const stats = getGroupStats({ whatsappGroupIds: groupInfo.whatsappGroupIds, scraping: { sources: scraping.sources }, paused: group.paused }, whatsappGroups, { affiliateConfigured: affiliateStatus || affiliateConfigured });
 
   const toggleCategory = (id) => setGroupInfo(g => {
     const has = g.categories.includes(id);

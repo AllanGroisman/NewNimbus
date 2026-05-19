@@ -13,10 +13,15 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { createTestUser, catalog, affiliate, waCalls, resetWa } from "../helpers/app.js";
 import { mlProduct, amazonProduct, makeGroup, makeWhatsAppGroup } from "../helpers/fixtures.js";
+import { truncateAll } from "../helpers/pg-helpers.js";
 
 describe("Jornada completa — primeira sessao do usuario", () => {
   let user;
-  beforeAll(() => {
+  beforeAll(async () => {
+    // Esta jornada depende de estado acumulado entre `it` blocks — opta por
+    // pular o truncate-between-tests do setup-each.js. Trunca uma vez aqui.
+    globalThis.__NIMBUS_SKIP_TRUNCATE_BETWEEN_TESTS = true;
+    await truncateAll();
     resetWa();
   });
 

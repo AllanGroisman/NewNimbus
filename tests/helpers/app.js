@@ -6,7 +6,9 @@
 
 import "./env.js";
 import { installMock, calls as waCalls, reset as resetWa } from "./wa-mock.js";
+import { installMock as installStripeMock, calls as stripeCalls, reset as resetStripe, setMock as setStripeMock } from "./stripe-mock.js";
 const waMock = installMock();
+const stripeMock = installStripeMock();
 
 import request from "supertest";
 import path from "path";
@@ -26,6 +28,7 @@ const storage = require(path.join(backendDir, "storage"));
 const catalog = require(path.join(backendDir, "catalog"));
 const scheduler = require(path.join(backendDir, "scheduler.js"));
 const affiliate = require(path.join(backendDir, "scraping", "affiliate.js"));
+const billing = require(path.join(backendDir, "billing"));
 
 function uniqueEmail(prefix = "user") {
   return `${prefix}-${crypto.randomBytes(4).toString("hex")}@test.local`;
@@ -57,7 +60,12 @@ export {
   catalog,
   scheduler,
   affiliate,
+  billing,
   waMock,
   waCalls,
   resetWa,
+  stripeMock,
+  stripeCalls,
+  resetStripe,
+  setStripeMock,
 };

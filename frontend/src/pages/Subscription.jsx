@@ -73,8 +73,18 @@ export default function PageSubscription() {
     }
   }
 
-  if (loading || !me) {
+  if (loading) {
     return <div style={{ padding: 20, color: "var(--color-text-secondary)" }}>Carregando assinatura…</div>;
+  }
+  if (!me) {
+    return (
+      <div style={{ padding: 20 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 500, marginBottom: 16 }}>Assinatura</h2>
+        <div style={{ background: "#FCEBEB", border: "0.5px solid #F7C1C1", color: "#A32D2D", padding: 10, borderRadius: 8, fontSize: 13 }}>
+          {error || "Falha ao carregar status de assinatura."}
+        </div>
+      </div>
+    );
   }
 
   const currentPlan = me.effectivePlan || "free";

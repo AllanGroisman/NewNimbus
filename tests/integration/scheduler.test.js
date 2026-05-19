@@ -6,16 +6,15 @@ import { app, createTestUser, catalog, scheduler, storage, affiliate, waCalls, r
 import { mlProduct, amazonProduct, makeGroup, makeWhatsAppGroup } from "../helpers/fixtures.js";
 
 describe("scheduler.refillNow — popa do catalogo", () => {
-  beforeAll(async () => {
+  // Re-seed do catálogo + afiliado a cada teste, porque setup-each.js trunca
+  // todas as tabelas antes de cada `it`.
+  beforeEach(async () => {
     await catalog.upsertProducts([
       mlProduct(401, { category: "gamer", discount: 30 }),
       mlProduct(402, { category: "gamer", discount: 50 }),
       mlProduct(403, { category: "casa", discount: 60 }),
     ]);
-    affiliate.writeConfig({ tag: "test-tag", cookie: "test-cookie" });
-  });
-
-  beforeEach(() => {
+    await affiliate.writeConfig({ tag: "test-tag", cookie: "test-cookie" });
     resetWa();
   });
 

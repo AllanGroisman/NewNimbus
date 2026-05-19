@@ -83,30 +83,57 @@ cd frontend && npm run build
 
 **Suíte de testes automatizada** (`tests/`, Vitest 2.x + supertest). Roda backend inteiro em-memória com WhatsApp/Baileys mockado e `NIMBUS_DATA_DIR` apontando pra tmpdir por worker, então não toca em `backend/data/`. ~83 testes, ~20s no total.
 
-```bat
-test.bat             :: wrapper na raiz — roda toda a suite
-```
+**Suíte de testes — três camadas, ~286 testes:**
 
-Ou direto:
+1. **Backend + integração** (`tests/`, Vitest 2.x + supertest) — ~222 testes, ~100s. Modo PG real (`nimbus_test` DB) com WhatsApp/Baileys e Stripe mockados. `truncateAll` antes de cada teste (journey opta por persistir via `globalThis.__NIMBUS_SKIP_TRUNCATE_BETWEEN_TESTS`).
+2. **Frontend** (`frontend/`, Vitest + RTL + jsdom) — ~59 testes, ~4s. `data/api.js`, `data/constants.js`, `Subscription.jsx`, `GroupDashboard.jsx`.
+3. **E2E** (`tests/e2e/`, Playwright + Chromium) — 5 testes, ~12s. Sobe backend+frontend dedicados (portas 3101/5273) contra DB `nimbus_test_e2e` isolado.
+
+```bat
+test.bat                          :: backend + frontend (não inclui E2E)
+```
 
 ```bash
 cd tests
-npm install          # primeira vez
-npm test             # tudo
-npm run test:unit    # unitarios (productKey, ASIN)
+npm install
+npm test                          # backend (~100s)
+npm run test:unit
 npm run test:integration
-npm run test:journey # jornada completa do usuario
+npm run test:journey
+RUN_REDIS_TESTS=1 npm test        # inclui redis-queue (BullMQ real)
+npm run test:e2e                  # Playwright (auto-sobe servers)
 npm run test:watch
+
+cd frontend && npm test           # ~4s
 ```
 
-Cobertura: auth (register/login/me/admin), state com a **corrida do OPS_FIELDS** (scheduler vs frontend), catálogo (upsert/query/filtros, `/api/ofertas`), afiliado ML+Amazon, scheduler (`refillNow`/`manualAdd`/`sendNextNow`/`tick`) e jornada completa (registro → afiliado → catálogo → campanha → refill → send-now → reset). Fora do escopo: scraping real (Puppeteer), WhatsApp real (Baileys substituído por mock que registra chamadas em `waCalls`) e UI visual.
+**Pré-requisitos:** Docker compose UP. DB `nimbus_test` precisa existir uma vez (`docker exec nimbus-postgres psql -U nimbus -c "CREATE DATABASE nimbus_test OWNER nimbus"`); `nimbus_test_e2e` é criado/migrado pelo globalSetup do Playwright.
+
+**Cobertura:**
+- **Auth** — register/login/me/PATCH/password/admin gating
+- **State + OPS_FIELDS** — race scheduler vs frontend (no PG a race some estruturalmente, mas o contrato continua testado)
+- **Catálogo** — upsert/query/filtros, `/api/ofertas`, `/api/admin/catalog` paginação/filtros
+- **Afiliados** — ML/Amazon/Shopee (gerar link, expiração, cache)
+- **Scheduler** — refillNow/manualAdd/sendNextNow/tick + edge cases (sem afiliado, sem janela, sem grupo WA)
+- **Manual ops HTTP** — refill/manual-add (force/409/202 cooldown)/pending approve+reject/history clear, isolamento entre users
+- **Admin** — users CRUD + role, scraper config/run/status, catalog admin, DLQ memory mode
+- **WhatsApp** — sessions/grupos/send/broadcast/invite + plan-gating de número novo (402)
+- **Billing** — trial auto, /me, checkout flow (URL fake), portal, webhooks (`checkout.session.completed`, `subscription.{created,updated,deleted}`, `invoice.payment_failed`, idempotência por event.id, signature inválida, evento desconhecido, sub órfã), plan-gating + admin bypass
+- **Health/metrics** — `/healthz` checks, `/metrics` formato + incremento, rate limiters no-op em test
+- **Redis queue** — enqueueSend → handler, retry exponencial até sucesso, callControl RPC, status counts, DLQ
+- **Frontend** — data/api.js (Authorization, 401 limpa token + dispatchEvent, 402), data/constants.js (helpers), Subscription.jsx (status/checkout/admin bypass/Stripe disabled), GroupDashboard.jsx (botão pausar/retomar no header visível em qualquer aba, banner sem afiliado)
+- **E2E** — registro+entrada, login inválido, logout, navegação pra Assinatura com trial
+
+**Fora do escopo:** scraping real (Puppeteer), Baileys real, Stripe real (cobrança não testada).
 
 `start.bat` **não** roda testes — sobe direto. Pra rodar testes antes de subir, encadeie: `test.bat && start.bat`.
 
 Mudanças no backend que sustentam os testes (importantes ao mexer):
-- Módulos JSON (`storage/json.js`, `auth/json.js`, `catalog/json.js`, `config/json.js`) leem `NIMBUS_DATA_DIR` (default: `backend/data/`).
+- Módulos PG (`storage/pg.js` etc.) e JSON convivem por façade — testes rodam em PG.
 - `server.js` exporta `{ app, boot }` e só chama `boot()` quando `require.main === module` (supertest carrega o app sem bindar porta).
 - Rate limiters no `server.js` viram no-op quando `NODE_ENV === "test"`.
+- `storage/pg.js` coerce `avgDiscount` (coluna `String`) pra `Number` quando numérico — match com shape do JSON.
+- Mocks em `tests/helpers/wa-mock.js` (whatsapp/index.js) e `tests/helpers/stripe-mock.js` (billing/stripe.js): patcheiam `require.cache` antes de `server.js` carregar.
 
 Variáveis de ambiente relevantes (lidas pelo backend):
 
