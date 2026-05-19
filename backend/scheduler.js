@@ -7,6 +7,8 @@ const queueMod = require("./infra/queue");
 const { productKey } = require("./catalog/product-key");
 const metrics = require("./infra/metrics");
 const log = require("./infra/logger").child({ module: "scheduler" });
+const billing = require("./billing");
+const auth = require("./auth");
 
 // Cadência do loop principal (em ms). Roda janelas de envio.
 const TICK_MS = 30 * 1000;
@@ -538,6 +540,19 @@ async function tick() {
   try {
     const userIds = await storage.listAllUserIds();
     for (const userId of userIds) {
+      // Plan-gating — pula usuário sem assinatura ativa (free/canceled/past_due).
+      // Admin sempre passa. Sessões WA não são derrubadas; só envios pausam.
+      try {
+        const user = await auth.findById(userId);
+        const sub = await billing.getByUserId(userId);
+        if (!billing.isActive(sub, user?.role)) {
+          continue;
+        }
+      } catch (err) {
+        log.warn({ err: err.message, userId }, "billing check falhou — pulando user");
+        continue;
+      }
+
       const state = await storage.loadState(userId);
       const groups = state.groups || [];
       const whatsappGroups = state.whatsappGroups || [];

@@ -6,6 +6,16 @@ echo         NIMBUS - Iniciando tudo
 echo ========================================
 echo.
 
+:: Pergunta se quer subir o ngrok
+set "START_NGROK="
+set /p "START_NGROK=Iniciar ngrok (acesso externo)? [S/N] (default S): "
+if /I "%START_NGROK%"=="N" (
+    set "START_NGROK=N"
+) else (
+    set "START_NGROK=S"
+)
+echo.
+
 :: Emails que viram admin automaticamente no login
 :: (separe por virgula pra adicionar mais)
 set "ADMIN_EMAILS=allangroisman@gmail.com"
@@ -51,14 +61,18 @@ start "Nimbus - Frontend" /D "%~dp0frontend" cmd /k npx vite --host
 :: Aguarda o frontend subir
 timeout /t 3 /nobreak >nul
 
-:: Inicia o ngrok
-echo [4/4] Iniciando ngrok (acesso externo)...
-start "Nimbus - ngrok" cmd /k "ngrok http 5173"
+:: Inicia o ngrok (se o usuario pediu)
+if /I "%START_NGROK%"=="S" (
+    echo [4/4] Iniciando ngrok ^(acesso externo^)...
+    start "Nimbus - ngrok" cmd /k "ngrok http 5173"
+) else (
+    echo [4/4] ngrok pulado.
+)
 
 echo.
 echo ========================================
 echo   Tudo rodando! Acesse localhost:5173
-echo   Veja a URL publica no terminal ngrok
+if /I "%START_NGROK%"=="S" echo   Veja a URL publica no terminal ngrok
 echo ========================================
 echo.
 echo Para parar tudo, rode: stop.bat

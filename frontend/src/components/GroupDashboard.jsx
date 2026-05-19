@@ -992,6 +992,16 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             {stats.count > 0 && <Badge color="gray">{stats.members} membros</Badge>}
           </div>
         </div>
+        <button
+          onClick={() => {
+            if (group.paused) onUpdate(group.id, { paused: false });
+            else setConfirmPause(true);
+          }}
+          title={group.paused ? "Retomar campanha" : "Pausar envios desta campanha"}
+          style={{ padding: "8px 18px", borderRadius: 8, background: group.paused ? PRIMARY : "#E24B4A", color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, flexShrink: 0 }}
+        >
+          {group.paused ? "▶ Retomar" : "⏸ Pausar"}
+        </button>
       </div>
 
       {stats.pausedManual && (
@@ -1129,34 +1139,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
       {tab === "manage" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {/* Status + ação de pausa: lugar mais natural pra ligar/desligar a campanha
-              (antes ficava no header, mas é uma config, não navegação). */}
-          <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
-              {group.paused
-                ? <span style={{ width: 11, height: 11, borderRadius: "50%", background: "#EF9F27", flexShrink: 0 }} />
-                : <span className="live-dot" />}
-              <div>
-                <div style={{ fontWeight: 500 }}>{group.paused ? "Campanha pausada" : "Campanha em execução"}</div>
-                <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>
-                  {group.paused
-                    ? "Não busca produtos novos nem envia mensagens enquanto estiver pausada."
-                    : "Busca produtos do catálogo nos horários definidos e envia para os grupos vinculados."}
-                </div>
-              </div>
-            </div>
-            <button
-              onClick={() => {
-                if (group.paused) onUpdate(group.id, { paused: false });
-                else setConfirmPause(true);
-              }}
-              title={group.paused ? "Retomar campanha" : "Pausar envios desta campanha"}
-              style={{ padding: "8px 18px", borderRadius: 8, background: group.paused ? PRIMARY : "#E24B4A", color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, flexShrink: 0 }}
-            >
-              {group.paused ? "▶ Retomar" : "⏸ Pausar"}
-            </button>
-          </div>
-
           <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
             <div style={{ fontWeight: 500, marginBottom: 4 }}>Informações da campanha</div>
             <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>Nome e categorias</div>

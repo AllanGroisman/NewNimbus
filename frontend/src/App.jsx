@@ -9,7 +9,7 @@ const DEFAULT_SETTINGS = {
   sources: allSources,
   theme: "auto",
 };
-import { authMe, authLogout, loadAppState, saveAppState, loadAppOps, getToken, getAffiliateStatus } from "./data/api";
+import { authMe, authLogout, loadAppState, saveAppState, loadAppOps, getToken, getAffiliateStatus, billingMe } from "./data/api";
 import Sidebar from "./components/Sidebar";
 import GroupDashboard from "./components/GroupDashboard";
 import PageDashboard from "./pages/Dashboard";
@@ -46,6 +46,8 @@ export default function App() {
   // Default true pra ML/Amazon evita "flash vermelho" antes do primeiro fetch.
   // Shopee fica sempre como "não configurado" enquanto a integração não existe.
   const [affiliateStatus, setAffiliateStatus] = useState({ ml: true, amazon: true, shopee: false });
+  // Billing — { planId, effectivePlan, status, daysLeftInTrial, limits, stripeEnabled, isAdmin }
+  const [billing, setBilling] = useState(null);
   const affiliateConfigured = !!affiliateStatus.ml;
   const applyAffiliateStatus = (s) => {
     setAffiliateStatus({
@@ -75,6 +77,8 @@ export default function App() {
         setWhatsappGroups(state.whatsappGroups || []);
         setSettings({ ...DEFAULT_SETTINGS, ...(state.settings || {}) });
         stateLoadedRef.current = true;
+        // Billing — não bloqueia o boot se falhar
+        billingMe().then(b => !cancelled && setBilling(b)).catch(() => {});
       } catch {
         // token inválido — segue para tela de login
       } finally {
@@ -82,6 +86,19 @@ export default function App() {
       }
     }
     bootstrap();
+
+    // ?checkout=success/cancel — após retorno do Stripe Checkout, limpa query e refaz billingMe.
+    // O webhook normalmente chega antes desse callback, mas damos 1.5s de folga.
+    const qs = new URLSearchParams(window.location.search);
+    const checkout = qs.get("checkout");
+    if (checkout === "success" || checkout === "cancel") {
+      qs.delete("checkout");
+      const newSearch = qs.toString();
+      window.history.replaceState({}, "", window.location.pathname + (newSearch ? `?${newSearch}` : ""));
+      if (checkout === "success") {
+        setTimeout(() => { billingMe().then(setBilling).catch(() => {}); }, 1500);
+      }
+    }
 
     // Se o backend devolver 401 em qualquer chamada, derruba a sessão
     const onUnauth = () => { setUser(null); stateLoadedRef.current = false; };
@@ -343,6 +360,21 @@ export default function App() {
         onToggleMobile={setMobileMenu}
       />
       <div className="main-content" style={{ flex: 1, padding: "20px 24px", minWidth: 0, overflowY: "auto" }}>
+        {billing && !billing.isAdmin && (
+          (billing.status === "past_due" || billing.status === "unpaid") ? (
+            <div onClick={() => setPage("subscription")} style={{ cursor: "pointer", background: "#FCEBEB", border: "0.5px solid #F7C1C1", color: "#A32D2D", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
+              Pagamento pendente — clique para regularizar e manter envios ativos.
+            </div>
+          ) : billing.status === "trialing" && billing.daysLeftInTrial !== null && billing.daysLeftInTrial <= 2 ? (
+            <div onClick={() => setPage("subscription")} style={{ cursor: "pointer", background: "#FFF7E0", border: "0.5px solid #F0D58A", color: "#7A5800", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
+              Seu trial expira em {billing.daysLeftInTrial}d. Assine para continuar usando.
+            </div>
+          ) : billing.effectivePlan === "free" ? (
+            <div onClick={() => setPage("subscription")} style={{ cursor: "pointer", background: "#FFF7E0", border: "0.5px solid #F0D58A", color: "#7A5800", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
+              Sem plano ativo — envios pausados. Escolha um plano para reativar.
+            </div>
+          ) : null
+        )}
         {selectedGroup
           ? <GroupDashboard
               key={selectedGroup.id}

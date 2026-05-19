@@ -96,6 +96,20 @@ export async function rejectPendingItem(groupId, pendingId) {
   return http("DELETE", `/api/state/groups/${groupId}/pending/${encodeURIComponent(pendingId)}`);
 }
 
+// ─── Billing (Stripe) ──────────────────────────────────────────────────
+// Status atual: { planId, effectivePlan, status, currentPeriodEnd, daysLeftInTrial, limits, stripeEnabled }
+export async function billingMe() {
+  return http("GET", "/api/billing/me");
+}
+// Cria Checkout Session e devolve { url } — frontend chama window.location.assign(url)
+export async function billingCheckout(planId) {
+  return http("POST", "/api/billing/checkout", { planId });
+}
+// Customer Portal — alterar cartão / cancelar / ver faturas
+export async function billingPortal() {
+  return http("POST", "/api/billing/portal");
+}
+
 // ─── Afiliados ML ──────────────────────────────────────────────────────
 export async function getAffiliateStatus()      { return http("GET",    "/api/affiliate"); }
 export async function saveAffiliate(payload)    { return http("PUT",    "/api/affiliate", payload); }

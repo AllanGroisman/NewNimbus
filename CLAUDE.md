@@ -122,6 +122,9 @@ Variáveis de ambiente relevantes (lidas pelo backend):
 - `LOG_LEVEL` — nível do pino (`debug`/`info`/`warn`/`error`). Default: `debug` em dev, `info` em prod.
 - `NODE_ENV` — `development` (default) ou `production`. Em prod ativa logs JSON.
 - `PORT` — porta do backend (default 3001).
+- `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` — chaves do Stripe (test ou live). Vazio = endpoints de billing retornam 501 (modo dev sem credenciais).
+- `STRIPE_PRICE_BASIC` / `STRIPE_PRICE_PRO` / `STRIPE_PRICE_BUSINESS` — Price IDs dos 3 planos (criados no dashboard Stripe, BRL recorrente mensal).
+- `STRIPE_SUCCESS_URL` / `STRIPE_CANCEL_URL` — pra onde o Checkout redireciona após sucesso/cancel. Default aponta pra `localhost:5173/?checkout=...`.
 
 ### Operação (Fase 0 — hardening)
 
@@ -182,7 +185,34 @@ O frontend espelha `OPS_FIELDS` em `App.jsx` (linha 30) e nunca os envia no save
 
 Pra migrar sessões existentes de arquivo pra Postgres: `cd backend && npm run migrate-auth` (idempotente, suporta `--dry-run`).
 
-**7. Fila de envios (Fase 2 + 2.1 — `QUEUE_BACKEND=redis`).** Duas filas BullMQ no Redis:
+**7. Billing (Stripe — Checkout + Portal hosted).** Assinatura por usuário (1:1 com `User`) no modelo `Subscription` (Prisma) ou `data/subscriptions.json` (JSON). Eventos idempotentes via `WebhookEvent` (id = `evt_…` do Stripe).
+
+- **Trial automático**: `auth.register` cria `Subscription { planId:"pro", status:"trialing", currentPeriodEnd:+7d }` sem cartão. `billing.getStatus` também faz lazy-trial pra usuários pré-existentes que ainda não têm row.
+- **Admin bypass**: usuários com `role=admin` (ADMIN_EMAILS) sempre caem em `effectivePlan=business` independente de pagamento. Vide `limits.effectivePlanId` e `billing.isActive`.
+- **Plan-gating** aplicado em 3 lugares:
+  - `PUT /api/state` valida `numbers/groups/categoriesPerGroup/autoScraping` e retorna **402** com `{ error, limit, current, planRequired }`.
+  - `POST /api/whatsapp/sessions/:id` (criação de sessão NOVA) bloqueia se exceder `numbers`.
+  - `scheduler.tick` pula usuários onde `billing.isActive(sub, role)` é falso — sessões WA continuam vivas, só os envios pausam.
+- **Webhook** (`POST /api/billing/webhook`): montado com `express.raw({type:"application/json"})` ANTES do `express.json()` global pra preservar bytes pra validação HMAC. Idempotência: `markWebhookProcessed(event.id)` antes de processar; conflito = no-op.
+- **Limits**: única fonte de verdade em `backend/billing/limits.js` (`PLANS.{free,basic,pro,business}.limits`). Frontend lê via `billingMe()` e usa pra desabilitar botões.
+- **Métricas**: `nimbus_billing_webhook_events_total{type,result}`, `nimbus_billing_checkout_total{plan,result}`, `nimbus_billing_active_subscriptions{plan}`.
+
+Stripe local (dev):
+
+```bash
+# 1) Stripe CLI roda webhook listener — imprime o whsec_… use no .env
+stripe login
+stripe listen --forward-to http://localhost:3001/api/billing/webhook
+
+# 2) No .env do backend, configure STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET + 3 PRICE_IDs.
+#    Sem STRIPE_SECRET_KEY, endpoints /checkout e /portal retornam 501.
+
+# 3) Disparar eventos sintéticos pra testar:
+stripe trigger checkout.session.completed
+stripe trigger customer.subscription.updated
+```
+
+**8. Fila de envios (Fase 2 + 2.1 — `QUEUE_BACKEND=redis`).** Duas filas BullMQ no Redis:
 
 - `nimbus.send-message` — envios agendados, retry exponencial (5×, 5s→80s), concurrency 1, limiter 1/s
 - `nimbus.control` — RPC server↔worker (start session, send manual, list groups, etc), concurrency 4, sem retry

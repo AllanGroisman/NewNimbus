@@ -16,6 +16,8 @@ const queueMod = require("./infra/queue");
 const logger = require("./infra/logger");
 const metrics = require("./infra/metrics");
 const sentry = require("./infra/sentry");
+const billing = require("./billing");
+const stripeMod = require("./billing/stripe");
 
 // Sentry init (Fase 4) — no-op se SENTRY_DSN não estiver definido
 sentry.init({ context: "server" });
@@ -75,6 +77,104 @@ app.use(cors({
   },
   credentials: true,
 }));
+
+// ────────────────────────────────────────────────────────────────────────
+// Stripe webhook — DEVE vir antes do express.json() global porque
+// stripe.webhooks.constructEvent precisa do raw body (Buffer) pra validar
+// a assinatura HMAC. Se passar pelo json parser primeiro, perdemos os bytes.
+// ────────────────────────────────────────────────────────────────────────
+app.post(
+  "/api/billing/webhook",
+  express.raw({ type: "application/json", limit: "1mb" }),
+  async (req, res) => {
+    if (!stripeMod.enabled()) return res.status(501).json({ error: "Stripe não configurado" });
+    const signature = req.headers["stripe-signature"];
+    if (!signature) return res.status(400).json({ error: "Missing stripe-signature" });
+
+    let event;
+    try {
+      event = stripeMod.constructEvent(req.body, signature);
+    } catch (err) {
+      logger.warn({ err: err.message }, "[billing] webhook signature inválida");
+      return res.status(400).json({ error: `Webhook signature: ${err.message}` });
+    }
+
+    // Idempotência — Stripe reentrega eventos. Marca antes de processar.
+    const fresh = await billing.markWebhookProcessed(event.id, event.type);
+    if (!fresh) {
+      return res.json({ received: true, deduped: true });
+    }
+
+    try {
+      await handleStripeEvent(event);
+      metrics.recordWebhook?.(event.type, "ok");
+      res.json({ received: true });
+    } catch (err) {
+      logger.error({ err: err.message, eventId: event.id, type: event.type }, "[billing] handler falhou");
+      sentry.captureException(err, { tags: { stripeEvent: event.type } });
+      metrics.recordWebhook?.(event.type, "error");
+      // 500 faz o Stripe reentregar — mas como já marcamos como processed,
+      // não vai re-processar. Aceitamos a perda em troca de não loopar.
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// Despacha cada tipo de evento Stripe pra atualização correspondente do storage.
+async function handleStripeEvent(event) {
+  const obj = event.data?.object;
+  switch (event.type) {
+    case "checkout.session.completed": {
+      // Primeiro pareamento customer ↔ user. A subscription em si vem em
+      // subscription.created/updated logo depois — aqui só garantimos o link.
+      const userId = obj.client_reference_id;
+      const customerId = typeof obj.customer === "string" ? obj.customer : obj.customer?.id;
+      if (userId && customerId) {
+        await billing.update(userId, { stripeCustomerId: customerId });
+      }
+      return;
+    }
+    case "customer.subscription.created":
+    case "customer.subscription.updated": {
+      const norm = stripeMod.normalizeSubscription(obj);
+      // Resolve userId: 1) metadata.nimbusUserId, 2) customer já linkado.
+      let userId = obj.metadata?.nimbusUserId;
+      if (!userId && norm.stripeCustomerId) {
+        const existing = await billing.getByCustomerId(norm.stripeCustomerId);
+        userId = existing?.userId;
+      }
+      if (!userId) {
+        logger.warn({ subId: obj.id }, "[billing] subscription sem userId — ignorando");
+        return;
+      }
+      await billing.update(userId, norm);
+      return;
+    }
+    case "customer.subscription.deleted": {
+      // Stripe envia quando assinatura é cancelada definitivamente (fim do período).
+      const customerId = typeof obj.customer === "string" ? obj.customer : obj.customer?.id;
+      const existing = customerId ? await billing.getByCustomerId(customerId) : null;
+      if (existing) {
+        await billing.update(existing.userId, {
+          planId: "free",
+          status: "canceled",
+          cancelAtPeriodEnd: false,
+          stripeSubscriptionId: null,
+        });
+      }
+      return;
+    }
+    case "invoice.payment_succeeded":
+    case "invoice.payment_failed":
+      // Status do subscription já reflete em customer.subscription.updated;
+      // só logamos pra observabilidade.
+      logger.info({ type: event.type, invoice: obj.id }, "[billing] invoice event");
+      return;
+    default:
+      // Ignora silenciosamente — Stripe manda muitos tipos.
+      return;
+  }
+}
 
 app.use(express.json({ limit: "2mb" }));
 
@@ -198,6 +298,9 @@ app.post("/api/auth/register", registerLimiter, async (req, res) => {
   try {
     const { name, email, password, phone } = req.body || {};
     const user = await auth.register({ name, email, password, phone });
+    // Trial automático de 7 dias do plano Pro — sem cartão. Idempotente.
+    try { await billing.startTrialFor(user.id); }
+    catch (err) { logger.warn({ err: err.message, userId: user.id }, "[billing] trial start falhou"); }
     const { token } = await auth.login({ email, password });
     res.json({ user, token });
   } catch (err) {
@@ -251,7 +354,44 @@ app.get("/api/state", auth.requireAuth, async (req, res) => {
 
 app.put("/api/state", auth.requireAuth, async (req, res) => {
   try {
-    const saved = await storage.saveState(req.user.id, req.body || {});
+    // Plan-gating — bloqueia se contagens excedem limites do plano efetivo.
+    // Admin passa direto. Mensagens explícitas pra UI sugerir upgrade.
+    const incoming = req.body || {};
+    if (req.user.role !== "admin") {
+      const sub = await billing.getByUserId(req.user.id);
+      const planLimits = billing.limits.getLimits(sub, req.user.role);
+
+      const incomingGroups = Array.isArray(incoming.groups) ? incoming.groups : [];
+      const incomingNumbers = Array.isArray(incoming.numbers) ? incoming.numbers : [];
+
+      const checks = [
+        billing.limits.checkLimit(sub, "groups", incomingGroups.length, req.user.role),
+        billing.limits.checkLimit(sub, "numbers", incomingNumbers.length, req.user.role),
+      ];
+      // categoriesPerGroup — qualquer grupo que exceda é bloqueio.
+      const worstCats = incomingGroups.reduce((max, g) => {
+        const n = Array.isArray(g.categories) ? g.categories.length : 0;
+        return n > max ? n : max;
+      }, 0);
+      if (worstCats > 0) {
+        checks.push(billing.limits.checkLimit(sub, "categoriesPerGroup", worstCats, req.user.role));
+      }
+      // autoScraping — bloqueia se algum grupo tem scraping.auto=true e plano não permite.
+      if (!planLimits.autoScraping) {
+        const usesAuto = incomingGroups.some(g => g?.scraping?.auto === true);
+        if (usesAuto) {
+          return res.status(402).json({
+            error: "Scraping automático não disponível no plano atual",
+            planRequired: "pro",
+          });
+        }
+      }
+
+      const failed = checks.find(c => !c.ok);
+      if (failed) return res.status(402).json(failed);
+    }
+
+    const saved = await storage.saveState(req.user.id, incoming);
     res.json({ ok: true, updatedAt: saved.updatedAt });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -262,6 +402,79 @@ app.get("/api/state/ops", auth.requireAuth, async (req, res) => {
   try {
     res.json(await storage.loadOps(req.user.id));
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// Billing (Stripe)
+// ────────────────────────────────────────────────────────────────────────
+
+// Status atual da assinatura do usuário — usado pelo frontend pra renderizar
+// plano ativo, limites, dias restantes do trial e badges past_due.
+app.get("/api/billing/me", auth.requireAuth, async (req, res) => {
+  try {
+    const status = await billing.getStatus(req.user.id, req.user.role);
+    res.json({ ...status, stripeEnabled: stripeMod.enabled() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Cria Checkout Session pra um plano. Body: { planId }.
+// Responde { url } — frontend faz window.location.assign(url).
+app.post("/api/billing/checkout", auth.requireAuth, async (req, res) => {
+  try {
+    if (!stripeMod.enabled()) return res.status(501).json({ error: "Stripe não configurado" });
+    const planId = String(req.body?.planId || "").trim();
+    if (!["basic", "pro", "business"].includes(planId)) {
+      return res.status(400).json({ error: "planId inválido" });
+    }
+    if (!stripeMod.priceFor(planId)) {
+      return res.status(500).json({ error: `Price ID do plano "${planId}" não configurado no servidor` });
+    }
+
+    // Garante sub existente; pega customer se já tem.
+    const sub = await billing.ensureForUser(req.user.id, { planId: "free", status: "inactive" });
+    const customer = await stripeMod.getOrCreateCustomer({
+      userId: req.user.id,
+      email: req.user.email,
+      name: req.user.name,
+      existingCustomerId: sub.stripeCustomerId,
+    });
+
+    // Persiste customerId se ainda não estava linkado.
+    if (!sub.stripeCustomerId) {
+      await billing.update(req.user.id, { stripeCustomerId: customer.id });
+    }
+
+    const session = await stripeMod.createCheckoutSession({
+      planId,
+      customer,
+      userId: req.user.id,
+    });
+    metrics.recordCheckout?.(planId, "ok");
+    res.json({ url: session.url });
+  } catch (err) {
+    metrics.recordCheckout?.(String(req.body?.planId || "unknown"), "error");
+    logger.error({ err: err.message }, "[billing] checkout falhou");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Customer Portal — alterar cartão / cancelar / ver faturas. Precisa customer
+// existente, então user só consegue acessar depois do primeiro checkout.
+app.post("/api/billing/portal", auth.requireAuth, async (req, res) => {
+  try {
+    if (!stripeMod.enabled()) return res.status(501).json({ error: "Stripe não configurado" });
+    const sub = await billing.getByUserId(req.user.id);
+    if (!sub?.stripeCustomerId) {
+      return res.status(400).json({ error: "Sem customer Stripe — assine um plano primeiro" });
+    }
+    const session = await stripeMod.createPortalSession({ customer: { id: sub.stripeCustomerId } });
+    res.json({ url: session.url });
+  } catch (err) {
+    logger.error({ err: err.message }, "[billing] portal falhou");
     res.status(500).json({ error: err.message });
   }
 });
@@ -736,6 +949,18 @@ app.get("/api/whatsapp/sessions", auth.requireAuth, async (req, res) => {
 
 app.post("/api/whatsapp/sessions/:id", auth.requireAuth, async (req, res) => {
   try {
+    // Plan-gating — número novo conta contra limite `numbers`. Sessão já existente
+    // (reconect) passa direto pq não estoura contagem.
+    if (req.user.role !== "admin") {
+      const existing = await wa.listSessions?.(req.user.id);
+      const isNew = !(existing || []).some(s => s.numberId === req.params.id || s.id === req.params.id);
+      if (isNew) {
+        const sub = await billing.getByUserId(req.user.id);
+        const count = (existing || []).length + 1;
+        const check = billing.limits.checkLimit(sub, "numbers", count, req.user.role);
+        if (!check.ok) return res.status(402).json(check);
+      }
+    }
     await wa.startSession(req.user.id, req.params.id);
     const s = await wa.getSession(req.user.id, req.params.id);
     res.json({ ok: true, id: req.params.id, status: s?.status });

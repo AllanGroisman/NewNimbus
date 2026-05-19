@@ -104,6 +104,33 @@ const workerHeartbeatAge = new client.Gauge({
   registers: [register],
 });
 
+// ── Billing (Stripe) ──────────────────────────────────────────────────
+const billingWebhookTotal = new client.Counter({
+  name: "nimbus_billing_webhook_events_total",
+  help: "Eventos de webhook Stripe recebidos",
+  labelNames: ["type", "result"], // result: ok|error
+  registers: [register],
+});
+const billingCheckoutTotal = new client.Counter({
+  name: "nimbus_billing_checkout_total",
+  help: "Tentativas de checkout (criação de Stripe Checkout Session)",
+  labelNames: ["plan", "result"], // result: ok|error
+  registers: [register],
+});
+const billingActiveSubs = new client.Gauge({
+  name: "nimbus_billing_active_subscriptions",
+  help: "Assinaturas ativas (status active+trialing) por plano",
+  labelNames: ["plan"],
+  registers: [register],
+});
+
+function recordWebhook(type, result) {
+  try { billingWebhookTotal.inc({ type, result }); } catch {}
+}
+function recordCheckout(plan, result) {
+  try { billingCheckoutTotal.inc({ plan, result }); } catch {}
+}
+
 // Express middleware — instrumenta requests HTTP. Aplique APÓS rotas que
 // você quer trackear. Usa req.route?.path quando disponível pra evitar
 // explosão de cardinalidade com rotas paramétricas.
@@ -147,4 +174,9 @@ module.exports = {
   catalogProducts,
   catalogScrapeRunsTotal,
   workerHeartbeatAge,
+  billingWebhookTotal,
+  billingCheckoutTotal,
+  billingActiveSubs,
+  recordWebhook,
+  recordCheckout,
 };
