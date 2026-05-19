@@ -83,6 +83,7 @@ async function main() {
 
   await appConfig.warmup();
   await auth.warmup();
+  await auth.bootSeed();
   await queue.init({ producer: false, consumer: true });
 
   // Restaura sessões Baileys persistidas (tabela baileys_auth). Eventos

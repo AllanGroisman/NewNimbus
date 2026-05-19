@@ -1099,6 +1099,7 @@ async function boot() {
   // afiliado per-user) — necessário pra auth e pra affiliate.status() /
   // adminScraper.readConfig() funcionarem sync.
   await auth.warmup();
+  await auth.bootSeed();
   await appConfig.warmup();
   await affiliate.warmup();
 

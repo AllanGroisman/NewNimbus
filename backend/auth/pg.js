@@ -17,6 +17,52 @@ function isAdminEmail(email) {
   return ADMIN_EMAILS.includes(String(email || "").trim().toLowerCase());
 }
 
+// Conta admin garantida no boot: força email + senha + role=admin.
+// Configurada via env DEFAULT_ADMIN_EMAIL / DEFAULT_ADMIN_PASSWORD.
+const DEFAULT_ADMIN_EMAIL = String(process.env.DEFAULT_ADMIN_EMAIL || "").trim().toLowerCase();
+const DEFAULT_ADMIN_PASSWORD = process.env.DEFAULT_ADMIN_PASSWORD || "";
+const DEFAULT_ADMIN_NAME = process.env.DEFAULT_ADMIN_NAME || "Admin";
+
+async function seedDefaultAdmin() {
+  if (!DEFAULT_ADMIN_EMAIL || !DEFAULT_ADMIN_PASSWORD) return;
+  if (DEFAULT_ADMIN_PASSWORD.length < 6) {
+    console.warn("[auth] DEFAULT_ADMIN_PASSWORD < 6 chars — seed pulado");
+    return;
+  }
+
+  const existing = await findByEmail(DEFAULT_ADMIN_EMAIL);
+
+  if (existing) {
+    const samePassword = await bcrypt.compare(DEFAULT_ADMIN_PASSWORD, existing.passwordHash);
+    if (samePassword && existing.role === "admin") return;
+    await prisma().user.update({
+      where: { id: existing.id },
+      data: {
+        passwordHash: samePassword ? existing.passwordHash : await bcrypt.hash(DEFAULT_ADMIN_PASSWORD, 10),
+        role: "admin",
+      },
+    });
+    invalidateUser(existing.id);
+    console.log(`[auth] seed: admin ${DEFAULT_ADMIN_EMAIL} sincronizado`);
+    return;
+  }
+
+  await prisma().user.create({
+    data: {
+      id: crypto.randomUUID(),
+      name: DEFAULT_ADMIN_NAME,
+      email: DEFAULT_ADMIN_EMAIL,
+      phone: "",
+      passwordHash: await bcrypt.hash(DEFAULT_ADMIN_PASSWORD, 10),
+      role: "admin",
+    },
+  }).catch(err => {
+    if (err.code === "P2002") return; // race com outro processo (worker)
+    throw err;
+  });
+  console.log(`[auth] seed: admin ${DEFAULT_ADMIN_EMAIL} criado`);
+}
+
 let _jwtSecret = process.env.JWT_SECRET || null;
 const TOKEN_TTL = "30d";
 
@@ -36,6 +82,12 @@ async function warmup() {
     update: {},
   });
   _jwtSecret = secret;
+}
+
+// Garante que a conta admin definida em DEFAULT_ADMIN_* exista e esteja sincronizada.
+// Chamada no boot do server.js e do worker.js.
+async function bootSeed() {
+  await seedDefaultAdmin();
 }
 
 function getJwtSecret() {
@@ -244,6 +296,8 @@ async function setUserRole(userId, role) {
 
 module.exports = {
   warmup,
+  bootSeed,
+  seedDefaultAdmin,
   register,
   login,
   requireAuth,
