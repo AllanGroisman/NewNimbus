@@ -17,7 +17,7 @@ Instala e sobe o Nimbus inteiro numa VPS Ubuntu limpa (22.04 ou 24.04) com **um 
 
 ## Passo a passo
 
-Na VPS, como usuário normal (NÃO root):
+Na VPS (aceita rodar como root ou usuário normal):
 
 ```bash
 # Clone o repo (ajuste pra seu fork)

@@ -19,9 +19,11 @@ echo "  Repo: $REPO_DIR"
 echo "  User: $RUN_USER"
 echo "========================================="
 
-if [[ "$EUID" -eq 0 ]]; then
-  echo "ERRO: não rode como root. Rode como usuário normal — o script pede sudo quando precisa."
-  exit 1
+if [[ "$RUN_USER" == "root" ]]; then
+  USER_HOME="/root"
+  echo "AVISO: rodando como root. Pra produção, troque pra usuário normal depois."
+else
+  USER_HOME="/home/$RUN_USER"
 fi
 
 # ── 1. apt deps básicas ────────────────────────────────────────────────
@@ -139,8 +141,13 @@ cd "$REPO_DIR/frontend"
 npm install
 npm run build
 
-# Permissão pra www-data ler o dist/ (e atravessar /home/$USER)
-sudo chmod o+rx "/home/$RUN_USER" 2>/dev/null || true
+# Permissão pra www-data ler o dist/ (e atravessar o home).
+# /root é 700 por padrão — 711 deixa atravessar sem listar.
+if [[ "$RUN_USER" == "root" ]]; then
+  sudo chmod 711 /root
+else
+  sudo chmod o+rx "$USER_HOME" 2>/dev/null || true
+fi
 chmod -R o+rX "$REPO_DIR/frontend/dist"
 
 # ── 9. Nginx + UFW + PM2 ───────────────────────────────────────────────
@@ -171,7 +178,7 @@ pm2 delete all >/dev/null 2>&1 || true
 pm2 start ecosystem.config.js
 pm2 save
 # Autostart no boot — comando precisa rodar como root
-sudo env PATH="$PATH:/usr/bin" pm2 startup systemd -u "$RUN_USER" --hp "/home/$RUN_USER" >/dev/null
+sudo env PATH="$PATH:/usr/bin" pm2 startup systemd -u "$RUN_USER" --hp "$USER_HOME" >/dev/null
 
 # ── Smoke test ─────────────────────────────────────────────────────────
 echo
