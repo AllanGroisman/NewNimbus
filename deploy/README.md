@@ -97,6 +97,14 @@ bash deploy/update.sh
 
 Faz `git pull`, reinstala deps que mudaram, roda migrations, rebuilda o frontend e dá `pm2 reload`.
 
+## Verificar se está tudo OK
+
+```bash
+bash deploy/test.sh
+```
+
+Checa 30+ pontos: pacotes do sistema, containers Postgres/Redis, build do projeto, PM2 (backend + worker online), nginx (config válida + ativo), endpoints (`:3001/healthz`, `:80/healthz`, frontend), UFW. Imprime sumário no fim e `exit 1` se algo falhar.
+
 ## Comandos úteis
 
 ```bash
