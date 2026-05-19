@@ -5,8 +5,6 @@
 //   pm2 logs nimbus-backend                    # ver logs
 //   pm2 restart nimbus-backend
 //   pm2 save && pm2 startup                    # autostart no boot do SO
-//
-// Em modo Postgres: STORAGE_BACKEND=pg pm2 start ecosystem.config.js
 
 module.exports = {
   apps: [
@@ -52,21 +50,6 @@ module.exports = {
       error_file: "./logs/worker-error.log",
       time: true,
       merge_logs: true,
-    },
-    // Backup como cron interno do PM2 (rodando a cada 15min). Alternativa
-    // ao Task Scheduler / cron do SO.
-    {
-      name: "nimbus-backup",
-      script: "./scripts/backup-data.js",
-      cwd: __dirname,
-      instances: 1,
-      autorestart: false,
-      cron_restart: "*/15 * * * *",
-      watch: false,
-      env: { NODE_ENV: "production" },
-      out_file: "./logs/backup-out.log",
-      error_file: "./logs/backup-error.log",
-      time: true,
     },
     // Backup REMOTO (S3-compatível) — sobe último snapshot a cada 1h.
     // Sem env BACKUP_S3_* setadas, sai exit 0 sem fazer nada (não polui logs).

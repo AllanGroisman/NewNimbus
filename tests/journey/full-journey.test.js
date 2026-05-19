@@ -42,7 +42,7 @@ describe("Jornada completa — primeira sessao do usuario", () => {
     const res = await user.auth("put", "/api/affiliate/amazon").send({ tag: "carlos-test-20" });
     expect(res.status).toBe(200);
     expect(res.body.amazon.configured).toBe(true);
-    affiliate.writeConfig({ tag: "ml-test", cookie: "ml-cookie" });
+    affiliate.writeConfig(user.user.id, { tag: "ml-test", cookie: "ml-cookie-sessid" });
   });
 
   it("etapa 4: admin atualiza catalogo (via call direta — sem rodar puppeteer)", async () => {
@@ -124,7 +124,7 @@ describe("Jornada completa — primeira sessao do usuario", () => {
   });
 
   it("etapa 10: bloqueio quando ML desconfigurado e campanha usa ML", async () => {
-    affiliate.clearConfig();
+    affiliate.clearConfig(user.user.id);
     const r = await user.auth("post", "/api/state/groups/5000/send-now");
     expect(r.status).toBe(400);
     expect(r.body.error).toMatch(/afiliado|configure|pausada/i);

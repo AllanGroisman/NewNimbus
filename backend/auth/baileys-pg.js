@@ -1,7 +1,6 @@
-// Auth state Baileys em Postgres (Fase 3).
+// Auth state Baileys em Postgres.
 //
-// Substitui useMultiFileAuthState() (que escreve em auth_states/) por uma
-// implementação que persiste em Postgres via Prisma. Mesma interface que
+// Persiste credenciais Baileys na tabela `baileys_auth`. Mesma interface que
 // Baileys espera: { state: { creds, keys: { get, set } }, saveCreds }.
 //
 // Vantagens:

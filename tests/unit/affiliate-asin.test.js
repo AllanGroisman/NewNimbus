@@ -1,7 +1,7 @@
 // Extracao de ASIN da URL Amazon — pura, sem IO. Cobre os formatos mais comuns.
 
 import "../helpers/env.js";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
@@ -10,6 +10,19 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 const affiliate = require(path.resolve(__dirname, "..", "..", "backend", "scraping", "affiliate.js"));
+const { prisma } = require(path.resolve(__dirname, "..", "..", "backend", "db.js"));
+
+const TEST_USER_ID = "test-user-asin";
+
+// setup-each.js trunca tudo antes de cada teste — recriamos o user pra os
+// writes via PG não falharem com FK violation.
+beforeEach(async () => {
+  await prisma().user.upsert({
+    where: { id: TEST_USER_ID },
+    create: { id: TEST_USER_ID, email: `${TEST_USER_ID}@test.local`, name: "Unit", passwordHash: "x" },
+    update: {},
+  });
+});
 
 describe("extractASIN", () => {
   it("formato /dp/ASIN", () => {
@@ -38,20 +51,20 @@ describe("extractASIN", () => {
 
 describe("gerarLinkAfiliadoAmazon", () => {
   it("retorna null quando nao ha tag configurada", () => {
-    affiliate.clearAmazonConfig();
-    const r = affiliate.gerarLinkAfiliadoAmazon("https://www.amazon.com.br/dp/B0CXXX1234");
+    affiliate.clearAmazonConfig(TEST_USER_ID);
+    const r = affiliate.gerarLinkAfiliadoAmazon(TEST_USER_ID, "https://www.amazon.com.br/dp/B0CXXX1234");
     expect(r).toBeNull();
   });
 
   it("gera link com tag quando configurado", () => {
-    affiliate.writeAmazonConfig({ tag: "minha-tag-20" });
-    const r = affiliate.gerarLinkAfiliadoAmazon("https://www.amazon.com.br/dp/B0CXXX1234");
+    affiliate.writeAmazonConfig(TEST_USER_ID, { tag: "minha-tag-20" });
+    const r = affiliate.gerarLinkAfiliadoAmazon(TEST_USER_ID, "https://www.amazon.com.br/dp/B0CXXX1234");
     expect(r).toBe("https://www.amazon.com.br/dp/B0CXXX1234?tag=minha-tag-20");
-    affiliate.clearAmazonConfig();
+    affiliate.clearAmazonConfig(TEST_USER_ID);
   });
 
   it("rejeita tag invalida", () => {
-    expect(() => affiliate.writeAmazonConfig({ tag: "tag com espaco" })).toThrow();
-    expect(() => affiliate.writeAmazonConfig({ tag: "a" })).toThrow();
+    expect(() => affiliate.writeAmazonConfig(TEST_USER_ID, { tag: "tag com espaco" })).toThrow();
+    expect(() => affiliate.writeAmazonConfig(TEST_USER_ID, { tag: "a" })).toThrow();
   });
 });

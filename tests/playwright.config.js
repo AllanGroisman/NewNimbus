@@ -43,7 +43,6 @@ export default defineConfig({
       timeout: 60000,
       env: {
         NODE_ENV: "test",
-        STORAGE_BACKEND: "pg",
         QUEUE_BACKEND: "memory",
         DATABASE_URL,
         PORT: String(BACKEND_PORT),

@@ -1,6 +1,3 @@
-const path = require("path");
-const fs = require("fs");
-
 // Em modo redis + worker process, publica snapshot da sessão no Redis pra que
 // o server (whatsapp-proxy) consiga ler status/QR sem RPC. Lazy-required pra não
 // criar conexão Redis em modo memory.
@@ -34,14 +31,9 @@ try {
   return;
 }
 
-const { default: makeWASocket, DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion } = baileys;
+const { default: makeWASocket, DisconnectReason, fetchLatestBaileysVersion } = baileys;
 
-const AUTH_DIR = path.join(__dirname, "..", "auth_states");
-if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
-
-// Auth state em Postgres (Fase 3) quando STORAGE_BACKEND=pg.
-// Em modo json (legado): usa useMultiFileAuthState (arquivos em auth_states/).
-const USE_PG_AUTH = (process.env.STORAGE_BACKEND || "json").toLowerCase() === "pg";
+// Auth state em Postgres (tabela baileys_auth via auth/baileys-pg.js).
 let _pgAuth = null;
 function pgAuth() {
   if (!_pgAuth) _pgAuth = require("../auth/baileys-pg");
@@ -54,11 +46,6 @@ const log = pino({ level: "warn" });
 const sessions = new Map();
 
 function key(userId, numberId) { return `${userId}::${numberId}`; }
-function dirFor(userId, numberId) {
-  const safeUser = String(userId).replace(/[^a-zA-Z0-9_-]/g, "_");
-  const safeNum = String(numberId).replace(/[^a-zA-Z0-9_-]/g, "_");
-  return path.join(AUTH_DIR, safeUser, safeNum);
-}
 
 function normalizePhone(p) { return String(p).replace(/\D/g, ""); }
 function jidFromPhone(phone) { return `${normalizePhone(phone)}@s.whatsapp.net`; }
@@ -66,16 +53,12 @@ function jidFromPhone(phone) { return `${normalizePhone(phone)}@s.whatsapp.net`;
 async function startSession(userId, numberId) {
   userId = String(userId);
   numberId = String(numberId);
-  const dir = dirFor(userId, numberId);
-  if (!USE_PG_AUTH && !fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
   const k = key(userId, numberId);
   const existing = sessions.get(k);
   if (existing?.sock && existing.status === "connected") return existing;
 
-  const { state, saveCreds } = USE_PG_AUTH
-    ? await pgAuth().useDatabaseAuthState(`${userId}::${numberId}`)
-    : await useMultiFileAuthState(dir);
+  const { state, saveCreds } = await pgAuth().useDatabaseAuthState(`${userId}::${numberId}`);
   const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: undefined }));
 
   const sock = makeWASocket({
@@ -130,11 +113,7 @@ async function startSession(userId, numberId) {
       publishStatus(session);
 
       if (loggedOut) {
-        if (USE_PG_AUTH) {
-          pgAuth().deleteSession(`${userId}::${numberId}`).catch(() => {});
-        } else {
-          try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
-        }
+        pgAuth().deleteSession(`${userId}::${numberId}`).catch(() => {});
         return;
       }
 
@@ -177,14 +156,7 @@ async function deleteSession(userId, numberId) {
     try { s.sock.end(); } catch {}
   }
   sessions.delete(k);
-  if (USE_PG_AUTH) {
-    try { await pgAuth().deleteSession(`${userId}::${numberId}`); } catch {}
-  } else {
-    const dir = dirFor(userId, numberId);
-    if (fs.existsSync(dir)) {
-      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
-    }
-  }
+  try { await pgAuth().deleteSession(`${userId}::${numberId}`); } catch {}
   if (PUBLISH_STATUS) {
     try { await sessionStatus().clear(userId, numberId); } catch {}
   }
@@ -260,37 +232,22 @@ async function getGroupMetadata(userId, numberId, jid) {
   return s.sock.groupMetadata(jid);
 }
 
-// Restaura sessões persistidas. Em modo PG: SELECT distinct sessionId no
-// baileys_auth. Em modo arquivo: varre auth_states/<userId>/<numberId>/.
+// Restaura sessões persistidas (SELECT distinct sessionId em baileys_auth).
 async function restoreSessions() {
   let pairs = [];
-  if (USE_PG_AUTH) {
-    try {
-      const { prisma } = require("../db");
-      const rows = await prisma().baileysAuth.findMany({
-        where: { keyType: "creds" },
-        select: { sessionId: true },
-      });
-      pairs = rows.map(r => {
-        const [userId, numberId] = r.sessionId.split("::");
-        return { userId, numberId };
-      }).filter(p => p.userId && p.numberId);
-    } catch (err) {
-      console.error(`[whatsapp] falha listando sessões PG: ${err.message}`);
-      return;
-    }
-  } else {
-    if (!fs.existsSync(AUTH_DIR)) return;
-    const userDirs = fs.readdirSync(AUTH_DIR, { withFileTypes: true })
-      .filter(d => d.isDirectory())
-      .map(d => d.name);
-    for (const userId of userDirs) {
-      const userPath = path.join(AUTH_DIR, userId);
-      const numbers = fs.readdirSync(userPath, { withFileTypes: true })
-        .filter(d => d.isDirectory())
-        .map(d => d.name);
-      for (const numberId of numbers) pairs.push({ userId, numberId });
-    }
+  try {
+    const { prisma } = require("../db");
+    const rows = await prisma().baileysAuth.findMany({
+      where: { keyType: "creds" },
+      select: { sessionId: true },
+    });
+    pairs = rows.map(r => {
+      const [userId, numberId] = r.sessionId.split("::");
+      return { userId, numberId };
+    }).filter(p => p.userId && p.numberId);
+  } catch (err) {
+    console.error(`[whatsapp] falha listando sessões PG: ${err.message}`);
+    return;
   }
 
   for (const { userId, numberId } of pairs) {
@@ -298,7 +255,7 @@ async function restoreSessions() {
       console.error(`[whatsapp] falha ao restaurar ${userId}/${numberId}:`, err.message);
     });
   }
-  if (pairs.length > 0) console.log(`[whatsapp] restaurando ${pairs.length} sessão(ões) (auth=${USE_PG_AUTH ? "pg" : "file"})...`);
+  if (pairs.length > 0) console.log(`[whatsapp] restaurando ${pairs.length} sessão(ões)...`);
 }
 
 function status() {

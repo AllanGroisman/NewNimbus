@@ -23,8 +23,6 @@ npx prisma generate
 npx prisma studio
 ```
 
-## Quando você só vai usar isso
+## Conexão
 
-Só importa se você está rodando em modo `STORAGE_BACKEND=pg`. Em modo `json` o Prisma nem é carregado.
-
-A conexão é configurada pela env `DATABASE_URL` (ver `.env.example` ou `start.bat`).
+A conexão é configurada pela env `DATABASE_URL` (ver `.env.example` ou `start.bat`). Em dev, o `docker compose up -d` sobe um Postgres em `localhost:5432` com a string já no formato esperado.

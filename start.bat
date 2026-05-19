@@ -20,13 +20,9 @@ echo.
 :: (separe por virgula pra adicionar mais)
 set "ADMIN_EMAILS=allangroisman@gmail.com"
 
-:: Backend storage: "json" (legado) ou "pg" (Postgres).
-:: Setup do PG ja feito (migration + dados migrados). Pra usar PG:
-::   1) Garanta que o Docker Desktop esta aberto
-::   2) docker compose up -d  (no diretorio raiz — sobe Postgres + Redis)
-::   3) Ja pode rodar este start.bat com STORAGE_BACKEND=pg
-:: Pra voltar pro JSON: troca pra "json" abaixo (dados ainda estao em backend/data/)
-set "STORAGE_BACKEND=pg"
+:: Backend usa Postgres via Prisma. Pre-requisitos:
+::   1) Docker Desktop aberto
+::   2) docker compose up -d  (sobe Postgres + Redis no diretorio raiz)
 set "DATABASE_URL=postgresql://nimbus:nimbus_dev@localhost:5432/nimbus?schema=public"
 
 :: Backend queue (Fase 2): "memory" (legado) ou "redis" (BullMQ).

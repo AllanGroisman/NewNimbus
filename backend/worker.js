@@ -1,7 +1,7 @@
 // worker.js — processo separado que owna Baileys + consome filas (Fase 2.1).
 //
 // Roda em paralelo ao server. Responsabilidades:
-//   - Restaurar sessões Baileys persistidas (auth_states/)
+//   - Restaurar sessões Baileys persistidas (tabela baileys_auth)
 //   - Publicar status das sessões no Redis (pra server ler via whatsapp-proxy)
 //   - Consumir queue "send-message" → processSendJob (envios agendados, com retry)
 //   - Consumir queue "control"      → handleControlJob (RPC do server)
@@ -22,7 +22,7 @@ const queue = require("./infra/queue");
 const wa = require("./whatsapp");          // resolve pra whatsapp/local
 const scheduler = require("./scheduler");
 const appConfig = require("./config");
-const { backendName } = require("./db");
+const auth = require("./auth");
 const logger = require("./infra/logger");
 const sentry = require("./infra/sentry");
 const heartbeat = require("./infra/worker-heartbeat");
@@ -74,7 +74,7 @@ async function handleControlJob(job) {
 }
 
 async function main() {
-  console.log(`[worker] iniciando (storage=${backendName()} queue=${queue.backendName()})`);
+  console.log(`[worker] iniciando (queue=${queue.backendName()})`);
 
   if (!queue.isRedis()) {
     console.error("[worker] erro: QUEUE_BACKEND deve ser 'redis'. Em memory mode o server faz tudo. Saindo.");
@@ -82,18 +82,19 @@ async function main() {
   }
 
   await appConfig.warmup();
+  await auth.warmup();
   await queue.init({ producer: false, consumer: true });
 
-  // Restaura sessões Baileys persistidas (auth_states/ ou tabela baileys_auth
-  // dependendo de STORAGE_BACKEND). Eventos connection.update vão publicar
-  // status no Redis automaticamente (ver whatsapp-local.js → publishStatus).
+  // Restaura sessões Baileys persistidas (tabela baileys_auth). Eventos
+  // connection.update vão publicar status no Redis automaticamente
+  // (ver whatsapp-local.js → publishStatus).
   await wa.restoreSessions();
 
   queue.setSendHandler(scheduler.processSendJob);
   queue.setControlHandler(handleControlJob);
 
   // Heartbeat — server lê pra detectar worker morto
-  await heartbeat.start({ extras: { storage: backendName(), queue: queue.backendName() } });
+  await heartbeat.start({ extras: { queue: queue.backendName() } });
 
   console.log("[worker] pronto. Aguardando jobs...");
 

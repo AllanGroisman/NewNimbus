@@ -5,7 +5,7 @@ Tudo que fala com o WhatsApp via [Baileys](https://github.com/WhiskeySockets/Bai
 ## Arquivos
 
 - **`index.js`** — fachada. Decide entre `local.js` (Baileys de verdade no processo) e `proxy.js` (espelho que conversa via fila Redis com o `worker`).
-- **`local.js`** — implementação real. Mantém um mapa de sessões em memória, gera QR como data URL, escuta eventos do Baileys, reconecta automaticamente, persiste a sessão em arquivo (`backend/auth_states/`) ou no Postgres.
+- **`local.js`** — implementação real. Mantém um mapa de sessões em memória, gera QR como data URL, escuta eventos do Baileys, reconecta automaticamente, persiste a sessão na tabela `baileys_auth` (Postgres) via `auth/baileys-pg.js`.
 - **`proxy.js`** — usado pelo `server.js` quando `QUEUE_BACKEND=redis` (modo 2 processos). O `server` não tem Baileys; em vez disso, manda comandos pro `worker.js` pela fila `control` (BullMQ RPC) e lê status/QR de um cache no Redis.
 
 ## Como a fachada decide
@@ -24,11 +24,8 @@ Em modo `redis`, só **um processo** carrega o Baileys: o `worker`. O `server` s
 
 Cada sessão é a chave `${userId}::${numberId}` num `Map` em memória. Status pode ser: `connecting`, `awaiting_qr`, `connected`, `disconnected`, `logged_out`.
 
-Quando a sessão desconecta sem ser logout, o `local.js` agenda um restart automático com backoff (1.5s × tentativa, máx 30s). Em logout, ele apaga as credenciais (arquivo ou linha do PG) — usuário vai precisar escanear o QR de novo.
+Quando a sessão desconecta sem ser logout, o `local.js` agenda um restart automático com backoff (1.5s × tentativa, máx 30s). Em logout, ele apaga as credenciais (linha do PG) — usuário vai precisar escanear o QR de novo.
 
-## Onde os arquivos da sessão ficam
+## Onde as credenciais ficam
 
-- Modo `STORAGE_BACKEND=json`: `backend/auth_states/<userId>/<numberId>/`. Cada sessão é uma pasta com vários `.json` que o Baileys gerencia.
-- Modo `STORAGE_BACKEND=pg`: tabela `baileys_auth` (ver `backend/auth/baileys-pg.js`).
-
-Pra migrar de arquivo pra Postgres: `npm run migrate-auth` na pasta `backend/`.
+Tabela `baileys_auth` no Postgres (ver `backend/auth/baileys-pg.js`). Trocar de máquina não perde sessão.

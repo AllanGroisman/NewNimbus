@@ -1,71 +1,77 @@
 const crypto = require("crypto");
-const appConfig = require("../config");
+const store = require("./affiliate-store");
 
-// Config persistida via app-config (key "affiliate"). Schema:
-// { ml: { tag, cookie, updatedAt }, amazon: { tag, updatedAt }, shopee: { appId, appSecret, updatedAt } }
-// Lê também o schema antigo flat { tag, cookie, updatedAt } como ML.
+// Config persistida POR USUÁRIO via affiliate-store. Schema do `raw`:
+//   { ml: { tag, cookie, updatedAt },
+//     amazon: { tag, updatedAt },
+//     shopee: { appId, appSecret, updatedAt } }
+// Env vars (ML_AFFILIATE_TAG, AMAZON_AFFILIATE_TAG, SHOPEE_AFFILIATE_APP_ID, …)
+// continuam funcionando como override GLOBAL — útil em dev ou pra fallback do
+// admin-scraper (que roda fora de qualquer userId).
 
 const ML_ENDPOINT = "https://www.mercadolivre.com.br/affiliate-program/api/v2/affiliates/createLink";
 const SHOPEE_ENDPOINT = "https://open-api.affiliate.shopee.com.br/graphql";
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias
-const mlCache = new Map();      // linkOriginal → { shortUrl, ts }
-const amazonCache = new Map();  // linkOriginal → { shortUrl, ts }
-const shopeeCache = new Map();  // linkOriginal → { shortUrl, ts }
 
-let mlLastFailureAt = null;
-let mlLastFailureReason = null;
-let mlLastSuccessAt = null;
+// Caches per-user. Chave externa = userId, interna = link → { shortUrl, ts }.
+const mlCache = new Map();
+const amazonCache = new Map();
+const shopeeCache = new Map();
 
-let amazonLastFailureAt = null;
-let amazonLastFailureReason = null;
-let amazonLastSuccessAt = null;
+// Telemetria per-user (last success/failure por loja).
+// Estrutura: stats[userId] = { ml: {ok, fail, reason}, amazon: {...}, shopee: {...} }
+const stats = new Map();
 
-let shopeeLastFailureAt = null;
-let shopeeLastFailureReason = null;
-let shopeeLastSuccessAt = null;
-
-// ────────────────────────────────────────────────────────────────────────
-// Storage
-// ────────────────────────────────────────────────────────────────────────
-
-function readRaw() {
-  return appConfig.get("affiliate") || {};
+function ensureStats(userId) {
+  let s = stats.get(userId);
+  if (!s) {
+    s = {
+      ml:     { lastSuccessAt: null, lastFailureAt: null, lastFailureReason: null },
+      amazon: { lastSuccessAt: null, lastFailureAt: null, lastFailureReason: null },
+      shopee: { lastSuccessAt: null, lastFailureAt: null, lastFailureReason: null },
+    };
+    stats.set(userId, s);
+  }
+  return s;
 }
 
-function writeRaw(obj) {
-  appConfig.set("affiliate", obj, { mode: 0o600 });
+function getCache(map, userId) {
+  let m = map.get(userId);
+  if (!m) { m = new Map(); map.set(userId, m); }
+  return m;
 }
 
-function readMLConfig() {
+// ────────────────────────────────────────────────────────────────────────
+// Storage helpers
+// ────────────────────────────────────────────────────────────────────────
+
+function readMLConfig(userId) {
   if (process.env.ML_AFFILIATE_TAG && process.env.ML_AFFILIATE_COOKIE) {
     return { tag: process.env.ML_AFFILIATE_TAG.trim(), cookie: process.env.ML_AFFILIATE_COOKIE, source: "env", updatedAt: null };
   }
-  const raw = readRaw();
-  // Schema novo
+  if (!userId) return { tag: null, cookie: null, source: null, updatedAt: null };
+  const raw = store.getRaw(userId);
   if (raw.ml && (raw.ml.tag || raw.ml.cookie)) {
     return { tag: raw.ml.tag || null, cookie: raw.ml.cookie || null, source: "file", updatedAt: raw.ml.updatedAt || null };
-  }
-  // Schema antigo (flat) — migra mentalmente como ML
-  if (raw.tag || raw.cookie) {
-    return { tag: raw.tag || null, cookie: raw.cookie || null, source: "file", updatedAt: raw.updatedAt || null };
   }
   return { tag: null, cookie: null, source: null, updatedAt: null };
 }
 
-function readAmazonConfig() {
+function readAmazonConfig(userId) {
   if (process.env.AMAZON_AFFILIATE_TAG) {
     return { tag: process.env.AMAZON_AFFILIATE_TAG.trim(), source: "env", updatedAt: null };
   }
-  const raw = readRaw();
+  if (!userId) return { tag: null, source: null, updatedAt: null };
+  const raw = store.getRaw(userId);
   if (raw.amazon && raw.amazon.tag) {
     return { tag: raw.amazon.tag, source: "file", updatedAt: raw.amazon.updatedAt || null };
   }
   return { tag: null, source: null, updatedAt: null };
 }
 
-function readShopeeConfig() {
+function readShopeeConfig(userId) {
   if (process.env.SHOPEE_AFFILIATE_APP_ID && process.env.SHOPEE_AFFILIATE_APP_SECRET) {
     return {
       appId: process.env.SHOPEE_AFFILIATE_APP_ID.trim(),
@@ -74,7 +80,8 @@ function readShopeeConfig() {
       updatedAt: null,
     };
   }
-  const raw = readRaw();
+  if (!userId) return { appId: null, appSecret: null, source: null, updatedAt: null };
+  const raw = store.getRaw(userId);
   if (raw.shopee && (raw.shopee.appId || raw.shopee.appSecret)) {
     return {
       appId: raw.shopee.appId || null,
@@ -86,28 +93,29 @@ function readShopeeConfig() {
   return { appId: null, appSecret: null, source: null, updatedAt: null };
 }
 
-function writeMLConfig({ tag, cookie }) {
+function writeMLConfig(userId, { tag, cookie }) {
+  if (!userId) throw new Error("writeMLConfig exige userId");
   if (process.env.ML_AFFILIATE_TAG || process.env.ML_AFFILIATE_COOKIE) {
     throw new Error("Configuração ML vem de variável de ambiente — desligue ML_AFFILIATE_TAG/ML_AFFILIATE_COOKIE pra usar config dinâmica.");
   }
-  const raw = readRaw();
-  const cur = readMLConfig();
+  const raw = { ...(store.getRaw(userId) || {}) };
+  const cur = readMLConfig(userId);
   const next = {
     tag: tag !== undefined ? String(tag || "").trim() : cur.tag,
     cookie: cookie !== undefined ? String(cookie || "").trim() : cur.cookie,
     updatedAt: new Date().toISOString(),
   };
-  // Migra schema antigo: remove campos flat
-  delete raw.tag; delete raw.cookie; delete raw.updatedAt;
   raw.ml = next;
-  writeRaw(raw);
-  mlCache.clear();
-  mlLastFailureAt = null;
-  mlLastFailureReason = null;
+  store.setRaw(userId, raw, { mode: 0o600 });
+  getCache(mlCache, userId).clear();
+  const s = ensureStats(userId).ml;
+  s.lastFailureAt = null;
+  s.lastFailureReason = null;
   return next;
 }
 
-function writeAmazonConfig({ tag }) {
+function writeAmazonConfig(userId, { tag }) {
+  if (!userId) throw new Error("writeAmazonConfig exige userId");
   if (process.env.AMAZON_AFFILIATE_TAG) {
     throw new Error("Configuração Amazon vem de variável de ambiente — desligue AMAZON_AFFILIATE_TAG pra usar config dinâmica.");
   }
@@ -115,36 +123,42 @@ function writeAmazonConfig({ tag }) {
   if (cleanTag && !/^[a-zA-Z0-9_-]{2,30}$/.test(cleanTag)) {
     throw new Error("Tag inválida — use letras, números, hífen ou sublinhado (ex: pedroguterres-20)");
   }
-  const raw = readRaw();
+  const raw = { ...(store.getRaw(userId) || {}) };
   raw.amazon = { tag: cleanTag || null, updatedAt: new Date().toISOString() };
-  writeRaw(raw);
-  amazonCache.clear();
-  amazonLastFailureAt = null;
-  amazonLastFailureReason = null;
+  store.setRaw(userId, raw, { mode: 0o600 });
+  getCache(amazonCache, userId).clear();
+  const s = ensureStats(userId).amazon;
+  s.lastFailureAt = null;
+  s.lastFailureReason = null;
   return raw.amazon;
 }
 
-function clearMLConfig() {
-  const raw = readRaw();
-  delete raw.tag; delete raw.cookie; delete raw.updatedAt; delete raw.ml;
-  if (Object.keys(raw).length) writeRaw(raw);
-  else appConfig.del("affiliate");
-  mlCache.clear();
-  mlLastFailureAt = null;
-  mlLastFailureReason = null;
+function clearMLConfig(userId) {
+  if (!userId) return;
+  const raw = { ...(store.getRaw(userId) || {}) };
+  delete raw.ml;
+  if (Object.keys(raw).length) store.setRaw(userId, raw, { mode: 0o600 });
+  else store.clear(userId);
+  getCache(mlCache, userId).clear();
+  const s = ensureStats(userId).ml;
+  s.lastFailureAt = null;
+  s.lastFailureReason = null;
 }
 
-function clearAmazonConfig() {
-  const raw = readRaw();
+function clearAmazonConfig(userId) {
+  if (!userId) return;
+  const raw = { ...(store.getRaw(userId) || {}) };
   delete raw.amazon;
-  if (Object.keys(raw).length) writeRaw(raw);
-  else appConfig.del("affiliate");
-  amazonCache.clear();
-  amazonLastFailureAt = null;
-  amazonLastFailureReason = null;
+  if (Object.keys(raw).length) store.setRaw(userId, raw, { mode: 0o600 });
+  else store.clear(userId);
+  getCache(amazonCache, userId).clear();
+  const s = ensureStats(userId).amazon;
+  s.lastFailureAt = null;
+  s.lastFailureReason = null;
 }
 
-function writeShopeeConfig({ appId, appSecret }) {
+function writeShopeeConfig(userId, { appId, appSecret }) {
+  if (!userId) throw new Error("writeShopeeConfig exige userId");
   if (process.env.SHOPEE_AFFILIATE_APP_ID || process.env.SHOPEE_AFFILIATE_APP_SECRET) {
     throw new Error("Configuração Shopee vem de variável de ambiente — desligue SHOPEE_AFFILIATE_APP_ID/SHOPEE_AFFILIATE_APP_SECRET pra usar config dinâmica.");
   }
@@ -156,38 +170,47 @@ function writeShopeeConfig({ appId, appSecret }) {
   if (cleanSecret && cleanSecret.length < 16) {
     throw new Error("App Secret muito curto — confira o valor copiado do painel.");
   }
-  const raw = readRaw();
-  const cur = readShopeeConfig();
+  const raw = { ...(store.getRaw(userId) || {}) };
+  const cur = readShopeeConfig(userId);
   raw.shopee = {
     appId: cleanId || cur.appId || null,
     appSecret: cleanSecret || cur.appSecret || null,
     updatedAt: new Date().toISOString(),
   };
-  writeRaw(raw);
-  shopeeCache.clear();
-  shopeeLastFailureAt = null;
-  shopeeLastFailureReason = null;
+  store.setRaw(userId, raw, { mode: 0o600 });
+  getCache(shopeeCache, userId).clear();
+  const s = ensureStats(userId).shopee;
+  s.lastFailureAt = null;
+  s.lastFailureReason = null;
   return raw.shopee;
 }
 
-function clearShopeeConfig() {
-  const raw = readRaw();
+function clearShopeeConfig(userId) {
+  if (!userId) return;
+  const raw = { ...(store.getRaw(userId) || {}) };
   delete raw.shopee;
-  if (Object.keys(raw).length) writeRaw(raw);
-  else appConfig.del("affiliate");
-  shopeeCache.clear();
-  shopeeLastFailureAt = null;
-  shopeeLastFailureReason = null;
+  if (Object.keys(raw).length) store.setRaw(userId, raw, { mode: 0o600 });
+  else store.clear(userId);
+  getCache(shopeeCache, userId).clear();
+  const s = ensureStats(userId).shopee;
+  s.lastFailureAt = null;
+  s.lastFailureReason = null;
 }
 
 // ────────────────────────────────────────────────────────────────────────
 // Status
 // ────────────────────────────────────────────────────────────────────────
 
-function status() {
-  const ml = readMLConfig();
-  const amazon = readAmazonConfig();
-  const shopee = readShopeeConfig();
+function status(userId) {
+  const ml = readMLConfig(userId);
+  const amazon = readAmazonConfig(userId);
+  const shopee = readShopeeConfig(userId);
+  const s = userId ? ensureStats(userId) : {
+    ml: { lastSuccessAt: null, lastFailureAt: null, lastFailureReason: null },
+    amazon: { lastSuccessAt: null, lastFailureAt: null, lastFailureReason: null },
+    shopee: { lastSuccessAt: null, lastFailureAt: null, lastFailureReason: null },
+  };
+  const mlHealthy = !!(ml.tag && ml.cookie) && (!s.ml.lastFailureAt || (s.ml.lastSuccessAt && new Date(s.ml.lastSuccessAt) > new Date(s.ml.lastFailureAt)));
   return {
     // Compat com UI antiga: campos top-level são do ML
     configured: !!(ml.tag && ml.cookie),
@@ -196,11 +219,10 @@ function status() {
     cookiePreview: ml.cookie ? ml.cookie.slice(0, 30) + "…" : null,
     source: ml.source,
     updatedAt: ml.updatedAt,
-    lastSuccessAt: mlLastSuccessAt,
-    lastFailureAt: mlLastFailureAt,
-    lastFailureReason: mlLastFailureReason,
-    healthy: !!(ml.tag && ml.cookie) && (!mlLastFailureAt || (mlLastSuccessAt && new Date(mlLastSuccessAt) > new Date(mlLastFailureAt))),
-    // Sub-objetos novos (UI nova lê daqui)
+    lastSuccessAt: s.ml.lastSuccessAt,
+    lastFailureAt: s.ml.lastFailureAt,
+    lastFailureReason: s.ml.lastFailureReason,
+    healthy: mlHealthy,
     ml: {
       configured: !!(ml.tag && ml.cookie),
       tag: ml.tag || null,
@@ -208,32 +230,31 @@ function status() {
       cookiePreview: ml.cookie ? ml.cookie.slice(0, 30) + "…" : null,
       source: ml.source,
       updatedAt: ml.updatedAt,
-      lastSuccessAt: mlLastSuccessAt,
-      lastFailureAt: mlLastFailureAt,
-      lastFailureReason: mlLastFailureReason,
-      healthy: !!(ml.tag && ml.cookie) && (!mlLastFailureAt || (mlLastSuccessAt && new Date(mlLastSuccessAt) > new Date(mlLastFailureAt))),
+      lastSuccessAt: s.ml.lastSuccessAt,
+      lastFailureAt: s.ml.lastFailureAt,
+      lastFailureReason: s.ml.lastFailureReason,
+      healthy: mlHealthy,
     },
     amazon: {
       configured: !!amazon.tag,
       tag: amazon.tag || null,
       source: amazon.source,
       updatedAt: amazon.updatedAt,
-      lastSuccessAt: amazonLastSuccessAt,
-      lastFailureAt: amazonLastFailureAt,
-      lastFailureReason: amazonLastFailureReason,
+      lastSuccessAt: s.amazon.lastSuccessAt,
+      lastFailureAt: s.amazon.lastFailureAt,
+      lastFailureReason: s.amazon.lastFailureReason,
     },
     shopee: {
       configured: !!(shopee.appId && shopee.appSecret),
       appId: shopee.appId || null,
-      // Mostra só preview do secret pra UI confirmar sem expor o valor inteiro
       appSecretLength: shopee.appSecret ? shopee.appSecret.length : 0,
       appSecretPreview: shopee.appSecret ? shopee.appSecret.slice(0, 6) + "…" : null,
       source: shopee.source,
       updatedAt: shopee.updatedAt,
-      lastSuccessAt: shopeeLastSuccessAt,
-      lastFailureAt: shopeeLastFailureAt,
-      lastFailureReason: shopeeLastFailureReason,
-      healthy: !!(shopee.appId && shopee.appSecret) && (!shopeeLastFailureAt || (shopeeLastSuccessAt && new Date(shopeeLastSuccessAt) > new Date(shopeeLastFailureAt))),
+      lastSuccessAt: s.shopee.lastSuccessAt,
+      lastFailureAt: s.shopee.lastFailureAt,
+      lastFailureReason: s.shopee.lastFailureReason,
+      healthy: !!(shopee.appId && shopee.appSecret) && (!s.shopee.lastFailureAt || (s.shopee.lastSuccessAt && new Date(s.shopee.lastSuccessAt) > new Date(s.shopee.lastFailureAt))),
     },
   };
 }
@@ -242,14 +263,16 @@ function status() {
 // Mercado Livre
 // ────────────────────────────────────────────────────────────────────────
 
-async function gerarLinkAfiliadoML(linkOriginal) {
+async function gerarLinkAfiliadoML(userId, linkOriginal) {
   if (!linkOriginal || typeof linkOriginal !== "string") return null;
-  const { tag, cookie } = readMLConfig();
+  const { tag, cookie } = readMLConfig(userId);
   if (!tag || !cookie) return null;
 
-  const cached = mlCache.get(linkOriginal);
+  const cache = getCache(mlCache, userId);
+  const cached = cache.get(linkOriginal);
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.shortUrl;
 
+  const s = ensureStats(userId).ml;
   try {
     const res = await fetch(ML_ENDPOINT, {
       method: "POST",
@@ -264,30 +287,30 @@ async function gerarLinkAfiliadoML(linkOriginal) {
     });
 
     if (!res.ok) {
-      mlLastFailureAt = new Date().toISOString();
-      mlLastFailureReason = `HTTP ${res.status} — cookie pode ter expirado`;
-      console.error(`[afiliados ML] ${mlLastFailureReason}`);
+      s.lastFailureAt = new Date().toISOString();
+      s.lastFailureReason = `HTTP ${res.status} — cookie pode ter expirado`;
+      console.error(`[afiliados ML] ${s.lastFailureReason}`);
       return null;
     }
 
     const data = await res.json();
     const short = data?.urls?.[0]?.short_url || null;
     if (!short) {
-      mlLastSuccessAt = new Date().toISOString();
+      s.lastSuccessAt = new Date().toISOString();
       const apiMsg = data?.urls?.[0]?.error || data?.message || data?.error || null;
-      mlLastFailureReason = apiMsg
+      s.lastFailureReason = apiMsg
         ? `Link inválido: ${String(apiMsg).slice(0, 120)}`
         : "Link inválido — use uma URL de produto/oferta do Mercado Livre (a home não funciona)";
-      console.warn(`[afiliados ML] ${mlLastFailureReason}: ${JSON.stringify(data).slice(0, 200)}`);
+      console.warn(`[afiliados ML] ${s.lastFailureReason}: ${JSON.stringify(data).slice(0, 200)}`);
       return null;
     }
-    mlCache.set(linkOriginal, { shortUrl: short, ts: Date.now() });
-    mlLastSuccessAt = new Date().toISOString();
-    mlLastFailureReason = null;
+    cache.set(linkOriginal, { shortUrl: short, ts: Date.now() });
+    s.lastSuccessAt = new Date().toISOString();
+    s.lastFailureReason = null;
     return short;
   } catch (err) {
-    mlLastFailureAt = new Date().toISOString();
-    mlLastFailureReason = err.message;
+    s.lastFailureAt = new Date().toISOString();
+    s.lastFailureReason = err.message;
     console.error("[afiliados ML] erro:", err.message);
     return null;
   }
@@ -297,8 +320,6 @@ async function gerarLinkAfiliadoML(linkOriginal) {
 // Amazon BR
 // ────────────────────────────────────────────────────────────────────────
 
-// Extrai ASIN (10 caracteres alfanuméricos) de uma URL da Amazon BR.
-// Cobre os principais padrões de URL: /dp/, /gp/product/, /product/, /-/pt/dp/, /exec/obidos/asin/
 function extractASIN(url) {
   if (!url || typeof url !== "string") return null;
   const decoded = (() => { try { return decodeURIComponent(url); } catch { return url; } })();
@@ -318,27 +339,27 @@ function extractASIN(url) {
   return null;
 }
 
-// Gera link curto de afiliado Amazon: https://www.amazon.com.br/dp/ASIN?tag=TAG
-// Não chama API externa — só monta a URL. Retorna null se não tem tag ou ASIN.
-function gerarLinkAfiliadoAmazon(linkOriginal) {
+function gerarLinkAfiliadoAmazon(userId, linkOriginal) {
   if (!linkOriginal || typeof linkOriginal !== "string") return null;
-  const { tag } = readAmazonConfig();
+  const { tag } = readAmazonConfig(userId);
   if (!tag) return null;
 
-  const cached = amazonCache.get(linkOriginal);
+  const cache = getCache(amazonCache, userId);
+  const cached = cache.get(linkOriginal);
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.shortUrl;
 
+  const s = ensureStats(userId).amazon;
   const asin = extractASIN(linkOriginal);
   if (!asin) {
-    amazonLastFailureAt = new Date().toISOString();
-    amazonLastFailureReason = "Não foi possível extrair o ASIN — URL não é de produto Amazon BR válida";
+    s.lastFailureAt = new Date().toISOString();
+    s.lastFailureReason = "Não foi possível extrair o ASIN — URL não é de produto Amazon BR válida";
     return null;
   }
 
   const short = `https://www.amazon.com.br/dp/${asin}?tag=${encodeURIComponent(tag)}`;
-  amazonCache.set(linkOriginal, { shortUrl: short, ts: Date.now() });
-  amazonLastSuccessAt = new Date().toISOString();
-  amazonLastFailureReason = null;
+  cache.set(linkOriginal, { shortUrl: short, ts: Date.now() });
+  s.lastSuccessAt = new Date().toISOString();
+  s.lastFailureReason = null;
   return short;
 }
 
@@ -346,42 +367,34 @@ function gerarLinkAfiliadoAmazon(linkOriginal) {
 // Shopee (Affiliate Open API — GraphQL)
 // ────────────────────────────────────────────────────────────────────────
 
-// Assina o request da Shopee. Pura — sem rede. Útil pra testar.
-//   header = sha256(appId + timestamp + payload + appSecret)
-//   payload é a string JSON enviada no body, EXATAMENTE como vai pra rede.
-// Retorna a string completa pra header Authorization.
 function signShopeeRequest({ appId, appSecret, timestamp, payload }) {
   const base = String(appId) + String(timestamp) + String(payload) + String(appSecret);
   const signature = crypto.createHash("sha256").update(base).digest("hex");
   return `SHA256 Credential=${appId}, Timestamp=${timestamp}, Signature=${signature}`;
 }
 
-// Monta a mutation GraphQL pra gerar short link.
-// subIds são opcionais (tracking) — passamos vazios pra deixar o link genérico.
 function buildShopeeShortLinkPayload(originUrl) {
-  // Escapa aspas duplas e barras pra ficar dentro da string GraphQL
   const safe = String(originUrl).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   const query = `mutation{generateShortLink(input:{originUrl:"${safe}",subIds:["","","","",""]}){shortLink}}`;
   return JSON.stringify({ query });
 }
 
-// Monta query GraphQL pro productOfferV2 — usada pra popular o catálogo.
-// sortType: 2=mais vendidos, 3=maior comissão, 4=maior desconto, 0=mais novos.
-// Default 4 (maior desconto) porque é o que faz sentido pra um app de ofertas.
 function buildShopeeProductOfferPayload({ keyword, page = 1, limit = 50, sortType = 4 }) {
   const safe = String(keyword || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   const query = `query{productOfferV2(keyword:"${safe}",sortType:${Number(sortType)},page:${Number(page)},limit:${Number(limit)}){nodes{itemId shopId productName productLink offerLink imageUrl price priceMin priceMax priceDiscountRate sales commissionRate ratingStar productCatIds} pageInfo{page limit hasNextPage}}}`;
   return JSON.stringify({ query });
 }
 
-async function gerarLinkAfiliadoShopee(linkOriginal) {
+async function gerarLinkAfiliadoShopee(userId, linkOriginal) {
   if (!linkOriginal || typeof linkOriginal !== "string") return null;
-  const { appId, appSecret } = readShopeeConfig();
+  const { appId, appSecret } = readShopeeConfig(userId);
   if (!appId || !appSecret) return null;
 
-  const cached = shopeeCache.get(linkOriginal);
+  const cache = getCache(shopeeCache, userId);
+  const cached = cache.get(linkOriginal);
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.shortUrl;
 
+  const s = ensureStats(userId).shopee;
   const timestamp = Math.floor(Date.now() / 1000);
   const payload = buildShopeeShortLinkPayload(linkOriginal);
   const authHeader = signShopeeRequest({ appId, appSecret, timestamp, payload });
@@ -398,54 +411,66 @@ async function gerarLinkAfiliadoShopee(linkOriginal) {
     });
 
     if (!res.ok) {
-      shopeeLastFailureAt = new Date().toISOString();
-      shopeeLastFailureReason = `HTTP ${res.status} — confira App ID/Secret no painel da Shopee`;
-      console.error(`[afiliados Shopee] ${shopeeLastFailureReason}`);
+      s.lastFailureAt = new Date().toISOString();
+      s.lastFailureReason = `HTTP ${res.status} — confira App ID/Secret no painel da Shopee`;
+      console.error(`[afiliados Shopee] ${s.lastFailureReason}`);
       return null;
     }
 
     const data = await res.json();
     if (data?.errors?.length) {
       const msg = data.errors[0]?.message || "erro desconhecido";
-      shopeeLastFailureAt = new Date().toISOString();
-      shopeeLastFailureReason = `API: ${String(msg).slice(0, 120)}`;
-      console.warn(`[afiliados Shopee] ${shopeeLastFailureReason}`);
+      s.lastFailureAt = new Date().toISOString();
+      s.lastFailureReason = `API: ${String(msg).slice(0, 120)}`;
+      console.warn(`[afiliados Shopee] ${s.lastFailureReason}`);
       return null;
     }
     const short = data?.data?.generateShortLink?.shortLink || null;
     if (!short) {
-      shopeeLastFailureAt = new Date().toISOString();
-      shopeeLastFailureReason = "Resposta sem shortLink — URL pode não ser de produto Shopee válido";
-      console.warn(`[afiliados Shopee] ${shopeeLastFailureReason}: ${JSON.stringify(data).slice(0, 200)}`);
+      s.lastFailureAt = new Date().toISOString();
+      s.lastFailureReason = "Resposta sem shortLink — URL pode não ser de produto Shopee válido";
+      console.warn(`[afiliados Shopee] ${s.lastFailureReason}: ${JSON.stringify(data).slice(0, 200)}`);
       return null;
     }
-    shopeeCache.set(linkOriginal, { shortUrl: short, ts: Date.now() });
-    shopeeLastSuccessAt = new Date().toISOString();
-    shopeeLastFailureReason = null;
+    cache.set(linkOriginal, { shortUrl: short, ts: Date.now() });
+    s.lastSuccessAt = new Date().toISOString();
+    s.lastFailureReason = null;
     return short;
   } catch (err) {
-    shopeeLastFailureAt = new Date().toISOString();
-    shopeeLastFailureReason = err.message;
+    s.lastFailureAt = new Date().toISOString();
+    s.lastFailureReason = err.message;
     console.error("[afiliados Shopee] erro:", err.message);
     return null;
   }
 }
 
-// Busca ofertas da Shopee via productOfferV2. Retorna array crus de nodes da API.
-// Não mapeia pro formato do Nimbus — quem usa (scraper.js) faz isso.
-// Devolve [] em qualquer erro (sem credenciais, HTTP fail, GraphQL error).
-// Trata 1 página por chamada — paginação fica com o caller.
-async function fetchShopeeOffers({ keyword, page = 1, limit = 50, sortType = 4 } = {}) {
+// Resolve credenciais Shopee pro admin-scraper (que roda fora de qualquer userId).
+// Prioridade: env vars → primeiro user com config válida. Retorna null se nada.
+function getScraperShopeeCreds() {
+  if (process.env.SHOPEE_AFFILIATE_APP_ID && process.env.SHOPEE_AFFILIATE_APP_SECRET) {
+    return {
+      appId: process.env.SHOPEE_AFFILIATE_APP_ID.trim(),
+      appSecret: process.env.SHOPEE_AFFILIATE_APP_SECRET,
+    };
+  }
+  const list = store.listShopeeConfigs();
+  if (list.length) return { appId: list[0].appId, appSecret: list[0].appSecret };
+  return null;
+}
+
+// Busca ofertas Shopee — usada pelo admin-scraper. Recebe { appId, appSecret }
+// explicitamente (ou pega de getScraperShopeeCreds se ausente). Devolve { nodes, pageInfo }.
+async function fetchShopeeOffers({ keyword, page = 1, limit = 50, sortType = 4, creds } = {}) {
   if (!keyword) return { nodes: [], pageInfo: null };
-  const { appId, appSecret } = readShopeeConfig();
-  if (!appId || !appSecret) {
-    console.warn("[afiliados Shopee] fetchShopeeOffers: sem App ID/Secret — pulando");
+  const c = creds || getScraperShopeeCreds();
+  if (!c || !c.appId || !c.appSecret) {
+    console.warn("[afiliados Shopee] fetchShopeeOffers: sem App ID/Secret (env ou usuário configurado) — pulando");
     return { nodes: [], pageInfo: null };
   }
 
   const timestamp = Math.floor(Date.now() / 1000);
   const payload = buildShopeeProductOfferPayload({ keyword, page, limit, sortType });
-  const authHeader = signShopeeRequest({ appId, appSecret, timestamp, payload });
+  const authHeader = signShopeeRequest({ appId: c.appId, appSecret: c.appSecret, timestamp, payload });
 
   try {
     const res = await fetch(SHOPEE_ENDPOINT, {
@@ -459,31 +484,31 @@ async function fetchShopeeOffers({ keyword, page = 1, limit = 50, sortType = 4 }
     });
 
     if (!res.ok) {
-      shopeeLastFailureAt = new Date().toISOString();
-      shopeeLastFailureReason = `HTTP ${res.status} ao buscar ofertas`;
-      console.error(`[afiliados Shopee] ${shopeeLastFailureReason}`);
+      console.error(`[afiliados Shopee] fetchShopeeOffers HTTP ${res.status}`);
       return { nodes: [], pageInfo: null };
     }
 
     const data = await res.json();
     if (data?.errors?.length) {
       const msg = data.errors[0]?.message || "erro desconhecido";
-      shopeeLastFailureAt = new Date().toISOString();
-      shopeeLastFailureReason = `productOfferV2: ${String(msg).slice(0, 160)}`;
-      console.warn(`[afiliados Shopee] ${shopeeLastFailureReason}`);
+      console.warn(`[afiliados Shopee] productOfferV2: ${String(msg).slice(0, 160)}`);
       return { nodes: [], pageInfo: null };
     }
     const result = data?.data?.productOfferV2 || {};
     const nodes = Array.isArray(result.nodes) ? result.nodes : [];
-    shopeeLastSuccessAt = new Date().toISOString();
-    shopeeLastFailureReason = null;
     return { nodes, pageInfo: result.pageInfo || null };
   } catch (err) {
-    shopeeLastFailureAt = new Date().toISOString();
-    shopeeLastFailureReason = err.message;
     console.error("[afiliados Shopee] fetchShopeeOffers erro:", err.message);
     return { nodes: [], pageInfo: null };
   }
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Warmup (chamar no boot — popula cache do store)
+// ────────────────────────────────────────────────────────────────────────
+
+async function warmup() {
+  await store.warmup();
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -508,7 +533,8 @@ module.exports = {
   readShopeeConfig,
   writeShopeeConfig,
   clearShopeeConfig,
-  // Exportados pra testes unitários (puros, sem rede)
+  getScraperShopeeCreds,
+  // Puros — testes
   signShopeeRequest,
   buildShopeeShortLinkPayload,
   buildShopeeProductOfferPayload,
@@ -517,4 +543,5 @@ module.exports = {
   writeConfig: writeMLConfig,
   clearConfig: clearMLConfig,
   status,
+  warmup,
 };

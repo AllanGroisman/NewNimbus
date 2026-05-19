@@ -2,7 +2,7 @@
 // Verifica: assinatura HMAC-SHA256 e montagem do payload GraphQL.
 
 import "../helpers/env.js";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import path from "path";
 import crypto from "crypto";
 import { fileURLToPath } from "url";
@@ -12,6 +12,17 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 const affiliate = require(path.resolve(__dirname, "..", "..", "backend", "scraping", "affiliate.js"));
+const { prisma } = require(path.resolve(__dirname, "..", "..", "backend", "db.js"));
+
+const TEST_USER_ID = "test-user-shopee";
+
+beforeEach(async () => {
+  await prisma().user.upsert({
+    where: { id: TEST_USER_ID },
+    create: { id: TEST_USER_ID, email: `${TEST_USER_ID}@test.local`, name: "Unit", passwordHash: "x" },
+    update: {},
+  });
+});
 
 describe("signShopeeRequest", () => {
   it("monta o header no formato esperado pela Shopee", () => {
@@ -93,34 +104,34 @@ describe("buildShopeeProductOfferPayload", () => {
 
 describe("gerarLinkAfiliadoShopee", () => {
   it("retorna null quando não há config", async () => {
-    affiliate.clearShopeeConfig();
-    const r = await affiliate.gerarLinkAfiliadoShopee("https://shopee.com.br/i.1.2");
+    affiliate.clearShopeeConfig(TEST_USER_ID);
+    const r = await affiliate.gerarLinkAfiliadoShopee(TEST_USER_ID, "https://shopee.com.br/i.1.2");
     expect(r).toBeNull();
   });
 
   it("retorna null em URL inválida (tipo)", async () => {
-    expect(await affiliate.gerarLinkAfiliadoShopee(null)).toBeNull();
-    expect(await affiliate.gerarLinkAfiliadoShopee("")).toBeNull();
-    expect(await affiliate.gerarLinkAfiliadoShopee(123)).toBeNull();
+    expect(await affiliate.gerarLinkAfiliadoShopee(TEST_USER_ID, null)).toBeNull();
+    expect(await affiliate.gerarLinkAfiliadoShopee(TEST_USER_ID, "")).toBeNull();
+    expect(await affiliate.gerarLinkAfiliadoShopee(TEST_USER_ID, 123)).toBeNull();
   });
 });
 
 describe("writeShopeeConfig", () => {
   it("rejeita App ID inválido", () => {
-    expect(() => affiliate.writeShopeeConfig({ appId: "ab", appSecret: "0123456789abcdef" })).toThrow();
-    expect(() => affiliate.writeShopeeConfig({ appId: "tem espaço", appSecret: "0123456789abcdef" })).toThrow();
+    expect(() => affiliate.writeShopeeConfig(TEST_USER_ID, { appId: "ab", appSecret: "0123456789abcdef" })).toThrow();
+    expect(() => affiliate.writeShopeeConfig(TEST_USER_ID, { appId: "tem espaço", appSecret: "0123456789abcdef" })).toThrow();
   });
 
   it("rejeita App Secret muito curto", () => {
-    expect(() => affiliate.writeShopeeConfig({ appId: "1234", appSecret: "curto" })).toThrow();
+    expect(() => affiliate.writeShopeeConfig(TEST_USER_ID, { appId: "1234", appSecret: "curto" })).toThrow();
   });
 
   it("salva config válida e marca configured=true no status", () => {
-    affiliate.writeShopeeConfig({ appId: "1234567", appSecret: "0123456789abcdef" });
-    const s = affiliate.status();
+    affiliate.writeShopeeConfig(TEST_USER_ID, { appId: "1234567", appSecret: "0123456789abcdef" });
+    const s = affiliate.status(TEST_USER_ID);
     expect(s.shopee.configured).toBe(true);
     expect(s.shopee.appId).toBe("1234567");
     expect(s.shopee.appSecretLength).toBeGreaterThan(0);
-    affiliate.clearShopeeConfig();
+    affiliate.clearShopeeConfig(TEST_USER_ID);
   });
 });

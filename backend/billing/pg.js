@@ -1,5 +1,4 @@
 // Persistência Postgres do módulo billing.
-// Interface idêntica à json.js — façade decide em runtime.
 
 const { prisma } = require("../db");
 

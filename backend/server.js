@@ -11,7 +11,6 @@ const affiliate = require("./scraping/affiliate");
 const catalog = require("./catalog");
 const adminScraper = require("./scraping/admin");
 const appConfig = require("./config");
-const { backendName } = require("./db");
 const queueMod = require("./infra/queue");
 const logger = require("./infra/logger");
 const metrics = require("./infra/metrics");
@@ -228,10 +227,10 @@ app.get("/healthz", async (req, res) => {
   // Storage: tenta uma operação leve
   try {
     await storage.listAllUserIds();
-    checks.storage = { ok: true, backend: backendName() };
+    checks.storage = { ok: true, backend: "pg" };
   } catch (err) {
     healthy = false;
-    checks.storage = { ok: false, backend: backendName(), error: err.message };
+    checks.storage = { ok: false, backend: "pg", error: err.message };
   }
 
   // Scheduler: ticou recentemente?
@@ -484,14 +483,14 @@ app.post("/api/billing/portal", auth.requireAuth, async (req, res) => {
 // ────────────────────────────────────────────────────────────────────────
 
 app.get("/api/affiliate", auth.requireAuth, (req, res) => {
-  res.json(affiliate.status());
+  res.json(affiliate.status(req.user.id));
 });
 
 app.put("/api/affiliate", auth.requireAuth, (req, res) => {
   try {
     const { tag, cookie } = req.body || {};
-    affiliate.writeConfig({ tag, cookie });
-    res.json(affiliate.status());
+    affiliate.writeConfig(req.user.id, { tag, cookie });
+    res.json(affiliate.status(req.user.id));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -499,8 +498,8 @@ app.put("/api/affiliate", auth.requireAuth, (req, res) => {
 
 app.delete("/api/affiliate", auth.requireAuth, (req, res) => {
   try {
-    affiliate.clearConfig();
-    res.json(affiliate.status());
+    affiliate.clearConfig(req.user.id);
+    res.json(affiliate.status(req.user.id));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -512,9 +511,9 @@ app.post("/api/affiliate/test", auth.requireAuth, async (req, res) => {
     if (!url || typeof url !== "string" || !url.trim()) {
       return res.status(400).json({ error: "Forneça uma URL de produto do Mercado Livre pra testar." });
     }
-    const short = await affiliate.gerarLinkAfiliadoML(url.trim());
+    const short = await affiliate.gerarLinkAfiliadoML(req.user.id, url.trim());
     if (!short) {
-      const s = affiliate.status();
+      const s = affiliate.status(req.user.id);
       const reason = s.lastFailureReason || "Falha ao gerar link";
       return res.status(400).json({ error: reason, cookieHealthy: !!s.healthy });
     }
@@ -529,8 +528,8 @@ app.post("/api/affiliate/test", auth.requireAuth, async (req, res) => {
 app.put("/api/affiliate/amazon", auth.requireAuth, (req, res) => {
   try {
     const { tag } = req.body || {};
-    affiliate.writeAmazonConfig({ tag });
-    res.json(affiliate.status());
+    affiliate.writeAmazonConfig(req.user.id, { tag });
+    res.json(affiliate.status(req.user.id));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -538,8 +537,8 @@ app.put("/api/affiliate/amazon", auth.requireAuth, (req, res) => {
 
 app.delete("/api/affiliate/amazon", auth.requireAuth, (req, res) => {
   try {
-    affiliate.clearAmazonConfig();
-    res.json(affiliate.status());
+    affiliate.clearAmazonConfig(req.user.id);
+    res.json(affiliate.status(req.user.id));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -551,9 +550,9 @@ app.post("/api/affiliate/amazon/test", auth.requireAuth, (req, res) => {
     if (!url || typeof url !== "string" || !url.trim()) {
       return res.status(400).json({ error: "Forneça uma URL de produto da Amazon pra testar." });
     }
-    const short = affiliate.gerarLinkAfiliadoAmazon(url.trim());
+    const short = affiliate.gerarLinkAfiliadoAmazon(req.user.id, url.trim());
     if (!short) {
-      const s = affiliate.status();
+      const s = affiliate.status(req.user.id);
       const reason = s.amazon.lastFailureReason
         || (!s.amazon.configured ? "Configure a tag de afiliado da Amazon primeiro." : "Falha ao gerar link");
       return res.status(400).json({ error: reason });
@@ -569,8 +568,8 @@ app.post("/api/affiliate/amazon/test", auth.requireAuth, (req, res) => {
 app.put("/api/affiliate/shopee", auth.requireAuth, (req, res) => {
   try {
     const { appId, appSecret } = req.body || {};
-    affiliate.writeShopeeConfig({ appId, appSecret });
-    res.json(affiliate.status());
+    affiliate.writeShopeeConfig(req.user.id, { appId, appSecret });
+    res.json(affiliate.status(req.user.id));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -578,8 +577,8 @@ app.put("/api/affiliate/shopee", auth.requireAuth, (req, res) => {
 
 app.delete("/api/affiliate/shopee", auth.requireAuth, (req, res) => {
   try {
-    affiliate.clearShopeeConfig();
-    res.json(affiliate.status());
+    affiliate.clearShopeeConfig(req.user.id);
+    res.json(affiliate.status(req.user.id));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -591,9 +590,9 @@ app.post("/api/affiliate/shopee/test", auth.requireAuth, async (req, res) => {
     if (!url || typeof url !== "string" || !url.trim()) {
       return res.status(400).json({ error: "Forneça uma URL de produto da Shopee pra testar." });
     }
-    const short = await affiliate.gerarLinkAfiliadoShopee(url.trim());
+    const short = await affiliate.gerarLinkAfiliadoShopee(req.user.id, url.trim());
     if (!short) {
-      const s = affiliate.status();
+      const s = affiliate.status(req.user.id);
       const reason = s.shopee.lastFailureReason
         || (!s.shopee.configured ? "Configure App ID e App Secret da Shopee primeiro." : "Falha ao gerar link");
       return res.status(400).json({ error: reason });
@@ -1096,16 +1095,19 @@ app.post("/api/whatsapp/sessions/:id/broadcast", auth.requireAuth, async (req, r
 // ────────────────────────────────────────────────────────────────────────
 
 async function boot() {
-  // Pré-aquece cache de config (afiliado, scraper-config) — necessário pra
-  // affiliate.status() / adminScraper.readConfig() funcionarem sync no modo PG.
+  // Pré-aquece JWT secret (Postgres / env) + cache de config (scraper-config +
+  // afiliado per-user) — necessário pra auth e pra affiliate.status() /
+  // adminScraper.readConfig() funcionarem sync.
+  await auth.warmup();
   await appConfig.warmup();
+  await affiliate.warmup();
 
   // Inicializa fila de envios (Fase 2). Server é só PRODUCER — quem registra
   // workers é o backend/worker.js (em redis mode). Em memory é no-op.
   await queueMod.init({ producer: true, consumer: false });
 
   const server = app.listen(PORT, () => {
-    console.log(`Nimbus Backend rodando em http://localhost:${PORT} [storage=${backendName()} queue=${queueMod.backendName()}]`);
+    console.log(`Nimbus Backend rodando em http://localhost:${PORT} [queue=${queueMod.backendName()}]`);
     console.log(`  GET  /api/ofertas?category=gamer&minDiscount=20&limit=10`);
     console.log(`  GET  /api/status`);
     console.log(`  GET  /api/admin/scraper/config (admin)`);

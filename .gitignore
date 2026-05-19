@@ -53,12 +53,7 @@ coverage/
 *.orig
 *.rej
 
-# Credenciais WhatsApp (Baileys) — NUNCA versionar
-backend/auth_states/
-
-# Dados da aplicação (usuários, estado, segredo JWT) — NUNCA versionar
-# Importante: regra específica ao backend pra NÃO bater em frontend/src/data/
-backend/data/
+# Snapshots de backup (gerados localmente, não versionar)
 backend/backups/
 
 # Arquivos grandes / temporários

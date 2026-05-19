@@ -1,7 +1,6 @@
 // Schema Prisma — Nimbus
-// Substitui a persistência em JSON por Postgres.
-// Toda interface pública dos módulos (storage.js, catalog.js, auth.js, etc)
-// é mantida; só a implementação muda quando STORAGE_BACKEND=pg.
+// Persistência única em Postgres. Os módulos storage/, catalog/, auth/, config/,
+// billing/, scraping/affiliate-store/ leem e escrevem aqui via PrismaClient.
 
 generator client {
   provider = "prisma-client-js"
@@ -25,11 +24,12 @@ model User {
   role         String   @default("user") // "user" | "admin"
   createdAt    DateTime @default(now())
 
-  state          UserState?
-  groups         Group[]
-  whatsappGroups WhatsappGroup[]
-  numbers        WhatsappNumber[]
-  subscription   Subscription?
+  state           UserState?
+  groups          Group[]
+  whatsappGroups  WhatsappGroup[]
+  numbers         WhatsappNumber[]
+  subscription    Subscription?
+  affiliateConfig AffiliateConfig?
 
   @@map("users")
 }
@@ -181,8 +181,7 @@ model WhatsappNumber {
   @@map("whatsapp_numbers")
 }
 
-// Auth state Baileys em Postgres (Fase 3 — useDatabaseAuthState).
-// Substitui useMultiFileAuthState (auth_states/<userId>/<numberId>/*.json).
+// Auth state Baileys em Postgres (useDatabaseAuthState).
 // PK composta serializa por sessão+chave; valores codificados com BufferJSON.
 model BaileysAuth {
   sessionId String   // formato: "<userId>::<numberId>"
@@ -230,14 +229,27 @@ model CatalogProduct {
 // Configs globais (afiliado, scraper)
 // ────────────────────────────────────────────────────────────────────────
 
-// Key-value simples. Usado por affiliate.js e admin-scraper.js.
-// Keys: "affiliate.ml", "affiliate.amazon", "scraper.config", "scraper.runs.last"
+// Key-value simples. Usado por admin-scraper.js (scraper-config).
+// O afiliado por loja foi movido pra AffiliateConfig (per-user).
 model AppConfig {
   key       String   @id
   value     Json
   updatedAt DateTime @default(now()) @updatedAt
 
   @@map("app_config")
+}
+
+// Config de afiliado por usuário — cada um tem TAG/cookie/credenciais próprios.
+// `data` é um jsonb com sub-objetos { ml: { tag, cookie, updatedAt },
+// amazon: { tag, updatedAt }, shopee: { appId, appSecret, updatedAt } }.
+model AffiliateConfig {
+  userId    String   @id
+  data      Json     @default("{}")
+  updatedAt DateTime @default(now()) @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("affiliate_config")
 }
 
 // ────────────────────────────────────────────────────────────────────────

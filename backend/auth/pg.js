@@ -1,21 +1,12 @@
 // Implementação Postgres do módulo auth.
-// Mantém EXATAMENTE a mesma interface pública de auth-json.js — server.js não muda.
-// Diferenças de design vs JSON:
 //   - Usuários numa tabela com unique constraint em email (race-free).
 //   - syncRole roda como UPDATE direto se necessário.
-//   - JWT secret continua em env/disco (mesma origem de loadOrCreateSecret).
+//   - JWT secret persistido em AppConfig (key "jwt_secret"); env JWT_SECRET tem prioridade.
 
-const fs = require("fs");
-const path = require("path");
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { prisma } = require("../db");
-
-const DATA_DIR = path.join(__dirname, "..", "data");
-const SECRET_FILE = path.join(DATA_DIR, ".jwt_secret");
-
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const ADMIN_EMAILS = String(process.env.ADMIN_EMAILS || "")
   .split(",")
@@ -26,15 +17,31 @@ function isAdminEmail(email) {
   return ADMIN_EMAILS.includes(String(email || "").trim().toLowerCase());
 }
 
-function loadOrCreateSecret() {
-  if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
-  if (fs.existsSync(SECRET_FILE)) return fs.readFileSync(SECRET_FILE, "utf-8").trim();
-  const secret = crypto.randomBytes(48).toString("hex");
-  fs.writeFileSync(SECRET_FILE, secret, { mode: 0o600 });
-  return secret;
-}
-const JWT_SECRET = loadOrCreateSecret();
+let _jwtSecret = process.env.JWT_SECRET || null;
 const TOKEN_TTL = "30d";
+
+// Carrega (ou gera+persiste) o JWT secret na tabela AppConfig.
+// Chamar no boot ANTES de qualquer sign/verify. Idempotente.
+async function warmup() {
+  if (_jwtSecret) return;
+  const row = await prisma().appConfig.findUnique({ where: { key: "jwt_secret" } });
+  if (row && typeof row.value === "string" && row.value.length > 0) {
+    _jwtSecret = row.value;
+    return;
+  }
+  const secret = crypto.randomBytes(48).toString("hex");
+  await prisma().appConfig.upsert({
+    where: { key: "jwt_secret" },
+    create: { key: "jwt_secret", value: secret },
+    update: {},
+  });
+  _jwtSecret = secret;
+}
+
+function getJwtSecret() {
+  if (!_jwtSecret) throw new Error("[auth] JWT secret não inicializado — chame auth.warmup() no boot");
+  return _jwtSecret;
+}
 
 function publicUser(u) {
   if (!u) return null;
@@ -118,12 +125,12 @@ async function login({ email, password }) {
   if (!ok) throw new Error("Email ou senha incorretos");
   await syncRole(user);
   cacheUser(user);
-  const token = jwt.sign({ sub: user.id, email: user.email }, JWT_SECRET, { expiresIn: TOKEN_TTL });
+  const token = jwt.sign({ sub: user.id, email: user.email }, getJwtSecret(), { expiresIn: TOKEN_TTL });
   return { token, user: publicUser(user) };
 }
 
 function verifyToken(token) {
-  try { return jwt.verify(token, JWT_SECRET); }
+  try { return jwt.verify(token, getJwtSecret()); }
   catch { return null; }
 }
 
@@ -236,6 +243,7 @@ async function setUserRole(userId, role) {
 }
 
 module.exports = {
+  warmup,
   register,
   login,
   requireAuth,

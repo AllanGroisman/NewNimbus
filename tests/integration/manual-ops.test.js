@@ -8,6 +8,8 @@ import { mlProduct, amazonProduct, makeGroup, makeWhatsAppGroup } from "../helpe
 
 async function userWithGroup(opts = {}) {
   const { user, auth, email } = await createTestUser();
+  // Cada usuário tem afiliado próprio — configura aqui pra desbloquear gating ML.
+  affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
   const group = makeGroup({
     id: opts.id ?? 700,
     sources: opts.sources || ["amazon"],
@@ -22,7 +24,6 @@ async function userWithGroup(opts = {}) {
 
 describe("POST /refill — endpoint HTTP", () => {
   beforeEach(async () => {
-    await affiliate.writeConfig({ tag: "t", cookie: "c" });
     await catalog.upsertProducts([
       mlProduct(10, { category: "gamer", discount: 30 }),
       mlProduct(11, { category: "gamer", discount: 60 }),
@@ -64,10 +65,6 @@ describe("POST /refill — endpoint HTTP", () => {
 });
 
 describe("POST /manual-add — endpoint HTTP", () => {
-  beforeEach(async () => {
-    await affiliate.writeConfig({ tag: "t", cookie: "c" });
-  });
-
   const baseBody = {
     url: "https://www.amazon.com.br/dp/B0CMANUAL123",
     overrides: { name: "Item Manual", price: 99, originalPrice: 199, discount: 50, store: "Amazon" },
@@ -90,17 +87,14 @@ describe("POST /manual-add — endpoint HTTP", () => {
   });
 
   it("retorna {inCooldown:true} quando produto saiu recentemente", async () => {
-    // Cria grupo com cooldown e adiciona o mesmo produto no history (recém-enviado).
     const { user, auth } = await userWithGroup({
       id: 503,
       schedule: { windows: [{ from: "00:00", to: "23:59", interval: 0 }], cooldownValue: 24, cooldownUnit: "horas" },
     });
-    // productKey é gerado a partir da URL — adicionar primeiro pra capturar a key real
     const first = await auth("post", "/api/state/groups/503/manual-add").send(baseBody);
     expect(first.status).toBe(200);
     const itemKey = first.body.item.key;
 
-    // Move o item da queue pro history pra simular envio prévio
     await storage.updateGroupOps(user.id, 503, {
       queue: [],
       history: [{ key: itemKey, name: "Item Manual", link: baseBody.url, sentAt: new Date().toISOString() }],

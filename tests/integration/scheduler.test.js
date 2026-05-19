@@ -5,21 +5,25 @@ import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { app, createTestUser, catalog, scheduler, storage, affiliate, waCalls, resetWa } from "../helpers/app.js";
 import { mlProduct, amazonProduct, makeGroup, makeWhatsAppGroup } from "../helpers/fixtures.js";
 
+// Helper: cria usuário e já configura afiliado ML pra ele (desbloqueia gating).
+async function createUserWithMLAffiliate() {
+  const u = await createTestUser();
+  affiliate.writeConfig(u.user.id, { tag: "test-tag", cookie: "test-cookie-sessid" });
+  return u;
+}
+
 describe("scheduler.refillNow — popa do catalogo", () => {
-  // Re-seed do catálogo + afiliado a cada teste, porque setup-each.js trunca
-  // todas as tabelas antes de cada `it`.
   beforeEach(async () => {
     await catalog.upsertProducts([
       mlProduct(401, { category: "gamer", discount: 30 }),
       mlProduct(402, { category: "gamer", discount: 50 }),
       mlProduct(403, { category: "casa", discount: 60 }),
     ]);
-    await affiliate.writeConfig({ tag: "test-tag", cookie: "test-cookie" });
     resetWa();
   });
 
   it("preenche queue com produtos da categoria + sources do grupo", async () => {
-    const { user, auth } = await createTestUser();
+    const { user, auth } = await createUserWithMLAffiliate();
     const group = makeGroup({ id: 100, categories: ["gamer"], sources: ["ml"], auto: true });
     await auth("put", "/api/state").send({ groups: [group] });
 
@@ -36,7 +40,7 @@ describe("scheduler.refillNow — popa do catalogo", () => {
   });
 
   it("auto=false manda items pra PENDING em vez de queue", async () => {
-    const { user, auth } = await createTestUser();
+    const { user, auth } = await createUserWithMLAffiliate();
     const group = makeGroup({ id: 101, categories: ["gamer"], sources: ["ml"], auto: false });
     await auth("put", "/api/state").send({ groups: [group] });
 
@@ -51,7 +55,7 @@ describe("scheduler.refillNow — popa do catalogo", () => {
   });
 
   it("aplica overrides de filtros (UI ainda nao persistiu)", async () => {
-    const { user, auth } = await createTestUser();
+    const { user, auth } = await createUserWithMLAffiliate();
     const group = makeGroup({ id: 102, categories: ["gamer"], sources: ["ml"] });
     await auth("put", "/api/state").send({ groups: [group] });
 
@@ -60,13 +64,10 @@ describe("scheduler.refillNow — popa do catalogo", () => {
   });
 
   it("remove itens stale da fila quando sources muda (so Shopee, fila tem ML/Amazon)", async () => {
-    // Regressão: usuário marca apenas Shopee como source mas a fila continua
-    // trazendo itens de ML/Amazon adicionados quando a config era diferente.
-    const { user, auth } = await createTestUser();
+    const { user, auth } = await createUserWithMLAffiliate();
     const group = makeGroup({ id: 103, categories: ["gamer"], sources: ["ml"] });
     await auth("put", "/api/state").send({ groups: [group] });
 
-    // Popula a fila com itens ML/Amazon + um manual ML (que deve sobreviver).
     await storage.updateGroupOps(user.id, 103, {
       queue: [
         { id: "ml-x", key: "ml-x", name: "ML antigo", link: "https://ml.com/x", store: "Mercado Livre", category: "gamer", price: 100, discount: 50 },
@@ -75,7 +76,6 @@ describe("scheduler.refillNow — popa do catalogo", () => {
       ],
     });
 
-    // Usuário mudou pra Shopee apenas.
     const updated = { ...group, scraping: { ...group.scraping, sources: ["shopee"] } };
     await auth("put", "/api/state").send({ groups: [updated] });
 
@@ -83,33 +83,24 @@ describe("scheduler.refillNow — popa do catalogo", () => {
 
     const state = await storage.loadState(user.id);
     const g = state.groups.find(g => g.id === 103);
-    // ML e Amazon não-manuais devem ter sumido; manual sobrevive.
     expect(g.queue.find(q => q.id === "ml-x")).toBeUndefined();
     expect(g.queue.find(q => q.id === "amz-x")).toBeUndefined();
     expect(g.queue.find(q => q.id === "manual-x")).toBeDefined();
-    // Nada de não-shopee/não-manual sobreviveu.
     for (const item of g.queue) {
       expect(item.manual === true || item.store === "Shopee").toBe(true);
     }
   });
 
   it("tick remove stale mesmo quando buffer está acima do threshold (sem refill)", async () => {
-    // Outra ponta: se a fila tem >= REFILL_THRESHOLD itens, processGroup não
-    // chama refillQueue. Mesmo assim, itens stale devem ser removidos.
-    // Shopee precisa estar configurada (afiliate gate), e usamos sources=["amazon"]
-    // pra evitar gating (Amazon não tem gating) — o ponto é só validar a prune,
-    // independente de qual loja é a "nova".
-    const { user, auth } = await createTestUser();
+    const { user, auth } = await createUserWithMLAffiliate();
     const group = makeGroup({
       id: 104,
       categories: ["gamer"],
       sources: ["amazon"],
-      // Janela ativa pra processGroup não retornar cedo.
       schedule: { windows: [{ from: "00:00", to: "23:59", interval: 60 }], cooldownValue: 24, cooldownUnit: "horas" },
     });
     await auth("put", "/api/state").send({ groups: [group] });
 
-    // Popula com 6 itens ML (> REFILL_THRESHOLD=5) — todos stale pra source=amazon.
     const staleQueue = Array.from({ length: 6 }, (_, i) => ({
       id: `ml-${i}`, key: `ml-${i}`, name: `ML ${i}`,
       link: `https://ml.com/${i}`, store: "Mercado Livre", category: "gamer",
@@ -127,7 +118,7 @@ describe("scheduler.refillNow — popa do catalogo", () => {
 
 describe("scheduler.manualAdd — adicionar produto via URL", () => {
   it("adiciona na queue quando auto=true", async () => {
-    const { user, auth } = await createTestUser();
+    const { user, auth } = await createUserWithMLAffiliate();
     await auth("put", "/api/state").send({ groups: [makeGroup({ id: 200, auto: true })] });
     const r = await scheduler.manualAdd(user.id, 200, {
       url: "https://www.amazon.com.br/dp/B0CMANUALADD",
@@ -139,7 +130,7 @@ describe("scheduler.manualAdd — adicionar produto via URL", () => {
   });
 
   it("bloqueia duplicata na queue", async () => {
-    const { user, auth } = await createTestUser();
+    const { user, auth } = await createUserWithMLAffiliate();
     await auth("put", "/api/state").send({ groups: [makeGroup({ id: 201, auto: true })] });
     await scheduler.manualAdd(user.id, 201, {
       url: "https://www.amazon.com.br/dp/B0CDUP12345",
@@ -157,7 +148,7 @@ describe("scheduler.manualAdd — adicionar produto via URL", () => {
   });
 
   it("exige name e url", async () => {
-    const { user, auth } = await createTestUser();
+    const { user, auth } = await createUserWithMLAffiliate();
     await auth("put", "/api/state").send({ groups: [makeGroup({ id: 202, auto: true })] });
     await expect(scheduler.manualAdd(user.id, 202, { url: "", overrides: { name: "X" } })).rejects.toThrow();
     await expect(scheduler.manualAdd(user.id, 202, { url: "https://x.com", overrides: { name: "" } })).rejects.toThrow();
@@ -168,7 +159,7 @@ describe("scheduler.sendNextNow — envia primeiro item da queue", () => {
   beforeEach(() => resetWa());
 
   it("dispara wa.sendImage (item tem img) e move pra history", async () => {
-    const { user, auth } = await createTestUser();
+    const { user, auth } = await createUserWithMLAffiliate();
     const numbers = [{ id: "num-1", phone: "5511..." }];
     const waGroups = [makeWhatsAppGroup({ id: "wa-1", numberId: "num-1", jid: "fake@g.us" })];
     const group = makeGroup({
@@ -178,7 +169,6 @@ describe("scheduler.sendNextNow — envia primeiro item da queue", () => {
     });
     await auth("put", "/api/state").send({ groups: [group], numbers, whatsappGroups: waGroups });
 
-    // queue precisa ser populada via updateGroupOps (frontend PUT nao mexe em ops fields)
     await storage.updateGroupOps(user.id, 300, {
       queue: [{
         id: "i1", key: "i1", name: "Produto Envio", link: "https://www.amazon.com.br/dp/B0CSEND1234",
@@ -202,7 +192,7 @@ describe("scheduler.sendNextNow — envia primeiro item da queue", () => {
   });
 
   it("dispara wa.sendText quando item nao tem img", async () => {
-    const { user, auth } = await createTestUser();
+    const { user, auth } = await createUserWithMLAffiliate();
     const waGroups = [makeWhatsAppGroup({ id: "wa-2", numberId: "num-2", jid: "fake2@g.us" })];
     const group = makeGroup({ id: 301, whatsappGroupIds: ["wa-2"], sources: ["amazon"] });
     await auth("put", "/api/state").send({ groups: [group], whatsappGroups: waGroups });
@@ -216,7 +206,7 @@ describe("scheduler.sendNextNow — envia primeiro item da queue", () => {
   });
 
   it("falha quando campanha pausada", async () => {
-    const { user, auth } = await createTestUser();
+    const { user, auth } = await createUserWithMLAffiliate();
     const group = makeGroup({ id: 302 });
     group.paused = true;
     await auth("put", "/api/state").send({ groups: [group] });
@@ -224,17 +214,16 @@ describe("scheduler.sendNextNow — envia primeiro item da queue", () => {
   });
 
   it("falha quando ML afiliado nao configurado e grupo usa ML", async () => {
-    affiliate.clearConfig();
     const { user, auth } = await createTestUser();
+    // SEM afiliado configurado pra esse user
+    affiliate.clearConfig(user.id);
     const group = makeGroup({ id: 303, sources: ["ml"] });
     await auth("put", "/api/state").send({ groups: [group] });
     await expect(scheduler.sendNextNow(user.id, 303)).rejects.toThrow(/afiliado/i);
-    affiliate.writeConfig({ tag: "t", cookie: "c" });
   });
 
   it("falha quando queue vazia e refill nao traz nada", async () => {
-    affiliate.writeConfig({ tag: "t", cookie: "c" });
-    const { user, auth } = await createTestUser();
+    const { user, auth } = await createUserWithMLAffiliate();
     const group = makeGroup({ id: 304, filters: { minDiscount: 999 } });
     await auth("put", "/api/state").send({ groups: [group] });
     await expect(scheduler.sendNextNow(user.id, 304)).rejects.toThrow();
@@ -249,9 +238,8 @@ describe("scheduler.tick — loop periodico", () => {
       mlProduct(901, { category: "beleza", discount: 40 }),
       mlProduct(902, { category: "beleza", discount: 60 }),
     ]);
-    affiliate.writeConfig({ tag: "t", cookie: "c" });
 
-    const { user, auth } = await createTestUser();
+    const { user, auth } = await createUserWithMLAffiliate();
     const waGroups = [makeWhatsAppGroup({ id: "wa-tick", numberId: "num-tick", jid: "tick@g.us" })];
     const group = makeGroup({
       id: 999,
@@ -273,8 +261,7 @@ describe("scheduler.tick — loop periodico", () => {
 describe("POST /api/state/groups/:gid/refill — endpoint HTTP", () => {
   it("forca refill via HTTP", async () => {
     await catalog.upsertProducts([mlProduct(801, { category: "casa", discount: 40 })]);
-    affiliate.writeConfig({ tag: "t", cookie: "c" });
-    const { auth } = await createTestUser();
+    const { auth } = await createUserWithMLAffiliate();
     const group = makeGroup({ id: 800, categories: ["casa"], sources: ["ml"] });
     await auth("put", "/api/state").send({ groups: [group] });
 
@@ -286,8 +273,7 @@ describe("POST /api/state/groups/:gid/refill — endpoint HTTP", () => {
 
 describe("POST /api/state/groups/:gid/manual-add — endpoint HTTP", () => {
   it("retorna 409 em duplicata", async () => {
-    affiliate.writeConfig({ tag: "t", cookie: "c" });
-    const { auth } = await createTestUser();
+    const { auth } = await createUserWithMLAffiliate();
     await auth("put", "/api/state").send({ groups: [makeGroup({ id: 700 })] });
     const body = {
       url: "https://www.amazon.com.br/dp/B0CMANDUP01",
@@ -302,8 +288,7 @@ describe("POST /api/state/groups/:gid/manual-add — endpoint HTTP", () => {
 describe("POST /api/state/groups/:gid/send-now — endpoint HTTP", () => {
   it("dispara wa.sendText via HTTP", async () => {
     resetWa();
-    affiliate.writeConfig({ tag: "t", cookie: "c" });
-    const { user, auth } = await createTestUser();
+    const { user, auth } = await createUserWithMLAffiliate();
     const waGroups = [makeWhatsAppGroup({ id: "wa-sn", numberId: "num-sn", jid: "sn@g.us" })];
     const group = makeGroup({ id: 600, whatsappGroupIds: ["wa-sn"], sources: ["amazon"] });
     await auth("put", "/api/state").send({ groups: [group], whatsappGroups: waGroups });

@@ -109,9 +109,9 @@ function itemMatchesCampaign(item, ctx) {
 // Grupo está pausado quando depende de uma loja com gating (ML ou Shopee) e o
 // afiliado dela não está configurado. Amazon não pausa — cai pro link cru.
 // Retorna { paused, reason } pra o caller poder mostrar mensagem específica.
-function affiliateGate(group) {
+function affiliateGate(userId, group) {
   const sources = resolveSources(group.scraping?.sources);
-  const s = affiliate.status();
+  const s = affiliate.status(userId);
   if (sources.includes("ml") && !s.ml.configured) {
     return { paused: true, reason: "configure o afiliado do Mercado Livre (tag + cookie) em Configurações" };
   }
@@ -122,8 +122,8 @@ function affiliateGate(group) {
 }
 
 // Versão boolean pra callers que só querem saber se pausa.
-function groupPausedByAffiliate(group) {
-  return affiliateGate(group).paused;
+function groupPausedByAffiliate(userId, group) {
+  return affiliateGate(userId, group).paused;
 }
 
 // Auto-aprovação: produtos vão direto pra queue. Se false, vão pra pending pra
@@ -255,24 +255,24 @@ async function sendItem(userId, group, whatsappGroups, item) {
 
   let itemForSend = item;
   if (item.store === "Mercado Livre" && item.link) {
-    const aff = await affiliate.gerarLinkAfiliadoML(item.link);
+    const aff = await affiliate.gerarLinkAfiliadoML(userId, item.link);
     if (aff) {
       itemForSend = { ...item, link: aff };
-    } else if (affiliate.status().ml.configured) {
+    } else if (affiliate.status(userId).ml.configured) {
       console.warn(`[scheduler] afiliado ML falhou pra "${item.name?.slice(0, 40)}" — enviando com link original`);
     }
   } else if (item.store === "Amazon" && item.link) {
-    const aff = affiliate.gerarLinkAfiliadoAmazon(item.link);
+    const aff = affiliate.gerarLinkAfiliadoAmazon(userId, item.link);
     if (aff) {
       itemForSend = { ...item, link: aff };
-    } else if (affiliate.status().amazon.configured) {
+    } else if (affiliate.status(userId).amazon.configured) {
       console.warn(`[scheduler] afiliado Amazon falhou pra "${item.name?.slice(0, 40)}" — enviando com link original`);
     }
   } else if (item.store === "Shopee" && item.link) {
-    const aff = await affiliate.gerarLinkAfiliadoShopee(item.link);
+    const aff = await affiliate.gerarLinkAfiliadoShopee(userId, item.link);
     if (aff) {
       itemForSend = { ...item, link: aff };
-    } else if (affiliate.status().shopee.configured) {
+    } else if (affiliate.status(userId).shopee.configured) {
       console.warn(`[scheduler] afiliado Shopee falhou pra "${item.name?.slice(0, 40)}" — enviando com link original`);
     }
   }
@@ -428,7 +428,7 @@ async function sendNextNow(userId, groupId) {
   if (group.paused) {
     throw new Error("Campanha pausada: retome a campanha pra enviar.");
   }
-  const gate = affiliateGate(group);
+  const gate = affiliateGate(userId, group);
   if (gate.paused) {
     throw new Error(`Campanha pausada: ${gate.reason}.`);
   }
@@ -478,7 +478,7 @@ async function processGroup(userId, group, whatsappGroups, numbers) {
   if (group.paused) {
     return;
   }
-  if (groupPausedByAffiliate(group)) {
+  if (groupPausedByAffiliate(userId, group)) {
     return;
   }
 

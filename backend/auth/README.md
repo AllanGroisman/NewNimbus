@@ -1,18 +1,17 @@
 # auth/
 
-Cuida do **login, registro e identidade do usuário**. Também tem a versão Postgres das sessões do Baileys (whatsapp).
+Cuida do **login, registro e identidade do usuário**. Também tem o adapter Postgres das sessões do Baileys (whatsapp).
 
 ## Arquivos
 
-- **`index.js`** — fachada. Olha `STORAGE_BACKEND` e devolve a versão JSON ou Postgres.
-- **`json.js`** — guarda usuários em `backend/data/users.json`. Senha vai como hash bcrypt. O segredo do JWT mora em `backend/data/.jwt_secret`.
-- **`pg.js`** — mesma coisa, mas no Postgres (tabela `User`).
-- **`baileys-pg.js`** — adapter pra guardar a sessão do WhatsApp no Postgres (em vez de arquivos em `backend/auth_states/`). Permite trocar de máquina sem perder sessão. Só roda quando `STORAGE_BACKEND=pg`.
+- **`index.js`** — re-exporta `pg.js`.
+- **`pg.js`** — guarda usuários na tabela `User` (Postgres). Senha vai como hash bcrypt. O segredo do JWT mora na tabela `AppConfig` (key `jwt_secret`), persistido pela função `warmup()` no boot. Env `JWT_SECRET` tem prioridade.
+- **`baileys-pg.js`** — adapter pra guardar a sessão do WhatsApp na tabela `baileys_auth`. Permite trocar de máquina sem perder sessão.
 
 ## Como funciona o login
 
 1. Frontend manda email + senha pra `/api/auth/login`.
-2. `auth/json.js` (ou `pg.js`) compara o hash bcrypt da senha.
+2. `auth/pg.js` compara o hash bcrypt da senha.
 3. Se bater, gera um JWT (válido por 30 dias) e devolve pro frontend.
 4. Frontend guarda o token em `localStorage["nimbus.token"]` e manda em todo request seguinte no header `Authorization: Bearer <token>`.
 5. Em cada request o middleware `auth.requireAuth` decodifica o token e bota `req.user = { id, name, email, role }`.

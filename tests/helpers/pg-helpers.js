@@ -27,6 +27,7 @@ const TABLES = [
   "whatsapp_groups",
   "whatsapp_numbers",
   "baileys_auth",
+  "affiliate_config",
   "user_state",
   "users",
   "catalog_products",

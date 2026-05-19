@@ -1,6 +1,6 @@
 // Helper unico que importa o backend ja configurado pra testes.
 // IMPORTANTE: a ordem aqui e critica:
-//   1. env.js setta NIMBUS_DATA_DIR + NODE_ENV antes de tudo
+//   1. env.js seta NODE_ENV + DATABASE_URL + JWT_SECRET antes de tudo
 //   2. wa-mock instala mock no require.cache do whatsapp.js
 //   3. backend/server.js entao carrega com o mock no lugar
 

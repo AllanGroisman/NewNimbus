@@ -1,8 +1,4 @@
-// Façade billing/ — seleciona JSON ou Postgres baseado em STORAGE_BACKEND.
-// Mesmo padrão de storage/, catalog/, auth/, config/.
-
-const { isPg } = require("../db");
-const store = isPg() ? require("./pg") : require("./json");
+const store = require("./pg");
 const limits = require("./limits");
 
 // Cria trial de 7 dias do plano Pro pra usuário recém-registrado.
