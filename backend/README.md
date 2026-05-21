@@ -20,9 +20,10 @@ Servidor Node.js do Nimbus. Recebe as chamadas do frontend, faz scraping, agenda
 | **`auth/`** | Login, registro, JWT, bcrypt. Também o adapter Postgres pras sessões do Baileys. |
 | **`catalog/`** | Catálogo global de produtos (compartilhado entre todos os usuários). |
 | **`config/`** | Configs globais salvas como chave-valor (tag de afiliado, config do scraper). |
+| **`billing/`** | Stripe (Checkout/Portal/webhooks), assinaturas, trial automático, limites por plano. |
 | **`whatsapp/`** | Tudo que fala com o WhatsApp (Baileys): sessões, envio, QR code. |
-| **`scraping/`** | Puppeteer (scraper de ML e Amazon), conversão pra link de afiliado e o agendador do admin-scraper. |
-| **`infra/`** | "Encanamento": logger, métricas Prometheus, Sentry, fila BullMQ, heartbeat do worker. |
+| **`scraping/`** | Puppeteer (scraper de ML, Amazon e Shopee), conversão pra link de afiliado (ML/Amazon/Shopee) e o agendador do admin-scraper. |
+| **`infra/`** | "Encanamento": logger, métricas Prometheus, Sentry, fila BullMQ, heartbeat do worker, cache de status de sessão WA. |
 | **`scripts/`** | Scripts manuais (backup remoto S3). |
 | **`prisma/`** | Schema do banco + migrations geradas pelo Prisma. |
 
@@ -32,8 +33,8 @@ Servidor Node.js do Nimbus. Recebe as chamadas do frontend, faz scraping, agenda
 - **`logs/`** — logs do PM2 em produção.
 - **`node_modules/`** — pacotes do npm.
 
-## Façades (storage / auth / catalog / config / whatsapp)
+## Façades (storage / auth / catalog / config / billing / whatsapp)
 
-Algumas dessas pastas têm o padrão `index.js` + `pg.js`: o `index.js` só re-exporta `pg.js`. Mantemos a indireção pra deixar fácil voltar a injetar mocks ou adapters em testes.
+Quase todas essas pastas seguem o padrão `index.js` + `pg.js`: o `index.js` só re-exporta `pg.js`. Mantemos a indireção pra deixar fácil voltar a injetar mocks ou adapters em testes. O `scraping/affiliate-store/` segue o mesmo padrão (storage per-user das configs de afiliado).
 
 A mesma ideia vale pro `whatsapp/`: `index.js` decide entre `local.js` (Baileys de verdade, no processo) e `proxy.js` (espelho via fila Redis, usado pelo `server` quando o `worker` é quem segura o Baileys).

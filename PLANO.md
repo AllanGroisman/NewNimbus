@@ -1,5 +1,4 @@
 * Plano -> Front das limitações por plano. Testar as limitações. Plano Free pra testar?
-* Tirar tudo do BD de json
 * Verificação por email -> criar conta, trocar senha, etc...
 * Scraper -> realizar instantaneo caso não tenha sido realizado nas ultimas X horas
 * Front -> Trocar design para ideia do pedro

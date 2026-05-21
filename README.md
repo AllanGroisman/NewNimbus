@@ -10,7 +10,7 @@ Plataforma de automação de ofertas no WhatsApp. Faz scraping de produtos (Merc
 - **`docs/`** — documentos do projeto (arquitetura, plano, status). Não tem código aqui.
 - **`start.bat` / `stop.bat`** — sobem e param tudo (backend, frontend, ngrok) em janelas separadas no Windows.
 - **`test.bat`** — atalho pra rodar a bateria de testes.
-- **`docker-compose.yml`** — sobe Postgres + Redis em containers locais (só precisa se for usar o modo PG).
+- **`docker-compose.yml`** — sobe Postgres + Redis em containers locais. **Obrigatório**: Postgres é o storage primário (Prisma) e Redis é usado em modo `QUEUE_BACKEND=redis` (padrão do `start.bat`).
 
 ## Por onde começar
 

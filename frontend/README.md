@@ -27,8 +27,8 @@ npm run build   # build de produção pra dist/
 - **`src/App.css`** / **`src/index.css`** — estilos globais (tema claro/escuro via CSS variables).
 - **`src/components/`** — componentes reutilizáveis (sidebar, QR code, dashboard de grupo).
 - **`src/pages/`** — uma página por rota (Dashboard, Settings, WhatsApp, Login, etc).
-- **`src/data/`** — helpers de dados: constantes (categorias, fontes), helper de API (`fetch` + token), dados mockados pra demo.
-- **`src/assets/`** — imagens/SVGs.
+- **`src/data/`** — helpers de dados: constantes (categorias, fontes), helper de API (`fetch` + token), starter state.
+- **`src/__tests__/`** — testes Vitest + RTL (`api.test.js`, `constants.test.js`, `Subscription.test.jsx`, `GroupDashboard.test.jsx`).
 - **`public/`** — arquivos servidos crus na raiz (favicon, etc).
 
 ## Token JWT

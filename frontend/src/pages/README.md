@@ -11,7 +11,7 @@ Uma página por rota/seção do app. O `App.jsx` decide qual renderizar baseado 
 - **`Settings.jsx`** — configurações do usuário (preferências, horários padrão, tema).
 - **`AffiliateML.jsx`** — configuração da tag + cookie do Mercado Livre.
 - **`AffiliateAmazon.jsx`** — configuração da tag da Amazon.
-- **`AffiliateShopee.jsx`** — placeholder pra Shopee (não implementado no backend ainda).
-- **`Subscription.jsx`** — tela de plano/assinatura (UI; pagamento real ainda não plugado).
+- **`AffiliateShopee.jsx`** — configuração do App ID + App Secret da Shopee (integração completa: GraphQL Open API, cache 7d, gating).
+- **`Subscription.jsx`** — tela de plano/assinatura. Stripe Checkout + Portal hosted, trial 7d sem cartão, badge `past_due`. Bypass automático pra `role=admin`.
 - **`AdminUsers.jsx`** — só admin: lista de usuários, promove/rebaixa role.
 - **`AdminScraper.jsx`** — só admin: configura o admin-scraper (intervalo, categorias, limites) e vê status.
