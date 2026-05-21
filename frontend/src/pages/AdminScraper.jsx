@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, formatPrice } from "../data/constants";
+import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, formatPrice, TEST_URLS } from "../data/constants";
 import Badge from "../components/ui/Badge";
 import Toggle from "../components/ui/Toggle";
 import {
@@ -8,6 +8,10 @@ import {
   adminRunScraper,
   adminScraperStatus,
   adminCatalog,
+  adminScraperShopee,
+  adminScraperShopeeSave,
+  adminScraperShopeeClear,
+  adminScraperShopeeTest,
 } from "../data/api";
 
 const STATUS_POLL_MS = 5000;
@@ -261,6 +265,9 @@ export default function PageAdminScraper() {
         </div>
       </div>
 
+      {/* Credenciais Shopee (admin override do scraper global) */}
+      <ShopeeAdminSection />
+
       {/* Catálogo */}
       <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 10, flexWrap: "wrap" }}>
@@ -356,6 +363,198 @@ function StatBox({ label, value, sub, color }) {
       <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</div>
       <div style={{ fontSize: 16, fontWeight: 500, color: color || "var(--color-text-primary)", marginTop: 2 }}>{value}</div>
       {sub && <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+}
+
+function ShopeeAdminSection() {
+  const [data, setData] = useState(null);
+  const [appId, setAppId] = useState("");
+  const [appSecret, setAppSecret] = useState("");
+  const [showSecret, setShowSecret] = useState(false);
+  const [testUrl, setTestUrl] = useState(TEST_URLS.shopee);
+  const [msg, setMsg] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const r = await adminScraperShopee();
+      setData(r);
+      if (r.admin?.appId) setAppId(r.admin.appId);
+    } catch {}
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  async function handleSave() {
+    setSaving(true);
+    setMsg(null);
+    try {
+      await adminScraperShopeeSave({ appId: appId.trim(), appSecret: appSecret.trim() });
+      setAppSecret("");
+      setMsg({ type: "ok", text: "Salvo!" });
+      refresh();
+    } catch (err) {
+      setMsg({ type: "err", text: err.message });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleClear() {
+    if (!confirm("Apagar as credenciais Shopee do admin? O scraper volta a usar fallback do primeiro usuário.")) return;
+    setSaving(true);
+    setMsg(null);
+    try {
+      await adminScraperShopeeClear();
+      setAppId("");
+      setAppSecret("");
+      setMsg({ type: "ok", text: "Credenciais apagadas." });
+      refresh();
+    } catch (err) {
+      setMsg({ type: "err", text: err.message });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleTest() {
+    setTesting(true);
+    setMsg(null);
+    try {
+      const r = await adminScraperShopeeTest(testUrl.trim());
+      setMsg({ type: "ok", text: "Funcionou! Link gerado:", link: r.shortUrl });
+    } catch (err) {
+      setMsg({ type: "err", text: err.message });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  if (!data) {
+    return (
+      <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16, marginBottom: 18 }}>
+        <div style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>Carregando credenciais Shopee...</div>
+      </div>
+    );
+  }
+
+  const sourceLabel = {
+    env: "Variável de ambiente (.env)",
+    admin: "Credenciais do admin (esta tela)",
+    "user-fallback": "Fallback: 1º usuário configurado",
+  }[data.active?.source] || "Nenhuma";
+  const sourceColor = data.active?.source === "admin" || data.active?.source === "env" ? "green"
+    : data.active?.source === "user-fallback" ? "amber" : "gray";
+
+  return (
+    <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16, marginBottom: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, gap: 8, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontWeight: 500 }}>Credenciais Shopee (admin)</div>
+          <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 4 }}>
+            Usadas pelo scraper global pra buscar ofertas da Shopee. Sobrescreve o fallback de "primeiro usuário configurado".
+          </div>
+        </div>
+        <Badge color={sourceColor}>Fonte ativa: {sourceLabel}</Badge>
+      </div>
+
+      <div style={{ marginTop: 14, marginBottom: 10 }}>
+        <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>App ID</label>
+        <input
+          value={appId}
+          onChange={e => setAppId(e.target.value)}
+          placeholder="ex: 12345678"
+          style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", fontFamily: "monospace" }}
+        />
+      </div>
+
+      <div>
+        <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
+          App Secret
+          {data.admin?.appSecretPreview && (
+            <span style={{ marginLeft: 8, color: "var(--color-text-secondary)" }}>
+              (atual: <code>{data.admin.appSecretPreview}</code>)
+            </span>
+          )}
+        </label>
+        <div style={{ position: "relative" }}>
+          <input
+            type={showSecret ? "text" : "password"}
+            value={appSecret}
+            onChange={e => setAppSecret(e.target.value)}
+            placeholder={data.admin?.configured ? "Deixe vazio pra manter o atual" : "cole o App Secret"}
+            style={{ width: "100%", padding: "8px 38px 8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", fontFamily: "monospace" }}
+          />
+          <button
+            type="button"
+            onClick={() => setShowSecret(s => !s)}
+            style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", padding: "2px 8px", borderRadius: 6, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-primary)", fontSize: 10, cursor: "pointer", color: "var(--color-text-secondary)" }}
+          >
+            {showSecret ? "ocultar" : "mostrar"}
+          </button>
+        </div>
+        <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4 }}>
+          Pega em <a href="https://affiliate.shopee.com.br" target="_blank" rel="noreferrer" style={{ color: PRIMARY }}>affiliate.shopee.com.br</a> → painel → API Open.
+        </div>
+      </div>
+
+      {data.admin?.configured && (
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: "0.5px solid var(--color-border-tertiary)" }}>
+          <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
+            URL pra testar
+          </label>
+          <input
+            value={testUrl}
+            onChange={e => setTestUrl(e.target.value)}
+            placeholder="https://shopee.com.br/produto-xyz-i.123.456"
+            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 12, boxSizing: "border-box", fontFamily: "monospace" }}
+          />
+        </div>
+      )}
+
+      {msg && (
+        <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: msg.type === "ok" ? PRIMARY_LIGHT : "#FCEBEB", color: msg.type === "ok" ? PRIMARY_DARK : "#A32D2D", wordBreak: "break-all" }}>
+          {msg.text}
+          {msg.link && (
+            <>
+              {" "}
+              <a href={msg.link} target="_blank" rel="noreferrer" style={{ color: PRIMARY_DARK, textDecoration: "underline", fontFamily: "monospace" }}>
+                {msg.link}
+              </a>
+            </>
+          )}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+        <button
+          onClick={handleSave}
+          disabled={saving || !appId.trim() || (!data.admin?.configured && !appSecret.trim())}
+          style={{ padding: "7px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: (saving || !appId.trim() || (!data.admin?.configured && !appSecret.trim())) ? 0.6 : 1 }}
+        >
+          {saving ? "Salvando..." : "Salvar"}
+        </button>
+        <button
+          onClick={handleTest}
+          disabled={testing || !data.admin?.configured || !testUrl.trim()}
+          style={{ padding: "7px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: (!data.admin?.configured || !testUrl.trim()) ? "not-allowed" : "pointer", opacity: (!data.admin?.configured || !testUrl.trim() || testing) ? 0.5 : 1 }}
+        >
+          {testing ? "Testando..." : "Testar"}
+        </button>
+        {data.admin?.configured && (
+          <button onClick={handleClear} disabled={saving} style={{ padding: "7px 16px", borderRadius: 8, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 13, cursor: "pointer", marginLeft: "auto" }}>
+            Apagar
+          </button>
+        )}
+      </div>
+
+      {data.admin?.updatedAt && (
+        <div style={{ marginTop: 10, fontSize: 11, color: "var(--color-text-secondary)" }}>
+          Atualizado em: {new Date(data.admin.updatedAt).toLocaleString("pt-BR")}
+        </div>
+      )}
     </div>
   );
 }

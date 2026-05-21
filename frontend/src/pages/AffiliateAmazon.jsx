@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../data/constants";
+import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, TEST_URLS } from "../data/constants";
 import Badge from "../components/ui/Badge";
 import { getAffiliateStatus, saveAmazonAffiliate, clearAmazonAffiliate, testAmazonAffiliate } from "../data/api";
 
@@ -9,7 +9,7 @@ export default function PageAffiliateAmazon({ onAffiliateChange }) {
   const [amzMsg, setAmzMsg] = useState(null);
   const [amzSaving, setAmzSaving] = useState(false);
   const [amzTesting, setAmzTesting] = useState(false);
-  const [amzTestUrl, setAmzTestUrl] = useState("");
+  const [amzTestUrl, setAmzTestUrl] = useState(TEST_URLS.amazon);
 
   useEffect(() => {
     getAffiliateStatus().then(s => {

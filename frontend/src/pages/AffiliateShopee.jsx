@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../data/constants";
+import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, TEST_URLS } from "../data/constants";
 import Badge from "../components/ui/Badge";
 import { getAffiliateStatus, saveShopeeAffiliate, clearShopeeAffiliate, testShopeeAffiliate } from "../data/api";
 
@@ -11,7 +11,7 @@ export default function PageAffiliateShopee({ onAffiliateChange }) {
   const [msg, setMsg] = useState(null);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [testUrl, setTestUrl] = useState("");
+  const [testUrl, setTestUrl] = useState(TEST_URLS.shopee);
 
   useEffect(() => {
     getAffiliateStatus().then(s => {

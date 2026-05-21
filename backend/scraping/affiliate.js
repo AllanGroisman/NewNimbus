@@ -1,5 +1,10 @@
 const crypto = require("crypto");
 const store = require("./affiliate-store");
+const appConfig = require("../config");
+
+// Chave em appConfig pro override admin do scraper Shopee.
+// Sobrescreve "primeiro usuário com config" como fallback do admin-scraper.
+const SCRAPER_SHOPEE_ADMIN_KEY = "scraper-shopee-admin";
 
 // Config persistida POR USUÁRIO via affiliate-store. Schema do `raw`:
 //   { ml: { tag, cookie, updatedAt },
@@ -444,17 +449,60 @@ async function gerarLinkAfiliadoShopee(userId, linkOriginal) {
   }
 }
 
+// ────────────────────────────────────────────────────────────────────────
+// Admin Shopee creds (override global pro admin-scraper)
+// ────────────────────────────────────────────────────────────────────────
+
+function readScraperShopeeAdminCreds() {
+  const raw = appConfig.get(SCRAPER_SHOPEE_ADMIN_KEY);
+  if (!raw || typeof raw !== "object") return { appId: null, appSecret: null, updatedAt: null };
+  return {
+    appId: raw.appId || null,
+    appSecret: raw.appSecret || null,
+    updatedAt: raw.updatedAt || null,
+  };
+}
+
+function writeScraperShopeeAdminCreds({ appId, appSecret }) {
+  const cleanId = String(appId || "").trim();
+  const cleanSecret = String(appSecret || "").trim();
+  if (cleanId && !/^[a-zA-Z0-9_-]{4,64}$/.test(cleanId)) {
+    throw new Error("App ID inválido — use letras, números, hífen ou sublinhado.");
+  }
+  if (cleanSecret && cleanSecret.length < 16) {
+    throw new Error("App Secret muito curto — confira o valor copiado do painel.");
+  }
+  const cur = readScraperShopeeAdminCreds();
+  const next = {
+    appId: cleanId || cur.appId || null,
+    appSecret: cleanSecret || cur.appSecret || null,
+    updatedAt: new Date().toISOString(),
+  };
+  appConfig.set(SCRAPER_SHOPEE_ADMIN_KEY, next);
+  return next;
+}
+
+function clearScraperShopeeAdminCreds() {
+  appConfig.del(SCRAPER_SHOPEE_ADMIN_KEY);
+}
+
 // Resolve credenciais Shopee pro admin-scraper (que roda fora de qualquer userId).
-// Prioridade: env vars → primeiro user com config válida. Retorna null se nada.
+// Prioridade: env vars → admin override (appConfig) → primeiro user com config.
+// Retorna null se nada disponível.
 function getScraperShopeeCreds() {
   if (process.env.SHOPEE_AFFILIATE_APP_ID && process.env.SHOPEE_AFFILIATE_APP_SECRET) {
     return {
       appId: process.env.SHOPEE_AFFILIATE_APP_ID.trim(),
       appSecret: process.env.SHOPEE_AFFILIATE_APP_SECRET,
+      source: "env",
     };
   }
+  const admin = readScraperShopeeAdminCreds();
+  if (admin.appId && admin.appSecret) {
+    return { appId: admin.appId, appSecret: admin.appSecret, source: "admin" };
+  }
   const list = store.listShopeeConfigs();
-  if (list.length) return { appId: list[0].appId, appSecret: list[0].appSecret };
+  if (list.length) return { appId: list[0].appId, appSecret: list[0].appSecret, source: "user-fallback" };
   return null;
 }
 
@@ -534,6 +582,9 @@ module.exports = {
   writeShopeeConfig,
   clearShopeeConfig,
   getScraperShopeeCreds,
+  readScraperShopeeAdminCreds,
+  writeScraperShopeeAdminCreds,
+  clearScraperShopeeAdminCreds,
   // Puros — testes
   signShopeeRequest,
   buildShopeeShortLinkPayload,

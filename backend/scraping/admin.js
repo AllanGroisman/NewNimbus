@@ -11,6 +11,11 @@ const DEFAULT_CONFIG = {
   pruneAfterDays: 30,
 };
 
+// _status vive em memória mas tem cópia persistida em appConfig (chave STATUS_KEY)
+// pra sobreviver a reboots do backend. `running` e `nextRunAt` não são persistidos
+// (transitórios — reset no boot).
+const STATUS_KEY = "scraper-status";
+
 let _status = {
   running: false,
   lastRun: null,            // ISO
@@ -22,6 +27,25 @@ let _status = {
 
 let _interval = null;
 let _runPromise = null;
+
+function loadPersistedStatus() {
+  const saved = appConfig.get(STATUS_KEY);
+  if (saved && typeof saved === "object") {
+    _status.lastRun = saved.lastRun || null;
+    _status.lastDuration = saved.lastDuration || null;
+    _status.lastResult = saved.lastResult || null;
+    _status.lastError = saved.lastError || null;
+  }
+}
+
+function persistStatus() {
+  appConfig.set(STATUS_KEY, {
+    lastRun: _status.lastRun,
+    lastDuration: _status.lastDuration,
+    lastResult: _status.lastResult,
+    lastError: _status.lastError,
+  });
+}
 
 function readConfig() {
   const raw = appConfig.get("scraper-config");
@@ -127,6 +151,7 @@ async function runOnce() {
       _status.lastRun = new Date().toISOString();
       _status.lastDuration = Date.now() - t0;
       _runPromise = null;
+      persistStatus();
       scheduleNext();
     }
     return _status.lastResult;
@@ -149,6 +174,7 @@ function scheduleNext() {
 }
 
 function start() {
+  loadPersistedStatus();
   scheduleNext();
   // Não dispara automático no boot — admin clica "rodar agora" quando quiser
 }

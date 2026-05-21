@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../data/constants";
+import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, TEST_URLS } from "../data/constants";
 import Badge from "../components/ui/Badge";
 import { getAffiliateStatus, saveAffiliate, clearAffiliate, testAffiliate } from "../data/api";
 
@@ -10,7 +10,7 @@ export default function PageAffiliateML({ onAffiliateChange }) {
   const [affMsg, setAffMsg] = useState(null);
   const [affSaving, setAffSaving] = useState(false);
   const [affTesting, setAffTesting] = useState(false);
-  const [affTestUrl, setAffTestUrl] = useState("");
+  const [affTestUrl, setAffTestUrl] = useState(TEST_URLS.ml);
 
   useEffect(() => {
     getAffiliateStatus().then(s => {

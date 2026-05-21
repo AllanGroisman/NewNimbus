@@ -4,6 +4,16 @@ export const PRIMARY_LIGHT = "#E1F5EE";
 
 export const allSources = ["Mercado Livre", "Amazon", "Shopee", "Americanas"];
 
+// URLs reais de produtos populares pra usar como teste padrão nos
+// "Testar transformação" das telas de afiliado. Trocar aqui propaga
+// pra todas as telas (ML, Amazon, Shopee usuário, Shopee admin).
+// Se uma URL quebrar (produto sumiu), basta editar este arquivo.
+export const TEST_URLS = {
+  ml:     "https://www.mercadolivre.com.br/echo-dot-5a-geraco-alto-falante-preto-amazon-bivolt-preto/p/MLB27190731",
+  amazon: "https://www.amazon.com.br/dp/B09B8V1LZ3",   // Echo Dot 5ª geração
+  shopee: "https://shopee.com.br/Fone-Bluetooth-i12-TWS-Inpods12-Sem-Fio-Para-iPhone-Android-Universal-i.355684441.21753556712",
+};
+
 // Categorias — mapeia id → label, cor do badge e ícone (emoji)
 // IMPORTANTE: manter em sincronia com backend/scraping/scraper.js → CATEGORIES
 export const CATEGORIES = {

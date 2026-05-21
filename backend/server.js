@@ -864,6 +864,91 @@ app.get("/api/admin/scraper/status", auth.requireAuth, auth.requireAdmin, (req, 
   res.json(adminScraper.status());
 });
 
+// Credenciais Shopee globais (usadas pelo admin-scraper).
+// Override per-user fica intacto; isso aqui sobrescreve só o fallback do scraper.
+app.get("/api/admin/scraper/shopee", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  const admin = affiliate.readScraperShopeeAdminCreds();
+  const active = affiliate.getScraperShopeeCreds();
+  res.json({
+    admin: {
+      configured: !!(admin.appId && admin.appSecret),
+      appId: admin.appId,
+      appSecretPreview: admin.appSecret ? admin.appSecret.slice(0, 6) + "…" : null,
+      updatedAt: admin.updatedAt,
+    },
+    active: active ? {
+      appId: active.appId,
+      appSecretPreview: active.appSecret ? active.appSecret.slice(0, 6) + "…" : null,
+      source: active.source, // "env" | "admin" | "user-fallback"
+    } : null,
+  });
+});
+
+app.put("/api/admin/scraper/shopee", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  try {
+    const { appId, appSecret } = req.body || {};
+    const saved = affiliate.writeScraperShopeeAdminCreds({ appId, appSecret });
+    res.json({
+      ok: true,
+      admin: {
+        configured: !!(saved.appId && saved.appSecret),
+        appId: saved.appId,
+        appSecretPreview: saved.appSecret ? saved.appSecret.slice(0, 6) + "…" : null,
+        updatedAt: saved.updatedAt,
+      },
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete("/api/admin/scraper/shopee", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  affiliate.clearScraperShopeeAdminCreds();
+  res.json({ ok: true });
+});
+
+// Testa as credenciais admin gerando um shortlink — mesma rota de teste do affiliate,
+// mas usando explicitamente as creds do admin (sem cair em env nem user fallback).
+app.post("/api/admin/scraper/shopee/test", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const url = String(req.body?.url || "").trim();
+    if (!url) return res.status(400).json({ error: "Cole uma URL de produto da Shopee." });
+    if (!/shopee\.com\.br|s\.shopee\./i.test(url)) {
+      return res.status(400).json({ error: "URL inválida — precisa ser de shopee.com.br." });
+    }
+    const admin = affiliate.readScraperShopeeAdminCreds();
+    if (!admin.appId || !admin.appSecret) {
+      return res.status(400).json({ error: "Configure App ID e App Secret antes de testar." });
+    }
+    // Usa o fetcher de oferta com creds explícitas, ou gera um shortlink direto.
+    // Reaproveita gerarLinkAfiliadoShopee criando um userId-token de teste isolado.
+    // Mas o caminho mais direto é montar a chamada aqui — porém isso duplicaria.
+    // Truque: monkey-patch temporário via env (não — feio). Melhor: chamar direto
+    // via os helpers internos. Vou usar uma rota auxiliar exposta.
+    const { signShopeeRequest, buildShopeeShortLinkPayload } = affiliate;
+    const timestamp = Math.floor(Date.now() / 1000);
+    const payload = buildShopeeShortLinkPayload(url);
+    const authHeader = signShopeeRequest({
+      appId: admin.appId, appSecret: admin.appSecret, timestamp, payload,
+    });
+    const r = await fetch("https://open-api.affiliate.shopee.com.br/graphql", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": authHeader },
+      body: payload,
+    });
+    if (!r.ok) return res.status(502).json({ error: `Shopee HTTP ${r.status} — confira App ID/Secret` });
+    const data = await r.json();
+    if (data?.errors?.length) {
+      return res.status(502).json({ error: `Shopee API: ${data.errors[0]?.message || "erro"}` });
+    }
+    const short = data?.data?.generateShortLink?.shortLink || null;
+    if (!short) return res.status(502).json({ error: "Sem shortLink na resposta — URL pode não ser de produto válido." });
+    res.json({ ok: true, shortUrl: short });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Lista paginada do catálogo, com filtros opcionais — visualização do admin
 app.get("/api/admin/catalog", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
