@@ -130,15 +130,31 @@ pm2 restart all
 sudo docker compose restart
 ```
 
-## Backup do Postgres
+## Backup do Postgres (3 camadas)
 
-O `backup-data.js` antigo foi removido. Pra backup periódico do DB, agende `pg_dump` via cron — algo assim em `crontab -e`:
+Backup automático a cada 6h em **3 destinos**: local → Backblaze B2 → Google Drive. Setup em 1 comando:
 
-```cron
-0 */6 * * * docker exec nimbus-postgres pg_dump -U nimbus nimbus | gzip > /home/$USER/NewNimbus/backend/backups/nimbus-$(date +\%Y\%m\%d-\%H\%M).sql.gz
+```bash
+bash deploy/setup-backups.sh
 ```
 
-Aí o `nimbus-backup-remote` (já roda via PM2 cron de hora em hora) sobe os snapshots pro S3 — só configure `BACKUP_S3_*` no `.env`.
+Esse script instala `rclone`, registra o cron e te guia pela configuração do B2 (envs no `.env`) e do Google Drive (`rclone config`). Depois, o cron roda `backend/scripts/backup-all.sh` a cada 6h.
+
+Doc completa em [`../backend/scripts/README.md`](../backend/scripts/README.md). Resumo:
+
+| Camada | Quem cuida | Retenção |
+|---|---|---|
+| 1. Dump local em `backend/backups/db-*.sql.gz` | `backup-db.sh` (pg_dump) | 48 snapshots (12 dias) |
+| 2. Upload pro Backblaze B2 (S3-compatível) | `backup-remote.js` | 30 snapshots (7.5 dias) |
+| 3. Espelho no Google Drive | `backup-gdrive.sh` (rclone) | sem rotação (1TB cabe muito) |
+
+Restaurar:
+
+```bash
+gunzip -c backend/backups/db-AAAAMMDD-HHMMSS.sql.gz | \
+  docker exec -i nimbus-postgres psql -U nimbus -d nimbus
+pm2 restart nimbus-backend nimbus-worker
+```
 
 ## Troubleshooting
 

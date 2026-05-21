@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-// Backup remoto S3-compatível (Fase 4 / hardening++).
+// Backup remoto S3-compatível.
 //
-// Sobe o snapshot mais recente de backend/backups/ pra um bucket S3-compatível
+// Sobe os arquivos db-*.sql.gz de backend/backups/ pra um bucket S3-compatível
 // (AWS S3, Backblaze B2, Wasabi, MinIO, Cloudflare R2, etc).
 //
-// Configuração via env:
-//   BACKUP_S3_ENDPOINT   — opcional. Default: AWS. Pra B2: https://s3.us-west-002.backblazeb2.com
-//                          Pra R2:  https://<accountid>.r2.cloudflarestorage.com
+// Configuração via env (sem elas, sai exit 0 sem fazer nada):
+//   BACKUP_S3_ENDPOINT   — opcional. AWS deixa vazio. Pra B2:
+//                          https://s3.us-west-002.backblazeb2.com (ajuste a region)
+//                          Pra R2: https://<accountid>.r2.cloudflarestorage.com
 //   BACKUP_S3_REGION     — region (B2/R2 aceita "auto" ou a region específica)
 //   BACKUP_S3_BUCKET     — nome do bucket
 //   BACKUP_S3_PREFIX     — prefixo dentro do bucket (default: "nimbus/")
@@ -15,11 +16,9 @@
 //   BACKUP_RETAIN_REMOTE — quantos snapshots remotos manter (default: 30)
 //
 // Uso:
-//   node scripts/backup-remote.js               # sobe último snapshot local
-//   node scripts/backup-remote.js --all         # sobe todos snapshots locais ainda não enviados
+//   node scripts/backup-remote.js               # sobe os que ainda não estão em remoto
+//   node scripts/backup-remote.js --latest      # sobe só o último snapshot local
 //   node scripts/backup-remote.js --dry-run     # mostra o que faria
-//
-// Idempotência: usa o nome do snapshot local como key. Re-uploads sobrescrevem.
 
 const fs = require("fs");
 const fsp = require("fs/promises");
@@ -38,32 +37,18 @@ const config = {
 };
 
 const args = new Set(process.argv.slice(2));
-const ALL = args.has("--all");
+const LATEST_ONLY = args.has("--latest");
 const DRY = args.has("--dry-run");
 
-async function listLocalSnapshots() {
+const DUMP_RE = /^db-\d{8}-\d{6}\.sql\.gz$/;
+
+async function listLocalDumps() {
   if (!fs.existsSync(BACKUPS_DIR)) return [];
   const entries = await fsp.readdir(BACKUPS_DIR, { withFileTypes: true });
   return entries
-    .filter(e => e.isDirectory() && e.name.startsWith("data-"))
+    .filter(e => e.isFile() && DUMP_RE.test(e.name))
     .map(e => ({ name: e.name, path: path.join(BACKUPS_DIR, e.name) }))
-    .sort((a, b) => b.name.localeCompare(a.name)); // mais recente primeiro
-}
-
-// Walk recursivo gerando lista de arquivos relativos
-async function walk(root) {
-  const out = [];
-  async function rec(dir, rel) {
-    const entries = await fsp.readdir(dir, { withFileTypes: true });
-    for (const e of entries) {
-      const full = path.join(dir, e.name);
-      const r = rel ? path.join(rel, e.name) : e.name;
-      if (e.isDirectory()) await rec(full, r);
-      else out.push({ full, rel: r.replace(/\\/g, "/") });
-    }
-  }
-  await rec(root, "");
-  return out;
+    .sort((a, b) => b.name.localeCompare(a.name));
 }
 
 function validateConfig() {
@@ -92,31 +77,26 @@ async function makeClient() {
   });
 }
 
-async function uploadSnapshot(client, snapshot) {
+async function uploadDump(client, dump) {
   const { PutObjectCommand } = require("@aws-sdk/client-s3");
-  const files = await walk(snapshot.path);
-  console.log(`[backup-remote] subindo ${snapshot.name}: ${files.length} arquivos`);
-  let bytes = 0;
-  for (const f of files) {
-    const key = `${config.prefix}${snapshot.name}/${f.rel}`;
-    const stat = await fsp.stat(f.full);
-    bytes += stat.size;
-    if (DRY) {
-      console.log(`  [dry] ${key} (${stat.size} bytes)`);
-      continue;
-    }
-    const body = await fsp.readFile(f.full);
-    await client.send(new PutObjectCommand({
-      Bucket: config.bucket,
-      Key: key,
-      Body: body,
-    }));
+  const key = `${config.prefix}${dump.name}`;
+  const stat = await fsp.stat(dump.path);
+  if (DRY) {
+    console.log(`  [dry] ${key} (${(stat.size / 1024 / 1024).toFixed(2)} MB)`);
+    return stat.size;
   }
-  console.log(`[backup-remote] ${snapshot.name} OK (${(bytes / 1024 / 1024).toFixed(2)} MB)`);
-  return bytes;
+  const body = fs.createReadStream(dump.path);
+  await client.send(new PutObjectCommand({
+    Bucket: config.bucket,
+    Key: key,
+    Body: body,
+    ContentType: "application/gzip",
+  }));
+  console.log(`[backup-remote] ${dump.name} OK (${(stat.size / 1024 / 1024).toFixed(2)} MB)`);
+  return stat.size;
 }
 
-async function listRemoteSnapshots(client) {
+async function listRemoteDumps(client) {
   const { ListObjectsV2Command } = require("@aws-sdk/client-s3");
   const seen = new Set();
   let token;
@@ -127,10 +107,8 @@ async function listRemoteSnapshots(client) {
       ContinuationToken: token,
     }));
     for (const obj of (out.Contents || [])) {
-      // key formato: nimbus/data-YYYYMMDD-HHMMSS/...
-      const key = obj.Key.slice(config.prefix.length);
-      const snapName = key.split("/")[0];
-      if (snapName.startsWith("data-")) seen.add(snapName);
+      const name = obj.Key.slice(config.prefix.length);
+      if (DUMP_RE.test(name)) seen.add(name);
     }
     token = out.IsTruncated ? out.NextContinuationToken : undefined;
   } while (token);
@@ -139,54 +117,46 @@ async function listRemoteSnapshots(client) {
 
 async function rotateRemote(client, all) {
   if (all.length <= config.retain) return;
-  const { DeleteObjectsCommand, ListObjectsV2Command } = require("@aws-sdk/client-s3");
+  const { DeleteObjectsCommand } = require("@aws-sdk/client-s3");
   const toDelete = all.slice(config.retain);
-  for (const snap of toDelete) {
-    const out = await client.send(new ListObjectsV2Command({
-      Bucket: config.bucket,
-      Prefix: `${config.prefix}${snap}/`,
-    }));
-    const keys = (out.Contents || []).map(o => ({ Key: o.Key }));
-    if (!keys.length) continue;
-    if (DRY) {
-      console.log(`[dry] removeria ${snap} (${keys.length} objs)`);
-      continue;
-    }
-    // S3 DeleteObjects: max 1000 por chamada
-    for (let i = 0; i < keys.length; i += 1000) {
-      await client.send(new DeleteObjectsCommand({
-        Bucket: config.bucket,
-        Delete: { Objects: keys.slice(i, i + 1000) },
-      }));
-    }
-    console.log(`[backup-remote] removido remoto antigo: ${snap}`);
+  if (!toDelete.length) return;
+  if (DRY) {
+    for (const name of toDelete) console.log(`[dry] removeria remoto ${name}`);
+    return;
   }
+  const keys = toDelete.map(n => ({ Key: `${config.prefix}${n}` }));
+  for (let i = 0; i < keys.length; i += 1000) {
+    await client.send(new DeleteObjectsCommand({
+      Bucket: config.bucket,
+      Delete: { Objects: keys.slice(i, i + 1000) },
+    }));
+  }
+  for (const name of toDelete) console.log(`[backup-remote] removido remoto antigo: ${name}`);
 }
 
 async function main() {
-  if (!validateConfig()) process.exit(0); // exit 0 — não é erro fatal, só desativado
+  if (!validateConfig()) process.exit(0);
 
-  const local = await listLocalSnapshots();
+  const local = await listLocalDumps();
   if (!local.length) {
-    console.log("[backup-remote] sem snapshots locais em backend/backups/. Rode `npm run backup` antes.");
+    console.log("[backup-remote] sem dumps locais em backend/backups/. Rode backup-db.sh antes.");
     process.exit(0);
   }
 
   const client = await makeClient();
-  const remote = new Set(await listRemoteSnapshots(client));
+  const remote = new Set(await listRemoteDumps(client));
   console.log(`[backup-remote] local=${local.length} remote=${remote.size} target=${config.bucket}/${config.prefix}`);
 
-  const candidates = ALL ? local : [local[0]];
-  const toUpload = candidates.filter(s => !remote.has(s.name));
+  const candidates = LATEST_ONLY ? [local[0]] : local;
+  const toUpload = candidates.filter(d => !remote.has(d.name));
   if (!toUpload.length) {
     console.log("[backup-remote] nada a subir — tudo já em remoto");
   }
-  for (const s of toUpload) {
-    await uploadSnapshot(client, s);
+  for (const d of toUpload) {
+    await uploadDump(client, d);
   }
 
-  // Rotação no remoto
-  const allRemote = await listRemoteSnapshots(client);
+  const allRemote = await listRemoteDumps(client);
   await rotateRemote(client, allRemote);
 
   console.log("[backup-remote] done");
