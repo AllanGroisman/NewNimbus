@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { PRIMARY } from "../data/constants";
-import { authLogin, authRegister } from "../data/api";
+import { authLogin, authRegister, authGoogle } from "../data/api";
+
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 
 export default function Login({ onLogin }) {
   const [isRegister, setIsRegister] = useState(false);
@@ -10,6 +12,7 @@ export default function Login({ onLogin }) {
   const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const googleBtnRef = useRef(null);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -33,6 +36,48 @@ export default function Login({ onLogin }) {
     setError(null);
   }
 
+  // Google Identity Services — renderiza o botão quando o script carregar.
+  // Tenta a cada 200ms por até 5s pra cobrir slow networks.
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID) return;
+    let cancelled = false;
+    let attempts = 0;
+
+    async function handleCredential(resp) {
+      if (!resp?.credential) return;
+      setError(null);
+      setLoading(true);
+      try {
+        const r = await authGoogle(resp.credential);
+        onLogin(r.user);
+      } catch (err) {
+        setError(err.message || "Falha no login Google");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    function tryInit() {
+      if (cancelled) return;
+      const g = window.google?.accounts?.id;
+      if (!g || !googleBtnRef.current) {
+        if (attempts++ < 25) setTimeout(tryInit, 200);
+        return;
+      }
+      g.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleCredential });
+      g.renderButton(googleBtnRef.current, {
+        theme: "outline",
+        size: "large",
+        width: 296,
+        text: isRegister ? "signup_with" : "signin_with",
+        shape: "rectangular",
+        logo_alignment: "left",
+      });
+    }
+    tryInit();
+    return () => { cancelled = true; };
+  }, [isRegister, onLogin]);
+
   const inputStyle = { padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, fontFamily: "inherit" };
 
   return (
@@ -47,6 +92,18 @@ export default function Login({ onLogin }) {
             <button key={t} type="button" onClick={() => switchMode(i === 1)} style={{ flex: 1, padding: "7px", borderRadius: 8, border: "none", background: isRegister === (i === 1) ? "var(--color-background-primary)" : "transparent", fontSize: 13, cursor: "pointer", fontWeight: isRegister === (i === 1) ? 500 : 400 }}>{t}</button>
           ))}
         </div>
+
+        {GOOGLE_CLIENT_ID && (
+          <>
+            <div ref={googleBtnRef} style={{ display: "flex", justifyContent: "center", marginBottom: 14 }} />
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, color: "var(--color-text-secondary)", fontSize: 11 }}>
+              <div style={{ flex: 1, height: 1, background: "var(--color-border-tertiary)" }} />
+              <span>ou</span>
+              <div style={{ flex: 1, height: 1, background: "var(--color-border-tertiary)" }} />
+            </div>
+          </>
+        )}
+
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 12 }}>
           {isRegister && (
             <input value={name} onChange={e => setName(e.target.value)} placeholder="Nome completo" autoComplete="name" required style={inputStyle} />

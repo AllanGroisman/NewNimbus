@@ -43,6 +43,11 @@ export async function authLogin({ email, password }) {
   if (r.token) setToken(r.token);
   return r;
 }
+export async function authGoogle(idToken) {
+  const r = await http("POST", "/api/auth/google", { idToken });
+  if (r.token) setToken(r.token);
+  return r;
+}
 export async function authMe() {
   return http("GET", "/api/auth/me");
 }
@@ -191,6 +196,8 @@ export async function adminScraperShopee()           { return http("GET",    "/a
 export async function adminScraperShopeeSave(body)   { return http("PUT",    "/api/admin/scraper/shopee", body); }
 export async function adminScraperShopeeClear()      { return http("DELETE", "/api/admin/scraper/shopee"); }
 export async function adminScraperShopeeTest(url)    { return http("POST",   "/api/admin/scraper/shopee/test", { url }); }
+export async function adminScraperShopeeFilters()        { return http("GET", "/api/admin/scraper/shopee/filters"); }
+export async function adminScraperShopeeFiltersSave(f)   { return http("PUT", "/api/admin/scraper/shopee/filters", f); }
 export async function adminCatalog({ page = 1, pageSize = 50, category, source, q, sortBy } = {}) {
   const params = new URLSearchParams();
   params.set("page", page);

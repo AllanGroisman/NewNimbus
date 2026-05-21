@@ -313,7 +313,11 @@ async function scrapeShopee({ category, limit = 50 } = {}) {
   const pageSize = Math.min(50, limit);
   const products = [];
   let page = 1;
-  let safety = 6;  // Máx 6 páginas (= 300 itens) pra não cobrar demais
+  // Filtros de qualidade descartam muito → aumentamos o safety (até 12 páginas = 600 itens)
+  let safety = 12;
+  const filters = affiliate.readShopeeScraperFilters();
+  let totalSeen = 0;
+  let totalRejected = 0;
 
   while (products.length < limit && safety-- > 0) {
     const { nodes, pageInfo } = await affiliate.fetchShopeeOffers({
@@ -324,12 +328,21 @@ async function scrapeShopee({ category, limit = 50 } = {}) {
     });
     if (!nodes.length) break;
     for (const n of nodes) {
+      totalSeen++;
+      if (!affiliate.passesShopeeFilters(n, filters)) {
+        totalRejected++;
+        continue;
+      }
       const p = shopeeNodeToProduct(n, category);
       if (p.name && p.link) products.push(p);
       if (products.length >= limit) break;
     }
     if (!pageInfo?.hasNextPage) break;
     page++;
+  }
+
+  if (totalRejected > 0) {
+    console.log(`[scraper Shopee] ${keyword}: ${totalSeen} vistos, ${totalRejected} filtrados (rating/vendas/preço/comissão/desconto), ${products.length} aprovados`);
   }
 
   products.sort((a, b) => (b.discount || 0) - (a.discount || 0));

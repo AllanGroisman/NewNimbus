@@ -21,6 +21,7 @@ import PageAffiliateML from "./pages/AffiliateML";
 import PageAffiliateAmazon from "./pages/AffiliateAmazon";
 import PageAffiliateShopee from "./pages/AffiliateShopee";
 import PageAdminScraper from "./pages/AdminScraper";
+import PageAdminShopee from "./pages/AdminShopee";
 import PageAdminUsers from "./pages/AdminUsers";
 import Login from "./pages/Login";
 
@@ -340,6 +341,7 @@ export default function App() {
     "amazon": <PageAffiliateAmazon onAffiliateChange={applyAffiliateStatus} />,
     "shopee": <PageAffiliateShopee onAffiliateChange={applyAffiliateStatus} />,
     "admin-scraper": user?.role === "admin" ? <PageAdminScraper /> : fallbackPage,
+    "admin-shopee":  user?.role === "admin" ? <PageAdminShopee /> : fallbackPage,
     "admin-users":   user?.role === "admin" ? <PageAdminUsers currentUser={user} /> : fallbackPage,
   };
 

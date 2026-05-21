@@ -49,19 +49,27 @@ describe("billing/limits — checkLimit", () => {
     expect(r.planRequired).toBe("basic");
   });
 
-  it("basic: aceita até 3 grupos, rejeita 4", () => {
-    expect(limits.checkLimit(basicSub, "groups", 3).ok).toBe(true);
-    const r = limits.checkLimit(basicSub, "groups", 4);
+  it("basic: aceita 1 campanha, rejeita 2", () => {
+    expect(limits.checkLimit(basicSub, "groups", 1).ok).toBe(true);
+    const r = limits.checkLimit(basicSub, "groups", 2);
     expect(r.ok).toBe(false);
-    expect(r.limit).toBe(3);
+    expect(r.limit).toBe(1);
     expect(r.planRequired).toBe("pro");
   });
 
-  it("pro: aceita 15 grupos, rejeita 16", () => {
-    expect(limits.checkLimit(proSub, "groups", 15).ok).toBe(true);
-    const r = limits.checkLimit(proSub, "groups", 16);
+  it("pro: aceita 5 campanhas, rejeita 6", () => {
+    expect(limits.checkLimit(proSub, "groups", 5).ok).toBe(true);
+    const r = limits.checkLimit(proSub, "groups", 6);
     expect(r.ok).toBe(false);
     expect(r.planRequired).toBe("business");
+  });
+
+  it("whatsappGroupsPerCampaign: basic=3, pro=15, business=999", () => {
+    expect(limits.checkLimit(basicSub, "whatsappGroupsPerCampaign", 3).ok).toBe(true);
+    expect(limits.checkLimit(basicSub, "whatsappGroupsPerCampaign", 4).ok).toBe(false);
+    expect(limits.checkLimit(proSub, "whatsappGroupsPerCampaign", 15).ok).toBe(true);
+    expect(limits.checkLimit(proSub, "whatsappGroupsPerCampaign", 16).ok).toBe(false);
+    expect(limits.checkLimit({ planId: "business", status: "active" }, "whatsappGroupsPerCampaign", 100).ok).toBe(true);
   });
 
   it("autoScraping: bloqueado no basic, liberado no pro", () => {

@@ -4,12 +4,16 @@ import Modal from "../components/ui/Modal";
 import { billingMe, billingCheckout, billingPortal } from "../data/api";
 
 const PLAN_FEATURES = {
-  basic:    ["1 número WhatsApp", "3 grupos", "2 categorias", "Scraping manual", "Suporte por email"],
-  pro:      ["3 números WhatsApp", "15 grupos", "Todas as categorias", "Scraping automático", "Dashboard por grupo", "Filtros avançados", "Suporte via WhatsApp"],
-  business: ["Ilimitado", "Grupos ilimitados", "API de integração", "Painel multi-usuário", "Relatórios avançados", "SLA garantido", "Gerente dedicado"],
+  basic:    ["1 número WhatsApp", "1 campanha", "3 grupos por campanha", "2 categorias", "Scraping manual"],
+  pro:      ["3 números WhatsApp", "5 campanhas", "15 grupos por campanha", "Todas as categorias", "Scraping automático", "Dashboard por grupo", "Filtros avançados"],
+  business: ["5 números WhatsApp", "Campanhas ilimitadas", "Grupos ilimitados", "Scraping automático", "Relatórios avançados", "Suporte prioritário"],
 };
 
-const PLAN_PRICE_BRL = { basic: 49, pro: 99, business: 199 };
+const PLAN_PRICE_BRL = { basic: 69.90, pro: 99.90, business: 149.90 };
+
+function fmtPrice(brl) {
+  return `R$ ${brl.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
 
 function fmtDate(iso) {
   if (!iso) return "—";
@@ -93,7 +97,7 @@ export default function PageSubscription() {
   const plans = ["basic", "pro", "business"].map(id => ({
     id,
     name: id === "basic" ? "Básico" : id === "pro" ? "Pro" : "Business",
-    price: `R$ ${PLAN_PRICE_BRL[id]}`,
+    price: fmtPrice(PLAN_PRICE_BRL[id]),
     features: PLAN_FEATURES[id],
     current: currentPlan === id,
   }));

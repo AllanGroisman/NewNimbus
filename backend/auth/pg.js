@@ -181,6 +181,72 @@ async function login({ email, password }) {
   return { token, user: publicUser(user) };
 }
 
+// Login via Google ID token. Verifica o token contra o endpoint oficial do Google
+// (tokeninfo) — valida assinatura, expiração e audience contra GOOGLE_CLIENT_ID.
+// Se o usuário não existir, cria automaticamente com passwordHash random
+// (Google-only: não consegue entrar por senha, só por Google).
+// Se já existir (registro tradicional por email), apenas faz login.
+const GOOGLE_CLIENT_ID = String(process.env.GOOGLE_CLIENT_ID || "").trim();
+
+async function loginWithGoogle({ idToken }) {
+  if (!GOOGLE_CLIENT_ID) {
+    throw new Error("Login Google não configurado no servidor (GOOGLE_CLIENT_ID ausente)");
+  }
+  if (!idToken || typeof idToken !== "string") {
+    throw new Error("ID token Google ausente");
+  }
+
+  const url = `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`;
+  let res, info;
+  try {
+    res = await fetch(url);
+    info = await res.json();
+  } catch (err) {
+    throw new Error("Falha ao validar token Google: " + err.message);
+  }
+  if (!res.ok) {
+    throw new Error("Token Google inválido: " + (info?.error_description || info?.error || res.statusText));
+  }
+
+  if (info.aud !== GOOGLE_CLIENT_ID) {
+    throw new Error("Token Google emitido para outro app (audience inválida)");
+  }
+  if (info.exp && Number(info.exp) * 1000 < Date.now()) {
+    throw new Error("Token Google expirado");
+  }
+  if (info.email_verified !== true && info.email_verified !== "true") {
+    throw new Error("Email Google não verificado");
+  }
+
+  const email = String(info.email || "").trim().toLowerCase();
+  const name = String(info.name || info.given_name || email.split("@")[0] || "Usuário").trim();
+  if (!email) throw new Error("Token Google sem email");
+
+  let user = await findByEmail(email);
+  if (!user) {
+    // Cria conta nova — passwordHash random (Google-only).
+    const randomPass = crypto.randomBytes(32).toString("hex");
+    user = await prisma().user.create({
+      data: {
+        id: crypto.randomUUID(),
+        name,
+        email,
+        phone: "",
+        passwordHash: await bcrypt.hash(randomPass, 10),
+        role: isAdminEmail(email) ? "admin" : "user",
+      },
+    }).catch(async err => {
+      if (err.code === "P2002") return findByEmail(email); // race
+      throw err;
+    });
+  }
+
+  await syncRole(user);
+  cacheUser(user);
+  const token = jwt.sign({ sub: user.id, email: user.email }, getJwtSecret(), { expiresIn: TOKEN_TTL });
+  return { token, user: publicUser(user), created: !user.createdAt || (Date.now() - new Date(user.createdAt).getTime() < 5000) };
+}
+
 function verifyToken(token) {
   try { return jwt.verify(token, getJwtSecret()); }
   catch { return null; }
@@ -300,6 +366,7 @@ module.exports = {
   seedDefaultAdmin,
   register,
   login,
+  loginWithGoogle,
   requireAuth,
   requireAdmin,
   updateProfile,

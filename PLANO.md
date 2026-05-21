@@ -17,5 +17,8 @@
 * Atendimento -> Como vamos fazer o atendimento ao cliente? Bot no whats?
 * Login -> Login com google e etc...
 * CUPONS -> https://www.mercadolivre.com.br/cupons?source_page=mperfil#nav-header
-* SHOPEE -> Trocar de onde pega os produtos no scrapping
-* Front -> Colocar links reais pra testar la fixos que podem ser trocados caso o usuario ponha outro
+
+
+
+@SHOPEE -> Trocar de onde pega os produtos no scrapping
+@Front -> Colocar links reais pra testar la fixos que podem ser trocados caso o usuario ponha outro

@@ -1,11 +1,14 @@
 // Limites por plano — fonte única de verdade, lida pelo gating do backend
 // e exposta pro frontend via /api/billing/me.
 //
-// Mantém alinhamento com os planos exibidos em Subscription.jsx:
-//   Básico R$49 / Pro R$99 / Business R$199
+// Terminologia:
+//   numbers                     — números de WhatsApp conectados
+//   groups                      — CAMPANHAS (model Group; cada Group tem fila própria)
+//   whatsappGroupsPerCampaign   — grupos do WhatsApp anexados a UMA campanha
+//   categoriesPerGroup          — categorias selecionadas em UMA campanha
 //
 // Quando o plano não tem assinatura paga (status diferente de active/trialing),
-// o usuário cai em "free" — sem acesso a criar grupos/números nem rodar scheduler.
+// o usuário cai em "free" — sem acesso a criar campanhas/números nem rodar scheduler.
 
 const PLANS = {
   free: {
@@ -14,36 +17,40 @@ const PLANS = {
     limits: {
       numbers: 0,
       groups: 0,
+      whatsappGroupsPerCampaign: 0,
       categoriesPerGroup: 0,
       autoScraping: false,
     },
   },
   basic: {
     label: "Básico",
-    priceBRL: 49,
+    priceBRL: 69.90,
     limits: {
       numbers: 1,
-      groups: 3,
+      groups: 1,
+      whatsappGroupsPerCampaign: 3,
       categoriesPerGroup: 2,
       autoScraping: false,
     },
   },
   pro: {
     label: "Pro",
-    priceBRL: 99,
+    priceBRL: 99.90,
     limits: {
       numbers: 3,
-      groups: 15,
+      groups: 5,
+      whatsappGroupsPerCampaign: 15,
       categoriesPerGroup: 99,
       autoScraping: true,
     },
   },
   business: {
     label: "Business",
-    priceBRL: 199,
+    priceBRL: 149.90,
     limits: {
-      numbers: 99,
-      groups: 99,
+      numbers: 5,
+      groups: 999,
+      whatsappGroupsPerCampaign: 999,
       categoriesPerGroup: 99,
       autoScraping: true,
     },

@@ -84,9 +84,26 @@ Abra `http://localhost:5173`. O `start.bat` já injeta `DATABASE_URL`, `QUEUE_BA
 | Postgres (docker) | **Sim** | Storage primário via Prisma |
 | Redis (docker) | **Sim** (modo padrão `QUEUE_BACKEND=redis`) | Fila BullMQ + persistência de jobs. Pra desligar, troque pra `memory` no `start.bat` |
 | Stripe keys no `.env` | Não | Sem elas, endpoints de billing retornam 501 (resto funciona normal) |
+| Google OAuth | Não | Sem `GOOGLE_CLIENT_ID`, o botão "Entrar com Google" fica oculto. Login por email/senha continua funcionando |
 | Sentry DSN | Não | Sem, erros só ficam no console |
 | Backup S3 | Não | Sem, `npm run backup:remote` sai sem fazer nada |
 | ngrok | Não | Só pra acessar o frontend de fora da máquina |
+
+### Login com Google (opcional)
+
+Pra habilitar o botão "Entrar com Google" na tela de login:
+
+1. Acesse <https://console.cloud.google.com> → crie/escolha um projeto.
+2. **APIs & Services → OAuth consent screen** → tipo "External" → preencha nome do app + email de suporte.
+3. **APIs & Services → Credentials → Create Credentials → OAuth client ID** → tipo "Web application".
+4. **Authorized JavaScript origins**: adicione `http://localhost:5173` (dev) e a URL do seu domínio (prod).
+5. Copie o **Client ID** gerado (formato `xxx.apps.googleusercontent.com`).
+6. Cole o **mesmo valor** em:
+   - `backend/.env` → `GOOGLE_CLIENT_ID=...`
+   - `frontend/.env` → `VITE_GOOGLE_CLIENT_ID=...`
+7. Reinicie backend + frontend.
+
+Usuários novos via Google são criados automaticamente (com trial de 7 dias). Se o email já existir como conta tradicional, o Google login só faz login sem duplicar.
 
 ### Comandos do dia a dia
 

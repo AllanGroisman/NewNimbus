@@ -317,6 +317,23 @@ app.post("/api/auth/login", loginLimiter, async (req, res) => {
   }
 });
 
+// Login via Google Identity Services. Frontend recebe um ID token do GIS
+// e POSTa aqui. Backend valida com Google e cria/loga o usuário.
+// Se for criação nova, inicia trial automático de 7 dias (mesmo fluxo do register).
+app.post("/api/auth/google", loginLimiter, async (req, res) => {
+  try {
+    const { idToken, credential } = req.body || {};
+    const result = await auth.loginWithGoogle({ idToken: idToken || credential });
+    if (result.created) {
+      try { await billing.startTrialFor(result.user.id); }
+      catch (err) { logger.warn({ err: err.message, userId: result.user.id }, "[billing] trial start falhou"); }
+    }
+    res.json({ token: result.token, user: result.user });
+  } catch (err) {
+    res.status(401).json({ error: err.message });
+  }
+});
+
 app.get("/api/auth/me", auth.requireAuth, (req, res) => {
   res.json({ user: req.user });
 });
@@ -374,6 +391,14 @@ app.put("/api/state", auth.requireAuth, async (req, res) => {
       }, 0);
       if (worstCats > 0) {
         checks.push(billing.limits.checkLimit(sub, "categoriesPerGroup", worstCats, req.user.role));
+      }
+      // whatsappGroupsPerCampaign — qualquer campanha com mais grupos do WA que o limite bloqueia.
+      const worstWaGroups = incomingGroups.reduce((max, g) => {
+        const n = Array.isArray(g.whatsappGroupIds) ? g.whatsappGroupIds.length : 0;
+        return n > max ? n : max;
+      }, 0);
+      if (worstWaGroups > 0) {
+        checks.push(billing.limits.checkLimit(sub, "whatsappGroupsPerCampaign", worstWaGroups, req.user.role));
       }
       // autoScraping — bloqueia se algum grupo tem scraping.auto=true e plano não permite.
       if (!planLimits.autoScraping) {
@@ -905,6 +930,20 @@ app.put("/api/admin/scraper/shopee", auth.requireAuth, auth.requireAdmin, (req, 
 app.delete("/api/admin/scraper/shopee", auth.requireAuth, auth.requireAdmin, (req, res) => {
   affiliate.clearScraperShopeeAdminCreds();
   res.json({ ok: true });
+});
+
+// Filtros de qualidade aplicados pelo scraper Shopee (rating min, vendas min, etc).
+app.get("/api/admin/scraper/shopee/filters", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json({ filters: affiliate.readShopeeScraperFilters(), defaults: affiliate.SHOPEE_FILTERS_DEFAULTS });
+});
+
+app.put("/api/admin/scraper/shopee/filters", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  try {
+    const saved = affiliate.writeShopeeScraperFilters(req.body || {});
+    res.json({ ok: true, filters: saved });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // Testa as credenciais admin gerando um shortlink — mesma rota de teste do affiliate,

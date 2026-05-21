@@ -6,6 +6,17 @@ const appConfig = require("../config");
 // Sobrescreve "primeiro usuário com config" como fallback do admin-scraper.
 const SCRAPER_SHOPEE_ADMIN_KEY = "scraper-shopee-admin";
 
+// Filtros de qualidade aplicados aos resultados da Shopee. Ajustáveis no admin.
+const SHOPEE_FILTERS_KEY = "shopee-scraper-filters";
+const SHOPEE_FILTERS_DEFAULTS = {
+  minRating: 0,           // 0 = sem filtro. Recomendado: 4.0
+  minSales: 0,            // 0 = sem filtro. Recomendado: 100
+  minPrice: 0,            // BRL
+  maxPrice: 0,            // 0 = sem teto
+  minCommissionRate: 0,   // 0.05 = 5%. 0 = sem filtro
+  maxDiscount: 0,         // % máximo. Recomendado: 95 (corta "99% off" fake). 0 = sem filtro
+};
+
 // Config persistida POR USUÁRIO via affiliate-store. Schema do `raw`:
 //   { ml: { tag, cookie, updatedAt },
 //     amazon: { tag, updatedAt },
@@ -486,6 +497,57 @@ function clearScraperShopeeAdminCreds() {
   appConfig.del(SCRAPER_SHOPEE_ADMIN_KEY);
 }
 
+// ────────────────────────────────────────────────────────────────────────
+// Filtros de qualidade da Shopee (admin-only)
+// ────────────────────────────────────────────────────────────────────────
+
+function readShopeeScraperFilters() {
+  const raw = appConfig.get(SHOPEE_FILTERS_KEY);
+  if (!raw || typeof raw !== "object") return { ...SHOPEE_FILTERS_DEFAULTS };
+  return { ...SHOPEE_FILTERS_DEFAULTS, ...raw };
+}
+
+function writeShopeeScraperFilters(patch) {
+  const cur = readShopeeScraperFilters();
+  const num = (v, def) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : def;
+  };
+  const next = {
+    minRating:         num(patch?.minRating,         cur.minRating),
+    minSales:          num(patch?.minSales,          cur.minSales),
+    minPrice:          num(patch?.minPrice,          cur.minPrice),
+    maxPrice:          num(patch?.maxPrice,          cur.maxPrice),
+    minCommissionRate: num(patch?.minCommissionRate, cur.minCommissionRate),
+    maxDiscount:       num(patch?.maxDiscount,       cur.maxDiscount),
+  };
+  // Validações de sanidade
+  if (next.minRating > 5) next.minRating = 5;
+  if (next.maxDiscount > 100) next.maxDiscount = 100;
+  if (next.minCommissionRate > 1) next.minCommissionRate = next.minCommissionRate / 100; // aceita "5" → 0.05
+  appConfig.set(SHOPEE_FILTERS_KEY, next);
+  return next;
+}
+
+// Aplica filtros num node bruto da Shopee. Retorna `true` se passa.
+// node: { ratingStar, sales, price, commissionRate, priceDiscountRate, ... }
+function passesShopeeFilters(node, filters = null) {
+  const f = filters || readShopeeScraperFilters();
+  const rating = Number(node?.ratingStar) || 0;
+  const sales = Number(node?.sales) || 0;
+  const price = Number(node?.price) || 0;
+  const commission = Number(node?.commissionRate) || 0;
+  const discount = Number(node?.priceDiscountRate) || 0;
+
+  if (f.minRating > 0 && rating < f.minRating) return false;
+  if (f.minSales > 0 && sales < f.minSales) return false;
+  if (f.minPrice > 0 && price > 0 && price < f.minPrice) return false;
+  if (f.maxPrice > 0 && price > f.maxPrice) return false;
+  if (f.minCommissionRate > 0 && commission < f.minCommissionRate) return false;
+  if (f.maxDiscount > 0 && discount > f.maxDiscount) return false;
+  return true;
+}
+
 // Resolve credenciais Shopee pro admin-scraper (que roda fora de qualquer userId).
 // Prioridade: env vars → admin override (appConfig) → primeiro user com config.
 // Retorna null se nada disponível.
@@ -585,6 +647,10 @@ module.exports = {
   readScraperShopeeAdminCreds,
   writeScraperShopeeAdminCreds,
   clearScraperShopeeAdminCreds,
+  readShopeeScraperFilters,
+  writeShopeeScraperFilters,
+  passesShopeeFilters,
+  SHOPEE_FILTERS_DEFAULTS,
   // Puros — testes
   signShopeeRequest,
   buildShopeeShortLinkPayload,
