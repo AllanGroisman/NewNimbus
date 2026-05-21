@@ -133,11 +133,45 @@ function isAutoApprove(group) {
   return v === undefined ? true : !!v;
 }
 
+// Tenta gerar link de afiliado pra um item conforme a loja.
+// Decisão de "passa ou pula" no refill:
+//   - Loja não-monetizável (sem afiliado pra ela): mantém link original (passa)
+//   - Afiliado NÃO configurado pra loja: mantém link original (passa)
+//   - Afiliado CONFIGURADO e converteu: usa link de afiliado (passa)
+//   - Afiliado CONFIGURADO e falhou: DESCARTA (pula) — não queremos enviar link
+//     sem comissão quando o usuário configurou pra ganhar
+// Retorna { ok, link, reason }. link=null significa "mantém o original".
+async function convertItemAffiliate(userId, item, affStatus) {
+  if (!item || !item.link || typeof item.link !== "string") {
+    return { ok: true, link: null };
+  }
+  if (item.store === "Mercado Livre") {
+    if (!affStatus.ml.configured) return { ok: true, link: null };
+    const aff = await affiliate.gerarLinkAfiliadoML(userId, item.link);
+    if (aff) return { ok: true, link: aff };
+    return { ok: false, reason: "ML conversion failed" };
+  }
+  if (item.store === "Amazon") {
+    if (!affStatus.amazon.configured) return { ok: true, link: null };
+    const aff = affiliate.gerarLinkAfiliadoAmazon(userId, item.link);
+    if (aff) return { ok: true, link: aff };
+    return { ok: false, reason: "Amazon affiliate (ASIN inválido?)" };
+  }
+  if (item.store === "Shopee") {
+    if (!affStatus.shopee.configured) return { ok: true, link: null };
+    const aff = await affiliate.gerarLinkAfiliadoShopee(userId, item.link);
+    if (aff) return { ok: true, link: aff };
+    return { ok: false, reason: "Shopee conversion failed" };
+  }
+  return { ok: true, link: null };
+}
+
 // Faz refill da fila/pending CONSULTANDO O CATÁLOGO (não scrape).
 // Aplica filtros da campanha e exclui keys já no queue/pending/history (cooldown).
-// Retorna { cleanedQueue, cleanedPending, newItems, target, removedFromQueue }.
-// `target` = "queue" ou "pending" (pra onde os newItems vão).
-async function refillQueue(group) {
+// Converte link de afiliado item-a-item: se afiliado estiver configurado pra loja
+// mas a conversão falhar, o item é descartado (não vai pra queue/pending).
+// Retorna { cleanedQueue, cleanedPending, newItems, target, removedFromQueue, skippedAff }.
+async function refillQueue(userId, group) {
   const cats = Array.isArray(group.categories) && group.categories.length
     ? group.categories
     : (group.category ? [group.category] : []);
@@ -194,7 +228,7 @@ async function refillQueue(group) {
     limit: 100,
   });
 
-  const newItems = candidates.map(p => ({
+  const rawItems = candidates.map(p => ({
     id: p.key,    // a UI de pending busca por `id`
     key: p.key,
     name: p.name,
@@ -213,11 +247,37 @@ async function refillQueue(group) {
     addedAt: new Date().toISOString(),
   }));
 
-  if (newItems.length || removedFromQueue > 0) {
-    console.log(`[scheduler] "${group.name}": +${newItems.length} → ${target} (cats=${cats.join(",") || "todas"}, sources=${sources.join(",")})`);
+  // Conversão de afiliado item-a-item. Descarta produtos cuja conversão falhou
+  // (quando o afiliado da loja está configurado) pra não enviar link sem comissão.
+  const affStatus = affiliate.status(userId);
+  const newItems = [];
+  const skippedAff = { ml: 0, amazon: 0, shopee: 0, total: 0 };
+  for (const item of rawItems) {
+    const r = await convertItemAffiliate(userId, item, affStatus);
+    if (!r.ok) {
+      skippedAff.total++;
+      if (item.store === "Mercado Livre") skippedAff.ml++;
+      else if (item.store === "Amazon") skippedAff.amazon++;
+      else if (item.store === "Shopee") skippedAff.shopee++;
+      continue;
+    }
+    if (r.link) {
+      // Link de afiliado gerado — substitui o link e marca pra sendItem não re-converter.
+      newItems.push({ ...item, link: r.link, originalLink: item.link, affiliateLink: r.link });
+    } else {
+      // Loja sem afiliado configurado — mantém link original.
+      newItems.push(item);
+    }
   }
 
-  return { cleanedQueue, cleanedPending, newItems, target, removedFromQueue };
+  if (newItems.length || removedFromQueue > 0 || skippedAff.total > 0) {
+    const skipStr = skippedAff.total
+      ? `, ${skippedAff.total} descartados por afiliado (ml=${skippedAff.ml}, amz=${skippedAff.amazon}, sho=${skippedAff.shopee})`
+      : "";
+    console.log(`[scheduler] "${group.name}": +${newItems.length} → ${target} (cats=${cats.join(",") || "todas"}, sources=${sources.join(",")}${skipStr})`);
+  }
+
+  return { cleanedQueue, cleanedPending, newItems, target, removedFromQueue, skippedAff: skippedAff.total };
 }
 
 // Atualiza métricas após um envio
@@ -254,7 +314,11 @@ async function sendItem(userId, group, whatsappGroups, item) {
   }
 
   let itemForSend = item;
-  if (item.store === "Mercado Livre" && item.link) {
+  if (item.affiliateLink) {
+    // Já convertido no refill — usa direto pra evitar nova chamada de API.
+    itemForSend = { ...item, link: item.affiliateLink };
+  } else if (item.store === "Mercado Livre" && item.link) {
+    // Fallback pra itens legados ou inseridos manualmente (sem affiliateLink).
     const aff = await affiliate.gerarLinkAfiliadoML(userId, item.link);
     if (aff) {
       itemForSend = { ...item, link: aff };
@@ -446,7 +510,7 @@ async function sendNextNow(userId, groupId) {
   // então força os itens pra queue mesmo se a campanha está em modo de revisão.
   let queue = group.queue || [];
   if (!queue.length) {
-    const { cleanedQueue, newItems } = await refillQueue(group);
+    const { cleanedQueue, newItems } = await refillQueue(userId, group);
     const refilled = [...cleanedQueue, ...newItems];
     if (refilled.length) {
       await storage.updateGroupOps(userId, groupId, { queue: refilled });
@@ -507,7 +571,7 @@ async function processGroup(userId, group, whatsappGroups, numbers) {
   const pendingLen = (group.pending || []).length;
   const inWindow = !!activeWindow(now, group.schedule);
   if ((queueLen + pendingLen < REFILL_THRESHOLD) && inWindow) {
-    const { cleanedQueue, cleanedPending, newItems, target, removedFromQueue } = await refillQueue(group);
+    const { cleanedQueue, cleanedPending, newItems, target, removedFromQueue } = await refillQueue(userId, group);
     if (newItems.length || removedFromQueue > 0 || cleanedPending.length !== (group.pending || []).length) {
       if (target === "queue") {
         updates.queue = [...cleanedQueue, ...newItems];
@@ -627,7 +691,7 @@ async function refillNow(userId, groupId, overrides = {}) {
     if (Array.isArray(overrides.categories)) merged.categories = overrides.categories;
   }
 
-  const { cleanedQueue, cleanedPending, newItems, target, removedFromQueue } = await refillQueue(merged);
+  const { cleanedQueue, cleanedPending, newItems, target, removedFromQueue, skippedAff } = await refillQueue(userId, merged);
   const updates = {};
   if (target === "queue") {
     updates.queue = [...cleanedQueue, ...newItems];
@@ -643,6 +707,7 @@ async function refillNow(userId, groupId, overrides = {}) {
     pendingSize: (updates.pending || group.pending || []).length,
     added: newItems.length,
     removed: removedFromQueue,
+    skippedAffiliate: skippedAff || 0,
   };
 }
 
