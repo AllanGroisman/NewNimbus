@@ -17,6 +17,7 @@ const metrics = require("./infra/metrics");
 const sentry = require("./infra/sentry");
 const billing = require("./billing");
 const stripeMod = require("./billing/stripe");
+const backupApi = require("./backup/api");
 
 // Sentry init (Fase 4) — no-op se SENTRY_DSN não estiver definido
 sentry.init({ context: "server" });
@@ -929,6 +930,91 @@ app.post("/api/admin/users/:id/resend-verification", auth.requireAuth, auth.requ
   try {
     const result = await auth.adminResendVerification(req.params.id);
     res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// Admin — Backups
+// ────────────────────────────────────────────────────────────────────────
+
+app.get("/api/admin/backups/local", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const items = await backupApi.listLocal();
+    res.json({ items });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/backups/remote", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const result = await backupApi.listRemote();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Cria novo dump local (pode demorar ~10-30s)
+app.post("/api/admin/backups/local", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const info = await backupApi.createLocalDump();
+    res.json({ ok: true, backup: { name: info.name, size: info.size } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Envia backup local para o Backblaze
+app.post("/api/admin/backups/push", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const { filename } = req.body || {};
+    if (!filename) return res.status(400).json({ error: "filename obrigatório" });
+    await backupApi.uploadToRemote(filename);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Restaura banco a partir de backup local ou remoto (operação bloqueante ~10-60s)
+app.post("/api/admin/backups/restore", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  const { source, filename } = req.body || {};
+  if (!source || !filename) return res.status(400).json({ error: "source e filename obrigatórios" });
+  if (source !== "local" && source !== "remote") return res.status(400).json({ error: "source inválido" });
+  try {
+    const { disconnect } = require("./db");
+    await disconnect(); // libera conexões Prisma antes de dropar o banco
+    if (source === "local") await backupApi.restoreLocal(filename);
+    else await backupApi.restoreRemote(filename);
+
+    res.json({ ok: true, message: "Banco restaurado. Backend reiniciando..." });
+
+    // Reinicia o processo via PM2 após enviar a resposta
+    setTimeout(() => {
+      try { require("child_process").execSync("pm2 restart nimbus-backend nimbus-worker", { stdio: "ignore" }); }
+      catch {}
+    }, 1500);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/admin/backups/local/:filename", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    await backupApi.deleteLocal(req.params.filename);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete("/api/admin/backups/remote/:filename", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    await backupApi.deleteRemote(req.params.filename);
+    res.json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

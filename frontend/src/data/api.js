@@ -219,6 +219,15 @@ export async function adminResendUserVerification(id) {
   return http("POST", `/api/admin/users/${id}/resend-verification`);
 }
 
+// ─── Admin / Backups ───────────────────────────────────────────────────
+export async function adminBackupsLocal()              { return http("GET",    "/api/admin/backups/local"); }
+export async function adminBackupsRemote()             { return http("GET",    "/api/admin/backups/remote"); }
+export async function adminCreateLocalBackup()         { return http("POST",   "/api/admin/backups/local"); }
+export async function adminPushBackup(filename)        { return http("POST",   "/api/admin/backups/push", { filename }); }
+export async function adminRestoreBackup(source, filename) { return http("POST", "/api/admin/backups/restore", { source, filename }); }
+export async function adminDeleteLocalBackup(filename) { return http("DELETE", `/api/admin/backups/local/${encodeURIComponent(filename)}`); }
+export async function adminDeleteRemoteBackup(filename){ return http("DELETE", `/api/admin/backups/remote/${encodeURIComponent(filename)}`); }
+
 // ─── Admin / scraper global e catálogo ─────────────────────────────────
 export async function adminScraperConfig()       { return http("GET",  "/api/admin/scraper/config"); }
 export async function adminSaveScraperConfig(cfg){ return http("PUT",  "/api/admin/scraper/config", cfg); }

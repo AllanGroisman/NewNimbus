@@ -23,6 +23,7 @@ import PageAffiliateShopee from "./pages/AffiliateShopee";
 import PageAdminScraper from "./pages/AdminScraper";
 import PageAdminShopee from "./pages/AdminShopee";
 import PageAdminUsers from "./pages/AdminUsers";
+import PageAdminBackups from "./pages/AdminBackups";
 import PageTutoriais from "./pages/Tutoriais";
 import Login from "./pages/Login";
 
@@ -348,6 +349,7 @@ export default function App() {
     "admin-scraper": user?.role === "admin" ? <PageAdminScraper /> : fallbackPage,
     "admin-shopee":  user?.role === "admin" ? <PageAdminShopee /> : fallbackPage,
     "admin-users":   user?.role === "admin" ? <PageAdminUsers currentUser={user} /> : fallbackPage,
+    "admin-backups": user?.role === "admin" ? <PageAdminBackups /> : fallbackPage,
     "tutorials":     <PageTutoriais targetTutorialId={tutorialTarget} />,
   };
 

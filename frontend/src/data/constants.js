@@ -180,4 +180,5 @@ export const sidebarItems = [
   { id: "admin-scraper", icon: "⟳", label: "Scraping", adminOnly: true },
   { id: "admin-shopee",  icon: "◈", label: "Shopee",   adminOnly: true },
   { id: "admin-users",   icon: "♟", label: "Usuários", adminOnly: true },
+  { id: "admin-backups", icon: "⊡", label: "Backups",  adminOnly: true },
 ];
