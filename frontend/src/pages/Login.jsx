@@ -57,7 +57,15 @@ export default function Login({ onLogin }) {
   const [info, setInfo] = useState(null);
   const [infoMessage, setInfoMessage] = useState(null);
   const [resetToken, setResetToken] = useState(null);
+  const [resendCooldown, setResendCooldown] = useState(0); // segundos restantes
   const googleBtnRef = useRef(null);
+
+  // Countdown do cooldown de reenvio
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const t = setTimeout(() => setResendCooldown(s => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendCooldown]);
 
   // Captura ?verify=token / ?reset=token na primeira carga.
   useEffect(() => {
@@ -147,16 +155,20 @@ export default function Login({ onLogin }) {
   }
 
   async function handleResend() {
-    if (!info) return;
+    if (!info || resendCooldown > 0) return;
     setLoading(true);
     setError(null);
     try {
       await authResendVerification(info);
-      setInfo(info); // mantém email mostrado
-      setError(null);
       setInfoMessage("Email reenviado. Verifique sua caixa de entrada (e o spam).");
+      setResendCooldown(120);
     } catch (err) {
-      setError(err.message || "Falha ao reenviar");
+      if (err.code === "resend_cooldown" && err.retryAfterSeconds) {
+        setResendCooldown(err.retryAfterSeconds);
+        setError(null);
+      } else {
+        setError(err.message || "Falha ao reenviar");
+      }
     } finally {
       setLoading(false);
     }
@@ -247,8 +259,8 @@ export default function Login({ onLogin }) {
         {error && (
           <div style={{ background: "#FCEBEB", border: "0.5px solid #F7C1C1", color: "#A32D2D", borderRadius: 8, padding: "8px 10px", fontSize: 12 }}>{error}</div>
         )}
-        <button type="button" onClick={handleResend} disabled={loading} style={{ width: "100%", padding: 10, borderRadius: 10, background: "transparent", color: PRIMARY, border: `0.5px solid ${PRIMARY}`, fontSize: 13, cursor: loading ? "wait" : "pointer", fontWeight: 500 }}>
-          {loading ? "Reenviando…" : "Reenviar email de verificação"}
+        <button type="button" onClick={handleResend} disabled={loading || resendCooldown > 0} style={{ width: "100%", padding: 10, borderRadius: 10, background: "transparent", color: resendCooldown > 0 ? "var(--color-text-secondary)" : PRIMARY, border: `0.5px solid ${resendCooldown > 0 ? "var(--color-border-tertiary)" : PRIMARY}`, fontSize: 13, cursor: (loading || resendCooldown > 0) ? "default" : "pointer", fontWeight: 500 }}>
+          {loading ? "Reenviando…" : resendCooldown > 0 ? `Reenviar em ${resendCooldown}s` : "Reenviar email de verificação"}
         </button>
         <button type="button" onClick={() => switchMode("login")} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 12, color: "var(--color-text-secondary)" }}>
           Voltar para o login

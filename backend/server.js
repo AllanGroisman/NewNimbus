@@ -335,12 +335,16 @@ app.post("/api/auth/verify-email", loginLimiter, async (req, res) => {
 });
 
 // Reenvia email de verificação. Sempre devolve ok (não revela se conta existe).
+// Exceção: resend_cooldown (429) revela que a conta existe, mas o usuário já sabe disso.
 app.post("/api/auth/resend-verification", registerLimiter, async (req, res) => {
   try {
     const { email } = req.body || {};
     const result = await auth.resendVerification({ email });
     res.json(result);
   } catch (err) {
+    if (err.code === "resend_cooldown") {
+      return res.status(429).json({ error: err.message, code: "resend_cooldown", retryAfterSeconds: err.retryAfterSeconds });
+    }
     res.status(400).json({ error: err.message });
   }
 });

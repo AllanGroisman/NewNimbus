@@ -28,9 +28,11 @@ async function http(method, path, body, { signal } = {}) {
   if (!res.ok) {
     let detail = res.statusText;
     let code = null;
-    try { const j = await res.json(); detail = j.error || j.details || detail; code = j.code || null; } catch {}
+    let extra = {};
+    try { const j = await res.json(); detail = j.error || j.details || detail; code = j.code || null; extra = j; } catch {}
     const err = new Error(detail || `Falha ${method} ${path}`);
     if (code) err.code = code;
+    if (extra.retryAfterSeconds) err.retryAfterSeconds = extra.retryAfterSeconds;
     err.status = res.status;
     throw err;
   }

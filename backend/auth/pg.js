@@ -15,8 +15,9 @@ const MAX_EMAIL_LEN = 254;
 const MIN_PASSWORD_LEN = 8;
 const MAX_PASSWORD_LEN = 128;
 
-const EMAIL_VERIFY_TTL_MS = 24 * 60 * 60 * 1000;   // 24h
-const PASSWORD_RESET_TTL_MS = 60 * 60 * 1000;      // 1h
+const EMAIL_VERIFY_TTL_MS    = 24 * 60 * 60 * 1000; // 24h
+const PASSWORD_RESET_TTL_MS  = 60 * 60 * 1000;     // 1h
+const RESEND_COOLDOWN_MS     = 2 * 60 * 1000;       // 2 min entre reenvios
 
 function validatePassword(password) {
   const s = String(password || "");
@@ -261,6 +262,21 @@ async function resendVerification({ email }) {
   if (!email) return { ok: true };
   const user = await findByEmail(email);
   if (!user || user.emailVerified) return { ok: true };
+
+  // Cooldown: deriva quando o último email foi enviado a partir de emailVerifyExpires.
+  // lastSentAt = emailVerifyExpires - EMAIL_VERIFY_TTL_MS
+  if (user.emailVerifyExpires) {
+    const lastSentAt = user.emailVerifyExpires.getTime() - EMAIL_VERIFY_TTL_MS;
+    const elapsed = Date.now() - lastSentAt;
+    if (elapsed < RESEND_COOLDOWN_MS) {
+      const retryAfterSeconds = Math.ceil((RESEND_COOLDOWN_MS - elapsed) / 1000);
+      const err = new Error(`Aguarde ${retryAfterSeconds}s antes de solicitar outro email.`);
+      err.code = "resend_cooldown";
+      err.retryAfterSeconds = retryAfterSeconds;
+      throw err;
+    }
+  }
+
   const verifyToken = newToken();
   await prisma().user.update({
     where: { id: user.id },
