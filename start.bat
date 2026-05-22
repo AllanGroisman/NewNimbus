@@ -52,6 +52,26 @@ if errorlevel 1 (
 )
 echo.
 
+:: ── Backup local → Backblaze (para restaurar na VPS) ──────────────────
+set "DO_BACKUP=N"
+set /p "DO_BACKUP=Enviar banco local ao Backblaze (para restaurar na VPS depois)? [S/N] (default N): "
+if /I "%DO_BACKUP%"=="S" (
+    echo [backup] Gerando dump do banco...
+    if not exist "%~dp0backend\backups" mkdir "%~dp0backend\backups"
+    for /f %%i in ('node -e "var d=new Date();var p=function(n){return ('0'+n).slice(-2)};console.log(d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'-'+p(d.getHours())+p(d.getMinutes())+p(d.getSeconds()))"') do set "_TS=%%i"
+    docker exec nimbus-postgres sh -c "pg_dump -U nimbus nimbus | gzip" > "%~dp0backend\backups\db-%_TS%.sql.gz"
+    if errorlevel 1 (
+        echo [ERRO] Dump falhou. Continuando sem backup...
+    ) else (
+        echo [backup] Enviando para o Backblaze...
+        pushd "%~dp0backend"
+        node scripts\backup-remote.js --latest
+        popd
+        echo [backup] Pronto! Na VPS, rode start.sh e escolha restaurar o banco.
+    )
+)
+echo.
+
 :: ── Pergunta se quer subir o ngrok ────────────────────────────────────
 set "START_NGROK="
 set /p "START_NGROK=Iniciar ngrok (acesso externo)? [S/N] (default S): "

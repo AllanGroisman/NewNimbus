@@ -46,10 +46,19 @@ else
 
   if [[ -z "$_LATEST_REMOTE" ]]; then
     echo "  Sem backups remotos encontrados."
-  elif [[ "$_LATEST_REMOTE" > "${_LATEST_LOCAL:-0}" ]]; then
-    echo "  Backup remoto mais novo detectado: $_LATEST_REMOTE"
-    [[ -n "$_LATEST_LOCAL" ]] && echo "  Local atual:                    $_LATEST_LOCAL"
-    read -rp "  Restaurar banco do Backblaze antes de subir? [s/N] " _restore_resp
+  else
+    echo "  Backup remoto disponível: $_LATEST_REMOTE"
+    if [[ "$_LATEST_REMOTE" > "${_LATEST_LOCAL:-0}" ]]; then
+      echo "  >>> Mais novo que o local — recomendado restaurar."
+    elif [[ -n "$_LATEST_LOCAL" ]]; then
+      echo "  Local atual:              $_LATEST_LOCAL"
+      echo "  (banco local parece mais recente — mas você pode sobrescrever)"
+    fi
+    echo
+    echo "  Opções:"
+    echo "    s = restaurar do Backblaze (sobrescreve banco local)"
+    echo "    n = manter banco local como está"
+    read -rp "  Restaurar banco do Backblaze? [s/N] " _restore_resp
     case "${_restore_resp,,}" in
       s|sim|y|yes)
         node "$REPO_DIR/backend/scripts/restore-remote.js" --latest
@@ -58,8 +67,6 @@ else
         echo "  Mantendo banco local."
         ;;
     esac
-  else
-    echo "  Banco local já está atualizado ($_LATEST_LOCAL)."
   fi
 fi
 
