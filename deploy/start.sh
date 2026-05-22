@@ -14,7 +14,7 @@ echo "=== Nimbus - start ==="
 
 # Postgres + Redis
 echo
-echo "[1/4] Postgres + Redis..."
+echo "[1/5] Postgres + Redis..."
 cd "$REPO_DIR"
 sudo docker compose up -d
 for i in {1..30}; do
@@ -25,10 +25,13 @@ for i in {1..30}; do
   sleep 1
 done
 
-# PM2: backend + worker
+# Backend: deps + migrations
 echo
-echo "[2/4] PM2 (backend + worker)..."
+echo "[2/5] Backend: npm install + migrations + PM2..."
 cd "$REPO_DIR/backend"
+npm install --omit=dev
+npx prisma generate
+npx prisma migrate deploy
 if pm2 describe nimbus-backend >/dev/null 2>&1; then
   pm2 restart nimbus-backend nimbus-worker
 else
@@ -36,15 +39,23 @@ else
 fi
 pm2 save >/dev/null
 
+# Frontend: build
+echo
+echo "[3/5] Frontend: build..."
+cd "$REPO_DIR/frontend"
+npm install
+npm run build
+chmod -R o+rX "$REPO_DIR/frontend/dist"
+
 # Nginx (caso esteja parado)
 echo
-echo "[3/4] Nginx..."
+echo "[4/5] Nginx..."
 sudo systemctl start nginx 2>/dev/null || true
 sudo systemctl reload nginx
 
 # ngrok (opcional, roda no PM2)
 echo
-echo "[4/4] ngrok..."
+echo "[5/5] ngrok..."
 if ! command -v ngrok >/dev/null 2>&1; then
   echo "  ngrok não instalado — pulando."
   echo "  Para instalar: bash deploy/install.sh"
