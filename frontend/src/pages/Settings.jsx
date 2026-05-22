@@ -1,19 +1,14 @@
 import { useState } from "react";
-import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, CATEGORIES } from "../data/constants";
+import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../data/constants";
 import Badge from "../components/ui/Badge";
 import Toggle from "../components/ui/Toggle";
 import Modal from "../components/ui/Modal";
 import { authUpdate, authChangePassword } from "../data/api";
-import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
 
 export default function PageSettings({ user, setUser, onLogout, settings = {}, setSettings = () => {} }) {
   const [section, setSection] = useState("account");
-  const msgTemplate = settings.messageTemplate ?? DEFAULT_MESSAGE_TEMPLATE;
-  const setMsgTemplate = (v) => setSettings(s => ({ ...s, messageTemplate: v }));
   const notifications = settings.notifications || { email: true, push: false, weeklyReport: true, pendingReview: true };
   const setNotifications = (updater) => setSettings(s => ({ ...s, notifications: typeof updater === "function" ? updater(s.notifications || {}) : updater }));
-  const sources = settings.sources || allSources;
-  const setSources = (updater) => setSettings(s => ({ ...s, sources: typeof updater === "function" ? updater(s.sources || allSources) : updater }));
   const theme = settings.theme || "auto";
   const setTheme = (v) => setSettings(s => ({ ...s, theme: v }));
 
@@ -65,8 +60,6 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
     { id: "account", label: "Conta" },
     { id: "security", label: "Segurança" },
     { id: "notifications", label: "Notificações" },
-    { id: "sources", label: "Fontes e categorias" },
-    { id: "template", label: "Modelo padrão" },
     { id: "appearance", label: "Aparência" },
     { id: "danger", label: "Zona de perigo" },
   ];
@@ -163,52 +156,6 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
                   <Toggle value={notifications[n.key]} onChange={v => setNotifications(s => ({ ...s, [n.key]: v }))} />
                 </div>
               ))}
-            </div>
-          )}
-
-          {section === "sources" && (
-            <>
-              <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-                <div style={{ fontWeight: 500, marginBottom: 4 }}>Sites monitorados</div>
-                <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>Clique para ativar/desativar. Hoje só Mercado Livre tem scraper implementado.</div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {allSources.map(item => {
-                    const active = sources.includes(item);
-                    return (
-                      <button
-                        key={item}
-                        onClick={() => setSources(arr => active ? arr.filter(s => s !== item) : [...arr, item])}
-                        style={{ display: "flex", alignItems: "center", gap: 6, background: active ? "var(--color-background-secondary)" : "transparent", border: `0.5px solid ${active ? "var(--color-border-tertiary)" : "var(--color-border-secondary)"}`, borderRadius: 8, padding: "5px 10px", fontSize: 13, cursor: "pointer", opacity: active ? 1 : 0.5 }}
-                      >
-                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: active ? PRIMARY : "var(--color-border-secondary)" }} />{item}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-                <div style={{ fontWeight: 500, marginBottom: 4 }}>Categorias ativas</div>
-                <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>Categorias de produtos disponíveis na plataforma.</div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {Object.values(CATEGORIES).map(c => (
-                    <div key={c.label} style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--color-background-secondary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 8, padding: "5px 10px", fontSize: 13 }}>
-                      <span style={{ fontSize: 14 }}>{c.icon}</span>{c.label}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
-
-          {section === "template" && (
-            <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-              <div style={{ fontWeight: 500, marginBottom: 4 }}>Modelo de mensagem padrão</div>
-              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>Aplicado a campanhas novas. Cada campanha pode ter seu próprio modelo depois.</div>
-              <textarea value={msgTemplate} onChange={e => setMsgTemplate(e.target.value)} style={{ width: "100%", padding: 10, borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, resize: "vertical", minHeight: 160, boxSizing: "border-box", fontFamily: "inherit" }} />
-              <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 8 }}>
-                Variáveis: {"{produto}"}, {"{preco}"}, {"{preco_antigo}"}, {"{desconto}"}, {"{loja}"}, {"{link}"}
-              </div>
-              <div style={{ fontSize: 11, color: PRIMARY_DARK, marginTop: 8 }}>Salva automaticamente.</div>
             </div>
           )}
 

@@ -39,7 +39,7 @@ export const makeEmptyGroup = ({ id, name, categories, template }) => ({
     auto: true,
     times: ["08:00", "14:00"],
     mode: "both", // "Auto com revisão" — mais seguro pra começar
-    sources: ["Mercado Livre", "Amazon", "Shopee", "Americanas"],
+    sources: ["Mercado Livre", "Amazon", "Shopee"],
     filters: { minDiscount: 25, minPrice: 0, maxPrice: 3000, minRating: 4.0, minSales: 50, keywords: "" },
   },
   queue: [],

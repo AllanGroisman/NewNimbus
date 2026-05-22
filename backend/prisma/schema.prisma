@@ -24,6 +24,16 @@ model User {
   role         String   @default("user") // "user" | "admin"
   createdAt    DateTime @default(now())
 
+  // Email verification — emailVerified=false bloqueia login até confirmar.
+  // Contas Google nascem com emailVerified=true (Google já validou).
+  emailVerified        Boolean   @default(false)
+  emailVerifyToken     String?   @unique
+  emailVerifyExpires   DateTime?
+
+  // Password reset por email.
+  passwordResetToken   String?   @unique
+  passwordResetExpires DateTime?
+
   state           UserState?
   groups          Group[]
   whatsappGroups  WhatsappGroup[]

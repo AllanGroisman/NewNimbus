@@ -1,8 +1,10 @@
-export const PRIMARY = "#1D9E75";
-export const PRIMARY_DARK = "#0F6E56";
-export const PRIMARY_LIGHT = "#E1F5EE";
+export const PRIMARY = "#ea580c";
+export const PRIMARY_DARK = "#c2410c";
+export const PRIMARY_LIGHT = "#ffedd5";
+export const BRAND_BLUE = "#031432";
+export const BRAND_BLUE_LIGHT = "#1a2b48";
 
-export const allSources = ["Mercado Livre", "Amazon", "Shopee", "Americanas"];
+export const allSources = ["Mercado Livre", "Amazon", "Shopee"];
 
 // URLs reais de produtos populares pra usar como teste padrão nos
 // "Testar transformação" das telas de afiliado. Trocar aqui propaga
@@ -171,6 +173,7 @@ export const sidebarItems = [
   { id: "mercado-livre", icon: "◆", label: "Mercado Livre" },
   { id: "amazon", icon: "◇", label: "Amazon" },
   { id: "shopee", icon: "◈", label: "Shopee" },
+  { id: "tutorials", icon: "?", label: "Tutoriais" },
   { id: "settings", icon: "⚙", label: "Configurações" },
   { id: "subscription", icon: "★", label: "Assinatura" },
   { id: "products", icon: "⊟", label: "Produtos", adminOnly: true },

@@ -23,6 +23,7 @@ import PageAffiliateShopee from "./pages/AffiliateShopee";
 import PageAdminScraper from "./pages/AdminScraper";
 import PageAdminShopee from "./pages/AdminShopee";
 import PageAdminUsers from "./pages/AdminUsers";
+import PageTutoriais from "./pages/Tutoriais";
 import Login from "./pages/Login";
 
 const SAVE_DEBOUNCE_MS = 800;
@@ -40,6 +41,10 @@ export default function App() {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [page, setPage] = useState("dashboard");
   const [selectedGroup, setSelectedGroup] = useState(null);
+  // Deep-link pra um tutorial específico — setado quando outra página chama
+  // openTutorial(id). Limpado depois que a página Tutoriais consome.
+  const [tutorialTarget, setTutorialTarget] = useState(null);
+  const openTutorial = (id) => { setTutorialTarget(id); setSelectedGroup(null); setPage("tutorials"); };
   const [user, setUser] = useState(null);
   const [bootstrapping, setBootstrapping] = useState(true);
   const [mobileMenu, setMobileMenu] = useState(false);
@@ -337,12 +342,13 @@ export default function App() {
     />,
     settings: <PageSettings user={user} setUser={setUser} onLogout={handleLogout} settings={settings} setSettings={setSettings} onAffiliateChange={applyAffiliateStatus} />,
     subscription: <PageSubscription />,
-    "mercado-livre": <PageAffiliateML onAffiliateChange={applyAffiliateStatus} />,
-    "amazon": <PageAffiliateAmazon onAffiliateChange={applyAffiliateStatus} />,
-    "shopee": <PageAffiliateShopee onAffiliateChange={applyAffiliateStatus} />,
+    "mercado-livre": <PageAffiliateML onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
+    "amazon": <PageAffiliateAmazon onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
+    "shopee": <PageAffiliateShopee onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
     "admin-scraper": user?.role === "admin" ? <PageAdminScraper /> : fallbackPage,
     "admin-shopee":  user?.role === "admin" ? <PageAdminShopee /> : fallbackPage,
     "admin-users":   user?.role === "admin" ? <PageAdminUsers currentUser={user} /> : fallbackPage,
+    "tutorials":     <PageTutoriais targetTutorialId={tutorialTarget} />,
   };
 
   return (
@@ -352,10 +358,11 @@ export default function App() {
         selectedGroup={selectedGroup}
         groups={groups}
         whatsappGroups={whatsappGroups}
+        numbers={numbers}
         affiliateConfigured={affiliateConfigured}
         affiliateStatus={affiliateStatus}
         user={user}
-        onNavigate={(id) => { setPage(id); setSelectedGroup(null); }}
+        onNavigate={(id) => { setPage(id); setSelectedGroup(null); setTutorialTarget(null); }}
         onSelectGroup={handleSelectGroup}
         onLogout={handleLogout}
         mobileOpen={mobileMenu}

@@ -346,7 +346,7 @@ function catBtnStyle(active) {
 function storeBtnStyle(active) {
   return {
     padding: "5px 12px", borderRadius: 7, border: "0.5px solid",
-    borderColor: active ? "#0F6E56" : "var(--color-border-tertiary)",
+    borderColor: active ? PRIMARY_DARK : "var(--color-border-tertiary)",
     background: active ? "var(--color-background-secondary)" : "transparent",
     color: active ? "var(--color-text-primary)" : "var(--color-text-secondary)",
     fontSize: 12, cursor: "pointer", fontWeight: active ? 500 : 400,

@@ -1,45 +1,171 @@
 import { useState, useEffect, useRef } from "react";
 import { PRIMARY } from "../data/constants";
-import { authLogin, authRegister, authGoogle } from "../data/api";
+
+import {
+  authLogin, authRegister, authGoogle,
+  authVerifyEmail, authResendVerification,
+  authForgotPassword, authResetPassword,
+} from "../data/api";
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 
+// Limites devem bater com backend/auth/pg.js (MAX_NAME_LEN, etc).
+const LIMITS = {
+  name: 100,
+  email: 254,
+  password: 128,
+};
+const MIN_PASSWORD = 8;
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Regras de senha forte — mesmo conjunto validado no backend.
+function passwordChecks(pw) {
+  const s = String(pw || "");
+  return {
+    length: s.length >= MIN_PASSWORD,
+    lower: /[a-z]/.test(s),
+    upper: /[A-Z]/.test(s),
+    number: /[0-9]/.test(s),
+  };
+}
+function passwordOk(pw) {
+  const c = passwordChecks(pw);
+  return c.length && c.lower && c.upper && c.number;
+}
+
+// Lê e remove um parâmetro da query string (?verify=… / ?reset=…).
+function popQueryParam(name) {
+  const qs = new URLSearchParams(window.location.search);
+  const v = qs.get(name);
+  if (v == null) return null;
+  qs.delete(name);
+  const newSearch = qs.toString();
+  window.history.replaceState({}, "", window.location.pathname + (newSearch ? `?${newSearch}` : ""));
+  return v;
+}
+
 export default function Login({ onLogin }) {
-  const [isRegister, setIsRegister] = useState(false);
+  // mode: "login" | "register" | "forgot" | "registered" | "verifying" | "reset"
+  const [mode, setMode] = useState("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [phone, setPhone] = useState("");
+  const [password2, setPassword2] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [info, setInfo] = useState(null);
+  const [infoMessage, setInfoMessage] = useState(null);
+  const [resetToken, setResetToken] = useState(null);
   const googleBtnRef = useRef(null);
+
+  // Captura ?verify=token / ?reset=token na primeira carga.
+  useEffect(() => {
+    const verify = popQueryParam("verify");
+    if (verify) {
+      setMode("verifying");
+      setLoading(true);
+      authVerifyEmail(verify)
+        .then(r => {
+          if (r.user) onLogin(r.user);
+        })
+        .catch(err => {
+          setError(err.message || "Falha ao verificar email");
+          setMode("login");
+        })
+        .finally(() => setLoading(false));
+      return;
+    }
+    const reset = popQueryParam("reset");
+    if (reset) {
+      setResetToken(reset);
+      setMode("reset");
+      setPassword("");
+      setPassword2("");
+    }
+  }, [onLogin]);
+
+  function switchMode(m) {
+    setMode(m);
+    setError(null);
+    setInfo(null);
+    setPassword("");
+    setPassword2("");
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
     if (loading) return;
     setError(null);
-    setLoading(true);
+    setInfo(null);
+
     try {
-      const res = isRegister
-        ? await authRegister({ name, email, password, phone })
-        : await authLogin({ email, password });
-      onLogin(res.user);
+      if (mode === "register") {
+        const cleanName = name.trim();
+        const cleanEmail = email.trim().toLowerCase();
+        if (!cleanName) return setError("Nome obrigatório");
+        if (cleanName.length > LIMITS.name) return setError(`Nome muito longo (máx ${LIMITS.name})`);
+        if (!EMAIL_RE.test(cleanEmail)) return setError("Email inválido");
+        if (cleanEmail.length > LIMITS.email) return setError(`Email muito longo (máx ${LIMITS.email})`);
+        if (!passwordOk(password)) return setError("Senha não atende aos requisitos");
+        if (password !== password2) return setError("As senhas não coincidem");
+        setLoading(true);
+        await authRegister({ name: cleanName, email: cleanEmail, password });
+        setMode("registered");
+        setInfo(cleanEmail);
+      } else if (mode === "login") {
+        const cleanEmail = email.trim().toLowerCase();
+        if (!EMAIL_RE.test(cleanEmail)) return setError("Email inválido");
+        if (!password) return setError("Informe sua senha");
+        setLoading(true);
+        const res = await authLogin({ email: cleanEmail, password });
+        onLogin(res.user);
+      } else if (mode === "forgot") {
+        const cleanEmail = email.trim().toLowerCase();
+        if (!EMAIL_RE.test(cleanEmail)) return setError("Email inválido");
+        setLoading(true);
+        await authForgotPassword(cleanEmail);
+        setInfo("Se houver uma conta com este email, enviamos um link de reset. Verifique sua caixa de entrada.");
+      } else if (mode === "reset") {
+        if (!passwordOk(password)) return setError("Senha não atende aos requisitos");
+        if (password !== password2) return setError("As senhas não coincidem");
+        setLoading(true);
+        const res = await authResetPassword(resetToken, password);
+        if (res.user) onLogin(res.user);
+      }
     } catch (err) {
-      setError(err.message || "Falha ao autenticar");
+      if (err.code === "email_not_verified") {
+        setError(err.message);
+        setMode("registered");
+        setInfo(email.trim().toLowerCase());
+      } else {
+        setError(err.message || "Falha ao processar");
+      }
     } finally {
       setLoading(false);
     }
   }
 
-  function switchMode(register) {
-    setIsRegister(register);
+  async function handleResend() {
+    if (!info) return;
+    setLoading(true);
     setError(null);
+    try {
+      await authResendVerification(info);
+      setInfo(info); // mantém email mostrado
+      setError(null);
+      setInfoMessage("Email reenviado. Verifique sua caixa de entrada (e o spam).");
+    } catch (err) {
+      setError(err.message || "Falha ao reenviar");
+    } finally {
+      setLoading(false);
+    }
   }
 
-  // Google Identity Services — renderiza o botão quando o script carregar.
-  // Tenta a cada 200ms por até 5s pra cobrir slow networks.
+  // Google Identity Services — só faz sentido em login/register.
   useEffect(() => {
     if (!GOOGLE_CLIENT_ID) return;
+    if (mode !== "login" && mode !== "register") return;
     let cancelled = false;
     let attempts = 0;
 
@@ -69,31 +195,70 @@ export default function Login({ onLogin }) {
         theme: "outline",
         size: "large",
         width: 296,
-        text: isRegister ? "signup_with" : "signin_with",
+        text: mode === "register" ? "signup_with" : "signin_with",
         shape: "rectangular",
         logo_alignment: "left",
       });
     }
     tryInit();
     return () => { cancelled = true; };
-  }, [isRegister, onLogin]);
+  }, [mode, onLogin]);
 
-  const inputStyle = { padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, fontFamily: "inherit" };
+  const inputStyle = {
+    padding: "9px 12px",
+    borderRadius: 8,
+    border: "0.5px solid var(--color-border-tertiary)",
+    background: "var(--color-background-secondary)",
+    fontSize: 13,
+    fontFamily: "inherit",
+    color: "var(--color-text-primary)",
+  };
 
-  return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <form onSubmit={handleSubmit} style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 16, padding: 32, width: "100%", maxWidth: 360 }}>
-        <div style={{ textAlign: "center", marginBottom: 24 }}>
-          <div style={{ fontSize: 28, fontWeight: 500, color: "#0F6E56" }}>Nimbus</div>
-          <div style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>Ofertas automáticas para WhatsApp</div>
+  // Indicador visual da senha — checklist.
+  const checks = passwordChecks(password);
+  const checksMatch = password.length > 0 && password === password2;
+  const showPwChecks = (mode === "register" || mode === "reset") && password.length > 0;
+
+  const CheckLine = ({ ok, label }) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: ok ? "#22C55E" : "var(--color-text-secondary)" }}>
+      <span style={{ width: 12, textAlign: "center" }}>{ok ? "✓" : "○"}</span>
+      <span>{label}</span>
+    </div>
+  );
+
+  // Conteúdo principal por modo
+  let body;
+  if (mode === "verifying") {
+    body = (
+      <div style={{ textAlign: "center", padding: "12px 0" }}>
+        <div style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>Verificando seu email…</div>
+      </div>
+    );
+  } else if (mode === "registered") {
+    body = (
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ background: "#E8F5EE", border: "0.5px solid #B9DEC9", color: "#1F6A3C", borderRadius: 8, padding: "10px 12px", fontSize: 12 }}>
+          Enviamos um link de confirmação para <strong>{info}</strong>.
+          <br />Clique no link para ativar sua conta.
         </div>
-        <div style={{ display: "flex", marginBottom: 20, background: "var(--color-background-secondary)", borderRadius: 10, padding: 3 }}>
-          {["Entrar", "Cadastrar"].map((t, i) => (
-            <button key={t} type="button" onClick={() => switchMode(i === 1)} style={{ flex: 1, padding: "7px", borderRadius: 8, border: "none", background: isRegister === (i === 1) ? "var(--color-background-primary)" : "transparent", fontSize: 13, cursor: "pointer", fontWeight: isRegister === (i === 1) ? 500 : 400 }}>{t}</button>
-          ))}
-        </div>
-
-        {GOOGLE_CLIENT_ID && (
+        {infoMessage && (
+          <div style={{ background: "#E8F5EE", border: "0.5px solid #B9DEC9", color: "#1F6A3C", borderRadius: 8, padding: "8px 10px", fontSize: 12 }}>{infoMessage}</div>
+        )}
+        {error && (
+          <div style={{ background: "#FCEBEB", border: "0.5px solid #F7C1C1", color: "#A32D2D", borderRadius: 8, padding: "8px 10px", fontSize: 12 }}>{error}</div>
+        )}
+        <button type="button" onClick={handleResend} disabled={loading} style={{ width: "100%", padding: 10, borderRadius: 10, background: "transparent", color: PRIMARY, border: `0.5px solid ${PRIMARY}`, fontSize: 13, cursor: loading ? "wait" : "pointer", fontWeight: 500 }}>
+          {loading ? "Reenviando…" : "Reenviar email de verificação"}
+        </button>
+        <button type="button" onClick={() => switchMode("login")} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 12, color: "var(--color-text-secondary)" }}>
+          Voltar para o login
+        </button>
+      </div>
+    );
+  } else {
+    body = (
+      <form onSubmit={handleSubmit}>
+        {(mode === "login" || mode === "register") && GOOGLE_CLIENT_ID && (
           <>
             <div ref={googleBtnRef} style={{ display: "flex", justifyContent: "center", marginBottom: 14 }} />
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, color: "var(--color-text-secondary)", fontSize: 11 }}>
@@ -105,23 +270,138 @@ export default function Login({ onLogin }) {
         )}
 
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 12 }}>
-          {isRegister && (
-            <input value={name} onChange={e => setName(e.target.value)} placeholder="Nome completo" autoComplete="name" required style={inputStyle} />
+          {mode === "register" && (
+            <input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="Nome completo"
+              autoComplete="name"
+              required
+              maxLength={LIMITS.name}
+              style={inputStyle}
+            />
           )}
-          <input value={email} onChange={e => setEmail(e.target.value)} type="email" placeholder="Email" autoComplete="email" required style={inputStyle} />
-          <input value={password} onChange={e => setPassword(e.target.value)} type="password" placeholder="Senha" autoComplete={isRegister ? "new-password" : "current-password"} required minLength={6} style={inputStyle} />
-          {isRegister && (
-            <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="Telefone (opcional)" autoComplete="tel" style={inputStyle} />
+          {mode !== "reset" && (
+            <input
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              type="email"
+              placeholder="Email"
+              autoComplete="email"
+              required
+              maxLength={LIMITS.email}
+              style={inputStyle}
+            />
+          )}
+          {mode !== "forgot" && (
+            <input
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              type="password"
+              placeholder={mode === "reset" ? "Nova senha" : "Senha"}
+              autoComplete={mode === "login" ? "current-password" : "new-password"}
+              required
+              minLength={mode === "login" ? 1 : MIN_PASSWORD}
+              maxLength={LIMITS.password}
+              style={inputStyle}
+            />
+          )}
+          {(mode === "register" || mode === "reset") && (
+            <input
+              value={password2}
+              onChange={e => setPassword2(e.target.value)}
+              type="password"
+              placeholder="Confirmar senha"
+              autoComplete="new-password"
+              required
+              minLength={MIN_PASSWORD}
+              maxLength={LIMITS.password}
+              style={inputStyle}
+            />
           )}
         </div>
+
+        {showPwChecks && (
+          <div style={{ background: "var(--color-background-secondary)", borderRadius: 8, padding: "8px 10px", marginBottom: 12, display: "flex", flexDirection: "column", gap: 3 }}>
+            <CheckLine ok={checks.length} label={`Ao menos ${MIN_PASSWORD} caracteres`} />
+            <CheckLine ok={checks.upper} label="Uma letra maiúscula" />
+            <CheckLine ok={checks.lower} label="Uma letra minúscula" />
+            <CheckLine ok={checks.number} label="Um número" />
+            {password2.length > 0 && <CheckLine ok={checksMatch} label="Senhas coincidem" />}
+          </div>
+        )}
+
         {error && (
           <div style={{ background: "#FCEBEB", border: "0.5px solid #F7C1C1", color: "#A32D2D", borderRadius: 8, padding: "8px 10px", fontSize: 12, marginBottom: 12 }}>{error}</div>
         )}
+        {info && mode === "forgot" && (
+          <div style={{ background: "#E8F5EE", border: "0.5px solid #B9DEC9", color: "#1F6A3C", borderRadius: 8, padding: "8px 10px", fontSize: 12, marginBottom: 12 }}>{info}</div>
+        )}
+
         <button type="submit" disabled={loading} style={{ width: "100%", padding: 10, borderRadius: 10, background: PRIMARY, color: "#fff", border: "none", fontSize: 14, cursor: loading ? "wait" : "pointer", fontWeight: 500, opacity: loading ? 0.7 : 1 }}>
-          {loading ? "Aguarde..." : (isRegister ? "Criar conta" : "Entrar")}
+          {loading ? "Aguarde..." : (
+            mode === "register" ? "Criar conta"
+            : mode === "forgot" ? "Enviar link de reset"
+            : mode === "reset" ? "Redefinir senha"
+            : "Entrar"
+          )}
         </button>
-        {!isRegister && <div style={{ textAlign: "center", marginTop: 12, fontSize: 12 }}><span style={{ cursor: "pointer", color: PRIMARY }}>Esqueci minha senha</span></div>}
+
+        {mode === "login" && (
+          <div style={{ textAlign: "center", marginTop: 12, fontSize: 12 }}>
+            <span onClick={() => switchMode("forgot")} style={{ cursor: "pointer", color: PRIMARY }}>Esqueci minha senha</span>
+          </div>
+        )}
+        {mode === "forgot" && (
+          <div style={{ textAlign: "center", marginTop: 12, fontSize: 12 }}>
+            <span onClick={() => switchMode("login")} style={{ cursor: "pointer", color: "var(--color-text-secondary)" }}>Voltar para o login</span>
+          </div>
+        )}
+        {mode === "reset" && (
+          <div style={{ textAlign: "center", marginTop: 12, fontSize: 12 }}>
+            <span onClick={() => switchMode("login")} style={{ cursor: "pointer", color: "var(--color-text-secondary)" }}>Voltar para o login</span>
+          </div>
+        )}
       </form>
+    );
+  }
+
+  // Tabs Entrar/Cadastrar só aparecem em login/register.
+  const showTabs = mode === "login" || mode === "register";
+
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 16, padding: 32, width: "100%", maxWidth: 360 }}>
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
+          <div style={{ fontSize: 28, fontWeight: 500, color: "var(--color-brand)" }}>Nimbus</div>
+          <div style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>
+            {mode === "forgot" ? "Recuperar acesso"
+              : mode === "reset" ? "Defina sua nova senha"
+              : mode === "registered" ? "Confirme seu email"
+              : "Ofertas automáticas para WhatsApp"}
+          </div>
+        </div>
+
+        {showTabs && (
+          <div style={{ display: "flex", marginBottom: 20, background: "var(--color-background-secondary)", borderRadius: 10, padding: 3 }}>
+            {["login", "register"].map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => switchMode(m)}
+                style={{
+                  flex: 1, padding: "7px", borderRadius: 8, border: "none",
+                  background: mode === m ? "var(--color-background-primary)" : "transparent",
+                  fontSize: 13, cursor: "pointer", fontWeight: mode === m ? 500 : 400,
+                  color: "var(--color-text-primary)",
+                }}
+              >{m === "login" ? "Entrar" : "Cadastrar"}</button>
+            ))}
+          </div>
+        )}
+
+        {body}
+      </div>
     </div>
   );
 }

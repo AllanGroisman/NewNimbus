@@ -112,13 +112,15 @@ describe("http() — tratamento de erros", () => {
 });
 
 describe("auth endpoints", () => {
-  it("authRegister grava token e devolve user", async () => {
+  it("authRegister devolve user sem token (precisa verificar email)", async () => {
     fetch.mockResolvedValueOnce(makeResponse({
-      status: 200, body: { user: { id: "u1", email: "x@y.z" }, token: "newt" }
+      status: 200, body: { user: { id: "u1", email: "x@y.z" }, requiresVerification: true }
     }));
-    const r = await authRegister({ name: "X", email: "x@y.z", password: "senha123" });
+    const r = await authRegister({ name: "X", email: "x@y.z", password: "Senha123" });
     expect(r.user.email).toBe("x@y.z");
-    expect(getToken()).toBe("newt");
+    expect(r.requiresVerification).toBe(true);
+    // Sem token: não grava nada no storage.
+    expect(getToken()).toBe(null);
   });
 
   it("authLogin grava token", async () => {

@@ -10,7 +10,7 @@ export function setToken(t) {
 }
 export function clearToken() { setToken(null); }
 
-async function http(method, path, body) {
+async function http(method, path, body, { signal } = {}) {
   const opts = { method, headers: {} };
   const token = getToken();
   if (token) opts.headers["Authorization"] = `Bearer ${token}`;
@@ -18,6 +18,7 @@ async function http(method, path, body) {
     opts.headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
   }
+  if (signal) opts.signal = signal;
   const res = await fetch(`${API_BASE}${path}`, opts);
   if (res.status === 401) {
     clearToken();
@@ -26,17 +27,20 @@ async function http(method, path, body) {
   }
   if (!res.ok) {
     let detail = res.statusText;
-    try { const j = await res.json(); detail = j.error || j.details || detail; } catch {}
-    throw new Error(detail || `Falha ${method} ${path}`);
+    let code = null;
+    try { const j = await res.json(); detail = j.error || j.details || detail; code = j.code || null; } catch {}
+    const err = new Error(detail || `Falha ${method} ${path}`);
+    if (code) err.code = code;
+    err.status = res.status;
+    throw err;
   }
   return res.json();
 }
 
 // ─── Auth ──────────────────────────────────────────────────────────────
-export async function authRegister({ name, email, password, phone }) {
-  const r = await http("POST", "/api/auth/register", { name, email, password, phone });
-  if (r.token) setToken(r.token);
-  return r;
+export async function authRegister({ name, email, password }) {
+  // Backend não devolve token — precisa verificar email primeiro.
+  return http("POST", "/api/auth/register", { name, email, password });
 }
 export async function authLogin({ email, password }) {
   const r = await http("POST", "/api/auth/login", { email, password });
@@ -45,6 +49,22 @@ export async function authLogin({ email, password }) {
 }
 export async function authGoogle(idToken) {
   const r = await http("POST", "/api/auth/google", { idToken });
+  if (r.token) setToken(r.token);
+  return r;
+}
+export async function authVerifyEmail(token) {
+  const r = await http("POST", "/api/auth/verify-email", { token });
+  if (r.token) setToken(r.token);
+  return r;
+}
+export async function authResendVerification(email) {
+  return http("POST", "/api/auth/resend-verification", { email });
+}
+export async function authForgotPassword(email) {
+  return http("POST", "/api/auth/forgot-password", { email });
+}
+export async function authResetPassword(token, newPassword) {
+  const r = await http("POST", "/api/auth/reset-password", { token, newPassword });
   if (r.token) setToken(r.token);
   return r;
 }
@@ -74,9 +94,10 @@ export async function loadAppOps() {
 export async function sendNextNow(groupId) {
   return http("POST", `/api/state/groups/${groupId}/send-now`);
 }
-// Força refill da fila a partir do catálogo (consulta com filtros atuais da campanha)
-export async function refillQueueNow(groupId, overrides) {
-  return http("POST", `/api/state/groups/${groupId}/refill`, overrides || {});
+// Força refill da fila a partir do catálogo (consulta com filtros atuais da campanha).
+// Aceita { signal } pra suportar AbortController do chamador (UI cancelar).
+export async function refillQueueNow(groupId, overrides, { signal } = {}) {
+  return http("POST", `/api/state/groups/${groupId}/refill`, overrides || {}, { signal });
 }
 // Busca metadados de uma URL (scraping on-demand) — pré-preenche o form de manual add
 export async function fetchUrlMetadata(url) {

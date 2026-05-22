@@ -7,6 +7,37 @@ const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { prisma } = require("../db");
+const mailer = require("./mailer");
+
+// Limites e regras de input padronizadas (compartilhadas com o frontend via copy).
+const MAX_NAME_LEN = 100;
+const MAX_EMAIL_LEN = 254;
+const MIN_PASSWORD_LEN = 8;
+const MAX_PASSWORD_LEN = 128;
+
+const EMAIL_VERIFY_TTL_MS = 24 * 60 * 60 * 1000;   // 24h
+const PASSWORD_RESET_TTL_MS = 60 * 60 * 1000;      // 1h
+
+function validatePassword(password) {
+  const s = String(password || "");
+  if (s.length < MIN_PASSWORD_LEN) {
+    throw new Error(`Senha precisa ter ao menos ${MIN_PASSWORD_LEN} caracteres`);
+  }
+  if (s.length > MAX_PASSWORD_LEN) {
+    throw new Error(`Senha não pode ter mais que ${MAX_PASSWORD_LEN} caracteres`);
+  }
+  if (!/[a-z]/.test(s)) throw new Error("Senha precisa ter ao menos uma letra minúscula");
+  if (!/[A-Z]/.test(s)) throw new Error("Senha precisa ter ao menos uma letra maiúscula");
+  if (!/[0-9]/.test(s)) throw new Error("Senha precisa ter ao menos um número");
+}
+
+function normalizeEmail(email) {
+  return String(email || "").trim().toLowerCase();
+}
+
+function newToken() {
+  return crypto.randomBytes(32).toString("hex");
+}
 
 const ADMIN_EMAILS = String(process.env.ADMIN_EMAILS || "")
   .split(",")
@@ -55,6 +86,7 @@ async function seedDefaultAdmin() {
       phone: "",
       passwordHash: await bcrypt.hash(DEFAULT_ADMIN_PASSWORD, 10),
       role: "admin",
+      emailVerified: true,
     },
   }).catch(err => {
     if (err.code === "P2002") return; // race com outro processo (worker)
@@ -142,43 +174,152 @@ async function syncRole(user) {
   return user;
 }
 
-async function register({ name, email, password, phone }) {
-  email = String(email || "").trim().toLowerCase();
+async function register({ name, email, password }) {
+  email = normalizeEmail(email);
   name = String(name || "").trim();
   password = String(password || "");
 
   if (!name) throw new Error("Nome obrigatório");
+  if (name.length > MAX_NAME_LEN) throw new Error(`Nome não pode ter mais que ${MAX_NAME_LEN} caracteres`);
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Email inválido");
-  if (password.length < 6) throw new Error("Senha precisa ter ao menos 6 caracteres");
+  if (email.length > MAX_EMAIL_LEN) throw new Error(`Email não pode ter mais que ${MAX_EMAIL_LEN} caracteres`);
+  validatePassword(password);
 
   const existing = await findByEmail(email);
   if (existing) throw new Error("Já existe uma conta com este email");
 
   const passwordHash = await bcrypt.hash(password, 10);
+  const verifyToken = newToken();
   const user = await prisma().user.create({
     data: {
       id: crypto.randomUUID(),
       name,
       email,
-      phone: phone ? String(phone).trim() : "",
+      phone: "",
       passwordHash,
       role: isAdminEmail(email) ? "admin" : "user",
+      emailVerified: false,
+      emailVerifyToken: verifyToken,
+      emailVerifyExpires: new Date(Date.now() + EMAIL_VERIFY_TTL_MS),
     },
   });
+
+  // Envio do email (atualmente só loga link no console). Se falhar, conta
+  // já foi criada — usuário pode pedir reenvio.
+  mailer.sendVerificationEmail({ to: email, name, token: verifyToken })
+    .catch(err => console.error("[auth] sendVerificationEmail:", err.message));
+
   return publicUser(user);
 }
 
 async function login({ email, password }) {
-  email = String(email || "").trim().toLowerCase();
+  email = normalizeEmail(email);
   password = String(password || "");
   const user = await findByEmail(email);
   if (!user) throw new Error("Email ou senha incorretos");
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) throw new Error("Email ou senha incorretos");
+  if (user.emailVerified === false) {
+    const err = new Error("Email ainda não verificado. Confira sua caixa de entrada.");
+    err.code = "email_not_verified";
+    throw err;
+  }
   await syncRole(user);
   cacheUser(user);
   const token = jwt.sign({ sub: user.id, email: user.email }, getJwtSecret(), { expiresIn: TOKEN_TTL });
   return { token, user: publicUser(user) };
+}
+
+// Confirma email a partir do token enviado por email. Retorna { token, user }
+// (auto-login) pra UX fluida. Idempotente: se já estava verificado, devolve sucesso.
+async function verifyEmail({ token }) {
+  if (!token || typeof token !== "string") throw new Error("Token inválido");
+  const user = await prisma().user.findUnique({ where: { emailVerifyToken: token } });
+  if (!user) throw new Error("Link de verificação inválido ou já usado");
+  if (user.emailVerifyExpires && user.emailVerifyExpires.getTime() < Date.now()) {
+    throw new Error("Link de verificação expirado — peça um novo");
+  }
+  const updated = await prisma().user.update({
+    where: { id: user.id },
+    data: {
+      emailVerified: true,
+      emailVerifyToken: null,
+      emailVerifyExpires: null,
+    },
+  });
+  invalidateUser(user.id);
+  await syncRole(updated);
+  cacheUser(updated);
+  const jwtToken = jwt.sign({ sub: updated.id, email: updated.email }, getJwtSecret(), { expiresIn: TOKEN_TTL });
+  return { token: jwtToken, user: publicUser(updated) };
+}
+
+// Gera um novo token de verificação e dispara email. Idempotente — não revela
+// se a conta existe ou não (sempre devolve ok).
+async function resendVerification({ email }) {
+  email = normalizeEmail(email);
+  if (!email) return { ok: true };
+  const user = await findByEmail(email);
+  if (!user || user.emailVerified) return { ok: true };
+  const verifyToken = newToken();
+  await prisma().user.update({
+    where: { id: user.id },
+    data: {
+      emailVerifyToken: verifyToken,
+      emailVerifyExpires: new Date(Date.now() + EMAIL_VERIFY_TTL_MS),
+    },
+  });
+  mailer.sendVerificationEmail({ to: email, name: user.name, token: verifyToken })
+    .catch(err => console.error("[auth] sendVerificationEmail:", err.message));
+  return { ok: true };
+}
+
+// Solicita reset de senha — sempre devolve ok (não revela se email existe).
+async function requestPasswordReset({ email }) {
+  email = normalizeEmail(email);
+  if (!email) return { ok: true };
+  const user = await findByEmail(email);
+  if (!user) return { ok: true };
+  const resetToken = newToken();
+  await prisma().user.update({
+    where: { id: user.id },
+    data: {
+      passwordResetToken: resetToken,
+      passwordResetExpires: new Date(Date.now() + PASSWORD_RESET_TTL_MS),
+    },
+  });
+  mailer.sendPasswordResetEmail({ to: email, name: user.name, token: resetToken })
+    .catch(err => console.error("[auth] sendPasswordResetEmail:", err.message));
+  return { ok: true };
+}
+
+// Aplica nova senha a partir de token de reset. Token vira inválido após uso.
+// Auto-login no final (já que a pessoa provou ser dona do email).
+async function resetPassword({ token, newPassword }) {
+  if (!token || typeof token !== "string") throw new Error("Token inválido");
+  validatePassword(newPassword);
+  const user = await prisma().user.findUnique({ where: { passwordResetToken: token } });
+  if (!user) throw new Error("Link de reset inválido ou já usado");
+  if (user.passwordResetExpires && user.passwordResetExpires.getTime() < Date.now()) {
+    throw new Error("Link de reset expirado — peça um novo");
+  }
+  const updated = await prisma().user.update({
+    where: { id: user.id },
+    data: {
+      passwordHash: await bcrypt.hash(String(newPassword), 10),
+      passwordResetToken: null,
+      passwordResetExpires: null,
+      // Reset implica que a pessoa controla o email — verifica também.
+      emailVerified: true,
+      emailVerifyToken: null,
+      emailVerifyExpires: null,
+    },
+  });
+  invalidateUser(user.id);
+  await syncRole(updated);
+  cacheUser(updated);
+  const jwtToken = jwt.sign({ sub: updated.id, email: updated.email }, getJwtSecret(), { expiresIn: TOKEN_TTL });
+  return { token: jwtToken, user: publicUser(updated) };
 }
 
 // Login via Google ID token. Verifica o token contra o endpoint oficial do Google
@@ -234,6 +375,8 @@ async function loginWithGoogle({ idToken }) {
         phone: "",
         passwordHash: await bcrypt.hash(randomPass, 10),
         role: isAdminEmail(email) ? "admin" : "user",
+        // Google já validou o email — pula verificação.
+        emailVerified: true,
       },
     }).catch(async err => {
       if (err.code === "P2002") return findByEmail(email); // race
@@ -241,6 +384,14 @@ async function loginWithGoogle({ idToken }) {
     });
   }
 
+  // Se já tinha conta mas não estava verificada, Google attesta — marca verificada.
+  if (user && user.emailVerified === false) {
+    user = await prisma().user.update({
+      where: { id: user.id },
+      data: { emailVerified: true, emailVerifyToken: null, emailVerifyExpires: null },
+    });
+    invalidateUser(user.id);
+  }
   await syncRole(user);
   cacheUser(user);
   const token = jwt.sign({ sub: user.id, email: user.email }, getJwtSecret(), { expiresIn: TOKEN_TTL });
@@ -307,7 +458,7 @@ async function updateProfile(userId, updates) {
 }
 
 async function changePassword(userId, { currentPassword, newPassword }) {
-  if (String(newPassword || "").length < 6) throw new Error("Nova senha precisa ter ao menos 6 caracteres");
+  validatePassword(newPassword);
   const user = await findById(userId);
   if (!user) throw new Error("Usuário não encontrado");
   const ok = await bcrypt.compare(String(currentPassword || ""), user.passwordHash);
@@ -338,7 +489,7 @@ async function deleteUser(userId) {
 }
 
 async function adminSetPassword(userId, newPassword) {
-  if (String(newPassword || "").length < 6) throw new Error("Senha precisa ter ao menos 6 caracteres");
+  validatePassword(newPassword);
   await prisma().user.update({
     where: { id: userId },
     data: { passwordHash: await bcrypt.hash(String(newPassword), 10) },
@@ -367,6 +518,10 @@ module.exports = {
   register,
   login,
   loginWithGoogle,
+  verifyEmail,
+  resendVerification,
+  requestPasswordReset,
+  resetPassword,
   requireAuth,
   requireAdmin,
   updateProfile,
@@ -378,4 +533,9 @@ module.exports = {
   adminSetPassword,
   setUserRole,
   isAdminEmail,
+  // Limites/regras exportados pra ficar uma fonte só.
+  MAX_NAME_LEN,
+  MAX_EMAIL_LEN,
+  MIN_PASSWORD_LEN,
+  MAX_PASSWORD_LEN,
 };

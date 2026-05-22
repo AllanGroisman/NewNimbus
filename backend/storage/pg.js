@@ -233,28 +233,40 @@ async function updateGroupOps(userId, groupId, patch) {
     tx.push(prisma().group.update({ where: { id }, data: colData }));
   }
 
-  // queue: replace-all (scheduler sempre passa a lista nova já calculada)
+  // queue: replace-all (scheduler sempre passa a lista nova já calculada).
+  // Dedup por productKey — o scheduler ocasionalmente concatena lista existente
+  // com newItems do refill e pode duplicar chave; o unique [groupId, productKey]
+  // quebraria a transação. Primeira ocorrência vence (preserva ordem original).
   if (Array.isArray(patch.queue)) {
     tx.push(prisma().groupQueueItem.deleteMany({ where: { groupId: id } }));
-    patch.queue.forEach((item, idx) => {
+    const seen = new Set();
+    let pos = 0;
+    for (const item of patch.queue) {
       const key = item.key || item.id;
-      if (!key) return;
+      if (!key) continue;
+      const k = String(key);
+      if (seen.has(k)) continue;
+      seen.add(k);
       tx.push(prisma().groupQueueItem.create({
-        data: { groupId: id, productKey: String(key), position: idx, payload: item },
+        data: { groupId: id, productKey: k, position: pos++, payload: item },
       }));
-    });
+    }
   }
 
-  // pending: replace-all
+  // pending: replace-all (mesmo tratamento de dedup)
   if (Array.isArray(patch.pending)) {
     tx.push(prisma().groupPendingItem.deleteMany({ where: { groupId: id } }));
-    patch.pending.forEach(item => {
+    const seen = new Set();
+    for (const item of patch.pending) {
       const key = item.key || item.id;
-      if (!key) return;
+      if (!key) continue;
+      const k = String(key);
+      if (seen.has(k)) continue;
+      seen.add(k);
       tx.push(prisma().groupPendingItem.create({
-        data: { groupId: id, productKey: String(key), payload: item },
+        data: { groupId: id, productKey: k, payload: item },
       }));
-    });
+    }
   }
 
   // history: o scheduler manda lista nova começando pelo item recém-enviado.

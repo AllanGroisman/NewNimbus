@@ -109,12 +109,20 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
               const cats = getGroupCategories(g);
               const sources = (g.scraping?.sources || []);
               const win = getWindowStatus(g);
-              const isPaused = !!g.paused;
+              // Estado efetivo: manual OU afiliado faltando — botão e badge refletem ambos.
+              const isPaused = !!g.paused || stats.pausedByAffiliate;
               const isLive = !stats.paused && stats.status === "connected";
+              const missingAff = stats.pausedByAffiliateML && stats.pausedByAffiliateShopee
+                ? "ML e Shopee"
+                : stats.pausedByAffiliateML
+                  ? "ML"
+                  : stats.pausedByAffiliateShopee
+                    ? "Shopee"
+                    : null;
               const statusBadge = stats.pausedManual
                 ? <Badge color="amber">Campanha pausada</Badge>
                 : stats.pausedByAffiliate
-                  ? <Badge color="amber">Pausado · sem afiliado ML</Badge>
+                  ? <Badge color="amber">Pausado · sem afiliado {missingAff}</Badge>
                   : stats.status === "connected"
                     ? <Badge color="green">{stats.connected}/{stats.count} conectados</Badge>
                     : stats.status === "empty"
@@ -135,12 +143,23 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                       {statusBadge}
                     </div>
                     <button
-                      onClick={(e) => { e.stopPropagation(); togglePause(g); }}
-                      title={isPaused ? "Reativar campanha" : "Pausar campanha"}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        // Pausa por afiliado faltando: clicar abre a campanha pra ver
+                        // o alerta e o botão "Configurar afiliado" — pausar/retomar manual
+                        // aqui não resolve sozinho.
+                        if (stats.pausedByAffiliate && !g.paused) { onSelectGroup(g); return; }
+                        togglePause(g);
+                      }}
+                      title={
+                        g.paused ? "Reativar campanha"
+                          : stats.pausedByAffiliate ? `Configure o afiliado ${missingAff} para reativar`
+                          : "Pausar campanha"
+                      }
                       style={{
                         padding: "6px 14px", borderRadius: 8,
-                        border: `0.5px solid ${isPaused ? PRIMARY : "#E24B4A"}`,
-                        background: isPaused ? PRIMARY : "#E24B4A",
+                        border: `0.5px solid ${isPaused ? "#22C55E" : "#E24B4A"}`,
+                        background: isPaused ? "#22C55E" : "#E24B4A",
                         color: "#fff",
                         fontSize: 12, cursor: "pointer", fontWeight: 500,
                       }}
@@ -233,7 +252,7 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
           <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>
             Defina o nome e as categorias de produtos que esta campanha vai monitorar. Você poderá vincular grupos do WhatsApp depois.
           </div>
-          <div style={{ background: PRIMARY_LIGHT, color: "#0F6E56", padding: "8px 12px", borderRadius: 8, fontSize: 12, marginBottom: 14, lineHeight: 1.4 }}>
+          <div style={{ background: PRIMARY_LIGHT, color: PRIMARY_DARK, padding: "8px 12px", borderRadius: 8, fontSize: 12, marginBottom: 14, lineHeight: 1.4 }}>
             💡 Já vamos preencher os defaults pra você: modelo de mensagem, filtros (desconto ≥ 25%, avaliação ≥ 4.0), todas as fontes ativas e dois horários de scraping. Tudo isso pode ser ajustado depois.
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -250,7 +269,7 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                     <div
                       key={id}
                       onClick={() => toggleFormCategory(id)}
-                      style={{ padding: "6px 14px", borderRadius: 8, border: `0.5px solid ${active ? PRIMARY : "var(--color-border-tertiary)"}`, background: active ? PRIMARY_LIGHT : "transparent", color: active ? "#0F6E56" : "var(--color-text-secondary)", fontSize: 13, cursor: "pointer", fontWeight: active ? 500 : 400, userSelect: "none" }}
+                      style={{ padding: "6px 14px", borderRadius: 8, border: `0.5px solid ${active ? PRIMARY : "var(--color-border-tertiary)"}`, background: active ? PRIMARY_LIGHT : "transparent", color: active ? PRIMARY_DARK : "var(--color-text-secondary)", fontSize: 13, cursor: "pointer", fontWeight: active ? 500 : 400, userSelect: "none" }}
                     >
                       {active ? "✓ " : ""}<span style={{ marginRight: 4 }}>{categoryIcon(id)}</span>{categoryLabel(id)}
                     </div>

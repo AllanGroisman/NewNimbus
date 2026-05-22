@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, getGroupCategories, getGroupStats, computeQueueETA, formatETA } from "../data/constants";
 import { createWAGroup, leaveWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupHistory, approvePendingItem, rejectPendingItem, fetchUrlMetadata, manualAddToQueue } from "../data/api";
 import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
+import BusyOverlay from "./ui/BusyOverlay";
 
 const TEMPLATE_VARS = [
   { token: "{produto}", desc: "Nome do produto" },
@@ -223,6 +224,8 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const [sendNowMsg, setSendNowMsg] = useState(null);
   const [refilling, setRefilling] = useState(false);
   const [refillMsg, setRefillMsg] = useState(null);
+  // AbortController da request de refill — permite cancelar via overlay.
+  const refillAbortRef = useRef(null);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [confirmDeleteTpl, setConfirmDeleteTpl] = useState(null);
   // Diálogo "Salvar alterações" do modelo: abre quando usuário tenta salvar
@@ -232,6 +235,12 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const [saveTplName, setSaveTplName] = useState("");
   // Confirmações para botões destrutivos
   const [confirmPause, setConfirmPause] = useState(false);
+  // Modal de aviso ao tentar retomar campanha com afiliado faltando.
+  // null quando fechado; { needsML, needsShopee, hasManualPause } quando aberto.
+  const [confirmResumeAff, setConfirmResumeAff] = useState(null);
+  // Modal de aviso ao adicionar uma fonte cujo afiliado não está configurado.
+  // null quando fechado; { src } (ex: "Shopee", "Mercado Livre") quando aberto.
+  const [confirmAddSource, setConfirmAddSource] = useState(null);
   const [confirmClearQueue, setConfirmClearQueue] = useState(false);
   const [confirmRemoveQueueItem, setConfirmRemoveQueueItem] = useState(null);
   // Aba de modelo selecionada (presets + customs). Inicia tentando casar com o template do grupo.
@@ -281,6 +290,8 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
   async function triggerRefill() {
     if (refilling) return;
+    const ctrl = new AbortController();
+    refillAbortRef.current = ctrl;
     setRefilling(true);
     setRefillMsg(null);
     try {
@@ -290,7 +301,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         filters: scraping.filters,
         sources: scraping.sources,
         categories: groupInfo.categories,
-      });
+      }, { signal: ctrl.signal });
       const ops = await loadAppOps();
       const o = (ops.groups || []).find(g => g.id === group.id);
       if (o) onUpdate(group.id, { queue: o.queue });
@@ -301,10 +312,21 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       setRefillMsg({ type: r.added > 0 ? "ok" : "warn", text: `${parts.join(", ")} · fila tem ${r.queueSize} item(ns)` });
       setTimeout(() => setRefillMsg(null), 5000);
     } catch (err) {
-      setRefillMsg({ type: "err", text: err.message });
+      // AbortError quando usuário cancela: mensagem amigável, sem alarme.
+      if (err.name === "AbortError") {
+        setRefillMsg({ type: "warn", text: "Busca cancelada." });
+        setTimeout(() => setRefillMsg(null), 3000);
+      } else {
+        setRefillMsg({ type: "err", text: err.message });
+      }
     } finally {
+      refillAbortRef.current = null;
       setRefilling(false);
     }
+  }
+
+  function cancelRefill() {
+    if (refillAbortRef.current) refillAbortRef.current.abort();
   }
 
   async function triggerSendNow() {
@@ -661,6 +683,37 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   // Passa objeto quando disponível (ml + shopee gating), senão fallback boolean (compat).
   const stats = getGroupStats({ whatsappGroupIds: groupInfo.whatsappGroupIds, scraping: { sources: scraping.sources }, paused: group.paused }, whatsappGroups, { affiliateConfigured: affiliateStatus || affiliateConfigured });
 
+  // Status do afiliado pode vir como bool (App.jsx) ou objeto { configured } (testes).
+  const isAffOk = (key) => {
+    const v = affiliateStatus?.[key];
+    if (v && typeof v === "object") return !!v.configured;
+    return !!v;
+  };
+  // Mapeia o nome exibido da loja → key do afiliado (só lojas com gating).
+  const SOURCE_TO_AFF_KEY = { "Mercado Livre": "ml", "Shopee": "shopee" };
+
+  // Aplica o toggle de uma fonte (entry point pós-confirmação ou direto).
+  const applyToggleSource = (src) => {
+    setScraping(s => ({
+      ...s,
+      sources: s.sources.includes(src) ? s.sources.filter(x => x !== src) : [...s.sources, src],
+    }));
+  };
+  // Wrapper que intercepta: se for ADIÇÃO de fonte cujo afiliado não está
+  // configurado, abre modal de confirmação primeiro (senão a campanha vai
+  // pausar silenciosamente). Remoção e fontes sem gating passam direto.
+  const handleToggleSource = (src) => {
+    const active = scraping.sources.includes(src);
+    if (!active) {
+      const affKey = SOURCE_TO_AFF_KEY[src];
+      if (affKey && !isAffOk(affKey)) {
+        setConfirmAddSource({ src, affKey });
+        return;
+      }
+    }
+    applyToggleSource(src);
+  };
+
   const toggleCategory = (id) => setGroupInfo(g => {
     const has = g.categories.includes(id);
     if (has) {
@@ -976,6 +1029,13 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
   return (
     <div>
+      {refilling && (
+        <BusyOverlay
+          title="Buscando produtos no catálogo..."
+          message="Aplicando filtros e gerando links de afiliado"
+          onCancel={cancelRefill}
+        />
+      )}
       <button onClick={onBack} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 16, display: "flex", alignItems: "center", gap: 6 }}>&larr; Voltar</button>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <div>
@@ -992,16 +1052,44 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             {stats.count > 0 && <Badge color="gray">{stats.members} membros</Badge>}
           </div>
         </div>
-        <button
-          onClick={() => {
-            if (group.paused) onUpdate(group.id, { paused: false });
-            else setConfirmPause(true);
-          }}
-          title={group.paused ? "Retomar campanha" : "Pausar envios desta campanha"}
-          style={{ padding: "8px 18px", borderRadius: 8, background: group.paused ? PRIMARY : "#E24B4A", color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, flexShrink: 0 }}
-        >
-          {group.paused ? "▶ Retomar" : "⏸ Pausar"}
-        </button>
+        {(() => {
+          // Estado efetivo: manual OU pausada pelo sistema (afiliado faltando).
+          // Botão deve refletir o estado real, não só o manual.
+          const isPaused = !!group.paused || stats.pausedByAffiliate;
+          const affOnly = !group.paused && stats.pausedByAffiliate;
+          const affTarget = stats.pausedByAffiliateML ? "ml" : (stats.pausedByAffiliateShopee ? "shopee" : null);
+          const title = group.paused
+            ? "Retomar campanha"
+            : affOnly
+              ? `Configure o afiliado ${affTarget === "shopee" ? "Shopee" : "Mercado Livre"} para reativar`
+              : "Pausar envios desta campanha";
+          const handleClick = () => {
+            // Tem afiliado faltando? Abre modal explicando e pedindo confirmação
+            // antes de retomar (ou redirecionar pra config).
+            if (stats.pausedByAffiliate) {
+              setConfirmResumeAff({
+                needsML: stats.pausedByAffiliateML,
+                needsShopee: stats.pausedByAffiliateShopee,
+                hasManualPause: !!group.paused,
+              });
+              return;
+            }
+            if (group.paused) {
+              onUpdate(group.id, { paused: false });
+            } else {
+              setConfirmPause(true);
+            }
+          };
+          return (
+            <button
+              onClick={handleClick}
+              title={title}
+              style={{ padding: "8px 18px", borderRadius: 8, background: isPaused ? "#22C55E" : "#E24B4A", color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, flexShrink: 0 }}
+            >
+              {isPaused ? "▶ Retomar" : "⏸ Pausar"}
+            </button>
+          );
+        })()}
       </div>
 
       {stats.pausedManual && (
@@ -1010,7 +1098,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           <span style={{ fontSize: 13, color: "#854F0B", flex: 1, minWidth: 200 }}>
             Esta campanha está <strong>pausada manualmente</strong> — não vai buscar produtos nem enviar mensagens até ser retomada.
           </span>
-          <button onClick={() => onUpdate(group.id, { paused: false })} style={{ padding: "6px 12px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
+          <button onClick={() => onUpdate(group.id, { paused: false })} style={{ padding: "6px 12px", borderRadius: 8, background: "#22C55E", color: "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
             ▶ Retomar
           </button>
         </div>
@@ -1910,7 +1998,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {allSources.map(src => {
                     const active = scraping.sources.includes(src);
-                    return <div key={src} onClick={() => setScraping(s => ({ ...s, sources: active ? s.sources.filter(x => x !== src) : [...s.sources, src] }))} style={{ padding: "6px 14px", borderRadius: 8, border: `0.5px solid ${active ? PRIMARY : "var(--color-border-tertiary)"}`, background: active ? PRIMARY_LIGHT : "transparent", color: active ? PRIMARY_DARK : "var(--color-text-secondary)", fontSize: 13, cursor: "pointer", fontWeight: active ? 500 : 400 }}>{active ? "✓ " : ""}{src}</div>;
+                    return <div key={src} onClick={() => handleToggleSource(src)} style={{ padding: "6px 14px", borderRadius: 8, border: `0.5px solid ${active ? PRIMARY : "var(--color-border-tertiary)"}`, background: active ? PRIMARY_LIGHT : "transparent", color: active ? PRIMARY_DARK : "var(--color-text-secondary)", fontSize: 13, cursor: "pointer", fontWeight: active ? 500 : 400 }}>{active ? "✓ " : ""}{src}</div>;
                   })}
                 </div>
                 {scraping.sources.length === 0 && (
@@ -2331,6 +2419,108 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           </div>
         </Modal>
       )}
+
+      {confirmAddSource && (() => {
+        const { src } = confirmAddSource;
+        const close = () => setConfirmAddSource(null);
+        return (
+          <Modal title="Esta fonte vai pausar a campanha" onClose={close}>
+            <p style={{ fontSize: 13, marginBottom: 12, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+              O afiliado da <strong style={{ color: "var(--color-text-primary)" }}>{src}</strong> ainda não está configurado nesta conta.
+            </p>
+            <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+              Se adicionar essa fonte agora, a campanha vai ficar <strong>pausada pelo sistema</strong> até o afiliado ser configurado &mdash; senão os links sairiam sem comissão.
+            </p>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+              <button
+                onClick={close}
+                style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => { applyToggleSource(src); close(); }}
+                style={{ padding: "8px 16px", borderRadius: 8, background: "#22C55E", color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}
+                title="Adiciona a fonte; a campanha vai começar a enviar quando o afiliado for configurado."
+              >
+                Adicionar mesmo assim
+              </button>
+            </div>
+          </Modal>
+        );
+      })()}
+
+      {confirmResumeAff && (() => {
+        const { needsML, needsShopee, hasManualPause } = confirmResumeAff;
+        const missing = [];
+        if (needsML) missing.push("Mercado Livre");
+        if (needsShopee) missing.push("Shopee");
+        const missingLabel = missing.join(" e ");
+        // Pra qual config navegar quando o usuário escolhe "Configurar agora".
+        // Se faltam dois, prioriza o primeiro listado (ML).
+        const primaryTarget = needsML ? "ml" : "shopee";
+        const close = () => setConfirmResumeAff(null);
+        // Remove as fontes problemáticas da campanha — persiste no servidor na
+        // hora (mudança local + onUpdate) e já limpa pausa manual se houver.
+        const removeMissingSources = () => {
+          const newSources = (scraping.sources || []).filter(s => !missing.includes(s));
+          setScraping(s => ({ ...s, sources: newSources }));
+          const patch = { scraping: { ...(group.scraping || {}), ...scraping, sources: newSources } };
+          if (hasManualPause) patch.paused = false;
+          onUpdate(group.id, patch);
+          close();
+        };
+        return (
+          <Modal title="Afiliado não configurado" onClose={close}>
+            <p style={{ fontSize: 13, marginBottom: 12, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+              Esta campanha tem <strong style={{ color: "var(--color-text-primary)" }}>{missingLabel}</strong> como fonte, mas o afiliado correspondente ainda não está configurado.
+            </p>
+            <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+              {hasManualPause
+                ? <>Mesmo retomando manualmente, a campanha vai continuar <strong>pausada pelo sistema</strong> até o afiliado ser configurado &mdash; senão os links sairiam sem comissão.</>
+                : <>A campanha não vai começar a enviar até o afiliado ser configurado &mdash; senão os links sairiam sem comissão.</>
+              }
+            </p>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+              <button
+                onClick={close}
+                style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={removeMissingSources}
+                style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 13, cursor: "pointer", fontWeight: 500 }}
+                title={`Remove ${missingLabel} das fontes de busca; a campanha volta a rodar com as fontes restantes.`}
+              >
+                Remover {missingLabel} das fontes
+              </button>
+              {hasManualPause && (
+                <button
+                  onClick={() => { onUpdate(group.id, { paused: false }); close(); }}
+                  style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 13, cursor: "pointer", fontWeight: 500 }}
+                  title="Limpa a pausa manual; a campanha começa a enviar assim que o afiliado for configurado."
+                >
+                  Retomar mesmo assim
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  close();
+                  // Se manual paused, já limpa a pausa antes de navegar — quando o
+                  // usuário voltar configurando o afiliado, a campanha estará pronta.
+                  if (hasManualPause) onUpdate(group.id, { paused: false });
+                  if (onGoToAffiliate) onGoToAffiliate(primaryTarget);
+                  else if (onGoToSettings) onGoToSettings();
+                }}
+                style={{ padding: "8px 16px", borderRadius: 8, background: "#22C55E", color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}
+              >
+                Configurar {needsML ? "Mercado Livre" : "Shopee"}
+              </button>
+            </div>
+          </Modal>
+        );
+      })()}
 
       {confirmClearQueue && (
         <Modal title="Limpar fila?" onClose={() => setConfirmClearQueue(false)} danger>

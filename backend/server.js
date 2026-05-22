@@ -295,13 +295,14 @@ app.get("/healthz", async (req, res) => {
 
 app.post("/api/auth/register", registerLimiter, async (req, res) => {
   try {
-    const { name, email, password, phone } = req.body || {};
-    const user = await auth.register({ name, email, password, phone });
+    const { name, email, password } = req.body || {};
+    const user = await auth.register({ name, email, password });
     // Trial automático de 7 dias do plano Pro — sem cartão. Idempotente.
+    // Inicia já: quando o usuário verificar o email, o trial vai estar correndo.
     try { await billing.startTrialFor(user.id); }
     catch (err) { logger.warn({ err: err.message, userId: user.id }, "[billing] trial start falhou"); }
-    const { token } = await auth.login({ email, password });
-    res.json({ user, token });
+    // Sem token: usuário precisa verificar email antes de logar.
+    res.json({ user, requiresVerification: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -313,7 +314,56 @@ app.post("/api/auth/login", loginLimiter, async (req, res) => {
     const result = await auth.login({ email, password });
     res.json(result);
   } catch (err) {
+    // Distingue "email não verificado" (403 + code) de credencial errada (401).
+    if (err.code === "email_not_verified") {
+      return res.status(403).json({ error: err.message, code: "email_not_verified" });
+    }
     res.status(401).json({ error: err.message });
+  }
+});
+
+// Confirma email a partir do token enviado por email. Devolve token JWT
+// pra auto-login na sequência.
+app.post("/api/auth/verify-email", loginLimiter, async (req, res) => {
+  try {
+    const { token } = req.body || {};
+    const result = await auth.verifyEmail({ token });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Reenvia email de verificação. Sempre devolve ok (não revela se conta existe).
+app.post("/api/auth/resend-verification", registerLimiter, async (req, res) => {
+  try {
+    const { email } = req.body || {};
+    const result = await auth.resendVerification({ email });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Solicita reset de senha. Sempre devolve ok (não revela se conta existe).
+app.post("/api/auth/forgot-password", registerLimiter, async (req, res) => {
+  try {
+    const { email } = req.body || {};
+    const result = await auth.requestPasswordReset({ email });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Aplica nova senha a partir de token de reset. Auto-login.
+app.post("/api/auth/reset-password", loginLimiter, async (req, res) => {
+  try {
+    const { token, newPassword } = req.body || {};
+    const result = await auth.resetPassword({ token, newPassword });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 
