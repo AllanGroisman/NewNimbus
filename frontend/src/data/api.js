@@ -209,6 +209,15 @@ export async function adminSetUserPassword(id, newPassword) {
 export async function adminSetUserRole(id, role) {
   return http("PATCH", `/api/admin/users/${id}/role`, { role });
 }
+export async function adminVerifyUserEmail(id) {
+  return http("PATCH", `/api/admin/users/${id}/verify-email`);
+}
+export async function adminSetUserSuspended(id, suspended) {
+  return http("PATCH", `/api/admin/users/${id}/suspend`, { suspended });
+}
+export async function adminResendUserVerification(id) {
+  return http("POST", `/api/admin/users/${id}/resend-verification`);
+}
 
 // ─── Admin / scraper global e catálogo ─────────────────────────────────
 export async function adminScraperConfig()       { return http("GET",  "/api/admin/scraper/config"); }

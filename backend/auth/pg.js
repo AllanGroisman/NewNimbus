@@ -220,6 +220,11 @@ async function login({ email, password }) {
   if (!user) throw new Error("Email ou senha incorretos");
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) throw new Error("Email ou senha incorretos");
+  if (user.suspended) {
+    const err = new Error("Conta suspensa. Entre em contato com o suporte.");
+    err.code = "account_suspended";
+    throw err;
+  }
   if (user.emailVerified === false) {
     const err = new Error("Email ainda não verificado. Confira sua caixa de entrada.");
     err.code = "email_not_verified";
@@ -430,6 +435,7 @@ function requireAuth(req, res, next) {
   const cached = getCachedUser(payload.sub);
   const handle = (user) => {
     if (!user) return res.status(401).json({ error: "Usuário não encontrado" });
+    if (user.suspended) return res.status(403).json({ error: "Conta suspensa.", code: "account_suspended" });
     syncRole(user)
       .then(() => {
         req.user = publicUser(user);
@@ -491,8 +497,18 @@ async function changePassword(userId, { currentPassword, newPassword }) {
 // Mantemos a sincrona "findById" interna com cache pra requireAuth.
 
 async function listUsers() {
-  const users = await prisma().user.findMany({ orderBy: { createdAt: "asc" } });
-  return users.map(publicUser);
+  const users = await prisma().user.findMany({
+    orderBy: { createdAt: "asc" },
+    include: {
+      subscription: { select: { planId: true, status: true } },
+      _count: { select: { groups: true, numbers: true } },
+    },
+  });
+  return users.map(u => ({
+    ...publicUser(u),
+    subscription: u.subscription || null,
+    _count: u._count,
+  }));
 }
 
 async function deleteUser(userId) {
@@ -527,6 +543,44 @@ async function setUserRole(userId, role) {
   return publicUser(user);
 }
 
+async function adminVerifyEmail(userId) {
+  const user = await prisma().user.update({
+    where: { id: userId },
+    data: { emailVerified: true, emailVerifyToken: null, emailVerifyExpires: null },
+  }).catch(err => {
+    if (err.code === "P2025") throw new Error("Usuário não encontrado");
+    throw err;
+  });
+  invalidateUser(userId);
+  return publicUser(user);
+}
+
+async function adminSetSuspended(userId, suspended) {
+  const user = await prisma().user.update({
+    where: { id: userId },
+    data: { suspended, suspendedAt: suspended ? new Date() : null },
+  }).catch(err => {
+    if (err.code === "P2025") throw new Error("Usuário não encontrado");
+    throw err;
+  });
+  invalidateUser(userId);
+  return publicUser(user);
+}
+
+async function adminResendVerification(userId) {
+  const user = await prisma().user.findUnique({ where: { id: userId } });
+  if (!user) throw new Error("Usuário não encontrado");
+  if (user.emailVerified) throw new Error("Email já verificado");
+  const verifyToken = newToken();
+  await prisma().user.update({
+    where: { id: userId },
+    data: { emailVerifyToken: verifyToken, emailVerifyExpires: new Date(Date.now() + EMAIL_VERIFY_TTL_MS) },
+  });
+  mailer.sendVerificationEmail({ to: user.email, name: user.name, token: verifyToken })
+    .catch(err => console.error("[auth] adminResendVerification:", err.message));
+  return { ok: true };
+}
+
 module.exports = {
   warmup,
   bootSeed,
@@ -548,6 +602,9 @@ module.exports = {
   deleteUser,
   adminSetPassword,
   setUserRole,
+  adminVerifyEmail,
+  adminSetSuspended,
+  adminResendVerification,
   isAdminEmail,
   // Limites/regras exportados pra ficar uma fonte só.
   MAX_NAME_LEN,

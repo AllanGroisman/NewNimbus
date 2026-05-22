@@ -34,6 +34,10 @@ model User {
   passwordResetToken   String?   @unique
   passwordResetExpires DateTime?
 
+  // Suspensão administrativa.
+  suspended   Boolean   @default(false)
+  suspendedAt DateTime?
+
   state           UserState?
   groups          Group[]
   whatsappGroups  WhatsappGroup[]

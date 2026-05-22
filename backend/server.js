@@ -903,6 +903,37 @@ app.patch("/api/admin/users/:id/role", auth.requireAuth, auth.requireAdmin, asyn
   }
 });
 
+app.patch("/api/admin/users/:id/verify-email", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const user = await auth.adminVerifyEmail(req.params.id);
+    res.json({ user });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.patch("/api/admin/users/:id/suspend", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    if (req.params.id === req.user.id) {
+      return res.status(400).json({ error: "Você não pode suspender a si mesmo" });
+    }
+    const { suspended } = req.body || {};
+    const user = await auth.adminSetSuspended(req.params.id, !!suspended);
+    res.json({ user });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/users/:id/resend-verification", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const result = await auth.adminResendVerification(req.params.id);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // ────────────────────────────────────────────────────────────────────────
 // Admin — scraper global e catálogo
 // ────────────────────────────────────────────────────────────────────────
