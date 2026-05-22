@@ -20,6 +20,8 @@
 //   node scripts/backup-remote.js --latest      # sobe só o último snapshot local
 //   node scripts/backup-remote.js --dry-run     # mostra o que faria
 
+require("dotenv").config({ path: require("path").join(__dirname, "..", ".env") });
+
 const fs = require("fs");
 const fsp = require("fs/promises");
 const path = require("path");

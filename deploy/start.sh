@@ -12,9 +12,9 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 echo "=== Nimbus - start ==="
 
-# Postgres + Redis
+# Postgres + Redis (sobe primeiro — restore precisa do container)
 echo
-echo "[1/5] Postgres + Redis..."
+echo "[1/6] Postgres + Redis..."
 cd "$REPO_DIR"
 sudo docker compose up -d
 for i in {1..30}; do
@@ -25,9 +25,47 @@ for i in {1..30}; do
   sleep 1
 done
 
+# Banco remoto: verifica se tem backup mais novo no Backblaze
+echo
+echo "[2/6] Verificando backup remoto (Backblaze)..."
+_ENV_FILE="$REPO_DIR/backend/.env"
+_B2_BUCKET=""
+_B2_KEY_ID=""
+if [[ -f "$_ENV_FILE" ]]; then
+  _B2_BUCKET=$(grep -m1 '^BACKUP_S3_BUCKET=' "$_ENV_FILE" | cut -d= -f2-)
+  _B2_KEY_ID=$(grep -m1 '^BACKUP_S3_KEY_ID=' "$_ENV_FILE" | cut -d= -f2-)
+fi
+
+if [[ -z "$_B2_BUCKET" || -z "$_B2_KEY_ID" ]]; then
+  echo "  Backblaze não configurado — pulando."
+else
+  _LATEST_REMOTE=$(node "$REPO_DIR/backend/scripts/restore-remote.js" --list 2>/dev/null \
+    | grep -o 'db-[0-9]\{8\}-[0-9]\{6\}\.sql\.gz' | head -1 || true)
+  _LATEST_LOCAL=$(find "$REPO_DIR/backend/backups" -name 'db-*.sql.gz' 2>/dev/null \
+    | xargs -r basename -a | sort -r | head -1 || true)
+
+  if [[ -z "$_LATEST_REMOTE" ]]; then
+    echo "  Sem backups remotos encontrados."
+  elif [[ "$_LATEST_REMOTE" > "${_LATEST_LOCAL:-0}" ]]; then
+    echo "  Backup remoto mais novo detectado: $_LATEST_REMOTE"
+    [[ -n "$_LATEST_LOCAL" ]] && echo "  Local atual:                    $_LATEST_LOCAL"
+    read -rp "  Restaurar banco do Backblaze antes de subir? [s/N] " _restore_resp
+    case "${_restore_resp,,}" in
+      s|sim|y|yes)
+        node "$REPO_DIR/backend/scripts/restore-remote.js" --latest
+        ;;
+      *)
+        echo "  Mantendo banco local."
+        ;;
+    esac
+  else
+    echo "  Banco local já está atualizado ($_LATEST_LOCAL)."
+  fi
+fi
+
 # Backend: deps + migrations
 echo
-echo "[2/5] Backend: npm install + migrations + PM2..."
+echo "[3/6] Backend: npm install + migrations + PM2..."
 cd "$REPO_DIR/backend"
 npm install --omit=dev
 npx prisma generate
@@ -41,7 +79,7 @@ pm2 save >/dev/null
 
 # Frontend: build
 echo
-echo "[3/5] Frontend: build..."
+echo "[4/6] Frontend: build..."
 cd "$REPO_DIR/frontend"
 npm install
 npm run build
@@ -49,13 +87,13 @@ chmod -R o+rX "$REPO_DIR/frontend/dist"
 
 # Nginx (caso esteja parado)
 echo
-echo "[4/5] Nginx..."
+echo "[5/6] Nginx..."
 sudo systemctl start nginx 2>/dev/null || true
 sudo systemctl reload nginx
 
 # ngrok (opcional, roda no PM2)
 echo
-echo "[5/5] ngrok..."
+echo "[6/6] ngrok..."
 if ! command -v ngrok >/dev/null 2>&1; then
   echo "  ngrok não instalado — pulando."
   echo "  Para instalar: bash deploy/install.sh"
