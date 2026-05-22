@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Para tudo: PM2 (backend + worker) e Postgres + Redis.
+# Para e remove tudo do PM2: backend, worker, backup e ngrok.
+# Para também Postgres + Redis (docker compose).
 # Não desinstala — só desliga.
 #
 # Uso (da raiz do repo):
@@ -13,8 +14,16 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 echo "=== Nimbus - stop ==="
 
 echo
-echo "[1/2] PM2 stop..."
-pm2 stop nimbus-backend nimbus-worker 2>/dev/null || true
+echo "[1/2] PM2 delete (backend, worker, backup, ngrok)..."
+for proc in nimbus-backend nimbus-worker nimbus-backup-remote nimbus-ngrok; do
+  if pm2 describe "$proc" >/dev/null 2>&1; then
+    pm2 delete "$proc"
+    echo "  $proc removido."
+  else
+    echo "  $proc não estava no PM2."
+  fi
+done
+pm2 save >/dev/null
 
 echo
 echo "[2/2] Postgres + Redis stop..."
