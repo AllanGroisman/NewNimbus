@@ -1,6 +1,34 @@
 import { PRIMARY, PRIMARY_DARK, formatPrice } from "../../data/constants";
 import Badge from "./Badge";
 
+// Formata número grande compacto: 1234 -> "1,2 mil", 1500000 -> "1,5 mi"
+function formatCompact(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v) || v <= 0) return null;
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1).replace(".", ",").replace(",0", "")} mi`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(1).replace(".", ",").replace(",0", "")} mil`;
+  return String(v);
+}
+
+// Normaliza "vendidos" para texto curto. Aceita string ("1.5mil vendidos") ou número (soldCount).
+function soldText(product) {
+  if (product.soldCount != null && Number(product.soldCount) > 0) {
+    return `${formatCompact(product.soldCount)} vendidos`;
+  }
+  if (product.sold) {
+    const s = String(product.sold).trim();
+    return /vendid/i.test(s) ? s : `${s} vendidos`;
+  }
+  return null;
+}
+
+function reviewsText(product) {
+  if (product.reviewsCount == null) return null;
+  const raw = String(product.reviewsCount).replace(/[^\d]/g, "");
+  if (!raw) return null;
+  return formatCompact(Number(raw));
+}
+
 // Card compacto para filas/pendentes (horizontal)
 export function ProductRow({ product, actions, index }) {
   return (
@@ -97,9 +125,24 @@ export function ProductGridCard({ product }) {
           display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
         }}>{product.name}</div>
         <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{product.seller || product.store}</div>
+        {(() => {
+          const reviews = reviewsText(product);
+          const sold = soldText(product);
+          if (!product.rating && !reviews && !sold) return null;
+          return (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: 11, color: "var(--color-text-secondary)", alignItems: "center" }}>
+              {product.rating && (
+                <span>
+                  <span style={{ color: "#F5A623" }}>★</span> {product.rating}
+                  {reviews && <span style={{ marginLeft: 3 }}>({reviews})</span>}
+                </span>
+              )}
+              {!product.rating && reviews && <span>{reviews} avaliações</span>}
+              {sold && <span>· {sold}</span>}
+            </div>
+          );
+        })()}
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {product.rating && <Badge color="amber">★ {product.rating}</Badge>}
-          {product.sold && <Badge color="purple">{product.sold}</Badge>}
           {product.freeShipping && <Badge color="teal">Frete grátis</Badge>}
         </div>
         <div style={{ marginTop: "auto" }}>

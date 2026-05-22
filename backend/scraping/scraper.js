@@ -256,6 +256,45 @@ async function scrapeAmazon({ category, limit = 100 } = {}) {
 // Shopee (via Affiliate Open API — GraphQL, sem browser)
 // ────────────────────────────────────────────────────────────────────────
 
+// Cache em memória para reviews count (Shopee não expõe via Affiliate API,
+// então enriquecemos via endpoint público v4/item/get). TTL 6h.
+const shopeeReviewCache = new Map();
+const SHOPEE_REVIEW_TTL_MS = 6 * 60 * 60 * 1000;
+
+async function fetchShopeeReviewCount(itemId, shopId) {
+  if (!itemId || !shopId) return null;
+  const key = `${shopId}:${itemId}`;
+  const cached = shopeeReviewCache.get(key);
+  if (cached && Date.now() - cached.ts < SHOPEE_REVIEW_TTL_MS) return cached.value;
+
+  const url = `https://shopee.com.br/api/v4/item/get?itemid=${encodeURIComponent(itemId)}&shopid=${encodeURIComponent(shopId)}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": UA,
+        "Accept": "application/json",
+        "Accept-Language": "pt-BR,pt;q=0.9",
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": "https://shopee.com.br/",
+      },
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    // cmt_count = total de comentários/avaliações; some-times está em data.data.cmt_count
+    const cmt = data?.data?.cmt_count ?? data?.item?.cmt_count ?? null;
+    const value = Number.isFinite(Number(cmt)) ? Number(cmt) : null;
+    shopeeReviewCache.set(key, { value, ts: Date.now() });
+    return value;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Mapeia um node da API pro formato Nimbus.
 // Preços vêm em centavos como string ("1990" = R$19,90) na maioria dos casos,
 // mas alguns retornam decimal. Normalizamos pra Number aceitando ambos.
@@ -284,6 +323,10 @@ function shopeeNodeToProduct(node, category) {
     freeShipping: false,
     soldCount: Number(node.sales) || 0,
     commissionRate: Number(node.commissionRate) || null,
+    // Guardados temporariamente pro enriquecimento via v4/item/get;
+    // removidos antes de persistir no catálogo (não vão pro payload).
+    _shopeeItemId: node.itemId || null,
+    _shopeeShopId: node.shopId || null,
     scrapedAt: new Date().toISOString(),
   };
 }
@@ -346,7 +389,29 @@ async function scrapeShopee({ category, limit = 50 } = {}) {
   }
 
   products.sort((a, b) => (b.discount || 0) - (a.discount || 0));
-  return products.slice(0, limit);
+  const final = products.slice(0, limit);
+
+  // Enriquece com reviewsCount via endpoint público v4/item/get (paralelo, falhas silenciosas).
+  // Concorrência limitada pra não saturar / parecer abuso.
+  const CONCURRENCY = 5;
+  let enriched = 0;
+  for (let i = 0; i < final.length; i += CONCURRENCY) {
+    const slice = final.slice(i, i + CONCURRENCY);
+    await Promise.all(slice.map(async (p) => {
+      const cmt = await fetchShopeeReviewCount(p._shopeeItemId, p._shopeeShopId);
+      if (cmt != null) {
+        p.reviewsCount = cmt;
+        enriched++;
+      }
+      delete p._shopeeItemId;
+      delete p._shopeeShopId;
+    }));
+  }
+  if (final.length > 0) {
+    console.log(`[scraper Shopee] reviewsCount: ${enriched}/${final.length} enriquecidos`);
+  }
+
+  return final;
 }
 
 // ────────────────────────────────────────────────────────────────────────
