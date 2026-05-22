@@ -52,12 +52,61 @@ if errorlevel 1 (
 )
 echo.
 
-:: ── Backup local → Backblaze (para restaurar na VPS) ──────────────────
+:: ── Sincronizar banco com Backblaze ───────────────────────────────────
+echo [sync] Verificando Backblaze...
+set "_LATEST_REMOTE="
+set "_LATEST_LOCAL=db-00000000-000000.sql.gz"
+
+pushd "%~dp0backend"
+for /f %%i in ('node scripts\check-remote.js 2^>nul') do set "_LATEST_REMOTE=%%i"
+if not exist backups mkdir backups
+for /f %%i in ('dir /b /o-n backups\db-*.sql.gz 2^>nul') do (
+    if "%_LATEST_LOCAL%"=="db-00000000-000000.sql.gz" set "_LATEST_LOCAL=%%i"
+)
+popd
+
+if not defined _LATEST_REMOTE (
+    echo [sync] Backblaze nao configurado ou sem backups remotos.
+    echo.
+    goto :sync_done
+)
+
+if "%_LATEST_REMOTE%" GTR "%_LATEST_LOCAL%" (
+    echo.
+    echo [sync] *** Banco no Backblaze e mais novo! ***
+    echo   Remoto: %_LATEST_REMOTE%
+    echo   Local:  %_LATEST_LOCAL%
+    echo.
+    echo   s = restaurar do Backblaze ^(sobrescreve banco local^)
+    echo   n = manter banco local e enviar ao Backblaze
+    echo   i = ignorar ^(nao faz nada^)
+    echo.
+    set "SYNC_OPT=i"
+    set /p "SYNC_OPT=Opcao? [s/n/i] (default i): "
+    if /I "%SYNC_OPT%"=="S" (
+        echo [sync] Restaurando banco do Backblaze...
+        pushd "%~dp0backend"
+        node scripts\restore-remote.js --latest
+        popd
+        echo [sync] Banco restaurado com sucesso!
+        echo.
+        goto :sync_done
+    )
+    if /I "%SYNC_OPT%"=="N" (
+        goto :do_push
+    )
+    echo [sync] Ignorado.
+    echo.
+    goto :sync_done
+) else (
+    echo [sync] Banco local esta atualizado ^(%_LATEST_LOCAL%^).
+)
+
+:do_push
 set "DO_BACKUP=N"
 set /p "DO_BACKUP=Enviar banco local ao Backblaze (para restaurar na VPS depois)? [S/N] (default N): "
 if /I "%DO_BACKUP%"=="S" (
     echo [backup] Gerando dump do banco...
-    if not exist "%~dp0backend\backups" mkdir "%~dp0backend\backups"
     for /f %%i in ('node -e "var d=new Date();var p=function(n){return ('0'+n).slice(-2)};console.log(d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'-'+p(d.getHours())+p(d.getMinutes())+p(d.getSeconds()))"') do set "_TS=%%i"
     docker exec nimbus-postgres sh -c "pg_dump -U nimbus nimbus | gzip" > "%~dp0backend\backups\db-%_TS%.sql.gz"
     if errorlevel 1 (
@@ -70,6 +119,8 @@ if /I "%DO_BACKUP%"=="S" (
         echo [backup] Pronto! Na VPS, rode start.sh e escolha restaurar o banco.
     )
 )
+
+:sync_done
 echo.
 
 :: ── Pergunta se quer subir o ngrok ────────────────────────────────────
