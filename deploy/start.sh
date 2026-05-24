@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sobe tudo: Postgres + Redis (docker compose), backend + worker (PM2) e ngrok (opcional, PM2).
+# Sobe tudo: Postgres + Redis (docker compose), backend + worker (PM2).
 # Roda DEPOIS de install.sh (que já configurou tudo).
 #
 # Uso (da raiz do repo):
@@ -72,7 +72,7 @@ fi
 
 # Backend: deps + migrations
 echo
-echo "[3/6] Backend: npm install + migrations + PM2..."
+echo "[3/5] Backend: npm install + migrations + PM2..."
 cd "$REPO_DIR/backend"
 npm install --omit=dev
 npx prisma generate
@@ -86,7 +86,7 @@ pm2 save >/dev/null
 
 # Frontend: build
 echo
-echo "[4/6] Frontend: build..."
+echo "[4/5] Frontend: build..."
 cd "$REPO_DIR/frontend"
 npm install
 npm run build
@@ -94,78 +94,14 @@ chmod -R o+rX "$REPO_DIR/frontend/dist"
 
 # Nginx (caso esteja parado)
 echo
-echo "[5/6] Nginx..."
+echo "[5/5] Nginx..."
 sudo systemctl start nginx 2>/dev/null || true
 sudo systemctl reload nginx
-
-# ngrok (opcional, roda no PM2)
-echo
-echo "[6/6] ngrok..."
-if ! command -v ngrok >/dev/null 2>&1; then
-  echo "  ngrok não instalado — pulando."
-  echo "  Para instalar: bash deploy/install.sh"
-else
-  read -rp "  Quer iniciar o ngrok agora? [s/N] " _resp
-  case "${_resp,,}" in
-    s|sim|y|yes)
-      # Remove instância anterior se existir
-      pm2 delete nimbus-ngrok 2>/dev/null || true
-
-      pm2 start "$(command -v ngrok)" \
-        --name nimbus-ngrok \
-        --no-autorestart \
-        -- http 80
-      pm2 save >/dev/null
-
-      echo "  Aguardando URL do ngrok..."
-      NGROK_URL=""
-      for i in {1..25}; do
-        RAW=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null)
-        # tenta jq primeiro, cai no python3, depois grep
-        if command -v jq >/dev/null 2>&1; then
-          NGROK_URL=$(echo "$RAW" | jq -r '.tunnels[]? | select(.proto=="https") | .public_url' 2>/dev/null | head -1)
-        elif command -v python3 >/dev/null 2>&1; then
-          NGROK_URL=$(echo "$RAW" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    urls = [t['public_url'] for t in d.get('tunnels',[]) if t.get('proto')=='https']
-    print(urls[0] if urls else '')
-except: pass
-" 2>/dev/null)
-        else
-          NGROK_URL=$(echo "$RAW" \
-            | grep -o '"public_url":"https://[^"]*"' \
-            | head -1 \
-            | sed 's/"public_url":"//;s/"//')
-        fi
-        [[ -n "$NGROK_URL" ]] && break
-        sleep 1
-      done
-
-      if [[ -n "$NGROK_URL" ]]; then
-        echo
-        echo "  ┌─────────────────────────────────────────────────────┐"
-        echo "  │  ngrok URL:  $NGROK_URL"
-        echo "  └─────────────────────────────────────────────────────┘"
-        echo
-        echo "  Lembre de atualizar:"
-        echo "    FRONTEND_URL / NEXT_PUBLIC_API_URL no .env"
-        echo "    Webhook do Stripe → ${NGROK_URL}/api/billing/webhook"
-      else
-        echo "  ngrok subiu mas URL ainda não disponível."
-        echo "  Acesse http://localhost:4040 para ver o link."
-      fi
-      ;;
-    *)
-      echo "  ngrok não iniciado. Para subir manualmente: ngrok http 80"
-      ;;
-  esac
-fi
 
 echo
 echo "=== Tudo no ar. ==="
 pm2 status
 echo
 echo "Acesse:"
+echo "  https://sistema.nimbuspromocoes.com"
 echo "  Local:  curl http://localhost/healthz"
