@@ -239,6 +239,10 @@ export async function adminScraperShopeeClear()      { return http("DELETE", "/a
 export async function adminScraperShopeeTest(url)    { return http("POST",   "/api/admin/scraper/shopee/test", { url }); }
 export async function adminScraperShopeeFilters()        { return http("GET", "/api/admin/scraper/shopee/filters"); }
 export async function adminScraperShopeeFiltersSave(f)   { return http("PUT", "/api/admin/scraper/shopee/filters", f); }
+export async function adminScraperMLFilters()            { return http("GET", "/api/admin/scraper/ml/filters"); }
+export async function adminScraperMLFiltersSave(f)       { return http("PUT", "/api/admin/scraper/ml/filters", f); }
+export async function adminScraperAmazonFilters()        { return http("GET", "/api/admin/scraper/amazon/filters"); }
+export async function adminScraperAmazonFiltersSave(f)   { return http("PUT", "/api/admin/scraper/amazon/filters", f); }
 export async function adminCatalog({ page = 1, pageSize = 50, category, source, q, sortBy } = {}) {
   const params = new URLSearchParams();
   params.set("page", page);

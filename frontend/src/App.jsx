@@ -21,6 +21,8 @@ import PageAffiliateML from "./pages/AffiliateML";
 import PageAffiliateAmazon from "./pages/AffiliateAmazon";
 import PageAffiliateShopee from "./pages/AffiliateShopee";
 import PageAdminScraper from "./pages/AdminScraper";
+import PageAdminML from "./pages/AdminML";
+import PageAdminAmazon from "./pages/AdminAmazon";
 import PageAdminShopee from "./pages/AdminShopee";
 import PageAdminUsers from "./pages/AdminUsers";
 import PageAdminBackups from "./pages/AdminBackups";
@@ -346,8 +348,10 @@ export default function App() {
     "mercado-livre": <PageAffiliateML onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
     "amazon": <PageAffiliateAmazon onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
     "shopee": <PageAffiliateShopee onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
-    "admin-scraper": user?.role === "admin" ? <PageAdminScraper /> : fallbackPage,
-    "admin-shopee":  user?.role === "admin" ? <PageAdminShopee /> : fallbackPage,
+    "admin-scraper":  user?.role === "admin" ? <PageAdminScraper /> : fallbackPage,
+    "admin-ml":       user?.role === "admin" ? <PageAdminML /> : fallbackPage,
+    "admin-amazon":   user?.role === "admin" ? <PageAdminAmazon /> : fallbackPage,
+    "admin-shopee":   user?.role === "admin" ? <PageAdminShopee /> : fallbackPage,
     "admin-users":   user?.role === "admin" ? <PageAdminUsers currentUser={user} /> : fallbackPage,
     "admin-backups": user?.role === "admin" ? <PageAdminBackups /> : fallbackPage,
     "tutorials":     <PageTutoriais targetTutorialId={tutorialTarget} />,
