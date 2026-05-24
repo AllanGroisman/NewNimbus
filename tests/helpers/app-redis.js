@@ -89,11 +89,22 @@ function uniqueEmail(prefix = "user") {
 
 async function createTestUser(overrides = {}) {
   const email = overrides.email || uniqueEmail();
-  const password = overrides.password || "senha123";
+  const password = overrides.password || "Senha123";
   const name = overrides.name || "Tester";
-  const res = await request(app).post("/api/auth/register").send({ name, email, password, phone: "11999999999" });
-  if (res.status !== 200) throw new Error(`register falhou: ${res.status} ${JSON.stringify(res.body)}`);
-  const { user, token } = res.body;
+
+  // 1. Registra — sem token (exige verificação de email)
+  const regRes = await request(app).post("/api/auth/register").send({ name, email, password, phone: "11999999999" });
+  if (regRes.status !== 200) throw new Error(`register falhou: ${regRes.status} ${JSON.stringify(regRes.body)}`);
+  const { user } = regRes.body;
+
+  // 2. Verifica email via DB direto → obtém token JWT
+  const { prisma } = require(path.join(backendDir, "db.js"));
+  const row = await prisma().user.findUnique({ where: { id: user.id }, select: { emailVerifyToken: true } });
+  if (!row?.emailVerifyToken) throw new Error(`emailVerifyToken não encontrado para ${email}`);
+  const verifyRes = await request(app).post("/api/auth/verify-email").send({ token: row.emailVerifyToken });
+  if (verifyRes.status !== 200) throw new Error(`verify-email falhou: ${verifyRes.status} ${JSON.stringify(verifyRes.body)}`);
+  const { token } = verifyRes.body;
+
   return {
     user, token, email, password,
     auth: (method, url) => request(app)[method](url).set("Authorization", `Bearer ${token}`),

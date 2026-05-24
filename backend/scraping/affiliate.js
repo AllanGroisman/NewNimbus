@@ -498,6 +498,76 @@ function clearScraperShopeeAdminCreds() {
 }
 
 // ────────────────────────────────────────────────────────────────────────
+// Filtros de qualidade do Mercado Livre (admin-only)
+// ────────────────────────────────────────────────────────────────────────
+
+const ML_FILTERS_KEY = "ml-scraper-filters";
+const ML_FILTERS_DEFAULTS = {
+  minRating:   0,  // 0 = sem filtro
+  minSales:    0,  // 0 = sem filtro
+  minPrice:    0,  // BRL
+  maxPrice:    0,  // 0 = sem teto
+  maxDiscount: 0,  // % máximo; 0 = sem filtro
+};
+
+function readMLScraperFilters() {
+  const raw = appConfig.get(ML_FILTERS_KEY);
+  if (!raw || typeof raw !== "object") return { ...ML_FILTERS_DEFAULTS };
+  return { ...ML_FILTERS_DEFAULTS, ...raw };
+}
+
+function writeMLScraperFilters(patch) {
+  const cur = readMLScraperFilters();
+  const num = (v, def) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : def; };
+  const next = {
+    minRating:   num(patch?.minRating,   cur.minRating),
+    minSales:    num(patch?.minSales,    cur.minSales),
+    minPrice:    num(patch?.minPrice,    cur.minPrice),
+    maxPrice:    num(patch?.maxPrice,    cur.maxPrice),
+    maxDiscount: num(patch?.maxDiscount, cur.maxDiscount),
+  };
+  if (next.minRating > 5)   next.minRating = 5;
+  if (next.maxDiscount > 100) next.maxDiscount = 100;
+  appConfig.set(ML_FILTERS_KEY, next);
+  return next;
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Filtros de qualidade da Amazon (admin-only)
+// ────────────────────────────────────────────────────────────────────────
+
+const AMAZON_FILTERS_KEY = "amazon-scraper-filters";
+const AMAZON_FILTERS_DEFAULTS = {
+  minRating:   0,  // 0 = sem filtro
+  minReviews:  0,  // 0 = sem filtro
+  minPrice:    0,  // BRL
+  maxPrice:    0,  // 0 = sem teto
+  maxDiscount: 0,  // % máximo; 0 = sem filtro
+};
+
+function readAmazonScraperFilters() {
+  const raw = appConfig.get(AMAZON_FILTERS_KEY);
+  if (!raw || typeof raw !== "object") return { ...AMAZON_FILTERS_DEFAULTS };
+  return { ...AMAZON_FILTERS_DEFAULTS, ...raw };
+}
+
+function writeAmazonScraperFilters(patch) {
+  const cur = readAmazonScraperFilters();
+  const num = (v, def) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : def; };
+  const next = {
+    minRating:   num(patch?.minRating,   cur.minRating),
+    minReviews:  num(patch?.minReviews,  cur.minReviews),
+    minPrice:    num(patch?.minPrice,    cur.minPrice),
+    maxPrice:    num(patch?.maxPrice,    cur.maxPrice),
+    maxDiscount: num(patch?.maxDiscount, cur.maxDiscount),
+  };
+  if (next.minRating > 5)   next.minRating = 5;
+  if (next.maxDiscount > 100) next.maxDiscount = 100;
+  appConfig.set(AMAZON_FILTERS_KEY, next);
+  return next;
+}
+
+// ────────────────────────────────────────────────────────────────────────
 // Filtros de qualidade da Shopee (admin-only)
 // ────────────────────────────────────────────────────────────────────────
 
@@ -647,6 +717,12 @@ module.exports = {
   readScraperShopeeAdminCreds,
   writeScraperShopeeAdminCreds,
   clearScraperShopeeAdminCreds,
+  readMLScraperFilters,
+  writeMLScraperFilters,
+  ML_FILTERS_DEFAULTS,
+  readAmazonScraperFilters,
+  writeAmazonScraperFilters,
+  AMAZON_FILTERS_DEFAULTS,
   readShopeeScraperFilters,
   writeShopeeScraperFilters,
   passesShopeeFilters,

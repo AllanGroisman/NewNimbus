@@ -1117,6 +1117,34 @@ app.put("/api/admin/scraper/shopee/filters", auth.requireAuth, auth.requireAdmin
   }
 });
 
+// Filtros de qualidade do Mercado Livre (admin-only)
+app.get("/api/admin/scraper/ml/filters", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json({ filters: affiliate.readMLScraperFilters(), defaults: affiliate.ML_FILTERS_DEFAULTS });
+});
+
+app.put("/api/admin/scraper/ml/filters", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  try {
+    const saved = affiliate.writeMLScraperFilters(req.body || {});
+    res.json({ ok: true, filters: saved });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Filtros de qualidade da Amazon (admin-only)
+app.get("/api/admin/scraper/amazon/filters", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json({ filters: affiliate.readAmazonScraperFilters(), defaults: affiliate.AMAZON_FILTERS_DEFAULTS });
+});
+
+app.put("/api/admin/scraper/amazon/filters", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  try {
+    const saved = affiliate.writeAmazonScraperFilters(req.body || {});
+    res.json({ ok: true, filters: saved });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // Testa as credenciais admin gerando um shortlink — mesma rota de teste do affiliate,
 // mas usando explicitamente as creds do admin (sem cair em env nem user fallback).
 app.post("/api/admin/scraper/shopee/test", auth.requireAuth, auth.requireAdmin, async (req, res) => {

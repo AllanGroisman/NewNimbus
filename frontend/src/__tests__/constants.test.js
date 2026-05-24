@@ -6,7 +6,8 @@ import {
   getGroupCategories, getLinkedWhatsapps,
   groupUsesML, groupUsesShopee,
   getGroupStats,
-  CATEGORIES, allSources,
+  CATEGORIES, allSources, sidebarItems,
+  computeQueueETA, formatETA,
 } from "../data/constants.js";
 
 describe("Categories — lookup helpers", () => {
@@ -99,6 +100,103 @@ describe("getLinkedWhatsapps", () => {
 
   it("retorna [] quando group não tem vínculo", () => {
     expect(getLinkedWhatsapps({}, waGroups)).toEqual([]);
+  });
+});
+
+describe("sidebarItems — estrutura e ícones", () => {
+  const allIds = sidebarItems.map(i => i.id);
+  const adminItems = sidebarItems.filter(i => i.adminOnly);
+  const userItems  = sidebarItems.filter(i => !i.adminOnly);
+
+  it("contém os itens de navegação principais", () => {
+    expect(allIds).toContain("dashboard");
+    expect(allIds).toContain("whatsapp");
+    expect(allIds).toContain("mercado-livre");
+    expect(allIds).toContain("amazon");
+    expect(allIds).toContain("shopee");
+    expect(allIds).toContain("tutorials");
+    expect(allIds).toContain("settings");
+  });
+
+  it("tem seções admin: ml, amazon e shopee", () => {
+    const adminIds = adminItems.map(i => i.id);
+    expect(adminIds).toContain("admin-ml");
+    expect(adminIds).toContain("admin-amazon");
+    expect(adminIds).toContain("admin-shopee");
+  });
+
+  it("nenhum item de usuário tem adminOnly=true", () => {
+    for (const item of userItems) {
+      expect(item.adminOnly).toBeFalsy();
+    }
+  });
+
+  it("ícone de tutoriais não é emoji colorido — deve ser símbolo Unicode", () => {
+    const tutorials = sidebarItems.find(i => i.id === "tutorials");
+    expect(tutorials).toBeDefined();
+    // Emojis são representados por code points U+1F000+ (surrogate pairs em JS)
+    // um símbolo puro como ⊙ tem comprimento 1 e não é surrogado
+    const icon = tutorials.icon;
+    expect(icon.length).toBe(1);
+    expect(icon.codePointAt(0)).toBeLessThan(0x10000); // não é emoji high-surrogate
+  });
+
+  it("todos os itens têm id, label e icon preenchidos", () => {
+    for (const item of sidebarItems) {
+      expect(item.id).toBeTruthy();
+      expect(item.label).toBeTruthy();
+      expect(item.icon).toBeTruthy();
+    }
+  });
+});
+
+describe("computeQueueETA", () => {
+  const now = new Date("2024-01-15T10:00:00");
+  const windows = [{ from: "08:00", to: "22:00", interval: 30 }];
+
+  it("retorna array vazio quando fila vazia", () => {
+    const group = { queue: [], schedule: { windows } };
+    expect(computeQueueETA(group, now)).toEqual([]);
+  });
+
+  it("retorna nulls quando não há janelas", () => {
+    const group = { queue: [{}], schedule: { windows: [] } };
+    expect(computeQueueETA(group, now)).toEqual([null]);
+  });
+
+  it("agendamento sequencial respeita o intervalo da janela", () => {
+    const group = { queue: [{}, {}], schedule: { windows } };
+    const [t1, t2] = computeQueueETA(group, now);
+    expect(t1).toBeInstanceOf(Date);
+    expect(t2).toBeInstanceOf(Date);
+    // t2 deve ser ao menos 30 min depois de t1
+    expect(t2.getTime() - t1.getTime()).toBeGreaterThanOrEqual(30 * 60 * 1000);
+  });
+
+  it("retorna null quando janela tem from >= to (impossível)", () => {
+    // from == to → slotMin nunca é < to → nextSlot sempre retorna null
+    const impossibleWin = [{ from: "10:00", to: "10:00", interval: 30 }];
+    const group = { queue: [{}, {}], schedule: { windows: impossibleWin } };
+    const etas = computeQueueETA(group, now);
+    expect(etas.every(e => e === null)).toBe(true);
+  });
+});
+
+describe("formatETA", () => {
+  const now = new Date("2024-01-15T10:00:00");
+
+  it("retorna '—' para null", () => {
+    expect(formatETA(null, now)).toBe("—");
+  });
+
+  it("retorna só HH:MM quando é hoje", () => {
+    const d = new Date("2024-01-15T14:30:00");
+    expect(formatETA(d, now)).toBe("14:30");
+  });
+
+  it("retorna DD/MM HH:MM quando é outro dia", () => {
+    const d = new Date("2024-01-16T09:05:00");
+    expect(formatETA(d, now)).toBe("16/01 09:05");
   });
 });
 

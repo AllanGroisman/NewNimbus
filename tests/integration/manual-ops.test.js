@@ -2,8 +2,13 @@
 // pending approve/reject, history clear. Complementa scheduler.test.js que cobre
 // a função pura; aqui é o flow HTTP + edge cases (404, 409, isolamento por user).
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { app, request, createTestUser, storage, catalog, affiliate, scheduler } from "../helpers/app.js";
+
+// Mock do gerarLinkAfiliadoML — evita HTTP real ao ML com cookie de teste inválido.
+vi.spyOn(affiliate, "gerarLinkAfiliadoML").mockImplementation(async (_userId, url) =>
+  url ? `https://s.mercadolivre.com.br/test-short?url=${encodeURIComponent(url)}` : null
+);
 import { mlProduct, amazonProduct, makeGroup, makeWhatsAppGroup } from "../helpers/fixtures.js";
 
 async function userWithGroup(opts = {}) {

@@ -38,7 +38,8 @@ describe("Billing — trial automático no register", () => {
     expect(res.body.effectivePlan).toBe("pro");
     expect(res.body.daysLeftInTrial).toBeGreaterThan(5);
     expect(res.body.daysLeftInTrial).toBeLessThanOrEqual(7);
-    expect(res.body.limits.groups).toBe(15);
+    expect(res.body.limits.groups).toBe(5);           // pro = 5 campanhas
+    expect(res.body.limits.whatsappGroupsPerCampaign).toBe(15); // pro = 15 grupos WA por campanha
     expect(res.body.limits.autoScraping).toBe(true);
   });
 
@@ -282,20 +283,20 @@ describe("Billing — webhook handler", () => {
 });
 
 describe("Billing — plan-gating no PUT /api/state", () => {
-  it("trial Pro: aceita 15 grupos", async () => {
+  it("trial Pro: aceita 5 grupos (campanhas)", async () => {
     const { auth } = await createTestUser();
-    const groups = Array.from({ length: 15 }, (_, i) => makeGroup({ id: i + 1, name: `G${i + 1}` }));
+    const groups = Array.from({ length: 5 }, (_, i) => makeGroup({ id: i + 1, name: `G${i + 1}` }));
     const res = await auth("put", "/api/state").send({ groups, numbers: [], whatsappGroups: [] });
     expect(res.status).toBe(200);
   });
 
-  it("trial Pro: rejeita 16 grupos com 402 + planRequired=business", async () => {
+  it("trial Pro: rejeita 6 grupos com 402 + planRequired=business", async () => {
     const { auth } = await createTestUser();
-    const groups = Array.from({ length: 16 }, (_, i) => makeGroup({ id: i + 1, name: `G${i + 1}` }));
+    const groups = Array.from({ length: 6 }, (_, i) => makeGroup({ id: i + 1, name: `G${i + 1}` }));
     const res = await auth("put", "/api/state").send({ groups, numbers: [], whatsappGroups: [] });
     expect(res.status).toBe(402);
-    expect(res.body.limit).toBe(15);
-    expect(res.body.current).toBe(16);
+    expect(res.body.limit).toBe(5);
+    expect(res.body.current).toBe(6);
     expect(res.body.planRequired).toBe("business");
   });
 

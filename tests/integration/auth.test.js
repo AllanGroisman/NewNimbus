@@ -16,20 +16,22 @@ describe("Auth — registro e login", () => {
     expect(res.body.error).toMatch(/senha/i);
   });
 
-  it("cria usuario e devolve token JWT", async () => {
+  it("cria usuario, exige verificacao de email e nao devolve token direto", async () => {
     const email = uniqueEmail();
-    const res = await request(app).post("/api/auth/register").send({ name: "Joao", email, password: "senha123" });
+    const res = await request(app).post("/api/auth/register").send({ name: "Joao", email, password: "Senha123" });
     expect(res.status).toBe(200);
     expect(res.body.user.email).toBe(email);
     expect(res.body.user.role).toBe("user");
-    expect(res.body.token).toMatch(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+    expect(res.body.requiresVerification).toBe(true);
+    // Sem token — precisa verificar email primeiro
+    expect(res.body.token).toBeUndefined();
     expect(res.body.user.passwordHash).toBeUndefined();
   });
 
   it("nao permite cadastrar mesmo email duas vezes", async () => {
     const email = uniqueEmail();
-    await request(app).post("/api/auth/register").send({ name: "A", email, password: "senha123" });
-    const dup = await request(app).post("/api/auth/register").send({ name: "B", email, password: "senha123" });
+    await request(app).post("/api/auth/register").send({ name: "A", email, password: "Senha123" });
+    const dup = await request(app).post("/api/auth/register").send({ name: "B", email, password: "Senha123" });
     expect(dup.status).toBe(400);
     expect(dup.body.error).toMatch(/j[áa] existe/i);
   });
@@ -83,9 +85,9 @@ describe("Auth — troca de senha", () => {
 
   it("aceita troca com senha atual correta e permite login com a nova", async () => {
     const u = await createTestUser();
-    const r = await u.auth("post", "/api/auth/password").send({ currentPassword: u.password, newPassword: "novasenha456" });
+    const r = await u.auth("post", "/api/auth/password").send({ currentPassword: u.password, newPassword: "Novasenha456" });
     expect(r.status).toBe(200);
-    const login = await request(app).post("/api/auth/login").send({ email: u.email, password: "novasenha456" });
+    const login = await request(app).post("/api/auth/login").send({ email: u.email, password: "Novasenha456" });
     expect(login.status).toBe(200);
   });
 });

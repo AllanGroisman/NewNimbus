@@ -1,9 +1,15 @@
 // Scheduler: refill, manualAdd, sendNextNow (com WhatsApp mockado).
 // Esse arquivo cobre o miolo do negocio: catalogo -> queue -> envio.
 
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { app, createTestUser, catalog, scheduler, storage, affiliate, waCalls, resetWa } from "../helpers/app.js";
 import { mlProduct, amazonProduct, makeGroup, makeWhatsAppGroup } from "../helpers/fixtures.js";
+
+// Mock do gerarLinkAfiliadoML — evita chamadas HTTP reais ao ML (cookie de teste é inválido).
+// O módulo affiliate é compartilhado por CJS cache, então o spyOn afeta o scheduler também.
+vi.spyOn(affiliate, "gerarLinkAfiliadoML").mockImplementation(async (_userId, url) =>
+  url ? `https://s.mercadolivre.com.br/test-short?url=${encodeURIComponent(url)}` : null
+);
 
 // Helper: cria usuário e já configura afiliado ML pra ele (desbloqueia gating).
 async function createUserWithMLAffiliate() {

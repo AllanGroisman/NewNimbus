@@ -57,14 +57,15 @@ describe("Subscription — render por status", () => {
     expect(screen.getByText(/Ativa/i)).toBeInTheDocument();
   });
 
-  it("past_due: mostra 'Pagamento atrasado'", async () => {
+  it("past_due: mostra badge 'Pagamento atrasado'", async () => {
     setBillingMe({
       planId: "pro", effectivePlan: "free", status: "past_due",
       hasStripeCustomer: true, stripeEnabled: true, isAdmin: false,
       limits: { numbers: 0, groups: 0 },
     });
     render(<PageSubscription />);
-    await waitFor(() => expect(screen.getByText(/Pagamento atrasado/i)).toBeInTheDocument());
+    // Pode aparecer mais de uma vez (badge + texto explicativo) — basta existir ao menos um
+    await waitFor(() => expect(screen.getAllByText(/Pagamento atrasado/i).length).toBeGreaterThan(0));
   });
 
   it("canceled: mostra 'Cancelada' e plano efetivo free", async () => {

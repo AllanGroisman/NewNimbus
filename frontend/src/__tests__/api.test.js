@@ -8,6 +8,10 @@ import {
   authLogin, authRegister, authMe,
   billingMe, billingCheckout, billingPortal,
   loadAppState, saveAppState,
+  adminScraperMLFilters, adminScraperMLFiltersSave,
+  adminScraperAmazonFilters, adminScraperAmazonFiltersSave,
+  adminScraperShopeeFilters, adminScraperShopeeFiltersSave,
+  getAffiliateStatus, saveAffiliate, clearAffiliate,
 } from "../data/api.js";
 
 function mockFetch(responses) {
@@ -129,6 +133,82 @@ describe("auth endpoints", () => {
     }));
     await authLogin({ email: "x@y.z", password: "p" });
     expect(getToken()).toBe("new-login-token");
+  });
+});
+
+describe("affiliate endpoints", () => {
+  it("getAffiliateStatus faz GET /api/affiliate", async () => {
+    fetch.mockResolvedValueOnce(makeResponse({ body: { configured: false } }));
+    const r = await getAffiliateStatus();
+    expect(r.configured).toBe(false);
+    expect(fetch.mock.calls[0][0]).toBe("/api/affiliate");
+    expect(fetch.mock.calls[0][1].method).toBe("GET");
+  });
+
+  it("saveAffiliate faz PUT com payload", async () => {
+    fetch.mockResolvedValueOnce(makeResponse({ body: { configured: true, tag: "minha-tag" } }));
+    const r = await saveAffiliate({ tag: "minha-tag", cookie: "sess123" });
+    expect(r.configured).toBe(true);
+    expect(fetch.mock.calls[0][1].method).toBe("PUT");
+    expect(fetch.mock.calls[0][1].body).toContain("minha-tag");
+  });
+
+  it("clearAffiliate faz DELETE /api/affiliate", async () => {
+    fetch.mockResolvedValueOnce(makeResponse({ body: { configured: false } }));
+    await clearAffiliate();
+    expect(fetch.mock.calls[0][1].method).toBe("DELETE");
+    expect(fetch.mock.calls[0][0]).toBe("/api/affiliate");
+  });
+});
+
+describe("admin scraper filter endpoints", () => {
+  it("adminScraperMLFilters faz GET /api/admin/scraper/ml/filters", async () => {
+    const filters = { minRating: 4, minSales: 50, minPrice: 20, maxPrice: 0, maxDiscount: 95 };
+    fetch.mockResolvedValueOnce(makeResponse({ body: { filters } }));
+    const r = await adminScraperMLFilters();
+    expect(r.filters).toEqual(filters);
+    expect(fetch.mock.calls[0][0]).toBe("/api/admin/scraper/ml/filters");
+    expect(fetch.mock.calls[0][1].method).toBe("GET");
+  });
+
+  it("adminScraperMLFiltersSave faz PUT com filtros", async () => {
+    const filters = { minRating: 4, minSales: 100, minPrice: 30, maxPrice: 5000, maxDiscount: 90 };
+    fetch.mockResolvedValueOnce(makeResponse({ body: { ok: true, filters } }));
+    const r = await adminScraperMLFiltersSave(filters);
+    expect(r.ok).toBe(true);
+    expect(fetch.mock.calls[0][1].method).toBe("PUT");
+    expect(fetch.mock.calls[0][1].body).toContain('"minRating"');
+  });
+
+  it("adminScraperAmazonFilters faz GET /api/admin/scraper/amazon/filters", async () => {
+    const filters = { minRating: 4, minReviews: 20, minPrice: 20, maxPrice: 0, maxDiscount: 90 };
+    fetch.mockResolvedValueOnce(makeResponse({ body: { filters } }));
+    const r = await adminScraperAmazonFilters();
+    expect(r.filters).toEqual(filters);
+    expect(fetch.mock.calls[0][0]).toBe("/api/admin/scraper/amazon/filters");
+    expect(fetch.mock.calls[0][1].method).toBe("GET");
+  });
+
+  it("adminScraperAmazonFiltersSave faz PUT com filtros", async () => {
+    const filters = { minRating: 4.5, minReviews: 50, minPrice: 0, maxPrice: 0, maxDiscount: 0 };
+    fetch.mockResolvedValueOnce(makeResponse({ body: { ok: true, filters } }));
+    const r = await adminScraperAmazonFiltersSave(filters);
+    expect(r.ok).toBe(true);
+    expect(fetch.mock.calls[0][1].method).toBe("PUT");
+  });
+
+  it("adminScraperShopeeFilters faz GET /api/admin/scraper/shopee/filters", async () => {
+    fetch.mockResolvedValueOnce(makeResponse({ body: { filters: { minRating: 0 } } }));
+    const r = await adminScraperShopeeFilters();
+    expect(r.filters).toBeDefined();
+    expect(fetch.mock.calls[0][0]).toBe("/api/admin/scraper/shopee/filters");
+  });
+
+  it("adminScraperShopeeFiltersSave faz PUT /api/admin/scraper/shopee/filters", async () => {
+    fetch.mockResolvedValueOnce(makeResponse({ body: { ok: true, filters: { minRating: 4 } } }));
+    const r = await adminScraperShopeeFiltersSave({ minRating: 4 });
+    expect(r.ok).toBe(true);
+    expect(fetch.mock.calls[0][1].method).toBe("PUT");
   });
 });
 

@@ -29,6 +29,7 @@ const catalog = require(path.join(backendDir, "catalog"));
 const scheduler = require(path.join(backendDir, "scheduler.js"));
 const affiliate = require(path.join(backendDir, "scraping", "affiliate.js"));
 const billing = require(path.join(backendDir, "billing"));
+const { prisma } = require(path.join(backendDir, "db.js"));
 
 function uniqueEmail(prefix = "user") {
   return `${prefix}-${crypto.randomBytes(4).toString("hex")}@test.local`;
@@ -36,11 +37,21 @@ function uniqueEmail(prefix = "user") {
 
 async function createTestUser(overrides = {}) {
   const email = overrides.email || uniqueEmail();
-  const password = overrides.password || "senha123";
+  const password = overrides.password || "Senha123";
   const name = overrides.name || "Tester";
-  const res = await request(app).post("/api/auth/register").send({ name, email, password, phone: "11999999999" });
-  if (res.status !== 200) throw new Error(`register falhou: ${res.status} ${JSON.stringify(res.body)}`);
-  const { user, token } = res.body;
+
+  // 1. Registra — backend não devolve token (exige verificação de email)
+  const regRes = await request(app).post("/api/auth/register").send({ name, email, password, phone: "11999999999" });
+  if (regRes.status !== 200) throw new Error(`register falhou: ${regRes.status} ${JSON.stringify(regRes.body)}`);
+  const { user } = regRes.body;
+
+  // 2. Busca o token de verificação direto no DB e confirma o email
+  const row = await prisma().user.findUnique({ where: { id: user.id }, select: { emailVerifyToken: true } });
+  if (!row?.emailVerifyToken) throw new Error(`emailVerifyToken não encontrado para ${email}`);
+  const verifyRes = await request(app).post("/api/auth/verify-email").send({ token: row.emailVerifyToken });
+  if (verifyRes.status !== 200) throw new Error(`verify-email falhou: ${verifyRes.status} ${JSON.stringify(verifyRes.body)}`);
+  const { token } = verifyRes.body;
+
   return {
     user,
     token,

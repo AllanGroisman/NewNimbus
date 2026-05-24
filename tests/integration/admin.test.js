@@ -23,6 +23,12 @@ describe("Admin — gating", () => {
       ["post", "/api/admin/scraper/run"],
       ["get", "/api/admin/catalog"],
       ["get", "/api/admin/queue/failed"],
+      ["get", "/api/admin/scraper/ml/filters"],
+      ["put", "/api/admin/scraper/ml/filters"],
+      ["get", "/api/admin/scraper/amazon/filters"],
+      ["put", "/api/admin/scraper/amazon/filters"],
+      ["get", "/api/admin/scraper/shopee/filters"],
+      ["put", "/api/admin/scraper/shopee/filters"],
     ];
     for (const [method, url] of rotas) {
       const res = await auth(method, url);
@@ -53,10 +59,10 @@ describe("Admin — users", () => {
   it("admin altera senha de outro user; user consegue logar com nova senha", async () => {
     const admin = await makeAdmin();
     const alvo = await createTestUser({ name: "Vitima" });
-    const r = await admin.auth("patch", `/api/admin/users/${alvo.user.id}/password`).send({ newPassword: "novasenha999" });
+    const r = await admin.auth("patch", `/api/admin/users/${alvo.user.id}/password`).send({ newPassword: "Novasenha999" });
     expect(r.status).toBe(200);
 
-    const login = await request(app).post("/api/auth/login").send({ email: alvo.email, password: "novasenha999" });
+    const login = await request(app).post("/api/auth/login").send({ email: alvo.email, password: "Novasenha999" });
     expect(login.status).toBe(200);
   });
 
@@ -190,6 +196,111 @@ describe("Admin — catalog", () => {
     const admin = await makeAdmin();
     const r = await admin.auth("get", "/api/admin/catalog?pageSize=5");
     expect(r.body.pageSize).toBe(10);
+  });
+});
+
+describe("Admin — scraper filters ML", () => {
+  it("GET /scraper/ml/filters devolve filtros com defaults", async () => {
+    const admin = await makeAdmin();
+    const r = await admin.auth("get", "/api/admin/scraper/ml/filters");
+    expect(r.status).toBe(200);
+    expect(r.body.filters).toBeDefined();
+    expect(typeof r.body.filters.minRating).toBe("number");
+    expect(typeof r.body.filters.minSales).toBe("number");
+    expect(r.body.defaults).toBeDefined();
+  });
+
+  it("PUT /scraper/ml/filters persiste e valida campos", async () => {
+    const admin = await makeAdmin();
+    const payload = { minRating: 4.2, minSales: 75, minPrice: 25, maxPrice: 3000, maxDiscount: 80 };
+    const r = await admin.auth("put", "/api/admin/scraper/ml/filters").send(payload);
+    expect(r.status).toBe(200);
+    expect(r.body.filters.minRating).toBeCloseTo(4.2);
+    expect(r.body.filters.minSales).toBe(75);
+    expect(r.body.filters.maxDiscount).toBe(80);
+
+    const get = await admin.auth("get", "/api/admin/scraper/ml/filters");
+    expect(get.body.filters.minRating).toBeCloseTo(4.2);
+  });
+
+  it("PUT /scraper/ml/filters clampeia minRating > 5 para 5", async () => {
+    const admin = await makeAdmin();
+    const r = await admin.auth("put", "/api/admin/scraper/ml/filters").send({ minRating: 9 });
+    expect(r.status).toBe(200);
+    expect(r.body.filters.minRating).toBe(5);
+  });
+
+  it("PUT /scraper/ml/filters clampeia maxDiscount > 100 para 100", async () => {
+    const admin = await makeAdmin();
+    const r = await admin.auth("put", "/api/admin/scraper/ml/filters").send({ maxDiscount: 150 });
+    expect(r.status).toBe(200);
+    expect(r.body.filters.maxDiscount).toBe(100);
+  });
+});
+
+describe("Admin — scraper filters Amazon", () => {
+  it("GET /scraper/amazon/filters devolve filtros com defaults", async () => {
+    const admin = await makeAdmin();
+    const r = await admin.auth("get", "/api/admin/scraper/amazon/filters");
+    expect(r.status).toBe(200);
+    expect(r.body.filters).toBeDefined();
+    expect(typeof r.body.filters.minRating).toBe("number");
+    expect(typeof r.body.filters.minReviews).toBe("number");
+    expect(r.body.defaults).toBeDefined();
+  });
+
+  it("PUT /scraper/amazon/filters persiste e valida campos", async () => {
+    const admin = await makeAdmin();
+    const payload = { minRating: 4.0, minReviews: 30, minPrice: 15, maxPrice: 2000, maxDiscount: 85 };
+    const r = await admin.auth("put", "/api/admin/scraper/amazon/filters").send(payload);
+    expect(r.status).toBe(200);
+    expect(r.body.filters.minReviews).toBe(30);
+    expect(r.body.filters.minRating).toBeCloseTo(4.0);
+
+    const get = await admin.auth("get", "/api/admin/scraper/amazon/filters");
+    expect(get.body.filters.minReviews).toBe(30);
+  });
+
+  it("PUT /scraper/amazon/filters clampeia minRating > 5 para 5", async () => {
+    const admin = await makeAdmin();
+    const r = await admin.auth("put", "/api/admin/scraper/amazon/filters").send({ minRating: 10 });
+    expect(r.status).toBe(200);
+    expect(r.body.filters.minRating).toBe(5);
+  });
+
+  it("ignora campos negativos (usa 0 como mínimo)", async () => {
+    const admin = await makeAdmin();
+    const r = await admin.auth("put", "/api/admin/scraper/amazon/filters").send({ minReviews: -5 });
+    expect(r.status).toBe(200);
+    expect(r.body.filters.minReviews).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("Admin — scraper filters Shopee", () => {
+  it("GET /scraper/shopee/filters devolve filtros com defaults", async () => {
+    const admin = await makeAdmin();
+    const r = await admin.auth("get", "/api/admin/scraper/shopee/filters");
+    expect(r.status).toBe(200);
+    expect(r.body.filters).toBeDefined();
+    expect(typeof r.body.filters.minRating).toBe("number");
+    expect(typeof r.body.filters.minCommissionRate).toBe("number");
+    expect(r.body.defaults).toBeDefined();
+  });
+
+  it("PUT /scraper/shopee/filters persiste e devolve filtros atualizados", async () => {
+    const admin = await makeAdmin();
+    const payload = { minRating: 4.0, minSales: 100, minPrice: 20, maxPrice: 0, minCommissionRate: 0.03, maxDiscount: 95 };
+    const r = await admin.auth("put", "/api/admin/scraper/shopee/filters").send(payload);
+    expect(r.status).toBe(200);
+    expect(r.body.filters.minSales).toBe(100);
+    expect(r.body.filters.maxDiscount).toBe(95);
+  });
+
+  it("PUT /scraper/shopee/filters aceita minCommissionRate como inteiro (converte 5 -> 0.05)", async () => {
+    const admin = await makeAdmin();
+    const r = await admin.auth("put", "/api/admin/scraper/shopee/filters").send({ minCommissionRate: 5 });
+    expect(r.status).toBe(200);
+    expect(r.body.filters.minCommissionRate).toBeCloseTo(0.05);
   });
 });
 
