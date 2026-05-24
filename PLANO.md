@@ -12,14 +12,16 @@
 * Stripe -> testar utilizando "modo teste"
 * Atendimento -> Como vamos fazer o atendimento ao cliente? Bot no whats?
 * CUPONS -> https://www.mercadolivre.com.br/cupons?source_page=mperfil#nav-header
+* PREENCHER FILA AUTOMATICAMENTE
+
 
 * * PRODUTOS AMAZON ESTÃO SEM INFORMACOES - provavelmente pegando de lugares que não faz sentido
 * * Colocar alerta para caso algo de errado já com opção de pausar
 * * BOTAR UMA VERSAO DE ADMIN PARA TRANCAR manualmente itens. 
 
-? * Back/Front -> Atualização em tempo real (pq não ta att?) Teste dos afiliados com frequencia.
 
 
+#Back/Front -> Atualização em tempo real (pq não ta att?) Teste dos afiliados com frequencia.
 #Back/Front -> Ta rodando campanha tendo só ML configurado, tendo Shopee e Amz ativos nos filtros.
 #Back -> Enviandos links não convertidos. Passar para fila todos os links já convertidos, se não der, não vai pra fila.
 #SHOPEE -> Trocar de onde pega os produtos no scrapping
