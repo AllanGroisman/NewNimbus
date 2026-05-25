@@ -1074,6 +1074,12 @@ app.post("/api/admin/scraper/run", auth.requireAuth, auth.requireAdmin, async (r
   }
 });
 
+app.post("/api/admin/scraper/cancel", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  const r = adminScraper.cancel();
+  if (!r.ok) return res.status(409).json({ error: r.message });
+  res.json(r);
+});
+
 app.get("/api/admin/scraper/status", auth.requireAuth, auth.requireAdmin, (req, res) => {
   res.json(adminScraper.status());
 });
@@ -1483,6 +1489,7 @@ async function boot() {
     console.log(`  GET  /api/status`);
     console.log(`  GET  /api/admin/scraper/config (admin)`);
     console.log(`  POST /api/admin/scraper/run    (admin)`);
+    console.log(`  POST /api/admin/scraper/cancel (admin)`);
     console.log(`  GET  /api/admin/users          (admin)`);
 
     if (queueMod.isRedis()) {

@@ -6,6 +6,7 @@ import {
   adminScraperConfig,
   adminSaveScraperConfig,
   adminRunScraper,
+  adminCancelScraper,
   adminScraperStatus,
   adminCatalog,
 } from "../data/api";
@@ -19,6 +20,7 @@ export default function PageAdminScraper() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
+  const [canceling, setCanceling] = useState(false);
   const [error, setError] = useState(null);
   const [savedMsg, setSavedMsg] = useState(null);
 
@@ -82,6 +84,7 @@ export default function PageAdminScraper() {
   useEffect(() => {
     if (status && !status.running && running) {
       setRunning(false);
+      setCanceling(false);
       refreshCatalog();
     }
     if (status?.running && !running) setRunning(true);
@@ -146,6 +149,18 @@ export default function PageAdminScraper() {
     }
   }
 
+  async function cancelRun() {
+    setError(null);
+    setCanceling(true);
+    try {
+      await adminCancelScraper();
+      await refreshStatus();
+    } catch (err) {
+      setCanceling(false);
+      setError(err.message);
+    }
+  }
+
   if (loading || !config) {
     return <div style={{ padding: 40, textAlign: "center", color: "var(--color-text-secondary)" }}>Carregando...</div>;
   }
@@ -177,7 +192,7 @@ export default function PageAdminScraper() {
       {/* Status / stats — TODOS os campos lidos de `status` (snapshot do backend),
           nunca de `config` local. Senão dessincroniza durante toggle. */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 18 }}>
-        <StatBox label="Status" value={status?.running ? "⟳ Rodando" : (status?.config?.enabled ? "Agendado" : "Pausado")} color={status?.running ? PRIMARY : (status?.config?.enabled ? PRIMARY_DARK : "#854F0B")} />
+        <StatBox label="Status" value={status?.canceling ? "✕ Cancelando..." : (status?.running ? "⟳ Rodando" : (status?.config?.enabled ? "Agendado" : "Pausado"))} color={status?.canceling ? "#A32D2D" : (status?.running ? PRIMARY : (status?.config?.enabled ? PRIMARY_DARK : "#854F0B"))} />
         <StatBox label="Último run" value={fmtDate(status?.lastRun)} sub={status?.lastDuration ? `${(status.lastDuration / 1000).toFixed(1)}s` : null} />
         <StatBox label="Próximo run" value={status?.config?.enabled ? fmtDate(status?.nextRunAt) : "—"} />
         <StatBox label="Produtos no catálogo" value={lastResult?.total ?? "—"} />
@@ -185,7 +200,10 @@ export default function PageAdminScraper() {
 
       {lastResult && (
         <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 14, marginBottom: 18 }}>
-          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>Resultado do último scraping</div>
+          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>
+            Resultado do último scraping
+            {lastResult.cancelled && <span style={{ fontSize: 11, fontWeight: 400, color: "#A32D2D", marginLeft: 8 }}>(cancelado — incompleto)</span>}
+          </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
             <Badge color="green">+{lastResult.inserted} novos</Badge>
             <Badge color="blue">{lastResult.updated} atualizados</Badge>
@@ -279,6 +297,14 @@ export default function PageAdminScraper() {
           <button onClick={runNow} disabled={status?.running} style={{ padding: "8px 16px", borderRadius: 8, background: status?.running ? "var(--color-border-secondary)" : "#fff", color: status?.running ? "var(--color-text-secondary)" : PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 13, cursor: status?.running ? "not-allowed" : "pointer", fontWeight: 500 }}>
             {status?.running ? "⟳ Rodando..." : "▶ Rodar agora"}
           </button>
+          {status?.running && (() => {
+            const isCanceling = canceling || status?.canceling;
+            return (
+              <button onClick={cancelRun} disabled={isCanceling} style={{ padding: "8px 16px", borderRadius: 8, background: "#fff", color: isCanceling ? "var(--color-text-secondary)" : "#A32D2D", border: `0.5px solid ${isCanceling ? "var(--color-border-secondary)" : "#A32D2D"}`, fontSize: 13, cursor: isCanceling ? "not-allowed" : "pointer", fontWeight: 500 }}>
+                {isCanceling ? "Cancelando..." : "✕ Cancelar scraping"}
+              </button>
+            );
+          })()}
           {savedMsg && <span style={{ alignSelf: "center", fontSize: 12, color: PRIMARY_DARK }}>{savedMsg}</span>}
         </div>
       </div>

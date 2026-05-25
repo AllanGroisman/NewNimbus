@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, getGroupCategories, getGroupStats, computeQueueETA, formatETA } from "../data/constants";
+import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, getGroupCategories, getGroupStats, computeQueueETA, formatETA, formatTimeBR, formatDateBR, isSameDayBR } from "../data/constants";
 import { createWAGroup, leaveWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupQueue, clearGroupHistory, approvePendingItem, rejectPendingItem, fetchUrlMetadata, manualAddToQueue } from "../data/api";
 import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
 import BusyOverlay from "./ui/BusyOverlay";
@@ -1141,13 +1141,10 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             <StatCard label="Envios semana" value={group.sentWeek} />
             <StatCard label="Na fila" value={queue.length} sub={pending.length > 0 ? `${pending.length} aguardando revisão` : undefined} color={pending.length > 0 ? "#854F0B" : undefined} />
             {(() => {
-              const d = group.lastSend && group.lastSend !== "—" ? new Date(group.lastSend) : null;
-              const valid = d && !isNaN(d.getTime());
-              const today = valid && d.toDateString() === new Date().toDateString();
-              const value = valid
-                ? (today ? d.toTimeString().slice(0, 5) : formatETA(d))
-                : "—";
-              const sub = valid && today ? "hoje" : (valid ? d.toLocaleDateString("pt-BR") : undefined);
+              const valid = !!group.lastSend && group.lastSend !== "—" && !isNaN(new Date(group.lastSend).getTime());
+              const today = valid && isSameDayBR(group.lastSend);
+              const value = valid ? formatTimeBR(group.lastSend) : "—";
+              const sub = valid ? (today ? "hoje" : formatDateBR(group.lastSend)) : undefined;
               return <StatCard label="Último envio" value={value} sub={sub} />;
             })()}
           </div>
@@ -2218,10 +2215,9 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 2 }}>Fila de envio</div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
                 {queue.length} produto{queue.length !== 1 ? "s" : ""} agendado{queue.length !== 1 ? "s" : ""}
-                {group.lastSend && group.lastSend !== "—" && (() => {
-                  const d = new Date(group.lastSend);
-                  return !isNaN(d.getTime()) ? <> · último envio às {formatETA(d)}</> : null;
-                })()}
+                {group.lastSend && group.lastSend !== "—" && !isNaN(new Date(group.lastSend).getTime())
+                  ? <> · último envio às {formatTimeBR(group.lastSend)}</>
+                  : null}
               </div>
             </div>
             <div style={{ display: "flex", gap: 6 }}>
@@ -2346,8 +2342,8 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               {group.history.map((h, i) => {
                 const sent = h.sentAt ? new Date(h.sentAt) : null;
                 const sentValid = sent && !isNaN(sent.getTime());
-                const dateStr = sentValid ? sent.toLocaleDateString("pt-BR") : (h.time || "—");
-                const timeStr = sentValid ? sent.toTimeString().slice(0, 5) : "";
+                const dateStr = sentValid ? formatDateBR(sent) : (h.time || "—");
+                const timeStr = sentValid ? formatTimeBR(sent) : "";
                 const priceStr = h.price != null ? formatPrice(Number(h.price)) : (typeof h.price === "string" ? h.price : "—");
                 const oldPriceStr = h.originalPrice != null ? formatPrice(Number(h.originalPrice)) : null;
                 const discountNum = typeof h.discount === "number" ? h.discount : (h.discount ? parseInt(String(h.discount).replace(/\D/g, ""), 10) : null);

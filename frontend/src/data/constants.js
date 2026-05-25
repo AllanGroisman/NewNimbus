@@ -167,6 +167,46 @@ export function formatETA(d, now = new Date()) {
   return `${dd}/${mo} ${hh}:${mm}`;
 }
 
+// ─── Datas no fuso de Brasília ──────────────────────────────────────────
+// O backend grava timestamps em UTC (toISOString). Para exibir sempre no
+// horário de Brasília — independente do fuso do navegador/servidor — formate
+// com timeZone fixo "America/Sao_Paulo".
+export const TZ_BR = "America/Sao_Paulo";
+
+const toDate = (d) => {
+  if (!d || d === "—") return null;
+  const date = d instanceof Date ? d : new Date(d);
+  return isNaN(date.getTime()) ? null : date;
+};
+
+// "DD/MM/AAAA" no fuso de Brasília
+export function formatDateBR(d) {
+  const date = toDate(d);
+  return date ? date.toLocaleDateString("pt-BR", { timeZone: TZ_BR }) : "—";
+}
+
+// "HH:MM" no fuso de Brasília
+export function formatTimeBR(d) {
+  const date = toDate(d);
+  return date
+    ? date.toLocaleTimeString("pt-BR", { timeZone: TZ_BR, hour: "2-digit", minute: "2-digit" })
+    : "—";
+}
+
+// "DD/MM/AAAA HH:MM" no fuso de Brasília
+export function formatDateTimeBR(d) {
+  const date = toDate(d);
+  if (!date) return "—";
+  return `${formatDateBR(date)} ${formatTimeBR(date)}`;
+}
+
+// true se a data cai no mesmo dia que `now`, ambos avaliados no fuso de Brasília
+export function isSameDayBR(d, now = new Date()) {
+  const date = toDate(d);
+  if (!date) return false;
+  return formatDateBR(date) === formatDateBR(now);
+}
+
 export const sidebarItems = [
   { id: "dashboard", icon: "▦", label: "Visão Geral" },
   { id: "whatsapp", icon: "◎", label: "WhatsApp" },

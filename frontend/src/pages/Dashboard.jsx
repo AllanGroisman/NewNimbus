@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, CATEGORIES, categoryLabel, categoryColor, categoryIcon, getGroupCategories, getGroupStats } from "../data/constants";
+import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, CATEGORIES, categoryLabel, categoryColor, categoryIcon, getGroupCategories, getGroupStats, formatTimeBR, formatDateTimeBR, isSameDayBR } from "../data/constants";
 import Badge from "../components/ui/Badge";
 import Modal from "../components/ui/Modal";
 
@@ -209,7 +209,7 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                       <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Último envio</div>
                       <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-primary)" }}>
                         {g.lastSend && g.lastSend !== "—"
-                          ? g.lastSend
+                          ? (isSameDayBR(g.lastSend) ? `hoje, ${formatTimeBR(g.lastSend)}` : formatDateTimeBR(g.lastSend))
                           : <span style={{ color: "var(--color-text-secondary)", fontWeight: 400 }}>nenhum</span>}
                       </div>
                     </div>
