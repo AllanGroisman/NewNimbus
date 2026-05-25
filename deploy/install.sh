@@ -79,23 +79,9 @@ sudo apt-get install -y libasound2t64 2>/dev/null \
   || sudo apt-get install -y libasound2 \
   || true
 
-# ── 6. ngrok (opcional, mas você pediu) ────────────────────────────────
+# ── 6. Sobe Postgres + Redis ───────────────────────────────────────────
 echo
-echo "[6/9] ngrok..."
-if ! command -v ngrok >/dev/null 2>&1; then
-  curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
-    | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
-  echo "deb https://ngrok-agent.s3.amazonaws.com buster main" \
-    | sudo tee /etc/apt/sources.list.d/ngrok.list >/dev/null
-  sudo apt-get update
-  sudo apt-get install -y ngrok
-else
-  echo "  ngrok já instalado."
-fi
-
-# ── 7. Sobe Postgres + Redis ───────────────────────────────────────────
-echo
-echo "[7/9] Postgres + Redis (docker compose)..."
+echo "[6/8] Postgres + Redis (docker compose)..."
 cd "$REPO_DIR"
 sudo docker compose up -d
 echo "  Esperando Postgres ficar pronto..."
@@ -107,9 +93,9 @@ for i in {1..30}; do
   sleep 2
 done
 
-# ── 8. Backend + Frontend ──────────────────────────────────────────────
+# ── 7. Backend + Frontend ──────────────────────────────────────────────
 echo
-echo "[8/9] Backend: npm install + prisma migrate deploy..."
+echo "[7/8] Backend: npm install + prisma migrate deploy..."
 cd "$REPO_DIR/backend"
 npm install --omit=dev
 npx prisma generate
@@ -141,9 +127,9 @@ else
 fi
 chmod -R o+rX "$REPO_DIR/frontend/dist"
 
-# ── 9. Nginx + UFW + PM2 ───────────────────────────────────────────────
+# ── 8. Nginx + UFW + PM2 ───────────────────────────────────────────────
 echo
-echo "[9/9] Nginx + UFW + PM2..."
+echo "[8/8] Nginx + UFW + PM2..."
 
 # Nginx config
 sudo cp "$REPO_DIR/deploy/nginx.conf" /etc/nginx/sites-available/nimbus
@@ -190,10 +176,6 @@ echo
 echo "  Backend  → http://127.0.0.1:3001 (PM2)"
 echo "  Worker   → pm2 logs nimbus-worker"
 echo "  Frontend → servido por nginx em :80"
-echo
-echo "  Pra expor com ngrok:"
-echo "    ngrok config add-authtoken SEU_TOKEN"
-echo "    ngrok http 80"
 echo
 echo "  Status:   pm2 status"
 echo "  Logs:     pm2 logs nimbus-backend"

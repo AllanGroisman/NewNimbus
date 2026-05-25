@@ -20,4 +20,4 @@ Cuida do **login, registro e identidade do usuário**. Também tem o adapter Pos
 
 A função `syncRole()` é chamada no login e olha o email. Se o email tá na lista da env `ADMIN_EMAILS`, promove pra `role=admin`. **Ela só promove, nunca rebaixa** (evita você se trancar fora por acidente).
 
-Pra virar admin localmente: defina `ADMIN_EMAILS=seuemail@gmail.com` no `start.bat` ou no `.env`.
+Pra virar admin localmente: defina `ADMIN_EMAILS=seuemail@gmail.com` no `windows\start.bat` ou no `.env`.

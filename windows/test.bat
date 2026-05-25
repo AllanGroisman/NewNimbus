@@ -1,7 +1,8 @@
 @echo off
 setlocal
 title Nimbus - Testes
-set ROOT=%~dp0
+:: ROOT = raiz do repo (este script vive em <repo>\windows\)
+set ROOT=%~dp0..\
 set FAIL=0
 
 :: ─── Backend + integration (tests/) ─────────────────────────────────────

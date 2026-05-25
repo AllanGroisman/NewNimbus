@@ -58,7 +58,6 @@ coverage/
 backend/backups/
 
 # Arquivos grandes / temporários
-frontTotal
 *.zip
 *.tar
 *.tar.gz

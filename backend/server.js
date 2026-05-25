@@ -186,7 +186,7 @@ app.use(metrics.httpMiddleware);
 app.get("/metrics", metrics.handler);
 
 // Rate limiters — protege endpoints sensíveis. Janelas em minutos.
-// Confiamos em X-Forwarded-For atrás de proxy/ngrok (trust proxy = 1 hop).
+// Confiamos em X-Forwarded-For atrás do nginx (trust proxy = 1 hop).
 app.set("trust proxy", 1);
 
 // Em testes (NODE_ENV=test) os limiters viram no-op pra não estourar registrando users.

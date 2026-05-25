@@ -1,10 +1,9 @@
-# Mata tudo que o start.bat sobe. Chamado pelo stop.bat.
+# Mata tudo que o windows\start.bat sobe. Chamado pelo windows\stop.bat.
 #
 # Estrategia:
 #   1. node.exe rodando server.js / worker.js / vite
 #   2. cmd.exe PAI desses node (que mantem a janela aberta por causa do cmd /k)
-#   3. ngrok.exe
-#   4. cmd.exe orfaos com titulo "Nimbus - *" que sobraram
+#   3. cmd.exe orfaos com titulo "Nimbus - *" que sobraram
 
 $killed = @()
 
@@ -22,13 +21,7 @@ foreach ($n in $nodes) {
     }
 }
 
-# 3. ngrok
-Get-Process ngrok -ErrorAction SilentlyContinue | ForEach-Object {
-    Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
-    $killed += "ngrok($($_.Id))"
-}
-
-# 4. cmd.exe orfaos com titulo "Nimbus - *" (caso a janela tenha perdido o filho)
+# 3. cmd.exe orfaos com titulo "Nimbus - *" (caso a janela tenha perdido o filho)
 $cmds = Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -match 'Nimbus - ' }
 foreach ($c in $cmds) {

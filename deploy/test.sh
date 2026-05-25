@@ -52,7 +52,6 @@ command -v docker >/dev/null 2>&1 && ok "docker $(docker --version | awk '{print
 command -v pm2    >/dev/null 2>&1 && ok "pm2 $(pm2 -v)"               || bad "pm2 não instalado"
 command -v nginx  >/dev/null 2>&1 && ok "nginx $(nginx -v 2>&1 | awk -F/ '{print $2}')" || bad "nginx não instalado"
 command -v git    >/dev/null 2>&1 && ok "git"                          || bad "git não instalado"
-command -v ngrok  >/dev/null 2>&1 && ok "ngrok"                        || warn "ngrok não instalado (opcional)"
 
 # ── 2. Docker compose: Postgres + Redis ────────────────────────────────
 sect "Containers (Postgres + Redis)"
@@ -233,6 +232,5 @@ if [[ $FAIL -gt 0 ]]; then
 fi
 
 echo
-echo "Tudo OK. Bora subir o ngrok:"
-echo "  ngrok http 80"
+echo "Tudo OK."
 exit 0

@@ -159,18 +159,26 @@ async function runOnce() {
   return _runPromise;
 }
 
+// Agenda o próximo run baseado em `lastRun + intervalMinutes`, não em `now`.
+// Se já passou da hora (ex: backend ficou off, ou está bootando depois do prazo),
+// dispara imediatamente. Caso contrário, agenda só o restante do intervalo.
+// Usa setTimeout single-shot — o `finally` de runOnce reagenda via scheduleNext().
 function scheduleNext() {
-  if (_interval) { clearInterval(_interval); _interval = null; }
+  if (_interval) { clearTimeout(_interval); _interval = null; }
   const cfg = readConfig();
   if (!cfg.enabled) {
     _status.nextRunAt = null;
     return;
   }
-  const ms = cfg.intervalMinutes * 60 * 1000;
-  _interval = setInterval(() => {
+  const intervalMs = cfg.intervalMinutes * 60 * 1000;
+  const lastMs = _status.lastRun ? new Date(_status.lastRun).getTime() : 0;
+  const dueAt = lastMs ? lastMs + intervalMs : Date.now() + intervalMs;
+  const delay = Math.max(0, dueAt - Date.now());
+
+  _status.nextRunAt = new Date(Date.now() + delay).toISOString();
+  _interval = setTimeout(() => {
     runOnce().catch(err => console.error("[admin-scraper] tick:", err.message));
-  }, ms);
-  _status.nextRunAt = new Date(Date.now() + ms).toISOString();
+  }, delay);
 }
 
 function start() {
@@ -180,7 +188,7 @@ function start() {
 }
 
 function stop() {
-  if (_interval) { clearInterval(_interval); _interval = null; }
+  if (_interval) { clearTimeout(_interval); _interval = null; }
 }
 
 module.exports = {

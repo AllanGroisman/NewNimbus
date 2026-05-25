@@ -6,26 +6,27 @@ Plataforma de automação de ofertas no WhatsApp. Faz scraping de produtos (Merc
 
 - **`backend/`** — servidor Node.js (Express). Onde fica toda a lógica: login, scraping, scheduler, envio pelo WhatsApp.
 - **`frontend/`** — site React que o usuário usa. Conecta no backend pela rota `/api`.
-- **`tests/`** — bateria automatizada de testes (Vitest). Roda com `test.bat`.
+- **`tests/`** — bateria automatizada de testes (Vitest). Roda com `windows\test.bat`.
 - **`docs/`** — documentos do projeto (arquitetura, plano, status). Não tem código aqui.
 - **`deploy/`** — scripts pra rodar tudo em VPS Ubuntu (install, start, update, setup-backups).
 - **`docker-compose.yml`** — sobe Postgres + Redis em containers locais. **Obrigatório**: Postgres é o storage primário (Prisma) e Redis é usado em modo `QUEUE_BACKEND=redis`.
 
 ## Scripts — o que cada um faz
 
-### Windows local (`*.bat` na raiz)
+### Windows local (`windows\*.bat`)
 
 | Script | O que faz |
 |---|---|
-| **`start.bat`** | Sobe **tudo** local: backend (3001) + worker (Baileys+filas) + frontend (5173) + ngrok opcional. Injeta envs de dev (`DATABASE_URL`, `QUEUE_BACKEND=redis`, `ADMIN_EMAILS`). |
-| **`stop.bat`** | Mata os processos do Node/Vite/ngrok abertos pelo `start.bat`. |
-| **`test.bat`** | Roda a bateria completa (~286 testes — backend unit/integration/journey + frontend Vitest). |
+| **`windows\start.bat`** | Sobe **tudo** local: backend (3001) + worker (Baileys+filas) + frontend (5173). Injeta envs de dev (`DATABASE_URL`, `QUEUE_BACKEND=redis`, `ADMIN_EMAILS`). |
+| **`windows\stop.bat`** | Mata os processos do Node/Vite abertos pelo `windows\start.bat`. |
+| **`windows\test.bat`** | Roda a bateria completa (~286 testes — backend unit/integration/journey + frontend Vitest). |
+| **`windows\backup.bat`** | Abre o gerenciador interativo de backups (sync-manager: dump/restore/upload Backblaze). |
 
 ### VPS Ubuntu (`deploy/*.sh`)
 
 | Script | O que faz |
 |---|---|
-| **`deploy/install.sh`** | **Instalação completa one-shot** numa VPS limpa: Node 22, Docker, PM2, nginx, ngrok, libs do Chromium, Postgres+Redis via compose, `prisma migrate deploy`, build do frontend, nginx servindo `dist/` em :80 com proxy `/api`→:3001, UFW (22/80/443), PM2 com autostart no boot. Idempotente. |
+| **`deploy/install.sh`** | **Instalação completa one-shot** numa VPS limpa: Node 22, Docker, PM2, nginx, libs do Chromium, Postgres+Redis via compose, `prisma migrate deploy`, build do frontend, nginx servindo `dist/` em :80 com proxy `/api`→:3001, UFW (22/80/443), PM2 com autostart no boot. Idempotente. |
 | **`deploy/start.sh`** | Sobe tudo: Docker (Postgres+Redis), PM2 (backend+worker), nginx. Idempotente — pode rodar com tudo já no ar. |
 | **`deploy/stop.sh`** | Para tudo (mantém instalado). |
 | **`deploy/update.sh`** | `git pull` + reinstala deps que mudaram + roda migrations + rebuild do frontend + `pm2 reload`. |
@@ -48,7 +49,6 @@ Plataforma de automação de ofertas no WhatsApp. Faz scraping de produtos (Merc
 - **Node.js 20+** (testado em 22.x) — https://nodejs.org
 - **Docker Desktop** (pra subir Postgres + Redis) — https://www.docker.com/products/docker-desktop
 - **Git** — https://git-scm.com
-- **ngrok** (opcional, só pra expor o frontend externamente) — https://ngrok.com/download
 
 ### Passo a passo
 
@@ -71,23 +71,22 @@ copy backend\.env.example backend\.env
 :: 5) Rodar as migrations do Prisma (cria as tabelas no Postgres)
 cd backend && npx prisma migrate deploy && npx prisma generate && cd ..
 
-:: 6) Subir tudo (backend + worker + frontend + ngrok opcional)
-start.bat
+:: 6) Subir tudo (backend + worker + frontend)
+windows\start.bat
 ```
 
-Abra `http://localhost:5173`. O `start.bat` já injeta `DATABASE_URL`, `QUEUE_BACKEND=redis`, `REDIS_URL` e `ADMIN_EMAILS=allangroisman@gmail.com` (edite o `.bat` pra trocar o admin).
+Abra `http://localhost:5173`. O `windows\start.bat` já injeta `DATABASE_URL`, `QUEUE_BACKEND=redis`, `REDIS_URL` e `ADMIN_EMAILS=allangroisman@gmail.com` (edite o `.bat` pra trocar o admin).
 
 ### O que é obrigatório vs. opcional
 
 | Componente | Obrigatório? | Pra que serve |
 |---|---|---|
 | Postgres (docker) | **Sim** | Storage primário via Prisma |
-| Redis (docker) | **Sim** (modo padrão `QUEUE_BACKEND=redis`) | Fila BullMQ + persistência de jobs. Pra desligar, troque pra `memory` no `start.bat` |
+| Redis (docker) | **Sim** (modo padrão `QUEUE_BACKEND=redis`) | Fila BullMQ + persistência de jobs. Pra desligar, troque pra `memory` em `windows\start.bat` |
 | Stripe keys no `.env` | Não | Sem elas, endpoints de billing retornam 501 (resto funciona normal) |
 | Google OAuth | Não | Sem `GOOGLE_CLIENT_ID`, o botão "Entrar com Google" fica oculto. Login por email/senha continua funcionando |
 | Sentry DSN | Não | Sem, erros só ficam no console |
 | Backup S3 | Não | Sem, `npm run backup:remote` sai sem fazer nada |
-| ngrok | Não | Só pra acessar o frontend de fora da máquina |
 
 ### Login com Google (opcional)
 
@@ -108,9 +107,9 @@ Usuários novos via Google são criados automaticamente (com trial de 7 dias). S
 ### Comandos do dia a dia
 
 ```bat
-start.bat           :: sobe tudo
-stop.bat            :: mata os processos
-test.bat            :: roda a bateria de testes (~286 testes)
+windows\start.bat   :: sobe tudo
+windows\stop.bat    :: mata os processos
+windows\test.bat    :: roda a bateria de testes (~286 testes)
 docker compose down :: para Postgres+Redis (dados persistem nos volumes)
 ```
 
@@ -127,7 +126,7 @@ cd NewNimbus
 bash deploy/install.sh
 ```
 
-O script instala e configura **tudo** (~5–10 min): Node 22 (NodeSource), Docker + compose, PM2, nginx, ngrok, libs nativas do Chromium pro Puppeteer, sobe Postgres + Redis via `docker compose`, roda `prisma migrate deploy`, builda o frontend (`npm run build` → `frontend/dist/`), configura nginx servindo o `dist/` em `:80` com proxy `/api` → `:3001`, abre UFW (22/80/443), e sobe `nimbus-backend` + `nimbus-worker` no PM2 com autostart no boot. É idempotente — pode rodar de novo sem quebrar.
+O script instala e configura **tudo** (~5–10 min): Node 22 (NodeSource), Docker + compose, PM2, nginx, libs nativas do Chromium pro Puppeteer, sobe Postgres + Redis via `docker compose`, roda `prisma migrate deploy`, builda o frontend (`npm run build` → `frontend/dist/`), configura nginx servindo o `dist/` em `:80` com proxy `/api` → `:3001`, abre UFW (22/80/443), e sobe `nimbus-backend` + `nimbus-worker` no PM2 com autostart no boot. É idempotente — pode rodar de novo sem quebrar.
 
 ### Depois do install
 
@@ -135,10 +134,6 @@ O script instala e configura **tudo** (~5–10 min): Node 22 (NodeSource), Docke
 # Editar config (Stripe live, CORS, URLs públicas)
 nano backend/.env
 pm2 restart nimbus-backend nimbus-worker
-
-# Expor com ngrok enquanto não tem domínio
-ngrok config add-authtoken SEU_TOKEN
-ngrok http 80
 
 # HTTPS quando tiver domínio
 sudo apt install -y certbot python3-certbot-nginx
@@ -224,7 +219,7 @@ rclone ls gdrive:NimbusBackups/      # listar o que está no Drive
 
 1. Leia `CLAUDE.md` na raiz — é o "mapa" técnico do projeto.
 2. Pra entender a estrutura interna do backend, leia `backend/README.md`.
-3. Pra rodar tudo localmente, dê `start.bat`.
+3. Pra rodar tudo localmente, dê `windows\start.bat`.
 
 ## Documentação extra
 
@@ -232,7 +227,7 @@ Veja `docs/` pra documentos de arquitetura, plano de escala e status do projeto.
 
 ## Testes automatizados
 
-O projeto tem **~286 testes** divididos em três camadas. Rodam com `test.bat` (backend + frontend) ou individualmente. Detalhes técnicos em `CLAUDE.md`.
+O projeto tem **~286 testes** divididos em três camadas. Rodam com `windows\test.bat` (backend + frontend) ou individualmente. Detalhes técnicos em `CLAUDE.md`.
 
 ### Backend — unitários (`tests/unit/`)
 

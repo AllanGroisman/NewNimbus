@@ -4,7 +4,7 @@ Instala e sobe o Nimbus inteiro numa VPS Ubuntu limpa (22.04 ou 24.04) com **um 
 
 ## O que o `install.sh` faz
 
-1. `apt update` + Node 22 (NodeSource) + Docker + nginx + PM2 + ngrok + libs do Chromium
+1. `apt update` + Node 22 (NodeSource) + Docker + nginx + PM2 + libs do Chromium
 2. Sobe Postgres + Redis via `docker compose up -d`
 3. Backend: `npm install --omit=dev`, `prisma generate`, `prisma migrate deploy`
 4. Cria `backend/.env` a partir de `.env.example` (só na primeira vez) com `QUEUE_BACKEND=redis` e `NODE_ENV=production`
@@ -35,7 +35,7 @@ O script pede sudo quando precisa. Vai levar ~5–10 min (depende da velocidade 
 O `backend/.env` **já vem do repo** com as chaves do Stripe (modo test), `QUEUE_BACKEND=redis`, `NODE_ENV=production`, `ADMIN_EMAILS`. Só precisa ajustar se for:
 
 - Trocar Stripe pra **modo live** (`sk_live_...`)
-- Apontar `STRIPE_SUCCESS_URL` / `STRIPE_CANCEL_URL` pra URL do ngrok ou domínio
+- Apontar `STRIPE_SUCCESS_URL` / `STRIPE_CANCEL_URL` pro domínio de produção
 - Restringir `NIMBUS_CORS_ORIGINS`
 
 Pra editar:
@@ -45,21 +45,7 @@ nano backend/.env
 pm2 restart nimbus-backend nimbus-worker
 ```
 
-**Expõe com ngrok** (enquanto você não tem domínio):
-
-```bash
-ngrok config add-authtoken SEU_TOKEN_NGROK
-ngrok http 80
-```
-
-A URL `https://xxxx.ngrok-free.app` que ele imprime é a URL pública. Cole ela em:
-- `STRIPE_SUCCESS_URL` / `STRIPE_CANCEL_URL`
-- `NIMBUS_CORS_ORIGINS` (se for restringir)
-- Webhook do Stripe (dashboard → Developers → Webhooks → `+ Add endpoint` apontando pra `https://xxxx.ngrok-free.app/api/billing/webhook`)
-
-E reinicia o backend.
-
-## Migrar pra HTTPS depois (quando tiver domínio)
+## Migrar pra HTTPS (quando tiver domínio)
 
 Aponte o domínio (A record) pro IP da VPS, espere propagar, e:
 
@@ -173,6 +159,6 @@ chmod -R o+rX ~/NewNimbus/frontend/dist
 sudo apt install -y $(cd ~/NewNimbus/backend && node -e "const {execSync} = require('child_process'); try { execSync('npx puppeteer browsers install chrome', {stdio:'inherit'}); } catch(e) {}")
 ```
 
-**Stripe webhook não chega** — Stripe exige HTTPS público. Com ngrok funciona; HTTP local não. Veja `pm2 logs nimbus-backend | grep webhook`.
+**Stripe webhook não chega** — Stripe exige HTTPS público. Configure o webhook apontando pra `https://seu-dominio.com/api/billing/webhook` no dashboard do Stripe. Veja `pm2 logs nimbus-backend | grep webhook`.
 
 **`pm2 startup` falhou** — rode manualmente o comando que ele imprime (vai começar com `sudo env PATH=...`).

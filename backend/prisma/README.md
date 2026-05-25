@@ -25,4 +25,4 @@ npx prisma studio
 
 ## Conexão
 
-A conexão é configurada pela env `DATABASE_URL` (ver `.env.example` ou `start.bat`). Em dev, o `docker compose up -d` sobe um Postgres em `localhost:5432` com a string já no formato esperado.
+A conexão é configurada pela env `DATABASE_URL` (ver `.env.example` ou `windows\start.bat`). Em dev, o `docker compose up -d` sobe um Postgres em `localhost:5432` com a string já no formato esperado.

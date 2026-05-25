@@ -11,7 +11,7 @@ Bateria automatizada de testes do Nimbus — três camadas, **~287 testes** no t
 Da raiz do projeto:
 
 ```bat
-test.bat
+windows\test.bat
 ```
 
 Roda backend + frontend (não inclui E2E). Veja `CLAUDE.md` na raiz pra detalhes técnicos.
@@ -96,7 +96,7 @@ npm test                          # ~4s
 
 ## Dica pra iniciante
 
-Se algo quebrar depois de mexer no backend, rode `test.bat` antes de subir — é a melhor rede de proteção. Problemas comuns:
+Se algo quebrar depois de mexer no backend, rode `windows\test.bat` antes de subir — é a melhor rede de proteção. Problemas comuns:
 
 - **"connection refused" no PG**: `docker compose up -d` esquecido.
 - **DB `nimbus_test` não existe**: rode o `CREATE DATABASE` listado acima uma vez.

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Imprime na stdout o nome do backup mais recente no Backblaze (ex: db-20260522-120000.sql.gz).
 // Sem output se não houver backups ou se o Backblaze não estiver configurado.
-// Usado pelo start.bat para comparar com o banco local.
+// Usado pelo windows\start.bat para comparar com o banco local.
 
 require("dotenv").config({ path: require("path").join(__dirname, "..", ".env") });
 
@@ -37,6 +37,6 @@ const client = new S3Client({
       process.stdout.write(backups[0].Key.replace(config.prefix, "") + "\n");
     }
   } catch (_) {
-    // silently fail — start.bat trata ausência de output como "não configurado"
+    // silently fail — windows\start.bat trata ausência de output como "não configurado"
   }
 })();
