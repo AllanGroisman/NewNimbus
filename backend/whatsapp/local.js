@@ -45,6 +45,10 @@ const log = pino({ level: "warn" });
 // chave: `${userId}::${numberId}` -> { sock, status, qr, qrDataUrl, info, ... }
 const sessions = new Map();
 
+// Setado por closeAll() no shutdown do worker: impede que o handler de "close"
+// agende reconexão enquanto estamos encerrando o processo.
+let shuttingDown = false;
+
 function key(userId, numberId) { return `${userId}::${numberId}`; }
 
 function normalizePhone(p) { return String(p).replace(/\D/g, ""); }
@@ -101,21 +105,50 @@ async function startSession(userId, numberId) {
       } : null;
       session.restartCount = 0;
       publishStatus(session);
+
+      // O numberId definitivo é o telefone. O id usado pra abrir o QR é provisório
+      // (o frontend gera antes de saber o telefone). Se divergir, migramos a auth
+      // pro id canônico (= telefone) e reabrimos sob ele — assim os grupos nunca
+      // ficam órfãos apontando pra um id volátil que muda a cada re-scan. Damos um
+      // tempo pro frontend capturar o connected+info (info.phone) sob o id tmp antes.
+      const canonicalId = session.info?.phone ? normalizePhone(session.info.phone) : null;
+      if (canonicalId && canonicalId !== numberId && !session.migrating) {
+        setTimeout(() => {
+          canonicalizeSession(userId, numberId, canonicalId).catch(e =>
+            console.error(`[whatsapp] canonicalize erro ${userId}/${numberId}: ${e.message}`));
+        }, 3000);
+      }
     }
 
     if (connection === "close") {
-      const code = lastDisconnect?.error?.output?.statusCode;
-      const loggedOut = code === DisconnectReason.loggedOut;
+      // Sessão em migração (canonicalizeSession fechou o sock tmp de propósito):
+      // não publica nem reconecta — quem cuida do reabrir é a migração.
+      if (session.migrating) return;
+
+      const err = lastDisconnect?.error;
+      const code = err?.output?.statusCode;
+      // O WhatsApp manda 401 tanto pra logout real quanto pra "conflict"/device_removed
+      // (mesma conta conectada em outro lugar, ou overlap de processos durante um
+      // restart). No conflito as credenciais continuam VÁLIDAS — apagá-las forçava
+      // re-scan a cada restart. Então só tratamos como logout definitivo o 401 que
+      // NÃO seja conflito; conflito cai no fluxo de reconexão abaixo.
+      const reasonTag = err?.data?.content?.[0]?.tag;
+      const isConflict = reasonTag === "conflict" || /\(conflict\)/i.test(err?.message || "");
+      const loggedOut = code === DisconnectReason.loggedOut && !isConflict;
+
       session.status = loggedOut ? "logged_out" : "disconnected";
-      session.lastError = lastDisconnect?.error?.message || null;
+      session.lastError = err?.message || null;
       session.qr = null;
       session.qrDataUrl = null;
       publishStatus(session);
 
-      if (loggedOut) {
-        pgAuth().deleteSession(`${userId}::${numberId}`).catch(() => {});
-        return;
-      }
+      // Logout real (usuário desvinculou o aparelho): não reconecta sozinho. NÃO
+      // apagamos as credenciais aqui — a remoção definitiva acontece só pela ação
+      // explícita do usuário (deleteSession), pra nunca derrubar sessão boa sem querer.
+      if (loggedOut) return;
+
+      // Encerrando o worker: sock.end() disparou este close. Não reconecta.
+      if (shuttingDown) return;
 
       session.restartCount = (session.restartCount || 0) + 1;
       const delay = Math.min(30000, 1500 * session.restartCount);
@@ -128,6 +161,43 @@ async function startSession(userId, numberId) {
   });
 
   return session;
+}
+
+// Migra uma sessão recém-conectada do id provisório (tmp) pro id canônico (=
+// telefone). Best-effort: se algo falhar, tenta garantir que reste uma sessão
+// viva sob o id canônico — nunca deixa o usuário sem sessão. Como o adapter de
+// auth captura o sessionId no closure (não dá pra renomear in-place), o caminho
+// é: fecha o sock tmp -> renomeia a auth no banco -> reabre sob o canônico.
+async function canonicalizeSession(userId, tmpId, canonicalId) {
+  const tmpKey = key(userId, tmpId);
+  const session = sessions.get(tmpKey);
+  // Guarda: pode ter sido cancelada (cancelQR/deleteSession) ou caído nesse meio tempo.
+  if (!session || session.status !== "connected" || session.migrating) return;
+  session.migrating = true;
+
+  // 1. Fecha o socket tmp (sem logout) pra parar de gravar auth sob o id tmp.
+  try { session.sock?.end(undefined); } catch {}
+  await new Promise(r => setTimeout(r, 600));
+
+  // 2. Move a auth (creds recém-escaneadas + keys) do id tmp pro canônico.
+  await pgAuth().renameSession(`${userId}::${tmpId}`, `${userId}::${canonicalId}`);
+
+  // 3. Limpa a sessão tmp do Map e do Redis.
+  sessions.delete(tmpKey);
+  if (PUBLISH_STATUS) { try { await sessionStatus().clear(userId, tmpId); } catch {} }
+
+  // 4. Descarta qualquer sessão canônica anterior (será substituída pela auth nova).
+  const canonKey = key(userId, canonicalId);
+  const prevCanon = sessions.get(canonKey);
+  if (prevCanon) {
+    prevCanon.migrating = true;
+    try { prevCanon.sock?.end(undefined); } catch {}
+    sessions.delete(canonKey);
+  }
+
+  // 5. Reabre sob o id canônico (lê a auth renomeada, reconecta sem QR).
+  await startSession(userId, canonicalId);
+  console.log(`[whatsapp] sessão canonicalizada ${userId}: ${tmpId} -> ${canonicalId}`);
 }
 
 function getSession(userId, numberId) {
@@ -233,10 +303,16 @@ async function getGroupMetadata(userId, numberId, jid) {
 }
 
 // Restaura sessões persistidas (SELECT distinct sessionId em baileys_auth).
+// CRÍTICO: só restaura sessões cujo número AINDA existe em whatsapp_numbers.
+// Auth órfã (de número deletado) precisa ser limpa, senão reconecta um "device
+// fantasma" do mesmo telefone — o WhatsApp trata 2 conexões do mesmo número como
+// conflito (device_removed/401), derruba a sessão e apaga as credenciais, forçando
+// re-scan a cada restart.
 async function restoreSessions() {
+  const { prisma } = require("../db");
+
   let pairs = [];
   try {
-    const { prisma } = require("../db");
     const rows = await prisma().baileysAuth.findMany({
       where: { keyType: "creds" },
       select: { sessionId: true },
@@ -250,12 +326,63 @@ async function restoreSessions() {
     return;
   }
 
-  for (const { userId, numberId } of pairs) {
+  // Cruza com os números que ainda existem no painel. Se a query falhar, NÃO
+  // limpamos nada (fallback conservador: restaura tudo, comportamento antigo).
+  let validNumbers = null;
+  try {
+    const nums = await prisma().whatsappNumber.findMany({ select: { id: true, userId: true } });
+    validNumbers = new Set(nums.map(n => `${n.userId}::${n.id}`));
+  } catch (err) {
+    console.error(`[whatsapp] falha listando números (sem reconciliação): ${err.message}`);
+  }
+
+  let live = pairs;
+  if (validNumbers) {
+    live = [];
+    for (const p of pairs) {
+      if (validNumbers.has(`${p.userId}::${p.numberId}`)) {
+        live.push(p);
+      } else {
+        console.log(`[whatsapp] limpando auth órfã ${p.userId}/${p.numberId} (número não existe mais)`);
+        pgAuth().deleteSession(`${p.userId}::${p.numberId}`).catch(() => {});
+      }
+    }
+  }
+
+  for (const { userId, numberId } of live) {
     startSession(userId, numberId).catch(err => {
       console.error(`[whatsapp] falha ao restaurar ${userId}/${numberId}:`, err.message);
     });
   }
-  if (pairs.length > 0) console.log(`[whatsapp] restaurando ${pairs.length} sessão(ões)...`);
+  if (live.length > 0) console.log(`[whatsapp] restaurando ${live.length} sessão(ões)...`);
+}
+
+// Encerra graciosamente todas as sessões antes do worker sair. Usa sock.end()
+// (fecha o websocket SEM deslogar — não apaga creds) pra que o WhatsApp registre
+// a saída do device; assim o próximo worker reconecta sem disparar conflito
+// (device_removed/401) por duas conexões simultâneas do mesmo número.
+async function closeAll() {
+  shuttingDown = true;
+  const pubs = [];
+  for (const s of sessions.values()) {
+    try { s.sock?.end(undefined); } catch {}
+    // Parte C: rebaixa o status pra "disconnected" no Redis ANTES de sair, pra a
+    // tela não mostrar "connected" stale de uma sessão que o worker não tem mais.
+    // O publish do handler de close é fire-and-forget e pode não chegar antes do
+    // process.exit; aqui aguardamos explicitamente.
+    if (PUBLISH_STATUS) {
+      s.status = "disconnected";
+      pubs.push(
+        sessionStatus().publish(s.userId, s.numberId, {
+          status: "disconnected",
+          info: s.info || null,
+        }).catch(() => {})
+      );
+    }
+  }
+  await Promise.allSettled(pubs);
+  // Pequena folga pro frame de close chegar ao WhatsApp antes do process.exit.
+  await new Promise(r => setTimeout(r, 400));
 }
 
 function status() {
@@ -281,6 +408,7 @@ module.exports = {
   leaveGroup,
   getGroupMetadata,
   restoreSessions,
+  closeAll,
   jidFromPhone,
   normalizePhone,
   status,
@@ -302,6 +430,7 @@ function makeStub() {
     leaveGroup: fail,
     getGroupMetadata: fail,
     restoreSessions: () => {},
+    closeAll: () => Promise.resolve(),
     jidFromPhone: () => null,
     normalizePhone: () => null,
     status: () => ({ totalSessions: 0, connectedSessions: 0, stub: true }),

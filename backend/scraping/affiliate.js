@@ -653,15 +653,21 @@ function passesMLFilters(product, filters = null) {
 
 // Aplica filtros de qualidade num produto JÁ scrapeado da Amazon. Retorna `true` se passa.
 // product: { price, discount, rating, reviewsCount, ... } (formato Nimbus, pós-scrapeAmazon).
+// rating/reviews NÃO vêm da página de ofertas — só chegam via enriquecimento (abrindo
+// a página do produto), que pode falhar/cair em CAPTCHA. Por isso, quando AUSENTES,
+// minRating/minReviews não cortam o produto: só filtram quem realmente tem o dado.
 function passesAmazonFilters(product, filters = null) {
   const f = filters || readAmazonScraperFilters();
   const price = Number(product?.price) || 0;
-  const rating = Number(product?.rating) || 0;
   const discount = Number(product?.discount) || 0;
+
+  const hasRating = product?.rating != null;
+  const hasReviews = product?.reviewsCount != null && String(product.reviewsCount).trim() !== "";
+  const rating = Number(product?.rating) || 0;
   const reviews = Number(String(product?.reviewsCount ?? "").replace(/[^\d]/g, "")) || 0;
 
-  if (f.minRating > 0 && rating < f.minRating) return false;
-  if (f.minReviews > 0 && reviews < f.minReviews) return false;
+  if (f.minRating > 0 && hasRating && rating < f.minRating) return false;
+  if (f.minReviews > 0 && hasReviews && reviews < f.minReviews) return false;
   if (f.minPrice > 0 && price > 0 && price < f.minPrice) return false;
   if (f.maxPrice > 0 && price > f.maxPrice) return false;
   if (f.maxDiscount > 0 && discount > f.maxDiscount) return false;

@@ -87,6 +87,9 @@ function restoreSessions() {
   console.log("[whatsapp-proxy] restoreSessions delegado pro worker");
 }
 
+// No-op no server: quem owna os sockets é o worker (ver local.closeAll).
+async function closeAll() {}
+
 // Agregado lido do Redis (não chama worker).
 async function status() {
   try {
@@ -100,6 +103,6 @@ module.exports = {
   startSession, getSession, listSessions, deleteSession,
   sendText, sendImage,
   createGroup, getInviteLink, revokeInvite, listGroups, leaveGroup, getGroupMetadata,
-  restoreSessions, status,
+  restoreSessions, closeAll, status,
   jidFromPhone, normalizePhone,
 };

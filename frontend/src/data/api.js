@@ -111,6 +111,10 @@ export async function fetchUrlMetadata(url) {
 export async function manualAddToQueue(groupId, payload) {
   return http("POST", `/api/state/groups/${groupId}/manual-add`, payload || {});
 }
+// Limpa a fila de envios da campanha
+export async function clearGroupQueue(groupId) {
+  return http("DELETE", `/api/state/groups/${groupId}/queue`);
+}
 // Limpa o histórico de envios da campanha (reseta cooldown — produtos voltam a ser elegíveis)
 export async function clearGroupHistory(groupId) {
   return http("DELETE", `/api/state/groups/${groupId}/history`);
@@ -253,3 +257,9 @@ export async function adminCatalog({ page = 1, pageSize = 50, category, source, 
   if (sortBy) params.set("sortBy", sortBy);
   return http("GET", `/api/admin/catalog?${params}`);
 }
+
+// ─── Admin / Notificações WhatsApp ─────────────────────────────────────
+export async function adminNotifConfig()          { return http("GET",  "/api/admin/notifications/config"); }
+export async function adminNotifSave(cfg)         { return http("PUT",  "/api/admin/notifications/config", cfg); }
+export async function adminNotifTest()            { return http("POST", "/api/admin/notifications/test"); }
+export async function adminNotifGroups(numberId)  { return http("GET",  `/api/whatsapp/sessions/${encodeURIComponent(numberId)}/groups`); }

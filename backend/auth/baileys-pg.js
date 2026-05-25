@@ -50,6 +50,21 @@ async function deleteSession(sessionId) {
   await prisma().baileysAuth.deleteMany({ where: { sessionId } });
 }
 
+// Move TODAS as linhas de auth de um sessionId pra outro (ex: id provisório do
+// scan -> id canônico = telefone). Numa transação: apaga o destino antes pra não
+// colidir na PK composta (sessionId, keyType, keyId). Usado pela canonicalização
+// de numberId no connect (ver whatsapp/local.js).
+async function renameSession(oldSessionId, newSessionId) {
+  if (!oldSessionId || !newSessionId || oldSessionId === newSessionId) return;
+  await prisma().$transaction([
+    prisma().baileysAuth.deleteMany({ where: { sessionId: newSessionId } }),
+    prisma().baileysAuth.updateMany({
+      where: { sessionId: oldSessionId },
+      data: { sessionId: newSessionId },
+    }),
+  ]);
+}
+
 // API que Baileys consome. Espelha useMultiFileAuthState.
 async function useDatabaseAuthState(sessionId) {
   // Carrega creds (cria nova se nunca existiu)
@@ -91,4 +106,4 @@ async function useDatabaseAuthState(sessionId) {
   };
 }
 
-module.exports = { useDatabaseAuthState, deleteSession, readKey, writeKey, deleteKey };
+module.exports = { useDatabaseAuthState, deleteSession, renameSession, readKey, writeKey, deleteKey };

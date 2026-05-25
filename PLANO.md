@@ -4,7 +4,7 @@
 * Scraper -> ultimo scraper
 * Front -> Trocar design para ideia do pedro
 * Front -> Testaamente o mobile 
-* Front -> Trocar exemplos de preencr mais exaustivhimento para mais genéricos
+* Front -> Trocar exemplos para mais genéricos
 * Front -> Trocar formatos de data 
 
 * Segurança -> Dois fatores?

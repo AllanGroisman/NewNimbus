@@ -1,3 +1,9 @@
+// CRÍTICO: carregar .env ANTES de qualquer require que dependa de env na hora do
+// module-load. O facade whatsapp/index.js decide local-vs-proxy lendo QUEUE_BACKEND
+// no require; sem o dotenv aqui, ele resolvia pra "local" (sem sessões) no backend,
+// quebrando envios e abrindo uma conexão Baileys duplicada (conflito com o worker).
+require("dotenv").config();
+
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
@@ -18,6 +24,7 @@ const sentry = require("./infra/sentry");
 const billing = require("./billing");
 const stripeMod = require("./billing/stripe");
 const backupApi = require("./backup/api");
+const adminNotifier = require("./notifications/admin-notifier");
 
 // Sentry init (Fase 4) — no-op se SENTRY_DSN não estiver definido
 sentry.init({ context: "server" });
@@ -735,6 +742,17 @@ app.delete("/api/state/groups/:gid/pending/:pid", auth.requireAuth, async (req, 
 });
 
 // Limpa o histórico de envios da campanha (reseta cooldown — produtos podem voltar)
+app.delete("/api/state/groups/:gid/queue", auth.requireAuth, async (req, res) => {
+  try {
+    const groupId = isNaN(Number(req.params.gid)) ? req.params.gid : Number(req.params.gid);
+    const updated = await storage.updateGroupOps(req.user.id, groupId, { queue: [] });
+    if (!updated) return res.status(404).json({ error: "Campanha não encontrada" });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.delete("/api/state/groups/:gid/history", auth.requireAuth, async (req, res) => {
   try {
     const groupId = isNaN(Number(req.params.gid)) ? req.params.gid : Number(req.params.gid);
@@ -1258,6 +1276,35 @@ app.delete("/api/admin/queue/failed/:id", auth.requireAuth, auth.requireAdmin, a
 });
 
 // ────────────────────────────────────────────────────────────────────────
+// Admin — Notificações WhatsApp
+// ────────────────────────────────────────────────────────────────────────
+
+app.get("/api/admin/notifications/config", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json(adminNotifier.readConfig());
+});
+
+app.put("/api/admin/notifications/config", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  try {
+    const body = req.body || {};
+    // userId é sempre sobrescrito pelo usuário logado — garante que a sessão WA pertence ao admin
+    const saved = adminNotifier.writeConfig({ ...body, userId: req.user.id });
+    res.json({ ok: true, config: saved });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/notifications/test", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    await adminNotifier.sendTest();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+
+// ────────────────────────────────────────────────────────────────────────
 // WhatsApp (Baileys)
 // ────────────────────────────────────────────────────────────────────────
 
@@ -1447,6 +1494,12 @@ async function boot() {
     }
     scheduler.start();
     adminScraper.start();
+    // Fire-and-forget — falha silenciosa se sessão WA ainda não estiver conectada
+    setTimeout(() => {
+      adminNotifier.notifySystemOnline().catch(err =>
+        console.error("[server] notifySystemOnline:", err.message)
+      );
+    }, 5000);
   });
 
   // Shutdown limpo — drena worker (jobs em-vôo terminam) antes de derrubar HTTP

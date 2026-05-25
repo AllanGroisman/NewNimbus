@@ -26,6 +26,7 @@ import PageAdminAmazon from "./pages/AdminAmazon";
 import PageAdminShopee from "./pages/AdminShopee";
 import PageAdminUsers from "./pages/AdminUsers";
 import PageAdminBackups from "./pages/AdminBackups";
+import PageAdminNotifications from "./pages/AdminNotifications";
 import PageTutoriais from "./pages/Tutoriais";
 import Login from "./pages/Login";
 
@@ -314,6 +315,30 @@ export default function App() {
     setSelectedGroup(g => g ? { ...g, whatsappGroupIds: (g.whatsappGroupIds || []).filter(id => id !== wgId) } : g);
   };
 
+  // Remove um número por completo: tira da lista e apaga os grupos WhatsApp que
+  // dependiam dele (desvinculando das campanhas). Usado pelo botão "Remover".
+  // Desconectar (sem remover) preserva o número pra reconexão manter os grupos.
+  const removeNumberAndGroups = (numberId) => {
+    const orphanGroupIds = whatsappGroups.filter(w => w.numberId === numberId).map(w => w.id);
+    setWhatsappGroups(ws => ws.filter(w => w.numberId !== numberId));
+    if (orphanGroupIds.length) {
+      const orphanSet = new Set(orphanGroupIds);
+      setGroups(gs => gs.map(g => ({ ...g, whatsappGroupIds: (g.whatsappGroupIds || []).filter(id => !orphanSet.has(id)) })));
+      setSelectedGroup(g => g ? { ...g, whatsappGroupIds: (g.whatsappGroupIds || []).filter(id => !orphanSet.has(id)) } : g);
+    }
+    setNumbers(ns => ns.filter(n => n.id !== numberId));
+  };
+
+  // Re-vincula os grupos WhatsApp do número antigo pro novo. Usado quando um re-scan
+  // (Adicionar novo número) reconecta um telefone que já existia sob outro id: os
+  // grupos apontavam pro id velho e ficariam órfãos. Aqui re-apontamos pro id novo,
+  // que é o que tem a sessão viva. (As campanhas referenciam o id do grupo, não o
+  // numberId, então não precisam mudar.)
+  const relinkNumber = (oldId, newId) => {
+    if (!oldId || !newId || oldId === newId) return;
+    setWhatsappGroups(ws => ws.map(w => w.numberId === oldId ? { ...w, numberId: newId } : w));
+  };
+
   const setWhatsappGroupStatus = (wgId, status) => {
     setWhatsappGroups(ws => ws.map(w => w.id === wgId ? { ...w, status } : w));
   };
@@ -342,6 +367,8 @@ export default function App() {
       numbers={numbers}
       setNumbers={setNumbers}
       whatsappGroups={whatsappGroups}
+      onRemoveNumber={removeNumberAndGroups}
+      onRelinkNumber={relinkNumber}
     />,
     settings: <PageSettings user={user} setUser={setUser} onLogout={handleLogout} settings={settings} setSettings={setSettings} onAffiliateChange={applyAffiliateStatus} />,
     subscription: <PageSubscription />,
@@ -352,8 +379,9 @@ export default function App() {
     "admin-ml":       user?.role === "admin" ? <PageAdminML /> : fallbackPage,
     "admin-amazon":   user?.role === "admin" ? <PageAdminAmazon /> : fallbackPage,
     "admin-shopee":   user?.role === "admin" ? <PageAdminShopee /> : fallbackPage,
-    "admin-users":   user?.role === "admin" ? <PageAdminUsers currentUser={user} /> : fallbackPage,
-    "admin-backups": user?.role === "admin" ? <PageAdminBackups /> : fallbackPage,
+    "admin-users":          user?.role === "admin" ? <PageAdminUsers currentUser={user} /> : fallbackPage,
+    "admin-backups":        user?.role === "admin" ? <PageAdminBackups /> : fallbackPage,
+    "admin-notifications":  user?.role === "admin" ? <PageAdminNotifications numbers={numbers} /> : fallbackPage,
     "tutorials":     <PageTutoriais targetTutorialId={tutorialTarget} />,
   };
 

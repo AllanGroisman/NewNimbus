@@ -10,7 +10,18 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Detecta se o sistema já está rodando (algum processo PM2 do Nimbus registrado).
+# Se estiver, entra em "modo reinício": pula o prompt de restore do banco e usa
+# startOrRestart no PM2 — assim dá pra rodar start.sh de novo sem chamar stop.sh.
+ALREADY_RUNNING=0
+if pm2 describe nimbus-backend >/dev/null 2>&1 || pm2 describe nimbus-worker >/dev/null 2>&1; then
+  ALREADY_RUNNING=1
+fi
+
 echo "=== Nimbus - start ==="
+if [[ "$ALREADY_RUNNING" == "1" ]]; then
+  echo "  (sistema já está rodando — modo reinício: vou reiniciar sem pedir restore do banco)"
+fi
 
 # Postgres + Redis (sobe primeiro — restore precisa do container)
 echo
@@ -25,8 +36,13 @@ for i in {1..30}; do
   sleep 1
 done
 
-# Banco remoto: verifica se tem backup mais novo no Backblaze
+# Banco remoto: verifica se tem backup mais novo no Backblaze.
+# No modo reinício (sistema já no ar) pulamos — não faz sentido restaurar o banco
+# só pra reiniciar o código, e o prompt interativo travaria o fluxo.
 echo
+if [[ "$ALREADY_RUNNING" == "1" ]]; then
+  echo "[2/5] Backup remoto: pulado (reinício de sistema já rodando)."
+else
 echo "[2/6] Verificando backup remoto (Backblaze)..."
 _ENV_FILE="$REPO_DIR/backend/.env"
 _B2_BUCKET=""
@@ -69,6 +85,7 @@ else
     esac
   fi
 fi
+fi
 
 # Backend: deps + migrations
 echo
@@ -77,11 +94,10 @@ cd "$REPO_DIR/backend"
 npm install --omit=dev
 npx prisma generate
 npx prisma migrate deploy
-if pm2 describe nimbus-backend >/dev/null 2>&1; then
-  pm2 restart nimbus-backend nimbus-worker
-else
-  pm2 start ecosystem.config.js
-fi
+# startOrRestart: sobe o que não existe e reinicia o que já estiver rodando — em
+# um comando só, sem erro de "already launched". Funciona tanto no boot inicial
+# quanto no reinício (sem precisar de stop.sh antes).
+pm2 startOrRestart ecosystem.config.js --update-env
 pm2 save >/dev/null
 
 # Frontend: build

@@ -39,3 +39,18 @@ describe("scrapeML (live)", () => {
     expect(items.length).toBeGreaterThan(0);
   }, 90000);
 });
+
+describe("scrapeAmazon (live — página de ofertas por departamento)", () => {
+  it.skipIf(!LIVE)("traz ofertas do departamento com nome, link /dp/ e preço", async () => {
+    const items = await scraper.scrapeAmazon({ category: "beleza", limit: 8 });
+    expect(items.length).toBeGreaterThan(0);
+    for (const p of items) {
+      expect(typeof p.name).toBe("string");
+      expect(p.name.length).toBeGreaterThan(0);
+      expect(p.link).toMatch(/amazon\.com\.br/);
+      expect(typeof p.price).toBe("number");
+      expect(p.price).toBeGreaterThan(0);
+      expect(p.store).toBe("Amazon");
+    }
+  }, 120000);
+});

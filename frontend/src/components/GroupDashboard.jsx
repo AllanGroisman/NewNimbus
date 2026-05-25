@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, getGroupCategories, getGroupStats, computeQueueETA, formatETA } from "../data/constants";
-import { createWAGroup, leaveWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupHistory, approvePendingItem, rejectPendingItem, fetchUrlMetadata, manualAddToQueue } from "../data/api";
+import { createWAGroup, leaveWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupQueue, clearGroupHistory, approvePendingItem, rejectPendingItem, fetchUrlMetadata, manualAddToQueue } from "../data/api";
 import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
 import BusyOverlay from "./ui/BusyOverlay";
 
@@ -2530,7 +2530,16 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button onClick={() => setConfirmClearQueue(false)} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
             <button
-              onClick={() => { setQueue([]); setConfirmClearQueue(false); }}
+              onClick={async () => {
+                setQueue([]);
+                setConfirmClearQueue(false);
+                try {
+                  await clearGroupQueue(group.id);
+                  onUpdate(group.id, { queue: [] });
+                } catch (err) {
+                  console.error("[limpar fila]", err.message);
+                }
+              }}
               style={{ padding: "8px 16px", borderRadius: 8, background: "#E24B4A", color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}
             >
               Sim, limpar

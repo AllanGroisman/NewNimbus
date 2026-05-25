@@ -101,6 +101,9 @@ async function main() {
 
   const shutdown = async (signal) => {
     console.log(`[worker] ${signal} recebido, encerrando...`);
+    // Fecha os sockets WhatsApp antes de sair: evita que o WhatsApp veja o device
+    // antigo "ainda conectado" quando o próximo worker reconectar (conflito 401).
+    try { await wa.closeAll(); console.log("[worker] sessões WhatsApp encerradas"); } catch {}
     try { await heartbeat.stop(); } catch {}
     try { await queue.close(); console.log("[worker] queue fechada"); } catch {}
     try { await sentry.flush(2000); } catch {}

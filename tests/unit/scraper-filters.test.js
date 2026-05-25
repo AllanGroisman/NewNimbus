@@ -11,6 +11,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 const affiliate = require(path.resolve(__dirname, "..", "..", "backend", "scraping", "affiliate.js"));
+const scraper = require(path.resolve(__dirname, "..", "..", "backend", "scraping", "scraper.js"));
 
 const ML_DEFAULTS = affiliate.ML_FILTERS_DEFAULTS;
 const AMZ_DEFAULTS = affiliate.AMAZON_FILTERS_DEFAULTS;
@@ -90,22 +91,54 @@ describe("passesAmazonFilters", () => {
     )).toBe(true);
   });
 
-  it("minReviews parseia reviewsCount com separador de milhar", () => {
+  it("minReviews parseia reviewsCount; ausente (null) NÃO corta", () => {
     expect(affiliate.passesAmazonFilters(amzProduct({ reviewsCount: "12.345" }), { ...AMZ_DEFAULTS, minReviews: 1000 })).toBe(true);
     expect(affiliate.passesAmazonFilters(amzProduct({ reviewsCount: "50" }), { ...AMZ_DEFAULTS, minReviews: 100 })).toBe(false);
-    expect(affiliate.passesAmazonFilters(amzProduct({ reviewsCount: null }), { ...AMZ_DEFAULTS, minReviews: 1 })).toBe(false);
+    // Sem reviews (não enriquecido / CAPTCHA) passa — minReviews só filtra quem tem o dado.
+    expect(affiliate.passesAmazonFilters(amzProduct({ reviewsCount: null }), { ...AMZ_DEFAULTS, minReviews: 1 })).toBe(true);
   });
 
-  it("minRating corta abaixo do mínimo e sem rating", () => {
+  it("minRating corta abaixo do mínimo; ausente (null) NÃO corta", () => {
     const f = { ...AMZ_DEFAULTS, minRating: 4.5 };
     expect(affiliate.passesAmazonFilters(amzProduct({ rating: 4.6 }), f)).toBe(true);
     expect(affiliate.passesAmazonFilters(amzProduct({ rating: 4.0 }), f)).toBe(false);
-    expect(affiliate.passesAmazonFilters(amzProduct({ rating: null }), f)).toBe(false);
+    // Sem rating passa — só vale o filtro pra quem foi enriquecido.
+    expect(affiliate.passesAmazonFilters(amzProduct({ rating: null }), f)).toBe(true);
+  });
+
+  it("preço/desconto ainda cortam mesmo sem rating", () => {
+    const f = { ...AMZ_DEFAULTS, minRating: 4.5, maxPrice: 150 };
+    // sem rating mas preço acima do teto → corta por preço
+    expect(affiliate.passesAmazonFilters(amzProduct({ rating: null, price: 199 }), f)).toBe(false);
+    // sem rating e preço ok → passa
+    expect(affiliate.passesAmazonFilters(amzProduct({ rating: null, price: 99 }), f)).toBe(true);
   });
 
   it("maxPrice e maxDiscount", () => {
     expect(affiliate.passesAmazonFilters(amzProduct({ price: 199 }), { ...AMZ_DEFAULTS, maxPrice: 150 })).toBe(false);
     expect(affiliate.passesAmazonFilters(amzProduct({ discount: 43 }), { ...AMZ_DEFAULTS, maxDiscount: 90 })).toBe(true);
     expect(affiliate.passesAmazonFilters(amzProduct({ discount: 95 }), { ...AMZ_DEFAULTS, maxDiscount: 90 })).toBe(false);
+  });
+});
+
+describe("buildAmazonDealsUrl", () => {
+  it("sem departamento (ou 'all') devolve a URL base de ofertas", () => {
+    expect(scraper.buildAmazonDealsUrl()).toBe("https://www.amazon.com.br/deals");
+    expect(scraper.buildAmazonDealsUrl("all")).toBe("https://www.amazon.com.br/deals");
+  });
+
+  it("com departamento codifica refinementFilters.departments no discounts-widget", () => {
+    const url = scraper.buildAmazonDealsUrl("16194415011");
+    expect(url.startsWith("https://www.amazon.com.br/deals?discounts-widget=")).toBe(true);
+    // O param é JSON serializado 2x e URL-encodado 2x; URL.get() decodifica uma vez.
+    const param = new URL(url).searchParams.get("discounts-widget");
+    const obj = JSON.parse(JSON.parse(decodeURIComponent(param)));
+    expect(obj).toEqual({ state: { refinementFilters: { departments: ["16194415011"] } }, version: 1 });
+  });
+
+  it("toda categoria do catálogo tem um amzDept mapeado", () => {
+    for (const [id, cat] of Object.entries(scraper.CATEGORIES)) {
+      expect(cat.amzDept, `categoria ${id} sem amzDept`).toMatch(/^\d+$/);
+    }
   });
 });

@@ -14,15 +14,15 @@ function upgradeAmazonImageUrl(url) {
 
 // Categorias suportadas. Cada categoria mapeia pra um identificador por loja.
 // - mlCode: ID da categoria do Mercado Livre (na URL de ofertas)
-// - amzKeyword: termo de busca usado no Amazon BR (porque a Amazon não tem
-//   "ofertas por categoria" como o ML — busca por keyword é o caminho viável)
+// - amzDept: ID do departamento na página de ofertas da Amazon (/deals). Usado no
+//   filtro "Departamento" da barra lateral (refinementFilters.departments).
 // - shopeeKeyword: keyword pro productOfferV2 da Shopee Affiliate Open API.
 const CATEGORIES = {
-  bebe:        { label: "Bebê",        mlCode: "MLB1384", amzKeyword: "bebê",              shopeeKeyword: "bebê" },
-  gamer:       { label: "Gamer",       mlCode: "MLB1144", amzKeyword: "videogame",         shopeeKeyword: "gamer" },
-  eletronicos: { label: "Eletrônicos", mlCode: "MLB1051", amzKeyword: "celular smartphone", shopeeKeyword: "celular" },
-  casa:        { label: "Casa",        mlCode: "MLB1574", amzKeyword: "casa decoração",    shopeeKeyword: "casa decoração" },
-  beleza:      { label: "Beleza",      mlCode: "MLB1246", amzKeyword: "beleza",            shopeeKeyword: "beleza" },
+  bebe:        { label: "Bebê",        mlCode: "MLB1384", amzDept: "17242604011", shopeeKeyword: "bebê" },
+  gamer:       { label: "Gamer",       mlCode: "MLB1144", amzDept: "7791986011",  shopeeKeyword: "gamer" },
+  eletronicos: { label: "Eletrônicos", mlCode: "MLB1051", amzDept: "16209063011", shopeeKeyword: "celular" },
+  casa:        { label: "Casa",        mlCode: "MLB1574", amzDept: "16191001011", shopeeKeyword: "casa decoração" },
+  beleza:      { label: "Beleza",      mlCode: "MLB1246", amzDept: "16194415011", shopeeKeyword: "beleza" },
 };
 
 // Lojas suportadas. id é o que vai em group.scraping.sources (após normalize).
@@ -137,12 +137,22 @@ async function scrapeML({ category, limit = 200 } = {}) {
 // Amazon BR
 // ────────────────────────────────────────────────────────────────────────
 
+// Monta a URL da página de ofertas (/deals) filtrada por departamento.
+// O filtro "Departamento" da barra lateral codifica o estado num parâmetro
+// `discounts-widget` que é o JSON do estado serializado DUAS vezes (JSON.stringify
+// aninhado) e então URL-encodado DUAS vezes — replicamos exatamente isso.
+// deptId null/"all" → página de ofertas geral, sem filtro.
+function buildAmazonDealsUrl(deptId) {
+  const base = "https://www.amazon.com.br/deals";
+  if (!deptId || deptId === "all") return base;
+  const state = { state: { refinementFilters: { departments: [String(deptId)] } }, version: 1 };
+  const widget = encodeURIComponent(encodeURIComponent(JSON.stringify(JSON.stringify(state))));
+  return `${base}?discounts-widget=${widget}`;
+}
+
 async function scrapeAmazon({ category, limit = 100 } = {}) {
   const cat = CATEGORIES[category];
-  const keyword = cat?.amzKeyword || "ofertas";
-  // i= força departamento (ajuda a manter relevância). rh=p_n_pct-off-with-tax filtra desconto
-  // mas é frágil entre regiões — usamos só keyword e deixamos os filtros pro scheduler.
-  const url = `https://www.amazon.com.br/s?k=${encodeURIComponent(keyword)}&s=exact-aware-popularity-rank`;
+  const url = buildAmazonDealsUrl(cat?.amzDept);
 
   const browser = await puppeteer.launch({
     headless: true,
@@ -152,125 +162,181 @@ async function scrapeAmazon({ category, limit = 100 } = {}) {
     const page = await browser.newPage();
     await page.setUserAgent(UA);
     await page.setExtraHTTPHeaders({ "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8" });
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.goto(url, { waitUntil: "networkidle2", timeout: 40000 });
 
-    // Espera os cards carregarem; se Amazon servir CAPTCHA, o seletor não vai aparecer
+    // Espera os cards de oferta aparecerem; se a Amazon servir CAPTCHA, não aparecem.
     try {
-      await page.waitForSelector('[data-component-type="s-search-result"]', { timeout: 10000 });
+      await page.waitForSelector('[data-testid="product-card"]', { timeout: 12000 });
     } catch {
-      const isCaptcha = await page.evaluate(() => /enter the characters|captcha|robot/i.test(document.body?.innerText || ""));
+      const isCaptcha = await page.evaluate(() => /enter the characters|captcha|robot|digite os caracteres/i.test(document.body?.innerText || ""));
       if (isCaptcha) throw new Error("Amazon retornou CAPTCHA — tente mais tarde ou rode menos vezes.");
-      throw new Error("Cards de produto Amazon não apareceram (layout pode ter mudado).");
+      throw new Error("Cards de oferta Amazon não apareceram (layout pode ter mudado).");
     }
 
-    await autoScroll(page);
-
-    const raw = await page.evaluate((cat) => {
+    // A grade de ofertas é VIRTUALIZADA: cards saem do DOM ao rolar. Por isso
+    // colhemos incrementalmente — a cada scroll, recolhemos os cards visíveis num
+    // Map (dedup por ASIN) até bater o limite ou a página parar de crescer.
+    const raw = await page.evaluate(async (targetLimit) => {
       const parsePrice = (s) => {
         if (!s) return null;
         const m = String(s).replace(/\s+/g, "").match(/R\$([\d.]+)(?:,(\d{1,2}))?/i);
         if (!m) return null;
-        const integer = m[1].replace(/\./g, "");
-        const cents = m[2] || "00";
-        const v = parseFloat(`${integer}.${cents}`);
+        const v = parseFloat(`${m[1].replace(/\./g, "")}.${m[2] || "00"}`);
         return isNaN(v) ? null : v;
       };
 
-      const cards = document.querySelectorAll('[data-component-type="s-search-result"]');
-      const results = [];
-      for (const card of cards) {
-        // Patrocinados frequentemente não têm preço/oferta consistente
-        const sponsored = card.querySelector('[data-component-type="sp-sponsored-result"]');
+      const seen = new Map();
+      const harvest = () => {
+        for (const card of document.querySelectorAll('[data-testid="product-card"]')) {
+          const asin = card.getAttribute("data-asin");
+          if (!asin || seen.has(asin)) continue;
 
-        const linkEl = card.querySelector('h2 a, a.a-link-normal.s-no-outline, a.s-line-clamp-2');
-        const titleEl = card.querySelector('h2 a span, h2 span') || linkEl;
-        const imgEl = card.querySelector('img.s-image');
-        // Preço atual: a-price principal (data-a-color="base"), excluindo a-text-price
-        // (que cobre preço por unidade R$/mL e preço riscado).
-        const priceCurrentEl = card.querySelector('.a-price[data-a-color="base"]:not(.a-text-price) .a-offscreen')
-                            || card.querySelector('.a-price:not(.a-text-price) .a-offscreen');
-        // Preço original: SÓ o riscado (data-a-strike="true"), nunca preço unitário.
-        const priceOriginalEl = card.querySelector('.a-price.a-text-price[data-a-strike="true"] .a-offscreen');
-        // Rating: tenta múltiplos seletores que a Amazon usa em diferentes layouts.
-        // O texto pode estar dentro do <i> ou no aria-label do container pai.
-        const ratingEl = card.querySelector('i.a-icon-star-small .a-icon-alt')
-                      || card.querySelector('i.a-icon-star .a-icon-alt')
-                      || card.querySelector('.a-icon-star-small .a-icon-alt')
-                      || card.querySelector('.a-icon-star .a-icon-alt')
-                      || card.querySelector('[aria-label*="de 5"]');
-        // reviewsCount: aparece num link/span ao lado do rating
-        const reviewsEl = card.querySelector('.a-row.a-size-small a span.a-size-base')
-                       || card.querySelector('a[href*="customerReviews"] span')
-                       || card.querySelector('.s-link-style .s-underline-text');
+          const linkEl = card.querySelector('a[data-testid="product-card-link"]');
+          const href = (linkEl?.href || "").split("?")[0]; // tira tracking
+          const imgEl = card.querySelector("img");
+          const name = imgEl?.getAttribute("alt")?.trim() || null;
 
-        if (!titleEl || !linkEl || !priceCurrentEl) continue;
+          // Preço atual: a-price base. Original: a-price riscado. O .a-offscreen
+          // vem com prefixo ("Preço da Oferta: R$ ..."), mas o parsePrice extrai o R$.
+          const price = parsePrice(card.querySelector('.a-price[data-a-color="base"] .a-offscreen')?.textContent);
+          const originalPrice = parsePrice(card.querySelector('.a-price[data-a-strike="true"] .a-offscreen')?.textContent);
 
-        const price = parsePrice(priceCurrentEl.textContent);
-        const originalPrice = priceOriginalEl ? parsePrice(priceOriginalEl.textContent) : null;
-        if (!price || price < 0.5) continue; // ignora preços absurdamente baixos (provavelmente preço unitário)
+          let discount = null;
+          const dm = (card.textContent || "").match(/(\d+)%\s*off/i);
+          if (dm) discount = parseInt(dm[1], 10);
+          else if (originalPrice && price && originalPrice > price) discount = Math.round((1 - price / originalPrice) * 100);
 
-        let discount = null;
-        if (originalPrice && originalPrice > price && originalPrice < price * 20) {
-          // sanity check: descarta cálculo se proporção é absurda (preço unitário virou original)
-          discount = Math.round((1 - price / originalPrice) * 100);
+          if (!name || !href || !price) continue;
+
+          seen.set(asin, {
+            name,
+            link: href,
+            img: imgEl?.getAttribute("src") || null,
+            price,
+            originalPrice,
+            discount,
+          });
         }
+      };
 
-        // Rating "4,5 de 5 estrelas" — tenta textContent e aria-label
-        let rating = null;
-        if (ratingEl) {
-          const text = ratingEl.textContent || ratingEl.getAttribute("aria-label") || "";
-          const m = text.match(/([\d,.]+)\s*de\s*5/i);
-          if (m) rating = parseFloat(m[1].replace(",", "."));
-        }
-        // reviewsCount: número entre parênteses ou número puro ao lado do rating
-        let reviewsCount = null;
-        if (reviewsEl) {
-          const t = (reviewsEl.textContent || "").trim().replace(/[^\d]/g, "");
-          if (t) reviewsCount = t;
-        }
-
-        const href = linkEl.getAttribute("href") || "";
-        const link = href.startsWith("http") ? href : `https://www.amazon.com.br${href}`;
-
-        results.push({
-          name: titleEl.textContent.trim(),
-          link,
-          img: imgEl?.src || null,
-          price,
-          originalPrice,
-          discount,
-          category: cat || null,
-          rating,
-          reviewsCount,
-          seller: null,
-          freeShipping: false,
-          sold: null,
-          store: "Amazon",
-          sponsored: !!sponsored,
-          scrapedAt: new Date().toISOString(),
-        });
+      let stale = 0;
+      for (let i = 0; i < 80 && seen.size < targetLimit; i++) {
+        harvest();
+        const prevSize = seen.size;
+        window.scrollBy(0, Math.round(window.innerHeight * 0.85));
+        await new Promise(r => setTimeout(r, 450));
+        const atBottom = (window.scrollY + window.innerHeight) >= document.body.scrollHeight - 5;
+        // Sem itens novos e já no fim → conta como "parado"; 3 seguidas = encerra.
+        if (seen.size === prevSize && atBottom) { if (++stale >= 3) break; }
+        else stale = 0;
       }
-      return results;
-    }, category || null);
+      harvest();
+      return [...seen.values()];
+    }, limit);
 
-    // Remove patrocinados — costumam não ser as melhores ofertas
-    const cleaned = raw.filter(p => !p.sponsored);
-    // Sobe a resolução das imagens (Amazon serve thumb minúsculo no card)
-    for (const p of cleaned) p.img = upgradeAmazonImageUrl(p.img);
-
-    // Filtros de qualidade do admin (rating/reviews/preço/desconto máximo).
-    // Defaults (tudo 0) = passa tudo.
-    const affiliate = require("./affiliate");
-    const filters = affiliate.readAmazonScraperFilters();
-    const filtered = cleaned.filter(p => affiliate.passesAmazonFilters(p, filters));
-    if (filtered.length < cleaned.length) {
-      console.log(`[scraper Amazon] ${category || "geral"}: ${cleaned.length} vistos, ${cleaned.length - filtered.length} filtrados, ${filtered.length} aprovados`);
+    // Sobe a resolução das imagens (a Amazon serve thumbnail minúsculo no card).
+    for (const p of raw) {
+      p.img = upgradeAmazonImageUrl(p.img);
+      p.category = category || null;
+      p.rating = null;        // preenchido no enriquecimento (página de oferta não expõe)
+      p.reviewsCount = null;  // idem
+      p.seller = null;
+      p.freeShipping = false;
+      p.sold = null;
+      p.store = "Amazon";
+      p.scrapedAt = new Date().toISOString();
     }
 
-    filtered.sort((a, b) => (b.discount || 0) - (a.discount || 0));
-    return filtered.slice(0, limit);
+    const affiliate = require("./affiliate");
+    const cfg = affiliate.readAmazonScraperFilters();
+
+    // 1) Filtro barato com dados do próprio card (preço/desconto). rating/reviews
+    //    ainda ausentes → passesAmazonFilters não corta por eles aqui.
+    let pool = raw.filter(p => affiliate.passesAmazonFilters(p, cfg));
+    pool.sort((a, b) => (b.discount || 0) - (a.discount || 0));
+
+    // 2) Enriquece rating/reviews abrindo a página de cada produto (reusa o browser).
+    //    Tolera CAPTCHA/timeout: o produto fica sem rating e segue no catálogo.
+    await enrichAmazonRatings(pool, browser, category);
+
+    // 3) Reaplica os filtros — agora minRating/minReviews valem pra quem foi enriquecido.
+    const kept = pool.filter(p => affiliate.passesAmazonFilters(p, cfg));
+    if (kept.length < pool.length) {
+      console.log(`[scraper Amazon] ${category || "geral"}: ${pool.length} ofertas, ${pool.length - kept.length} cortadas por rating/reviews, ${kept.length} aprovadas`);
+    }
+
+    kept.sort((a, b) => (b.discount || 0) - (a.discount || 0));
+    return kept.slice(0, limit);
   } finally {
     await browser.close();
+  }
+}
+
+// Enriquece produtos da Amazon com rating + reviewsCount abrindo a página de cada um
+// (/dp/ASIN) no MESMO browser. A página de ofertas não traz esses dados; um fetch sem
+// browser é bloqueado por CAPTCHA, então precisa do navegador real (~5s/produto).
+// Concorrência baixa pra não parecer abuso. Disjuntor: após N CAPTCHAs/erros seguidos,
+// para de enriquecer o resto (ficam com rating null e seguem no catálogo).
+async function enrichAmazonRatings(products, browser, category, { concurrency = 3, maxConsecutiveFails = 6 } = {}) {
+  if (!products.length) return;
+  const queue = products.slice();
+  let consecutiveFails = 0;
+  let stopped = false;
+  let enriched = 0;
+
+  const worker = async () => {
+    while (queue.length && !stopped) {
+      const p = queue.shift();
+      if (!p.link) continue;
+      // jitter pequeno pra dessincronizar as abas
+      await new Promise(r => setTimeout(r, 150 + Math.floor(Math.random() * 350)));
+      let page;
+      try {
+        page = await browser.newPage();
+        await page.setUserAgent(UA);
+        await page.setExtraHTTPHeaders({ "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8" });
+        await page.goto(p.link, { waitUntil: "domcontentloaded", timeout: 20000 });
+        await new Promise(r => setTimeout(r, 800));
+        const data = await page.evaluate(() => {
+          const txt = (s) => document.querySelector(s)?.textContent?.trim() || null;
+          const attr = (s, a) => document.querySelector(s)?.getAttribute(a) || null;
+          const captcha = /digite os caracteres|enter the characters|automated access|tipo de tr[áa]fego/i.test(document.body?.innerText || "");
+          const ratingTxt = attr("#acrPopover", "title")
+                         || txt('span[data-hook="rating-out-of-text"]')
+                         || txt("#acrPopover .a-icon-alt")
+                         || txt("i.a-icon-star .a-icon-alt");
+          const reviewTxt = txt("#acrCustomerReviewText");
+          return { captcha, ratingTxt, reviewTxt };
+        });
+
+        if (data.captcha) {
+          if (++consecutiveFails >= maxConsecutiveFails) stopped = true;
+          continue;
+        }
+        consecutiveFails = 0;
+        if (data.ratingTxt) {
+          const m = data.ratingTxt.match(/([\d,.]+)\s*de\s*5/i);
+          if (m) p.rating = parseFloat(m[1].replace(",", "."));
+        }
+        if (data.reviewTxt) {
+          const n = data.reviewTxt.replace(/[^\d]/g, "");
+          if (n) p.reviewsCount = n;
+        }
+        if (p.rating != null || p.reviewsCount != null) enriched++;
+      } catch {
+        if (++consecutiveFails >= maxConsecutiveFails) stopped = true;
+      } finally {
+        if (page) { try { await page.close(); } catch {} }
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, products.length) }, worker));
+  const tag = category || "geral";
+  if (stopped) {
+    console.warn(`[scraper Amazon] ${tag}: enriquecimento interrompido (CAPTCHA/erros seguidos) — ${enriched}/${products.length} com rating`);
+  } else {
+    console.log(`[scraper Amazon] ${tag}: rating/reviews enriquecidos ${enriched}/${products.length}`);
   }
 }
 
@@ -668,4 +734,4 @@ async function autoScroll(page) {
   await new Promise(r => setTimeout(r, 1000));
 }
 
-module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, applyFilters, normalizeSource, shopeeNodeToProduct, CATEGORIES, STORES };
+module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, CATEGORIES, STORES };

@@ -1,6 +1,7 @@
 const { scrapeOfertas, CATEGORIES, STORES } = require("./scraper");
 const catalog = require("../catalog");
 const appConfig = require("../config");
+const adminNotifier = require("../notifications/admin-notifier");
 
 const DEFAULT_CONFIG = {
   enabled: false,
@@ -153,6 +154,9 @@ async function runOnce() {
       _runPromise = null;
       persistStatus();
       scheduleNext();
+      adminNotifier.notifyScrapingResult(_status).catch(err =>
+        console.error("[admin-scraper] notifyScrapingResult:", err.message)
+      );
     }
     return _status.lastResult;
   })();
