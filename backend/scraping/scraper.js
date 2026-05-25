@@ -51,7 +51,10 @@ async function scrapeML({ category, limit = 200 } = {}) {
     ? `https://www.mercadolivre.com.br/ofertas?category=${cat.mlCode}`
     : "https://www.mercadolivre.com.br/ofertas";
 
-  const browser = await puppeteer.launch({ headless: true });
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+  });
   try {
     const page = await browser.newPage();
     await page.setUserAgent(UA);
@@ -114,8 +117,17 @@ async function scrapeML({ category, limit = 200 } = {}) {
       return results;
     }, category || null);
 
-    raw.sort((a, b) => (b.discount || 0) - (a.discount || 0));
-    return raw.slice(0, limit);
+    // Filtros de qualidade do admin (rating/vendas/preço/desconto máximo).
+    // Lazy require evita ciclo no boot. Defaults (tudo 0) = passa tudo.
+    const affiliate = require("./affiliate");
+    const filters = affiliate.readMLScraperFilters();
+    const filtered = raw.filter(p => affiliate.passesMLFilters(p, filters));
+    if (filtered.length < raw.length) {
+      console.log(`[scraper ML] ${category || "geral"}: ${raw.length} vistos, ${raw.length - filtered.length} filtrados, ${filtered.length} aprovados`);
+    }
+
+    filtered.sort((a, b) => (b.discount || 0) - (a.discount || 0));
+    return filtered.slice(0, limit);
   } finally {
     await browser.close();
   }
@@ -245,8 +257,18 @@ async function scrapeAmazon({ category, limit = 100 } = {}) {
     const cleaned = raw.filter(p => !p.sponsored);
     // Sobe a resolução das imagens (Amazon serve thumb minúsculo no card)
     for (const p of cleaned) p.img = upgradeAmazonImageUrl(p.img);
-    cleaned.sort((a, b) => (b.discount || 0) - (a.discount || 0));
-    return cleaned.slice(0, limit);
+
+    // Filtros de qualidade do admin (rating/reviews/preço/desconto máximo).
+    // Defaults (tudo 0) = passa tudo.
+    const affiliate = require("./affiliate");
+    const filters = affiliate.readAmazonScraperFilters();
+    const filtered = cleaned.filter(p => affiliate.passesAmazonFilters(p, filters));
+    if (filtered.length < cleaned.length) {
+      console.log(`[scraper Amazon] ${category || "geral"}: ${cleaned.length} vistos, ${cleaned.length - filtered.length} filtrados, ${filtered.length} aprovados`);
+    }
+
+    filtered.sort((a, b) => (b.discount || 0) - (a.discount || 0));
+    return filtered.slice(0, limit);
   } finally {
     await browser.close();
   }

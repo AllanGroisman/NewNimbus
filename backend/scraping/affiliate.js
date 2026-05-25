@@ -618,6 +618,56 @@ function passesShopeeFilters(node, filters = null) {
   return true;
 }
 
+// "+50 vendidos" / "1 mil" / number → quantidade aproximada de vendas.
+// ML manda string ("+50 vendidos"); aceita number direto também.
+function parseSoldText(s) {
+  if (s == null) return 0;
+  if (typeof s === "number") return Number.isFinite(s) ? s : 0;
+  const m = String(s).toLowerCase().match(/([\d.,]+)\s*(mil|mi)?/);
+  if (!m) return 0;
+  let n = parseFloat(m[1].replace(/\./g, "").replace(",", "."));
+  if (!isFinite(n)) return 0;
+  if (m[2] === "mil") n *= 1000;
+  if (m[2] === "mi") n *= 1000000;
+  return Math.round(n);
+}
+
+// Aplica filtros de qualidade num produto JÁ scrapeado do ML. Retorna `true` se passa.
+// product: { price, discount, rating, sold, ... } (formato Nimbus, pós-scrapeML).
+// Nota: ML nem sempre expõe `sold` no card de ofertas — com minSales > 0, itens
+// sem rótulo de vendas são cortados (sold ausente conta como 0).
+function passesMLFilters(product, filters = null) {
+  const f = filters || readMLScraperFilters();
+  const price = Number(product?.price) || 0;
+  const rating = Number(product?.rating) || 0;
+  const discount = Number(product?.discount) || 0;
+  const sales = parseSoldText(product?.sold);
+
+  if (f.minRating > 0 && rating < f.minRating) return false;
+  if (f.minSales > 0 && sales < f.minSales) return false;
+  if (f.minPrice > 0 && price > 0 && price < f.minPrice) return false;
+  if (f.maxPrice > 0 && price > f.maxPrice) return false;
+  if (f.maxDiscount > 0 && discount > f.maxDiscount) return false;
+  return true;
+}
+
+// Aplica filtros de qualidade num produto JÁ scrapeado da Amazon. Retorna `true` se passa.
+// product: { price, discount, rating, reviewsCount, ... } (formato Nimbus, pós-scrapeAmazon).
+function passesAmazonFilters(product, filters = null) {
+  const f = filters || readAmazonScraperFilters();
+  const price = Number(product?.price) || 0;
+  const rating = Number(product?.rating) || 0;
+  const discount = Number(product?.discount) || 0;
+  const reviews = Number(String(product?.reviewsCount ?? "").replace(/[^\d]/g, "")) || 0;
+
+  if (f.minRating > 0 && rating < f.minRating) return false;
+  if (f.minReviews > 0 && reviews < f.minReviews) return false;
+  if (f.minPrice > 0 && price > 0 && price < f.minPrice) return false;
+  if (f.maxPrice > 0 && price > f.maxPrice) return false;
+  if (f.maxDiscount > 0 && discount > f.maxDiscount) return false;
+  return true;
+}
+
 // Resolve credenciais Shopee pro admin-scraper (que roda fora de qualquer userId).
 // Prioridade: env vars → admin override (appConfig) → primeiro user com config.
 // Retorna null se nada disponível.
@@ -719,9 +769,11 @@ module.exports = {
   clearScraperShopeeAdminCreds,
   readMLScraperFilters,
   writeMLScraperFilters,
+  passesMLFilters,
   ML_FILTERS_DEFAULTS,
   readAmazonScraperFilters,
   writeAmazonScraperFilters,
+  passesAmazonFilters,
   AMAZON_FILTERS_DEFAULTS,
   readShopeeScraperFilters,
   writeShopeeScraperFilters,
