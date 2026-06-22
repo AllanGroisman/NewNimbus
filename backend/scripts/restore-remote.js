@@ -10,7 +10,7 @@
 // Requer as mesmas envs do backup-remote.js (BACKUP_S3_*).
 // O Postgres precisa estar rodando (docker compose up -d).
 
-require("dotenv").config({ path: require("path").join(__dirname, "..", ".env") });
+require("../config/loadEnv"); // .env + override por modo (honra BACKUP_S3_PREFIX do ngrok)
 
 const { execSync, spawnSync } = require("child_process");
 const fs   = require("fs");

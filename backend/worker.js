@@ -16,7 +16,7 @@
 // CRÍTICO: setar antes dos requires pra facade do whatsapp.js resolver pra local
 process.env.WORKER_PROCESS = "true";
 
-require("dotenv").config();
+require("./config/loadEnv"); // carrega .env + override por modo (prod | ngrok)
 
 const queue = require("./infra/queue");
 const wa = require("./whatsapp");          // resolve pra whatsapp/local

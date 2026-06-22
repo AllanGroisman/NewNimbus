@@ -1,6 +1,6 @@
 // Cliente Prisma singleton.
 
-require("dotenv").config();
+require("./config/loadEnv"); // carrega .env + override por modo (prod | ngrok)
 
 let _prisma = null;
 

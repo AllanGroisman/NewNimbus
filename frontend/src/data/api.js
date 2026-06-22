@@ -258,6 +258,7 @@ export async function adminCatalog({ page = 1, pageSize = 50, category, source, 
   if (sortBy) params.set("sortBy", sortBy);
   return http("GET", `/api/admin/catalog?${params}`);
 }
+export async function adminClearCatalog() { return http("DELETE", "/api/admin/catalog"); }
 
 // ─── Admin / Notificações WhatsApp ─────────────────────────────────────
 export async function adminNotifConfig()          { return http("GET",  "/api/admin/notifications/config"); }

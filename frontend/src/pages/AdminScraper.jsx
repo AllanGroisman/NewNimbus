@@ -9,6 +9,7 @@ import {
   adminCancelScraper,
   adminScraperStatus,
   adminCatalog,
+  adminClearCatalog,
 } from "../data/api";
 
 const STATUS_POLL_MS = 5000;
@@ -30,6 +31,7 @@ export default function PageAdminScraper() {
   const [catPage, setCatPage] = useState(1);
   const [catFilter, setCatFilter] = useState({ category: "", source: "", q: "", sortBy: "lastSeen_desc" });
   const [catLoading, setCatLoading] = useState(false);
+  const [clearing, setClearing] = useState(false);
 
   const refreshConfig = useCallback(async () => {
     try {
@@ -158,6 +160,21 @@ export default function PageAdminScraper() {
     } catch (err) {
       setCanceling(false);
       setError(err.message);
+    }
+  }
+
+  async function clearCatalog() {
+    if (!window.confirm("Apagar TODOS os produtos do catálogo? Esta ação não pode ser desfeita.")) return;
+    setError(null);
+    setClearing(true);
+    try {
+      await adminClearCatalog();
+      setCatPage(1);
+      await refreshCatalog();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setClearing(false);
     }
   }
 
@@ -316,9 +333,14 @@ export default function PageAdminScraper() {
             <div style={{ fontWeight: 500 }}>Catálogo de produtos</div>
             <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>{catTotal} produtos · página {catPage}</div>
           </div>
-          <button onClick={refreshCatalog} disabled={catLoading} style={{ padding: "6px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: "pointer" }}>
-            {catLoading ? "⟳" : "⟳ Atualizar"}
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={refreshCatalog} disabled={catLoading} style={{ padding: "6px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: "pointer" }}>
+              {catLoading ? "⟳" : "⟳ Atualizar"}
+            </button>
+            <button onClick={clearCatalog} disabled={clearing || catTotal === 0} style={{ padding: "6px 12px", borderRadius: 7, border: "0.5px solid #A32D2D", background: "transparent", color: "#A32D2D", fontSize: 12, cursor: clearing || catTotal === 0 ? "not-allowed" : "pointer", opacity: clearing || catTotal === 0 ? 0.5 : 1 }}>
+              {clearing ? "Apagando..." : "🗑 Apagar todos"}
+            </button>
+          </div>
         </div>
 
         <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>

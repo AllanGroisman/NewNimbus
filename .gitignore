@@ -27,6 +27,8 @@ backend/logs/
 # Pra valores específicos de máquina/branch, use .env.local.
 .env.local
 .env.*.local
+# Overrides do modo ngrok (domínio de teste local) — não versionar.
+backend/.env.ngrok
 
 # Editor / OS
 .DS_Store

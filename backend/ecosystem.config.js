@@ -21,6 +21,7 @@ module.exports = {
       env: {
         NODE_ENV: "production",
         PORT: 3001,
+        NIMBUS_MODE: process.env.NIMBUS_MODE || "prod",
       },
       // Logs — PM2 já rotaciona por padrão se pm2-logrotate estiver instalado:
       //   pm2 install pm2-logrotate
@@ -45,13 +46,14 @@ module.exports = {
       kill_timeout: 8000,      // mais alto: drain do BullMQ Worker pode levar segundos
       env: {
         NODE_ENV: "production",
+        NIMBUS_MODE: process.env.NIMBUS_MODE || "prod",
       },
       out_file: "./logs/worker-out.log",
       error_file: "./logs/worker-error.log",
       time: true,
       merge_logs: true,
     },
-    // Backup REMOTO (S3-compatível) — sobe último snapshot a cada 1h.
+    // Backup REMOTO (S3-compatível) — sobe último snapshot 1x/dia às 03h.
     // Sem env BACKUP_S3_* setadas, sai exit 0 sem fazer nada (não polui logs).
     {
       name: "nimbus-backup-remote",
@@ -59,9 +61,9 @@ module.exports = {
       cwd: __dirname,
       instances: 1,
       autorestart: false,
-      cron_restart: "0 * * * *",
+      cron_restart: "0 3 * * *",
       watch: false,
-      env: { NODE_ENV: "production" },
+      env: { NODE_ENV: "production", NIMBUS_MODE: process.env.NIMBUS_MODE || "prod" },
       out_file: "./logs/backup-remote-out.log",
       error_file: "./logs/backup-remote-error.log",
       time: true,

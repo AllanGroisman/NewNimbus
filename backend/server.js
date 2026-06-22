@@ -2,7 +2,7 @@
 // module-load. O facade whatsapp/index.js decide local-vs-proxy lendo QUEUE_BACKEND
 // no require; sem o dotenv aqui, ele resolvia pra "local" (sem sessões) no backend,
 // quebrando envios e abrindo uma conexão Baileys duplicada (conflito com o worker).
-require("dotenv").config();
+require("./config/loadEnv"); // carrega .env + override por modo (prod | ngrok)
 
 const express = require("express");
 const cors = require("cors");
@@ -61,8 +61,7 @@ app.use(helmet({
 // CORS allowlist via env. Default em dev: aceita tudo (mantém comportamento legado).
 // Em produção: defina NIMBUS_CORS_ORIGINS=https://app.x.com,https://admin.x.com
 // Patterns suportados: domínio exato OU "*.dominio.com" (wildcard de subdomínio).
-const CORS_ORIGINS = String(process.env.NIMBUS_CORS_ORIGINS || "")
-  .split(",").map(s => s.trim()).filter(Boolean);
+const { corsOrigins: CORS_ORIGINS } = require("./config/publicUrl");
 
 function originAllowed(origin) {
   if (!CORS_ORIGINS.length) return true; // dev mode (sem env definida)
@@ -1239,6 +1238,16 @@ app.get("/api/admin/catalog", auth.requireAuth, auth.requireAdmin, async (req, r
       items: slice,
       stats: await catalog.getStats(),
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Apaga TODOS os produtos do catálogo de uma vez (botão "Apagar todos").
+app.delete("/api/admin/catalog", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const r = await catalog.clearAll();
+    res.json({ ok: true, removed: r.removed });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

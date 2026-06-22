@@ -20,7 +20,7 @@
 //   node scripts/backup-remote.js --latest      # sobe só o último snapshot local
 //   node scripts/backup-remote.js --dry-run     # mostra o que faria
 
-require("dotenv").config({ path: require("path").join(__dirname, "..", ".env") });
+require("../config/loadEnv"); // .env + override por modo (honra BACKUP_S3_PREFIX do ngrok)
 
 const fs = require("fs");
 const fsp = require("fs/promises");

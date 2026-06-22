@@ -39,8 +39,11 @@ done
 # Banco remoto: verifica se tem backup mais novo no Backblaze.
 # No modo reinício (sistema já no ar) pulamos — não faz sentido restaurar o banco
 # só pra reiniciar o código, e o prompt interativo travaria o fluxo.
+# Modo ngrok (NIMBUS_SKIP_RESTORE=1): usa o banco LOCAL, nunca restaura da nuvem.
 echo
-if [[ "$ALREADY_RUNNING" == "1" ]]; then
+if [[ "${NIMBUS_SKIP_RESTORE:-0}" == "1" ]]; then
+  echo "[2/6] Restore remoto: pulado (modo ngrok — banco local)."
+elif [[ "$ALREADY_RUNNING" == "1" ]]; then
   echo "[2/5] Backup remoto: pulado (reinício de sistema já rodando)."
 else
 echo "[2/6] Verificando backup remoto (Backblaze)..."
@@ -48,8 +51,8 @@ _ENV_FILE="$REPO_DIR/backend/.env"
 _B2_BUCKET=""
 _B2_KEY_ID=""
 if [[ -f "$_ENV_FILE" ]]; then
-  _B2_BUCKET=$(grep -m1 '^BACKUP_S3_BUCKET=' "$_ENV_FILE" | cut -d= -f2-)
-  _B2_KEY_ID=$(grep -m1 '^BACKUP_S3_KEY_ID=' "$_ENV_FILE" | cut -d= -f2-)
+  _B2_BUCKET=$(grep -m1 '^BACKUP_S3_BUCKET=' "$_ENV_FILE" | cut -d= -f2- || true)
+  _B2_KEY_ID=$(grep -m1 '^BACKUP_S3_KEY_ID=' "$_ENV_FILE" | cut -d= -f2- || true)
 fi
 
 if [[ -z "$_B2_BUCKET" || -z "$_B2_KEY_ID" ]]; then
@@ -118,6 +121,13 @@ echo
 echo "=== Tudo no ar. ==="
 pm2 status
 echo
+# URL pública efetiva — lida pelo mesmo carregador do app, respeitando o modo
+# (NIMBUS_MODE=prod usa .env; =ngrok sobrepõe com .env.ngrok).
+_PUB=$(cd "$REPO_DIR/backend" && node -e 'require("./config/loadEnv"); process.stdout.write(require("./config/publicUrl").PUBLIC_BASE_URL || "")' 2>/dev/null || true)
 echo "Acesse:"
-echo "  https://sistema.nimbuspromocoes.com"
+echo "  ${_PUB:-https://sistema.nimbuspromocoes.com}"
 echo "  Local:  curl http://localhost/healthz"
+if [[ "$_PUB" == *ngrok* ]]; then
+  echo
+  echo "  (modo testes/ngrok — o túnel sobe pelo ngrok_start.sh, ou rode: bash deploy/ngrok.sh)"
+fi

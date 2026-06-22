@@ -18,8 +18,7 @@ const PRICE_TO_PLAN = Object.fromEntries(
   Object.entries(PRICE_IDS).filter(([, v]) => v).map(([k, v]) => [v, k])
 );
 
-const SUCCESS_URL = process.env.STRIPE_SUCCESS_URL || "http://localhost:5173/?checkout=success";
-const CANCEL_URL = process.env.STRIPE_CANCEL_URL || "http://localhost:5173/?checkout=cancel";
+const { stripeSuccessUrl: SUCCESS_URL, stripeCancelUrl: CANCEL_URL } = require("../config/publicUrl");
 
 let _client = null;
 function client() {

@@ -12,7 +12,7 @@
 
 const nodemailer = require("nodemailer");
 
-const APP_PUBLIC_URL = String(process.env.APP_PUBLIC_URL || "http://localhost:5173").replace(/\/+$/, "");
+const { appPublicUrl: APP_PUBLIC_URL } = require("../config/publicUrl");
 const SMTP_CONFIGURED = !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
 
 let _transporter = null;

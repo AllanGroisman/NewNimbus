@@ -220,6 +220,12 @@ async function pruneBeforeDate(cutoffDate) {
   return { removed: r.count, total };
 }
 
+// Apaga TODO o catálogo (usado pelo botão "Apagar todos" do admin).
+async function clearAll() {
+  const r = await prisma().catalogProduct.deleteMany({});
+  return { removed: r.count };
+}
+
 module.exports = {
   productKey,
   upsertProducts,
@@ -229,5 +235,6 @@ module.exports = {
   getStats,
   prune,
   pruneBeforeDate,
+  clearAll,
   storeToId,
 };
