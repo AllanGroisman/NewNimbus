@@ -31,6 +31,8 @@ import PageTutoriais from "./pages/Tutoriais";
 import Login from "./pages/Login";
 
 const SAVE_DEBOUNCE_MS = 800;
+// Onde guardamos a navegação atual (página ou campanha aberta) pra sobreviver ao F5.
+const NAV_STORAGE_KEY = "nimbus:nav";
 // Polling de OPS: agressivo enquanto a aba está em foco, pausa quando oculta.
 // 3 s mantém UI quase live sem encher o servidor; afiliado fica em 30 s pq muda raro.
 const OPS_POLL_MS = 3 * 1000;
@@ -43,7 +45,10 @@ export default function App() {
   const [numbers, setNumbers] = useState(initialNumbers);
   const [whatsappGroups, setWhatsappGroups] = useState(initialWhatsappGroups);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
-  const [page, setPage] = useState("dashboard");
+  const [page, setPage] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(NAV_STORAGE_KEY) || "{}").page || "dashboard"; }
+    catch { return "dashboard"; }
+  });
   const [selectedGroup, setSelectedGroup] = useState(null);
   // Deep-link pra um tutorial específico — setado quando outra página chama
   // openTutorial(id). Limpado depois que a página Tutoriais consome.
@@ -74,6 +79,11 @@ export default function App() {
   // Boot: se há token salvo, valida com o servidor e carrega o estado
   useEffect(() => {
     let cancelled = false;
+    // Lê a navegação salva ANTES de qualquer setState — o efeito de persistência
+    // (mais abaixo) reescreve essa chave assim que `user` é setado, então
+    // precisamos capturar o groupId aqui pra restaurar a campanha aberta.
+    let savedNav = {};
+    try { savedNav = JSON.parse(localStorage.getItem(NAV_STORAGE_KEY) || "{}"); } catch { /* ignora */ }
     async function bootstrap() {
       if (!getToken()) { setBootstrapping(false); return; }
       try {
@@ -87,6 +97,11 @@ export default function App() {
         setWhatsappGroups(state.whatsappGroups || []);
         setSettings({ ...DEFAULT_SETTINGS, ...(state.settings || {}) });
         stateLoadedRef.current = true;
+        // Reabre a campanha que estava aberta antes do F5, se ainda existir.
+        if (savedNav.groupId != null) {
+          const g = (state.groups || []).find(x => x.id === savedNav.groupId);
+          if (g) { setSelectedGroup(g); setPage("group"); }
+        }
         // Billing — não bloqueia o boot se falhar
         billingMe().then(b => !cancelled && setBilling(b)).catch(() => {});
       } catch {
@@ -134,6 +149,15 @@ export default function App() {
     const t = settings.theme || "auto";
     document.documentElement.dataset.theme = t;
   }, [settings.theme]);
+
+  // Lembra onde o usuário está (página atual ou campanha aberta) pra restaurar no F5.
+  useEffect(() => {
+    if (!user) return;
+    try {
+      const nav = selectedGroup ? { groupId: selectedGroup.id } : { page };
+      localStorage.setItem(NAV_STORAGE_KEY, JSON.stringify(nav));
+    } catch { /* ignora (modo privado/quota) */ }
+  }, [user, page, selectedGroup]);
 
   // Polling: pega dados operacionais (queue/history/métricas) que o scheduler
   // atualiza no servidor. Faz merge sem sobrescrever campos editáveis localmente.
@@ -225,6 +249,7 @@ export default function App() {
 
   function handleLogout() {
     authLogout();
+    try { localStorage.removeItem(NAV_STORAGE_KEY); } catch { /* ignora */ }
     stateLoadedRef.current = false;
     setUser(null);
     setGroups([]); setNumbers([]); setWhatsappGroups([]);
