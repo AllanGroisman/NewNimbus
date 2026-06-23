@@ -17,6 +17,8 @@ const SHOPEE_FILTERS_DEFAULTS = {
   maxDiscount: 0,         // % máximo. Recomendado: 95 (corta "99% off" fake). 0 = sem filtro
   minDiscount: 0,         // % mínimo. >0 = só itens em promoção. 0 = sem filtro
   listType: 0,            // pré-seleção Shopee: 0=Recomendados, 1=Maior comissão, 2=Top performance
+  sortType: 2,            // ordenação Shopee: 2=Mais vendidos (melhores produtos),
+                          // 1=Relevância, 3=Preço, 4=Maior comissão (traz spam barato).
 };
 
 // Config persistida POR USUÁRIO via affiliate-store. Schema do `raw`:
@@ -397,9 +399,17 @@ function buildShopeeShortLinkPayload(originUrl) {
   return JSON.stringify({ query });
 }
 
-function buildShopeeProductOfferPayload({ keyword, page = 1, limit = 50, sortType = 4, listType = 0 }) {
-  const safe = String(keyword || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-  const query = `query{productOfferV2(keyword:"${safe}",listType:${Number(listType)},sortType:${Number(sortType)},page:${Number(page)},limit:${Number(limit)}){nodes{itemId shopId productName productLink offerLink imageUrl price priceMin priceMax priceDiscountRate sales commissionRate ratingStar productCatIds} pageInfo{page limit hasNextPage}}}`;
+function buildShopeeProductOfferPayload({ keyword, productCatId, page = 1, limit = 50, sortType = 4, listType = 0 }) {
+  // keyword e productCatId são opcionais e combináveis. Com productCatId e sem
+  // keyword, a API devolve produtos GERAIS da categoria (sem viés de busca textual).
+  const parts = [];
+  if (keyword) {
+    const safe = String(keyword).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    parts.push(`keyword:"${safe}"`);
+  }
+  if (productCatId) parts.push(`productCatId:${Number(productCatId)}`);
+  parts.push(`listType:${Number(listType)}`, `sortType:${Number(sortType)}`, `page:${Number(page)}`, `limit:${Number(limit)}`);
+  const query = `query{productOfferV2(${parts.join(",")}){nodes{itemId shopId productName productLink offerLink imageUrl price priceMin priceMax priceDiscountRate sales commissionRate ratingStar productCatIds} pageInfo{page limit hasNextPage}}}`;
   return JSON.stringify({ query });
 }
 
@@ -595,6 +605,8 @@ function writeShopeeScraperFilters(patch) {
     minDiscount:       num(patch?.minDiscount,       cur.minDiscount),
     // listType é escolha discreta (0/1/2), não número livre: valida por whitelist.
     listType:          [0, 1, 2].includes(Number(patch?.listType)) ? Number(patch.listType) : cur.listType,
+    // sortType idem (1/2/3/4/5): 2=Mais vendidos é o default de qualidade.
+    sortType:          [1, 2, 3, 4, 5].includes(Number(patch?.sortType)) ? Number(patch.sortType) : cur.sortType,
   };
   // Validações de sanidade
   if (next.minRating > 5) next.minRating = 5;
@@ -703,8 +715,8 @@ function getScraperShopeeCreds() {
 
 // Busca ofertas Shopee — usada pelo admin-scraper. Recebe { appId, appSecret }
 // explicitamente (ou pega de getScraperShopeeCreds se ausente). Devolve { nodes, pageInfo }.
-async function fetchShopeeOffers({ keyword, page = 1, limit = 50, sortType = 4, listType = 0, creds } = {}) {
-  if (!keyword) return { nodes: [], pageInfo: null };
+async function fetchShopeeOffers({ keyword, productCatId, page = 1, limit = 50, sortType = 4, listType = 0, creds } = {}) {
+  if (!keyword && !productCatId) return { nodes: [], pageInfo: null };
   const c = creds || getScraperShopeeCreds();
   if (!c || !c.appId || !c.appSecret) {
     console.warn("[afiliados Shopee] fetchShopeeOffers: sem App ID/Secret (env ou usuário configurado) — pulando");
@@ -712,7 +724,7 @@ async function fetchShopeeOffers({ keyword, page = 1, limit = 50, sortType = 4, 
   }
 
   const timestamp = Math.floor(Date.now() / 1000);
-  const payload = buildShopeeProductOfferPayload({ keyword, page, limit, sortType, listType });
+  const payload = buildShopeeProductOfferPayload({ keyword, productCatId, page, limit, sortType, listType });
   const authHeader = signShopeeRequest({ appId: c.appId, appSecret: c.appSecret, timestamp, payload });
 
   try {

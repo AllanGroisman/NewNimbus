@@ -53,14 +53,33 @@ afterEach(() => {
 
 describe("scrapeShopee (fluxo, fetch mockado)", () => {
   it("pagina: junta nodes das páginas até hasNextPage:false", async () => {
+    // "beleza" tem um único shopeeCatId → uma fonte, paginação simples.
     offersSpy
       .mockResolvedValueOnce({ nodes: [apiNode({ itemId: 1 }), apiNode({ itemId: 2 })], pageInfo: { hasNextPage: true } })
       .mockResolvedValueOnce({ nodes: [apiNode({ itemId: 3 })], pageInfo: { hasNextPage: false } });
 
-    const items = await scraper.scrapeShopee({ category: "eletronicos", limit: 10 });
+    const items = await scraper.scrapeShopee({ category: "beleza", limit: 10 });
 
     expect(items).toHaveLength(3);
     expect(offersSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("eletronicos: distribui a busca entre os vários shopeeCatIds (categoria ampla)", async () => {
+    // 4 catIds (celulares, computador, áudio, eletrodomésticos). Cada fonte
+    // devolve 1 node único → uma chamada por catId, sem keyword.
+    let id = 0;
+    offersSpy.mockImplementation(async ({ productCatId }) => ({
+      nodes: [apiNode({ itemId: ++id, shopId: id })],
+      pageInfo: { hasNextPage: false },
+    }));
+
+    const items = await scraper.scrapeShopee({ category: "eletronicos", limit: 12 });
+
+    const cats = offersSpy.mock.calls.map(c => c[0].productCatId);
+    expect(cats).toEqual([100013, 100644, 100535, 100010]);
+    expect(offersSpy).toHaveBeenCalledWith(expect.objectContaining({ productCatId: 100013 }));
+    offersSpy.mock.calls.forEach(c => expect(c[0].keyword).toBeUndefined());
+    expect(items).toHaveLength(4);
   });
 
   it("aplica minDiscount: descarta nodes sem promoção", async () => {
@@ -76,14 +95,14 @@ describe("scrapeShopee (fluxo, fetch mockado)", () => {
     expect(items[0].discount).toBe(40);
   });
 
-  it("repassa o listType salvo nos filtros pra fetchShopeeOffers", async () => {
-    await affiliate.writeShopeeScraperFilters({ listType: 2 });
+  it("repassa o listType/sortType salvos nos filtros e busca por productCatId", async () => {
+    await affiliate.writeShopeeScraperFilters({ listType: 2, sortType: 1 });
     offersSpy.mockResolvedValue({ nodes: [apiNode()], pageInfo: { hasNextPage: false } });
 
-    await scraper.scrapeShopee({ category: "eletronicos", limit: 5 });
+    await scraper.scrapeShopee({ category: "beleza", limit: 5 });
 
-    // "eletronicos" → shopeeKeyword "celular" (CATEGORIES no scraper.js).
-    expect(offersSpy).toHaveBeenCalledWith(expect.objectContaining({ listType: 2, keyword: "celular" }));
+    // "beleza" → shopeeCatIds [100630] (CATEGORIES no scraper.js), sem keyword.
+    expect(offersSpy).toHaveBeenCalledWith(expect.objectContaining({ listType: 2, sortType: 1, productCatId: 100630 }));
   });
 
   it("mapeia pro formato Nimbus e enriquece reviewsCount, removendo campos temporários", async () => {

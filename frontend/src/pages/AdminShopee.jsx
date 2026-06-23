@@ -251,21 +251,41 @@ function ShopeeFiltersSection() {
         Recomendados: rating ≥ 4.0, vendas ≥ 100, desconto máx 95% (corta "99% off" fake).
       </div>
 
-      <div style={{ marginBottom: 16 }}>
-        <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
-          Pré-seleção da Shopee
-        </label>
-        <select
-          value={filters.listType ?? 0}
-          onChange={e => set("listType", Number(e.target.value))}
-          style={{ width: "100%", maxWidth: 320, padding: "7px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }}
-        >
-          <option value={0}>Recomendados</option>
-          <option value={2}>Top performance</option>
-          <option value={1}>Maior comissão</option>
-        </select>
-        <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 3 }}>
-          Como a Shopee escolhe os produtos dentro de cada categoria.
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 16 }}>
+        <div>
+          <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
+            Pré-seleção da Shopee
+          </label>
+          <select
+            value={filters.listType ?? 0}
+            onChange={e => set("listType", Number(e.target.value))}
+            style={{ width: "100%", padding: "7px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }}
+          >
+            <option value={0}>Recomendados</option>
+            <option value={2}>Top performance</option>
+            <option value={1}>Maior comissão</option>
+          </select>
+          <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 3 }}>
+            Como a Shopee escolhe os produtos dentro de cada categoria.
+          </div>
+        </div>
+
+        <div>
+          <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
+            Ordenação dos resultados
+          </label>
+          <select
+            value={filters.sortType ?? 2}
+            onChange={e => set("sortType", Number(e.target.value))}
+            style={{ width: "100%", padding: "7px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }}
+          >
+            <option value={2}>Mais vendidos (recomendado)</option>
+            <option value={1}>Relevância</option>
+            <option value={4}>Maior comissão</option>
+          </select>
+          <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 3 }}>
+            "Mais vendidos" traz os melhores produtos. "Maior comissão" tende a trazer tranqueira barata.
+          </div>
         </div>
       </div>
 
@@ -308,7 +328,7 @@ function ShopeeFiltersSection() {
           {saving ? "Salvando..." : "Salvar filtros"}
         </button>
         <button
-          onClick={() => setFilters(f => ({ ...f, minRating: 4.0, minSales: 100, minPrice: 20, maxPrice: 0, minCommissionRate: 0.03, maxDiscount: 95, minDiscount: 0 }))}
+          onClick={() => setFilters(f => ({ ...f, minRating: 4.0, minSales: 100, minPrice: 20, maxPrice: 0, minCommissionRate: 0.03, maxDiscount: 95, minDiscount: 0, sortType: 2 }))}
           disabled={saving}
           style={{ padding: "8px 16px", borderRadius: 8, background: "transparent", border: "0.5px solid var(--color-border-secondary)", fontSize: 13, cursor: "pointer" }}
         >

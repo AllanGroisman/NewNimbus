@@ -36,6 +36,18 @@ const TABLES = [
 
 async function truncateAll() {
   const db = prisma();
+
+  // GUARDA DE SEGURANÇA: só truncamos um banco de TESTE. Se por qualquer motivo
+  // (ex.: loadEnv sobrescrevendo DATABASE_URL) o client conectar no banco de DEV
+  // (nimbus) ou PROD, abortamos — truncar ali apagaria dados reais.
+  const [{ current_database: dbName }] = await db.$queryRawUnsafe("SELECT current_database()");
+  if (!/test/i.test(dbName)) {
+    throw new Error(
+      `[pg-helpers] RECUSADO truncar banco "${dbName}" — não parece banco de teste. ` +
+      `A suite deve rodar contra nimbus_test (veja tests/helpers/env.js). Abortando pra proteger dados.`
+    );
+  }
+
   const list = TABLES.map(t => `"${t}"`).join(", ");
   await db.$executeRawUnsafe(`TRUNCATE TABLE ${list} RESTART IDENTITY CASCADE`);
 }

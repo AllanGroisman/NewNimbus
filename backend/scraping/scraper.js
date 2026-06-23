@@ -16,13 +16,17 @@ function upgradeAmazonImageUrl(url) {
 // - mlCode: ID da categoria do Mercado Livre (na URL de ofertas)
 // - amzDept: ID do departamento na página de ofertas da Amazon (/deals). Usado no
 //   filtro "Departamento" da barra lateral (refinementFilters.departments).
-// - shopeeKeyword: keyword pro productOfferV2 da Shopee Affiliate Open API.
+// - shopeeCatIds: IDs de categoria (Level 1) reais da Shopee BR, usados no
+//   parâmetro `productCatId` do productOfferV2 — traz produtos GERAIS da categoria
+//   (não busca por palavra). Vários IDs = categoria ampla (ex.: eletrônicos =
+//   celulares + computador + áudio + eletrodomésticos). Descobertos via API.
+// - shopeeKeyword: fallback por palavra-chave caso shopeeCatIds esteja ausente.
 const CATEGORIES = {
-  bebe:        { label: "Bebê",        mlCode: "MLB1384", amzDept: "17242604011", shopeeKeyword: "bebê" },
-  gamer:       { label: "Gamer",       mlCode: "MLB1144", amzDept: "7791986011",  shopeeKeyword: "gamer" },
-  eletronicos: { label: "Eletrônicos", mlCode: "MLB1051", amzDept: "16209063011", shopeeKeyword: "celular" },
-  casa:        { label: "Casa",        mlCode: "MLB1574", amzDept: "16191001011", shopeeKeyword: "casa decoração" },
-  beleza:      { label: "Beleza",      mlCode: "MLB1246", amzDept: "16194415011", shopeeKeyword: "beleza" },
+  bebe:        { label: "Bebê",        mlCode: "MLB1384", amzDept: "17242604011", shopeeKeyword: "bebê",            shopeeCatIds: [100632] },
+  gamer:       { label: "Gamer",       mlCode: "MLB1144", amzDept: "7791986011",  shopeeKeyword: "gamer",           shopeeCatIds: [100634, 100644] },
+  eletronicos: { label: "Eletrônicos", mlCode: "MLB1051", amzDept: "16209063011", shopeeKeyword: "celular",         shopeeCatIds: [100013, 100644, 100535, 100010] },
+  casa:        { label: "Casa",        mlCode: "MLB1574", amzDept: "16191001011", shopeeKeyword: "casa decoração",  shopeeCatIds: [100636] },
+  beleza:      { label: "Beleza",      mlCode: "MLB1246", amzDept: "16194415011", shopeeKeyword: "beleza",          shopeeCatIds: [100630] },
 };
 
 // Lojas suportadas. id é o que vai em group.scraping.sources (após normalize).
@@ -434,47 +438,63 @@ async function scrapeShopee({ category, limit = 50 } = {}) {
   const affiliate = require("./affiliate");
 
   const cat = CATEGORIES[category];
+  const filters = affiliate.readShopeeScraperFilters();
+
+  // Preferimos buscar por categoria REAL da Shopee (productCatId) → produtos gerais
+  // da categoria, sem viés de palavra-chave. Fallback pra keyword se não houver IDs.
+  const catIds = Array.isArray(cat?.shopeeCatIds) ? cat.shopeeCatIds : [];
   const keyword = cat?.shopeeKeyword || cat?.label || category;
-  if (!keyword) {
-    console.warn("[scraper Shopee] sem keyword/categoria — pulando");
+  if (!catIds.length && !keyword) {
+    console.warn("[scraper Shopee] sem categoria/keyword — pulando");
     return [];
   }
 
   // API limita ~50 por página. Paginação simples se limit > 50.
   const pageSize = Math.min(50, limit);
   const products = [];
-  let page = 1;
-  // Filtros de qualidade descartam muito → aumentamos o safety (até 12 páginas = 600 itens)
-  let safety = 12;
-  const filters = affiliate.readShopeeScraperFilters();
+  const seenItems = new Set();
   let totalSeen = 0;
   let totalRejected = 0;
 
-  while (products.length < limit && safety-- > 0) {
-    const { nodes, pageInfo } = await affiliate.fetchShopeeOffers({
-      keyword,
-      page,
-      limit: pageSize,
-      sortType: 4,  // 4 = maior desconto
-      listType: filters.listType,  // pré-seleção Shopee (Recomendados/Top performance/Maior comissão)
-    });
-    if (!nodes.length) break;
-    for (const n of nodes) {
-      totalSeen++;
-      if (!affiliate.passesShopeeFilters(n, filters)) {
-        totalRejected++;
-        continue;
+  // Cada "fonte" é um productCatId (categoria ampla = vários) ou, no fallback, a keyword.
+  const sources = catIds.length ? catIds.map(id => ({ productCatId: id })) : [{ keyword }];
+  const perSource = Math.ceil(limit / sources.length);
+
+  for (const src of sources) {
+    let collected = 0;
+    let page = 1;
+    // Filtros de qualidade descartam muito → safety alto (até 12 páginas por fonte)
+    let safety = 12;
+    while (collected < perSource && products.length < limit && safety-- > 0) {
+      const { nodes, pageInfo } = await affiliate.fetchShopeeOffers({
+        ...src,
+        page,
+        limit: pageSize,
+        sortType: filters.sortType,  // 2 = mais vendidos (melhores produtos) por padrão
+        listType: filters.listType,  // pré-seleção Shopee (Recomendados/Top performance/Maior comissão)
+      });
+      if (!nodes.length) break;
+      for (const n of nodes) {
+        totalSeen++;
+        const key = `${n.shopId}_${n.itemId}`;
+        if (seenItems.has(key)) continue;  // dedup entre fontes/páginas
+        if (!affiliate.passesShopeeFilters(n, filters)) {
+          totalRejected++;
+          continue;
+        }
+        seenItems.add(key);
+        const p = shopeeNodeToProduct(n, category);
+        if (p.name && p.link) { products.push(p); collected++; }
+        if (products.length >= limit || collected >= perSource) break;
       }
-      const p = shopeeNodeToProduct(n, category);
-      if (p.name && p.link) products.push(p);
-      if (products.length >= limit) break;
+      if (!pageInfo?.hasNextPage) break;
+      page++;
     }
-    if (!pageInfo?.hasNextPage) break;
-    page++;
   }
 
+  const tag = catIds.length ? `cat[${catIds.join(",")}]` : keyword;
   if (totalRejected > 0) {
-    console.log(`[scraper Shopee] ${keyword}: ${totalSeen} vistos, ${totalRejected} filtrados (rating/vendas/preço/comissão/desconto), ${products.length} aprovados`);
+    console.log(`[scraper Shopee] ${tag}: ${totalSeen} vistos, ${totalRejected} filtrados (rating/vendas/preço/comissão/desconto), ${products.length} aprovados`);
   }
 
   products.sort((a, b) => (b.discount || 0) - (a.discount || 0));

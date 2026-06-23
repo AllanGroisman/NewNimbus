@@ -20,7 +20,14 @@ const dir = path.join(__dirname, "..");
 // quiet:true silencia as dicas que o dotenv v17 imprime no stdout — senão
 // poluem logs do PM2 e a captura da URL efetiva no start.sh.
 // Base compartilhada + defaults de PRODUÇÃO.
-dotenv.config({ path: path.join(dir, ".env"), override: true, quiet: true });
+//
+// EM TESTES (NODE_ENV=test) NÃO sobrescrevemos: a suite (tests/helpers/env.js)
+// seta DATABASE_URL=nimbus_test (e QUEUE_BACKEND etc.) ANTES de carregar o
+// backend, e esses valores PRECISAM vencer o .env. Se sobrescrevêssemos, o
+// DATABASE_URL voltaria pro banco de DEV (nimbus) e o truncate dos testes
+// apagaria o banco de desenvolvimento. .env só preenche o que falta.
+const inTest = process.env.NODE_ENV === "test";
+dotenv.config({ path: path.join(dir, ".env"), override: !inTest, quiet: true });
 
 const mode = (process.env.NIMBUS_MODE || "prod").toLowerCase();
 if (mode !== "prod") {
