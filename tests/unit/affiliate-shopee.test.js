@@ -100,6 +100,23 @@ describe("buildShopeeProductOfferPayload", () => {
     expect(parsed.query).toContain("limit:50");
     expect(parsed.query).toContain("sortType:4");
   });
+
+  it("inclui listType:0 por default (sem pré-seleção)", () => {
+    const p = affiliate.buildShopeeProductOfferPayload({ keyword: "x" });
+    expect(JSON.parse(p).query).toContain("listType:0");
+  });
+
+  it("propaga o listType escolhido (pré-seleção da Shopee)", () => {
+    const p = affiliate.buildShopeeProductOfferPayload({ keyword: "x", listType: 2 });
+    expect(JSON.parse(p).query).toContain("listType:2");
+  });
+
+  it("listType coexiste com keyword e sortType na mesma query", () => {
+    const parsed = JSON.parse(affiliate.buildShopeeProductOfferPayload({ keyword: "celular", listType: 1, sortType: 5 }));
+    expect(parsed.query).toContain('keyword:"celular"');
+    expect(parsed.query).toContain("listType:1");
+    expect(parsed.query).toContain("sortType:5");
+  });
 });
 
 describe("gerarLinkAfiliadoShopee", () => {

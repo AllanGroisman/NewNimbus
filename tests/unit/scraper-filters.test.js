@@ -15,6 +15,18 @@ const scraper = require(path.resolve(__dirname, "..", "..", "backend", "scraping
 
 const ML_DEFAULTS = affiliate.ML_FILTERS_DEFAULTS;
 const AMZ_DEFAULTS = affiliate.AMAZON_FILTERS_DEFAULTS;
+const SHOPEE_DEFAULTS = affiliate.SHOPEE_FILTERS_DEFAULTS;
+
+// Node CRU da Shopee API (antes do shopeeNodeToProduct). passesShopeeFilters lê
+// os campos brutos: ratingStar, sales, price, commissionRate, priceDiscountRate.
+const shopeeNode = (over = {}) => ({
+  ratingStar: 4.6,
+  sales: 1200,
+  price: 99.9,
+  commissionRate: 0.08,   // 8%
+  priceDiscountRate: 40,
+  ...over,
+});
 
 // Produto típico de oferta do ML (formato pós-scrapeML)
 const mlProduct = (over = {}) => ({
@@ -118,6 +130,97 @@ describe("passesAmazonFilters", () => {
     expect(affiliate.passesAmazonFilters(amzProduct({ price: 199 }), { ...AMZ_DEFAULTS, maxPrice: 150 })).toBe(false);
     expect(affiliate.passesAmazonFilters(amzProduct({ discount: 43 }), { ...AMZ_DEFAULTS, maxDiscount: 90 })).toBe(true);
     expect(affiliate.passesAmazonFilters(amzProduct({ discount: 95 }), { ...AMZ_DEFAULTS, maxDiscount: 90 })).toBe(false);
+  });
+});
+
+describe("passesShopeeFilters", () => {
+  it("defaults (tudo 0) deixam passar qualquer node — inclusive sem rating/vendas/desconto", () => {
+    expect(affiliate.passesShopeeFilters(shopeeNode(), SHOPEE_DEFAULTS)).toBe(true);
+    expect(affiliate.passesShopeeFilters(
+      shopeeNode({ ratingStar: 0, sales: 0, priceDiscountRate: 0, commissionRate: 0 }), SHOPEE_DEFAULTS
+    )).toBe(true);
+  });
+
+  it("minRating corta abaixo do mínimo", () => {
+    const f = { ...SHOPEE_DEFAULTS, minRating: 4.5 };
+    expect(affiliate.passesShopeeFilters(shopeeNode({ ratingStar: 4.6 }), f)).toBe(true);
+    expect(affiliate.passesShopeeFilters(shopeeNode({ ratingStar: 4.0 }), f)).toBe(false);
+  });
+
+  it("minSales corta abaixo do mínimo", () => {
+    const f = { ...SHOPEE_DEFAULTS, minSales: 1000 };
+    expect(affiliate.passesShopeeFilters(shopeeNode({ sales: 1200 }), f)).toBe(true);
+    expect(affiliate.passesShopeeFilters(shopeeNode({ sales: 50 }), f)).toBe(false);
+  });
+
+  it("minPrice e maxPrice delimitam a faixa", () => {
+    expect(affiliate.passesShopeeFilters(shopeeNode({ price: 99.9 }), { ...SHOPEE_DEFAULTS, minPrice: 150 })).toBe(false);
+    expect(affiliate.passesShopeeFilters(shopeeNode({ price: 99.9 }), { ...SHOPEE_DEFAULTS, minPrice: 50 })).toBe(true);
+    expect(affiliate.passesShopeeFilters(shopeeNode({ price: 300 }), { ...SHOPEE_DEFAULTS, maxPrice: 200 })).toBe(false);
+    expect(affiliate.passesShopeeFilters(shopeeNode({ price: 100 }), { ...SHOPEE_DEFAULTS, maxPrice: 200 })).toBe(true);
+  });
+
+  it("minCommissionRate corta comissão baixa (fração 0..1)", () => {
+    const f = { ...SHOPEE_DEFAULTS, minCommissionRate: 0.05 };
+    expect(affiliate.passesShopeeFilters(shopeeNode({ commissionRate: 0.08 }), f)).toBe(true);
+    expect(affiliate.passesShopeeFilters(shopeeNode({ commissionRate: 0.02 }), f)).toBe(false);
+  });
+
+  it("maxDiscount corta '99% off' fake mas não corta item sem desconto", () => {
+    const f = { ...SHOPEE_DEFAULTS, maxDiscount: 95 };
+    expect(affiliate.passesShopeeFilters(shopeeNode({ priceDiscountRate: 40 }), f)).toBe(true);
+    expect(affiliate.passesShopeeFilters(shopeeNode({ priceDiscountRate: 99 }), f)).toBe(false);
+    expect(affiliate.passesShopeeFilters(shopeeNode({ priceDiscountRate: 0 }), f)).toBe(true);
+  });
+
+  it("minDiscount: só deixa passar itens em promoção (corta desconto 0)", () => {
+    const f = { ...SHOPEE_DEFAULTS, minDiscount: 10 };
+    expect(affiliate.passesShopeeFilters(shopeeNode({ priceDiscountRate: 40 }), f)).toBe(true);
+    expect(affiliate.passesShopeeFilters(shopeeNode({ priceDiscountRate: 10 }), f)).toBe(true);
+    expect(affiliate.passesShopeeFilters(shopeeNode({ priceDiscountRate: 5 }), f)).toBe(false);
+    // O caso de uso principal: minDiscount > 0 derruba item sem desconto.
+    expect(affiliate.passesShopeeFilters(shopeeNode({ priceDiscountRate: 0 }), { ...SHOPEE_DEFAULTS, minDiscount: 1 })).toBe(false);
+  });
+
+  it("combina filtros: precisa passar em todos", () => {
+    const f = { minRating: 4.5, minSales: 100, minPrice: 20, maxPrice: 500, minCommissionRate: 0.05, maxDiscount: 95, minDiscount: 10 };
+    expect(affiliate.passesShopeeFilters(shopeeNode(), f)).toBe(true);
+    expect(affiliate.passesShopeeFilters(shopeeNode({ priceDiscountRate: 0 }), f)).toBe(false);
+    expect(affiliate.passesShopeeFilters(shopeeNode({ commissionRate: 0.01 }), f)).toBe(false);
+  });
+});
+
+describe("writeShopeeScraperFilters / readShopeeScraperFilters", () => {
+  it("persiste minDiscount e volta no read", () => {
+    affiliate.writeShopeeScraperFilters({ minDiscount: 15 });
+    expect(affiliate.readShopeeScraperFilters().minDiscount).toBe(15);
+  });
+
+  it("listType aceita 0/1/2", () => {
+    expect(affiliate.writeShopeeScraperFilters({ listType: 2 }).listType).toBe(2);
+    expect(affiliate.writeShopeeScraperFilters({ listType: 1 }).listType).toBe(1);
+    expect(affiliate.writeShopeeScraperFilters({ listType: 0 }).listType).toBe(0);
+  });
+
+  it("listType inválido NÃO sobrescreve o valor atual (whitelist)", () => {
+    affiliate.writeShopeeScraperFilters({ listType: 2 });
+    expect(affiliate.writeShopeeScraperFilters({ listType: 3 }).listType).toBe(2);
+    expect(affiliate.writeShopeeScraperFilters({ listType: "x" }).listType).toBe(2);
+    expect(affiliate.writeShopeeScraperFilters({ listType: -1 }).listType).toBe(2);
+  });
+
+  it("clampa minDiscount em 100 e converte comissão '5' → 0.05", () => {
+    const saved = affiliate.writeShopeeScraperFilters({ minDiscount: 150, minCommissionRate: 5 });
+    expect(saved.minDiscount).toBe(100);
+    expect(saved.minCommissionRate).toBe(0.05);
+  });
+
+  it("read mescla defaults: config sem os campos novos retorna minDiscount:0 e listType:0", () => {
+    const f = affiliate.readShopeeScraperFilters();
+    expect(f).toHaveProperty("minDiscount");
+    expect(f).toHaveProperty("listType");
+    expect(SHOPEE_DEFAULTS.minDiscount).toBe(0);
+    expect(SHOPEE_DEFAULTS.listType).toBe(0);
   });
 });
 

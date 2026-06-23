@@ -15,6 +15,8 @@ const SHOPEE_FILTERS_DEFAULTS = {
   maxPrice: 0,            // 0 = sem teto
   minCommissionRate: 0,   // 0.05 = 5%. 0 = sem filtro
   maxDiscount: 0,         // % máximo. Recomendado: 95 (corta "99% off" fake). 0 = sem filtro
+  minDiscount: 0,         // % mínimo. >0 = só itens em promoção. 0 = sem filtro
+  listType: 0,            // pré-seleção Shopee: 0=Recomendados, 1=Maior comissão, 2=Top performance
 };
 
 // Config persistida POR USUÁRIO via affiliate-store. Schema do `raw`:
@@ -395,9 +397,9 @@ function buildShopeeShortLinkPayload(originUrl) {
   return JSON.stringify({ query });
 }
 
-function buildShopeeProductOfferPayload({ keyword, page = 1, limit = 50, sortType = 4 }) {
+function buildShopeeProductOfferPayload({ keyword, page = 1, limit = 50, sortType = 4, listType = 0 }) {
   const safe = String(keyword || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-  const query = `query{productOfferV2(keyword:"${safe}",sortType:${Number(sortType)},page:${Number(page)},limit:${Number(limit)}){nodes{itemId shopId productName productLink offerLink imageUrl price priceMin priceMax priceDiscountRate sales commissionRate ratingStar productCatIds} pageInfo{page limit hasNextPage}}}`;
+  const query = `query{productOfferV2(keyword:"${safe}",listType:${Number(listType)},sortType:${Number(sortType)},page:${Number(page)},limit:${Number(limit)}){nodes{itemId shopId productName productLink offerLink imageUrl price priceMin priceMax priceDiscountRate sales commissionRate ratingStar productCatIds} pageInfo{page limit hasNextPage}}}`;
   return JSON.stringify({ query });
 }
 
@@ -590,10 +592,14 @@ function writeShopeeScraperFilters(patch) {
     maxPrice:          num(patch?.maxPrice,          cur.maxPrice),
     minCommissionRate: num(patch?.minCommissionRate, cur.minCommissionRate),
     maxDiscount:       num(patch?.maxDiscount,       cur.maxDiscount),
+    minDiscount:       num(patch?.minDiscount,       cur.minDiscount),
+    // listType é escolha discreta (0/1/2), não número livre: valida por whitelist.
+    listType:          [0, 1, 2].includes(Number(patch?.listType)) ? Number(patch.listType) : cur.listType,
   };
   // Validações de sanidade
   if (next.minRating > 5) next.minRating = 5;
   if (next.maxDiscount > 100) next.maxDiscount = 100;
+  if (next.minDiscount > 100) next.minDiscount = 100;
   if (next.minCommissionRate > 1) next.minCommissionRate = next.minCommissionRate / 100; // aceita "5" → 0.05
   appConfig.set(SHOPEE_FILTERS_KEY, next);
   return next;
@@ -615,6 +621,7 @@ function passesShopeeFilters(node, filters = null) {
   if (f.maxPrice > 0 && price > f.maxPrice) return false;
   if (f.minCommissionRate > 0 && commission < f.minCommissionRate) return false;
   if (f.maxDiscount > 0 && discount > f.maxDiscount) return false;
+  if (f.minDiscount > 0 && discount < f.minDiscount) return false;
   return true;
 }
 
@@ -696,7 +703,7 @@ function getScraperShopeeCreds() {
 
 // Busca ofertas Shopee — usada pelo admin-scraper. Recebe { appId, appSecret }
 // explicitamente (ou pega de getScraperShopeeCreds se ausente). Devolve { nodes, pageInfo }.
-async function fetchShopeeOffers({ keyword, page = 1, limit = 50, sortType = 4, creds } = {}) {
+async function fetchShopeeOffers({ keyword, page = 1, limit = 50, sortType = 4, listType = 0, creds } = {}) {
   if (!keyword) return { nodes: [], pageInfo: null };
   const c = creds || getScraperShopeeCreds();
   if (!c || !c.appId || !c.appSecret) {
@@ -705,7 +712,7 @@ async function fetchShopeeOffers({ keyword, page = 1, limit = 50, sortType = 4, 
   }
 
   const timestamp = Math.floor(Date.now() / 1000);
-  const payload = buildShopeeProductOfferPayload({ keyword, page, limit, sortType });
+  const payload = buildShopeeProductOfferPayload({ keyword, page, limit, sortType, listType });
   const authHeader = signShopeeRequest({ appId: c.appId, appSecret: c.appSecret, timestamp, payload });
 
   try {

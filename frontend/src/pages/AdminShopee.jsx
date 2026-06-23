@@ -251,6 +251,24 @@ function ShopeeFiltersSection() {
         Recomendados: rating ≥ 4.0, vendas ≥ 100, desconto máx 95% (corta "99% off" fake).
       </div>
 
+      <div style={{ marginBottom: 16 }}>
+        <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
+          Pré-seleção da Shopee
+        </label>
+        <select
+          value={filters.listType ?? 0}
+          onChange={e => set("listType", Number(e.target.value))}
+          style={{ width: "100%", maxWidth: 320, padding: "7px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }}
+        >
+          <option value={0}>Recomendados</option>
+          <option value={2}>Top performance</option>
+          <option value={1}>Maior comissão</option>
+        </select>
+        <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 3 }}>
+          Como a Shopee escolhe os produtos dentro de cada categoria.
+        </div>
+      </div>
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 }}>
         <NumField label="Rating mínimo (0 a 5)"   step="0.1" max="5"
           value={filters.minRating}        onChange={v => set("minRating", v)}
@@ -270,6 +288,9 @@ function ShopeeFiltersSection() {
         <NumField label="Desconto máximo (%)"     step="5" max="100"
           value={filters.maxDiscount}      onChange={v => set("maxDiscount", v)}
           hint="Ex: 95 — corta '99% off' fake" />
+        <NumField label="Desconto mínimo (%)"     step="5" max="100"
+          value={filters.minDiscount}      onChange={v => set("minDiscount", v)}
+          hint="Ex: 1 — só itens em promoção. 0 = qualquer um" />
       </div>
 
       {msg && (
@@ -287,7 +308,7 @@ function ShopeeFiltersSection() {
           {saving ? "Salvando..." : "Salvar filtros"}
         </button>
         <button
-          onClick={() => setFilters({ minRating: 4.0, minSales: 100, minPrice: 20, maxPrice: 0, minCommissionRate: 0.03, maxDiscount: 95 })}
+          onClick={() => setFilters(f => ({ ...f, minRating: 4.0, minSales: 100, minPrice: 20, maxPrice: 0, minCommissionRate: 0.03, maxDiscount: 95, minDiscount: 0 }))}
           disabled={saving}
           style={{ padding: "8px 16px", borderRadius: 8, background: "transparent", border: "0.5px solid var(--color-border-secondary)", fontSize: 13, cursor: "pointer" }}
         >

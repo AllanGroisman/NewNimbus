@@ -59,9 +59,11 @@ function BackupRow({ item, source, busy, onRestore, onPush, onDelete }) {
         <button disabled={isBusy} onClick={() => onRestore(item, source)} style={s.btn("success", isBusy)}>
           ▶ Restaurar
         </button>
-        <button disabled={isBusy} onClick={() => onDelete(item, source)} style={s.btn("danger", isBusy)}>
-          Excluir
-        </button>
+        {onDelete && (
+          <button disabled={isBusy} onClick={() => onDelete(item, source)} style={s.btn("danger", isBusy)}>
+            Excluir
+          </button>
+        )}
       </div>
     </div>
   );
@@ -71,6 +73,7 @@ export default function PageAdminBackups() {
   const [local,   setLocal]   = useState([]);
   const [remote,  setRemote]  = useState([]);
   const [b2ok,    setB2ok]    = useState(false);
+  const [remoteWritable, setRemoteWritable] = useState(true); // false no modo ngrok (só leitura)
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
   const [toast,   setToast]   = useState(null);
@@ -101,6 +104,7 @@ export default function PageAdminBackups() {
       const [loc, rem] = await Promise.all([adminBackupsLocal(), adminBackupsRemote()]);
       setLocal(loc.items || []);
       setB2ok(rem.ok !== false);
+      setRemoteWritable(rem.writable !== false);
       setRemote(rem.items || []);
     } catch (err) {
       setError(err.message);
@@ -253,7 +257,7 @@ export default function PageAdminBackups() {
                   source="local"
                   busy={busy}
                   onRestore={(i, src) => askConfirm("restore", i, src)}
-                  onPush={b2ok ? (i) => askConfirm("push", i, "local") : null}
+                  onPush={b2ok && remoteWritable ? (i) => askConfirm("push", i, "local") : null}
                   onDelete={(i, src) => askConfirm("delete", i, src)}
                 />
               ))
@@ -263,9 +267,20 @@ export default function PageAdminBackups() {
           {/* Coluna Remoto */}
           <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, overflow: "hidden" }}>
             <div style={{ padding: "12px 14px", borderBottom: "0.5px solid var(--color-border-tertiary)" }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>Backblaze</div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>
+                Backblaze
+                {b2ok && !remoteWritable && (
+                  <span style={{ fontSize: 10, fontWeight: 500, color: "#B45309", marginLeft: 8, padding: "1px 6px", borderRadius: 5, background: "#FEF3C7", border: "0.5px solid #FDE68A" }}>
+                    somente leitura
+                  </span>
+                )}
+              </div>
               <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>
-                {b2ok ? `${remote.length} arquivo${remote.length !== 1 ? "s" : ""} na nuvem` : "Não configurado — adicione BACKUP_S3_* no .env"}
+                {!b2ok
+                  ? "Não configurado — adicione BACKUP_S3_* no .env"
+                  : remoteWritable
+                    ? `${remote.length} arquivo${remote.length !== 1 ? "s" : ""} na nuvem`
+                    : `${remote.length} de produção · envio/exclusão desabilitados (modo ngrok)`}
               </div>
             </div>
             {!b2ok ? (
@@ -285,7 +300,7 @@ export default function PageAdminBackups() {
                   source="remote"
                   busy={busy}
                   onRestore={(i, src) => askConfirm("restore", i, src)}
-                  onDelete={(i, src) => askConfirm("delete", i, src)}
+                  onDelete={remoteWritable ? (i, src) => askConfirm("delete", i, src) : null}
                 />
               ))
             )}

@@ -10,7 +10,12 @@
     "test:unit": "vitest run unit",
     "test:integration": "vitest run integration",
     "test:journey": "vitest run journey",
-    "test:e2e": "playwright test"
+    "test:e2e:setup": "node e2e/global-setup.js",
+    "test:e2e": "npm run test:e2e:setup && playwright test",
+    "test:e2e:headed": "npm run test:e2e:setup && playwright test --headed",
+    "test:e2e:ui": "npm run test:e2e:setup && playwright test --ui",
+    "test:e2e:debug": "npm run test:e2e:setup && playwright test --debug",
+    "test:e2e:report": "playwright show-report"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",

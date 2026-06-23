@@ -42,6 +42,11 @@ const args = new Set(process.argv.slice(2));
 const LATEST_ONLY = args.has("--latest");
 const DRY = args.has("--dry-run");
 
+// BACKUP_REMOTE_AUTO_UPLOAD=0 desliga o upload automático sem desconfigurar o S3
+// (assim o restore/download remoto continua funcionando). Usado no modo ngrok pra
+// nunca subir dados de teste pra nuvem. Default: ligado.
+const AUTO_UPLOAD = !/^(0|false|no|off)$/i.test(String(process.env.BACKUP_REMOTE_AUTO_UPLOAD ?? "1").trim());
+
 const DUMP_RE = /^db-\d{8}-\d{6}\.sql\.gz$/;
 
 async function listLocalDumps() {
@@ -137,6 +142,10 @@ async function rotateRemote(client, all) {
 }
 
 async function main() {
+  if (!AUTO_UPLOAD) {
+    console.log("[backup-remote] upload automático desligado (BACKUP_REMOTE_AUTO_UPLOAD=0). Nada a subir.");
+    process.exit(0);
+  }
   if (!validateConfig()) process.exit(0);
 
   const local = await listLocalDumps();

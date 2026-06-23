@@ -1,9 +1,12 @@
-// Setup global do Playwright — cria + migra o DB de E2E antes de subir webServers.
-// Rodando 1x antes da suite inteira.
+// Setup do DB de E2E — cria + migra o nimbus_test_e2e.
+// IMPORTANTE: roda como passo SEPARADO (node e2e/global-setup.js) ANTES do
+// `playwright test`, porque o webServer do Playwright sobe o backend que precisa
+// do DB já existente — se isso ficasse no globalSetup, o backend tentaria conectar
+// antes do DB existir e crasharia. Os scripts test:e2e* encadeiam este arquivo.
 
 import { execSync } from "child_process";
 import path from "path";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -49,4 +52,11 @@ export default async function globalSetup() {
   });
 
   console.log(`[e2e:setup] DB ${DB_NAME} pronto (exists=${exists})`);
+}
+
+// Permite rodar direto: `node e2e/global-setup.js` (usado pelos scripts test:e2e*).
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  globalSetup()
+    .then(() => process.exit(0))
+    .catch((err) => { console.error("[e2e:setup] falhou:", err.message); process.exit(1); });
 }

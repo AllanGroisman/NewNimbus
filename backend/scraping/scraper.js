@@ -456,6 +456,7 @@ async function scrapeShopee({ category, limit = 50 } = {}) {
       page,
       limit: pageSize,
       sortType: 4,  // 4 = maior desconto
+      listType: filters.listType,  // pré-seleção Shopee (Recomendados/Top performance/Maior comissão)
     });
     if (!nodes.length) break;
     for (const n of nodes) {

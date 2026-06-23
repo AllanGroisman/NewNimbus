@@ -14,10 +14,24 @@ const {
   DeleteObjectCommand,
 } = require("@aws-sdk/client-s3");
 
+const { mode } = require("../config/loadEnv");
+
 const BACKUPS_DIR = path.join(__dirname, "..", "backups");
 const CONTAINER   = process.env.POSTGRES_CONTAINER || "nimbus-postgres";
 const PG_USER     = process.env.POSTGRES_USER      || "nimbus";
 const PG_DB       = process.env.POSTGRES_DB        || "nimbus";
+
+// No modo ngrok os prefixos S3 apontam pros backups de PRODUÇÃO (nimbus/) só pra
+// LEITURA/restore — testar com dados reais. Bloqueamos qualquer ESCRITA no remoto
+// (upload e delete) pra o ambiente de testes nunca poluir nem apagar os snapshots
+// de produção. Em produção (mode=prod) tudo é permitido normalmente.
+const REMOTE_WRITE_ALLOWED = mode !== "ngrok";
+
+function assertRemoteWriteAllowed() {
+  if (!REMOTE_WRITE_ALLOWED) {
+    throw new Error("Escrita no backup remoto desabilitada no modo ngrok (protege os backups de produção). Envie/exclua na nuvem pelo modo produção.");
+  }
+}
 
 const s3cfg = {
   endpoint:        process.env.BACKUP_S3_ENDPOINT || undefined,
@@ -106,10 +120,11 @@ async function listRemote() {
     .filter(o => /db-\d{8}-\d{6}\.sql\.gz$/.test(o.Key))
     .sort((a, b) => b.Key.localeCompare(a.Key))
     .map(o => ({ name: o.Key.replace(s3cfg.prefix, ""), size: o.Size, createdAt: o.LastModified?.toISOString() }));
-  return { ok: true, items };
+  return { ok: true, items, writable: REMOTE_WRITE_ALLOWED };
 }
 
 async function uploadToRemote(filename) {
+  assertRemoteWriteAllowed();
   if (!B2_OK) throw new Error("Backblaze não configurado");
   if (!/^db-\d{8}-\d{6}\.sql\.gz$/.test(filename)) throw new Error("Arquivo inválido");
   const filePath = path.join(BACKUPS_DIR, filename);
@@ -128,6 +143,7 @@ async function uploadToRemote(filename) {
 }
 
 async function deleteRemote(filename) {
+  assertRemoteWriteAllowed();
   if (!B2_OK) throw new Error("Backblaze não configurado");
   if (!/^db-\d{8}-\d{6}\.sql\.gz$/.test(filename)) throw new Error("Arquivo inválido");
   const client = makeClient();
@@ -195,6 +211,7 @@ async function restoreRemote(filename) {
 
 module.exports = {
   B2_OK,
+  REMOTE_WRITE_ALLOWED,
   listLocal,
   createLocalDump,
   deleteLocal,
