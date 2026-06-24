@@ -2,6 +2,45 @@ const puppeteer = require("puppeteer");
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// Amazon — confiabilidade contra CAPTCHA/anti-bot (intermitente).
+// A página de ofertas é re-tentada com backoff; o enriquecimento de rating
+// (abre 1 aba por produto) é limitado pra não disparar bloqueio em massa.
+const AMZ_MAX_ATTEMPTS = 3;
+const AMZ_BACKOFF_MS = [3000, 8000, 20000];   // por tentativa (1-based) + jitter
+const AMZ_ENRICH_DISPLAY = 40;                // sem filtro de rating/reviews: só p/ exibir
+const AMZ_ENRICH_MAX = 120;                   // com filtro de rating/reviews
+
+// Backoff com jitter ±30% pra a tentativa N (1-based). Pura → testável.
+function amzBackoffMs(attempt) {
+  const base = AMZ_BACKOFF_MS[Math.min(attempt - 1, AMZ_BACKOFF_MS.length - 1)];
+  const jitter = Math.floor(base * 0.3 * (Math.random() * 2 - 1));
+  return Math.max(0, base + jitter);
+}
+
+// Browser + page com stealth leve: reduz o fingerprint de automação que a Amazon
+// usa pra servir CAPTCHA. Reusado pela página de ofertas e pelo enriquecimento.
+function launchAmazonBrowser() {
+  return puppeteer.launch({
+    headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-blink-features=AutomationControlled",
+      "--disable-dev-shm-usage",
+    ],
+  });
+}
+
+async function applyAmazonStealth(page) {
+  await page.setUserAgent(UA);
+  await page.setExtraHTTPHeaders({ "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8" });
+  await page.setViewport({ width: 1366, height: 900 });
+  await page.evaluateOnNewDocument(() => {
+    Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+  });
+}
+
 // URLs de imagem da Amazon vêm com "size descriptor" tipo `._AC_UY218_QL90_.jpg`
 // que serve thumbnails minúsculos. Removendo o descriptor, a CDN serve a imagem
 // em resolução nativa (geralmente quadrada 1500×1500) — fica nítida no WhatsApp
@@ -54,77 +93,109 @@ function normalizeSource(s) {
 // Mercado Livre
 // ────────────────────────────────────────────────────────────────────────
 
+// Teto de segurança de páginas do ML (cada página de ofertas tem ~48 cards).
+const ML_MAX_PAGES = 25;
+
+// Colhe os .poly-card da página de ofertas já carregada/rolada → array de produtos.
+async function harvestMLCards(page, category) {
+  return await page.evaluate((cat) => {
+    const cards = document.querySelectorAll(".poly-card");
+    const results = [];
+    for (const card of cards) {
+      const titleEl = card.querySelector(".poly-component__title");
+      const imgEl = card.querySelector(".poly-component__picture");
+      const discountEl = card.querySelector(".poly-price__disc--pill, .poly-price__disc_label");
+      const originalPriceEl = card.querySelector(".andes-money-amount--previous .andes-money-amount__fraction");
+      const originalPriceCents = card.querySelector(".andes-money-amount--previous .andes-money-amount__cents");
+      const fractionEl = card.querySelector(".poly-price__current .andes-money-amount__fraction");
+      const centsEl = card.querySelector(".poly-price__current .andes-money-amount__cents");
+      const ratingEl = card.querySelector(".poly-reviews__rating");
+      const reviewsCountEl = card.querySelector(".poly-reviews__total");
+      const sellerEl = card.querySelector(".poly-component__seller");
+      const shippingEl = card.querySelector(".poly-component__shipping");
+      const soldEl = card.querySelector(".poly-component__sold");
+
+      if (!titleEl || !fractionEl) continue;
+
+      const fraction = fractionEl.textContent.trim().replace(/\./g, "");
+      const cents = centsEl ? centsEl.textContent.trim() : "00";
+      const price = parseFloat(`${fraction}.${cents}`);
+
+      let originalPrice = null;
+      if (originalPriceEl) {
+        const origFrac = originalPriceEl.textContent.trim().replace(/\./g, "");
+        const origCents = originalPriceCents ? originalPriceCents.textContent.trim() : "00";
+        originalPrice = parseFloat(`${origFrac}.${origCents}`);
+      }
+
+      let discountPct = null;
+      if (discountEl) {
+        const match = discountEl.textContent.match(/(\d+)%/);
+        if (match) discountPct = parseInt(match[1]);
+      }
+
+      results.push({
+        name: titleEl.textContent.trim(),
+        link: titleEl.href,
+        img: imgEl?.src || null,
+        price,
+        originalPrice,
+        discount: discountPct,
+        category: cat || null,
+        rating: ratingEl ? parseFloat(ratingEl.textContent.trim()) : null,
+        reviewsCount: reviewsCountEl ? reviewsCountEl.textContent.trim().replace(/[()]/g, "") : null,
+        seller: sellerEl ? sellerEl.textContent.trim().replace(/^Por\s+/, "") : null,
+        freeShipping: shippingEl ? shippingEl.textContent.toLowerCase().includes("grátis") : false,
+        sold: soldEl ? soldEl.textContent.trim() : null,
+        store: "Mercado Livre",
+        scrapedAt: new Date().toISOString(),
+      });
+    }
+    return results;
+  }, category || null);
+}
+
 async function scrapeML({ category, limit = 200 } = {}) {
   const cat = CATEGORIES[category];
-  const url = cat
+  const baseUrl = cat
     ? `https://www.mercadolivre.com.br/ofertas?category=${cat.mlCode}`
     : "https://www.mercadolivre.com.br/ofertas";
+  const tag = category || "geral";
 
   const browser = await puppeteer.launch({
     headless: true,
     args: ["--no-sandbox", "--disable-blink-features=AutomationControlled"],
   });
   try {
-    const page = await browser.newPage();
-    await page.setUserAgent(UA);
-    await page.goto(url, { waitUntil: "networkidle2", timeout: 30000 });
-    await autoScroll(page);
-
-    const raw = await page.evaluate((cat) => {
-      const cards = document.querySelectorAll(".poly-card");
-      const results = [];
-      for (const card of cards) {
-        const titleEl = card.querySelector(".poly-component__title");
-        const imgEl = card.querySelector(".poly-component__picture");
-        const discountEl = card.querySelector(".poly-price__disc--pill, .poly-price__disc_label");
-        const originalPriceEl = card.querySelector(".andes-money-amount--previous .andes-money-amount__fraction");
-        const originalPriceCents = card.querySelector(".andes-money-amount--previous .andes-money-amount__cents");
-        const fractionEl = card.querySelector(".poly-price__current .andes-money-amount__fraction");
-        const centsEl = card.querySelector(".poly-price__current .andes-money-amount__cents");
-        const ratingEl = card.querySelector(".poly-reviews__rating");
-        const reviewsCountEl = card.querySelector(".poly-reviews__total");
-        const sellerEl = card.querySelector(".poly-component__seller");
-        const shippingEl = card.querySelector(".poly-component__shipping");
-        const soldEl = card.querySelector(".poly-component__sold");
-
-        if (!titleEl || !fractionEl) continue;
-
-        const fraction = fractionEl.textContent.trim().replace(/\./g, "");
-        const cents = centsEl ? centsEl.textContent.trim() : "00";
-        const price = parseFloat(`${fraction}.${cents}`);
-
-        let originalPrice = null;
-        if (originalPriceEl) {
-          const origFrac = originalPriceEl.textContent.trim().replace(/\./g, "");
-          const origCents = originalPriceCents ? originalPriceCents.textContent.trim() : "00";
-          originalPrice = parseFloat(`${origFrac}.${origCents}`);
+    // A página de ofertas mostra ~48 cards por página; paginamos via &page=N
+    // (1-indexed; sem o param = página 1) acumulando e DEDUPLICANDO por link até
+    // bater o limite, esgotar as páginas ou atingir o teto de segurança.
+    const seen = new Set();
+    const raw = [];
+    for (let pageNum = 1; pageNum <= ML_MAX_PAGES && raw.length < limit; pageNum++) {
+      const url = pageNum === 1 ? baseUrl : `${baseUrl}&page=${pageNum}`;
+      const page = await browser.newPage();
+      try {
+        await page.setUserAgent(UA);
+        await page.goto(url, { waitUntil: "networkidle2", timeout: 30000 });
+        await autoScroll(page);
+        const cards = await harvestMLCards(page, category);
+        if (cards.length === 0) break;   // passou da última página
+        let added = 0;
+        for (const p of cards) {
+          if (!p.link || seen.has(p.link)) continue;
+          seen.add(p.link);
+          raw.push(p);
+          added++;
         }
-
-        let discountPct = null;
-        if (discountEl) {
-          const match = discountEl.textContent.match(/(\d+)%/);
-          if (match) discountPct = parseInt(match[1]);
-        }
-
-        results.push({
-          name: titleEl.textContent.trim(),
-          link: titleEl.href,
-          img: imgEl?.src || null,
-          price,
-          originalPrice,
-          discount: discountPct,
-          category: cat || null,
-          rating: ratingEl ? parseFloat(ratingEl.textContent.trim()) : null,
-          reviewsCount: reviewsCountEl ? reviewsCountEl.textContent.trim().replace(/[()]/g, "") : null,
-          seller: sellerEl ? sellerEl.textContent.trim().replace(/^Por\s+/, "") : null,
-          freeShipping: shippingEl ? shippingEl.textContent.toLowerCase().includes("grátis") : false,
-          sold: soldEl ? soldEl.textContent.trim() : null,
-          store: "Mercado Livre",
-          scrapedAt: new Date().toISOString(),
-        });
+        // Nenhum item novo nesta página → o ML começou a repetir, encerra.
+        if (added === 0) break;
+      } finally {
+        await page.close();
       }
-      return results;
-    }, category || null);
+      await sleep(300 + Math.floor(Math.random() * 400));   // educado entre páginas
+    }
+    console.log(`[scraper ML] ${tag}: ${raw.length} produtos coletados em até ${ML_MAX_PAGES} páginas`);
 
     // Filtros de qualidade do admin (rating/vendas/preço/desconto máximo).
     // Lazy require evita ciclo no boot. Defaults (tudo 0) = passa tudo.
@@ -132,7 +203,7 @@ async function scrapeML({ category, limit = 200 } = {}) {
     const filters = affiliate.readMLScraperFilters();
     const filtered = raw.filter(p => affiliate.passesMLFilters(p, filters));
     if (filtered.length < raw.length) {
-      console.log(`[scraper ML] ${category || "geral"}: ${raw.length} vistos, ${raw.length - filtered.length} filtrados, ${filtered.length} aprovados`);
+      console.log(`[scraper ML] ${tag}: ${raw.length} vistos, ${raw.length - filtered.length} filtrados, ${filtered.length} aprovados`);
     }
 
     filtered.sort((a, b) => (b.discount || 0) - (a.discount || 0));
@@ -159,18 +230,14 @@ function buildAmazonDealsUrl(deptId) {
   return `${base}?discounts-widget=${widget}`;
 }
 
-async function scrapeAmazon({ category, limit = 100 } = {}) {
-  const cat = CATEGORIES[category];
-  const url = buildAmazonDealsUrl(cat?.amzDept);
-
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-blink-features=AutomationControlled"],
-  });
+// Coleta UMA vez a página de ofertas da Amazon (launch → goto → harvest), com
+// browser próprio que é sempre fechado. Lança erro (CAPTCHA/layout) pra quem
+// chama decidir re-tentar. Não enriquece — isso roda depois, em browser à parte.
+async function harvestAmazonDeals(url, limit) {
+  const browser = await launchAmazonBrowser();
   try {
     const page = await browser.newPage();
-    await page.setUserAgent(UA);
-    await page.setExtraHTTPHeaders({ "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8" });
+    await applyAmazonStealth(page);
     await page.goto(url, { waitUntil: "networkidle2", timeout: 40000 });
 
     // Espera os cards de oferta aparecerem; se a Amazon servir CAPTCHA, não aparecem.
@@ -178,14 +245,14 @@ async function scrapeAmazon({ category, limit = 100 } = {}) {
       await page.waitForSelector('[data-testid="product-card"]', { timeout: 12000 });
     } catch {
       const isCaptcha = await page.evaluate(() => /enter the characters|captcha|robot|digite os caracteres/i.test(document.body?.innerText || ""));
-      if (isCaptcha) throw new Error("Amazon retornou CAPTCHA — tente mais tarde ou rode menos vezes.");
-      throw new Error("Cards de oferta Amazon não apareceram (layout pode ter mudado).");
+      if (isCaptcha) throw new Error("Amazon retornou CAPTCHA");
+      throw new Error("Cards de oferta Amazon não apareceram (layout pode ter mudado)");
     }
 
     // A grade de ofertas é VIRTUALIZADA: cards saem do DOM ao rolar. Por isso
     // colhemos incrementalmente — a cada scroll, recolhemos os cards visíveis num
     // Map (dedup por ASIN) até bater o limite ou a página parar de crescer.
-    const raw = await page.evaluate(async (targetLimit) => {
+    return await page.evaluate(async (targetLimit) => {
       const parsePrice = (s) => {
         if (!s) return null;
         const m = String(s).replace(/\s+/g, "").match(/R\$([\d.]+)(?:,(\d{1,2}))?/i);
@@ -242,50 +309,90 @@ async function scrapeAmazon({ category, limit = 100 } = {}) {
       harvest();
       return [...seen.values()];
     }, limit);
-
-    // Sobe a resolução das imagens (a Amazon serve thumbnail minúsculo no card).
-    for (const p of raw) {
-      p.img = upgradeAmazonImageUrl(p.img);
-      p.category = category || null;
-      p.rating = null;        // preenchido no enriquecimento (página de oferta não expõe)
-      p.reviewsCount = null;  // idem
-      p.seller = null;
-      p.freeShipping = false;
-      p.sold = null;
-      p.store = "Amazon";
-      p.scrapedAt = new Date().toISOString();
-    }
-
-    const affiliate = require("./affiliate");
-    const cfg = affiliate.readAmazonScraperFilters();
-
-    // 1) Filtro barato com dados do próprio card (preço/desconto). rating/reviews
-    //    ainda ausentes → passesAmazonFilters não corta por eles aqui.
-    let pool = raw.filter(p => affiliate.passesAmazonFilters(p, cfg));
-    pool.sort((a, b) => (b.discount || 0) - (a.discount || 0));
-
-    // 2) Enriquece rating/reviews abrindo a página de cada produto (reusa o browser).
-    //    Tolera CAPTCHA/timeout: o produto fica sem rating e segue no catálogo.
-    await enrichAmazonRatings(pool, browser, category);
-
-    // 3) Reaplica os filtros — agora minRating/minReviews valem pra quem foi enriquecido.
-    const kept = pool.filter(p => affiliate.passesAmazonFilters(p, cfg));
-    if (kept.length < pool.length) {
-      console.log(`[scraper Amazon] ${category || "geral"}: ${pool.length} ofertas, ${pool.length - kept.length} cortadas por rating/reviews, ${kept.length} aprovadas`);
-    }
-
-    kept.sort((a, b) => (b.discount || 0) - (a.discount || 0));
-    return kept.slice(0, limit);
   } finally {
     await browser.close();
   }
 }
 
+async function scrapeAmazon({ category, limit = 100 } = {}) {
+  const cat = CATEGORIES[category];
+  const url = buildAmazonDealsUrl(cat?.amzDept);
+  const tag = category || "geral";
+
+  // Jitter inicial: ML/Shopee/Amazon disparam em paralelo (scrapeOfertas). Um
+  // pequeno atraso desincroniza a batida na Amazon e reduz a chance de CAPTCHA.
+  await sleep(500 + Math.floor(Math.random() * 2500));
+
+  // 1) Coleta a página de ofertas com retry + backoff — um CAPTCHA não zera mais
+  //    a categoria inteira: tenta de novo com browser novo após esperar.
+  let raw = [];
+  for (let attempt = 1; attempt <= AMZ_MAX_ATTEMPTS; attempt++) {
+    try {
+      raw = await harvestAmazonDeals(url, limit);
+      break;
+    } catch (err) {
+      const last = attempt >= AMZ_MAX_ATTEMPTS;
+      console.warn(`[scraper Amazon] ${tag}: tentativa ${attempt}/${AMZ_MAX_ATTEMPTS} falhou (${err.message})${last ? " — desistindo" : ", aguardando backoff"}`);
+      if (last) return [];
+      await sleep(amzBackoffMs(attempt));
+    }
+  }
+  if (!raw.length) return [];
+
+  // Sobe a resolução das imagens (a Amazon serve thumbnail minúsculo no card).
+  for (const p of raw) {
+    p.img = upgradeAmazonImageUrl(p.img);
+    p.category = category || null;
+    p.rating = null;        // preenchido no enriquecimento (página de oferta não expõe)
+    p.reviewsCount = null;  // idem
+    p.seller = null;
+    p.freeShipping = false;
+    p.sold = null;
+    p.store = "Amazon";
+    p.scrapedAt = new Date().toISOString();
+  }
+
+  const affiliate = require("./affiliate");
+  const cfg = affiliate.readAmazonScraperFilters();
+
+  // 1) Filtro barato com dados do próprio card (preço/desconto). rating/reviews
+  //    ainda ausentes → passesAmazonFilters não corta por eles aqui.
+  let pool = raw.filter(p => affiliate.passesAmazonFilters(p, cfg));
+  pool.sort((a, b) => (b.discount || 0) - (a.discount || 0));
+
+  // 2) Enriquece rating/reviews abrindo a página de cada produto — em browser
+  //    PRÓPRIO (fresco) e LIMITADO: abrir centenas de páginas é o que mais dispara
+  //    CAPTCHA. Só vale a pena quando há filtro de rating/reviews; sem filtro,
+  //    enriquece poucos só pra exibição. pool já vem ordenado por desconto, então
+  //    os enriquecidos são os mais relevantes (os que de fato vão pra fila).
+  const needsRatingData = cfg.minRating > 0 || cfg.minReviews > 0;
+  const enrichCap = needsRatingData ? AMZ_ENRICH_MAX : AMZ_ENRICH_DISPLAY;
+  const toEnrich = pool.slice(0, Math.min(pool.length, enrichCap));
+  if (toEnrich.length) {
+    const eBrowser = await launchAmazonBrowser();
+    try {
+      await enrichAmazonRatings(toEnrich, eBrowser, category);
+    } finally {
+      try { await eBrowser.close(); } catch {}
+    }
+  }
+
+  // 3) Reaplica os filtros — agora minRating/minReviews valem pra quem foi enriquecido.
+  const kept = pool.filter(p => affiliate.passesAmazonFilters(p, cfg));
+  if (kept.length < pool.length) {
+    console.log(`[scraper Amazon] ${tag}: ${pool.length} ofertas, ${pool.length - kept.length} cortadas por rating/reviews, ${kept.length} aprovadas`);
+  }
+
+  kept.sort((a, b) => (b.discount || 0) - (a.discount || 0));
+  return kept.slice(0, limit);
+}
+
 // Enriquece produtos da Amazon com rating + reviewsCount abrindo a página de cada um
-// (/dp/ASIN) no MESMO browser. A página de ofertas não traz esses dados; um fetch sem
-// browser é bloqueado por CAPTCHA, então precisa do navegador real (~5s/produto).
-// Concorrência baixa pra não parecer abuso. Disjuntor: após N CAPTCHAs/erros seguidos,
-// para de enriquecer o resto (ficam com rating null e seguem no catálogo).
+// (/dp/ASIN) num browser dedicado (passado pelo chamador). A página de ofertas não
+// traz esses dados; um fetch sem browser é bloqueado por CAPTCHA, então precisa do
+// navegador real (~5s/produto). Concorrência baixa pra não parecer abuso. Disjuntor:
+// após N CAPTCHAs/erros seguidos, para de enriquecer o resto (ficam com rating null
+// e seguem no catálogo). O nº de produtos já vem limitado por quem chama (scrapeAmazon).
 async function enrichAmazonRatings(products, browser, category, { concurrency = 3, maxConsecutiveFails = 6 } = {}) {
   if (!products.length) return;
   const queue = products.slice();
@@ -302,8 +409,7 @@ async function enrichAmazonRatings(products, browser, category, { concurrency = 
       let page;
       try {
         page = await browser.newPage();
-        await page.setUserAgent(UA);
-        await page.setExtraHTTPHeaders({ "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8" });
+        await applyAmazonStealth(page);
         await page.goto(p.link, { waitUntil: "domcontentloaded", timeout: 20000 });
         await new Promise(r => setTimeout(r, 800));
         const data = await page.evaluate(() => {
@@ -760,4 +866,4 @@ async function autoScroll(page) {
   await new Promise(r => setTimeout(r, 1000));
 }
 
-module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, CATEGORIES, STORES };
+module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, CATEGORIES, STORES };

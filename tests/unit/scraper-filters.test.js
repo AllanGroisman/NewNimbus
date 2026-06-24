@@ -245,3 +245,29 @@ describe("buildAmazonDealsUrl", () => {
     }
   });
 });
+
+describe("amzBackoffMs — retry da Amazon", () => {
+  // Bases: [3000, 8000, 20000] com jitter ±30%.
+  const inRange = (v, base) => v >= base * 0.7 - 1 && v <= base * 1.3 + 1;
+
+  it("respeita a base de cada tentativa dentro do jitter ±30%", () => {
+    for (let i = 0; i < 50; i++) {
+      expect(inRange(scraper.amzBackoffMs(1), 3000)).toBe(true);
+      expect(inRange(scraper.amzBackoffMs(2), 8000)).toBe(true);
+      expect(inRange(scraper.amzBackoffMs(3), 20000)).toBe(true);
+    }
+  });
+
+  it("tentativas além do array usam a última base (clamp)", () => {
+    for (let i = 0; i < 50; i++) {
+      expect(inRange(scraper.amzBackoffMs(4), 20000)).toBe(true);
+      expect(inRange(scraper.amzBackoffMs(99), 20000)).toBe(true);
+    }
+  });
+
+  it("nunca devolve negativo", () => {
+    for (let i = 0; i < 100; i++) {
+      expect(scraper.amzBackoffMs(1)).toBeGreaterThanOrEqual(0);
+    }
+  });
+});
