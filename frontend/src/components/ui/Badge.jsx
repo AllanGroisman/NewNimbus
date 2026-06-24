@@ -6,6 +6,10 @@ const colorMap = {
   teal: { bg: "#E1F5EE", text: "#0F6E56" },
   gray: { bg: "#F1EFE8", text: "#5F5E5A" },
   purple: { bg: "#EEEDFE", text: "#3C3489" },
+  rose: { bg: "#FCE7F0", text: "#9D2B5E" },
+  indigo: { bg: "#E7E9FB", text: "#34409A" },
+  cyan: { bg: "#DFF4F6", text: "#0E6E78" },
+  orange: { bg: "#FBE9DA", text: "#9A4A0B" },
 };
 
 export default function Badge({ color, children }) {

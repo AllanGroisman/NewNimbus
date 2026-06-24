@@ -27,6 +27,11 @@ const CATEGORIES = {
   eletronicos: { label: "Eletrônicos", mlCode: "MLB1051", amzDept: "16209063011", shopeeKeyword: "celular",         shopeeCatIds: [100013, 100644, 100535, 100010] },
   casa:        { label: "Casa",        mlCode: "MLB1574", amzDept: "16191001011", shopeeKeyword: "casa decoração",  shopeeCatIds: [100636] },
   beleza:      { label: "Beleza",      mlCode: "MLB1246", amzDept: "16194415011", shopeeKeyword: "beleza",          shopeeCatIds: [100630] },
+  brinquedos:  { label: "Brinquedos",  mlCode: "MLB1132", amzDept: "16194299011", shopeeKeyword: "brinquedo infantil" },
+  roupas:      { label: "Roupas",      mlCode: "MLB1430", amzDept: "17365812011", shopeeKeyword: "roupa",            shopeeCatIds: [100017, 100011] },
+  esportes:    { label: "Esportes e Fitness", mlCode: "MLB1276", amzDept: "17349396011", shopeeKeyword: "esporte fitness", shopeeCatIds: [100637] },
+  informatica: { label: "Informática", mlCode: "MLB1648", amzDept: "16339927011", shopeeKeyword: "notebook computador", shopeeCatIds: [100644] },
+  pet:         { label: "Pet Shop",    mlCode: "MLB1071", amzDept: "18991137011", shopeeKeyword: "pet cachorro gato", shopeeCatIds: [100631] },
 };
 
 // Lojas suportadas. id é o que vai em group.scraping.sources (após normalize).

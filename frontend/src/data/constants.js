@@ -24,6 +24,11 @@ export const CATEGORIES = {
   eletronicos: { label: "Eletrônicos", color: "purple", icon: "📱" },
   casa:        { label: "Casa",        color: "amber",  icon: "🏠" },
   beleza:      { label: "Beleza",      color: "green",  icon: "💄" },
+  brinquedos:  { label: "Brinquedos",  color: "red",    icon: "🧸" },
+  roupas:      { label: "Roupas",      color: "rose",   icon: "👕" },
+  esportes:    { label: "Esportes e Fitness", color: "cyan", icon: "⚽" },
+  informatica: { label: "Informática", color: "indigo", icon: "💻" },
+  pet:         { label: "Pet Shop",    color: "orange", icon: "🐾" },
 };
 
 export const categoryLabel = (id) => CATEGORIES[id]?.label || id;

@@ -83,7 +83,8 @@ async function main() {
 
   console.log("Mapa atual em scraper.js (CATEGORIES[*].shopeeCatIds):");
   console.log("  bebe: [100632] · gamer: [100634, 100644] · eletronicos: [100013, 100644, 100535, 100010]");
-  console.log("  casa: [100636] · beleza: [100630]");
+  console.log("  casa: [100636] · beleza: [100630] · roupas: [100017, 100011] · esportes: [100637]");
+  console.log("  informatica: [100644] · pet: [100631] · brinquedos: (keyword 'brinquedo infantil')");
 }
 
 async function tallyKeyword(affiliate, creds, keyword, pages) {

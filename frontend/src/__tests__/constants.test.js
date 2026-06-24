@@ -32,7 +32,7 @@ describe("Categories — lookup helpers", () => {
   });
 
   it("CATEGORIES é estável (snapshot rápido)", () => {
-    expect(Object.keys(CATEGORIES)).toEqual(["gamer", "bebe", "eletronicos", "casa", "beleza"]);
+    expect(Object.keys(CATEGORIES)).toEqual(["gamer", "bebe", "eletronicos", "casa", "beleza", "brinquedos", "roupas", "esportes", "informatica", "pet"]);
   });
 
   it("allSources contém as lojas suportadas", () => {
