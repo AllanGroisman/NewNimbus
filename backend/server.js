@@ -740,6 +740,35 @@ app.delete("/api/state/groups/:gid/pending/:pid", auth.requireAuth, async (req, 
   }
 });
 
+// Aprovar TODOS os pendentes de uma vez: move tudo pra queue numa única escrita.
+// Evita o race de disparar N aprovações em paralelo (cada uma fazia replace-all
+// do pending/queue, colidindo no unique [groupId, productKey]).
+app.post("/api/state/groups/:gid/pending/approve-all", auth.requireAuth, async (req, res) => {
+  try {
+    const groupId = isNaN(Number(req.params.gid)) ? req.params.gid : Number(req.params.gid);
+    const state = await storage.loadState(req.user.id);
+    const group = (state.groups || []).find(g => g.id === groupId);
+    if (!group) return res.status(404).json({ error: "Campanha não encontrada" });
+    const newQueue = [...(group.queue || []), ...(group.pending || [])];
+    await storage.updateGroupOps(req.user.id, groupId, { pending: [], queue: newQueue });
+    res.json({ ok: true, queueSize: newQueue.length, pendingSize: 0 });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Rejeitar TODOS os pendentes de uma vez: limpa o pending numa única escrita.
+app.delete("/api/state/groups/:gid/pending", auth.requireAuth, async (req, res) => {
+  try {
+    const groupId = isNaN(Number(req.params.gid)) ? req.params.gid : Number(req.params.gid);
+    const updated = await storage.updateGroupOps(req.user.id, groupId, { pending: [] });
+    if (!updated) return res.status(404).json({ error: "Campanha não encontrada" });
+    res.json({ ok: true, pendingSize: 0 });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // Limpa o histórico de envios da campanha (reseta cooldown — produtos podem voltar)
 app.delete("/api/state/groups/:gid/queue", auth.requireAuth, async (req, res) => {
   try {
@@ -777,7 +806,7 @@ app.post("/api/scraper/fetch-url", auth.requireAuth, async (req, res) => {
     if (!url || typeof url !== "string" || !url.trim()) {
       return res.status(400).json({ error: "URL obrigatória" });
     }
-    const data = await scrapeSingleProduct(url.trim());
+    const data = await scrapeSingleProduct(url.trim(), { userId: req.user.id });
     res.json(data);
   } catch (err) {
     console.error("[fetch-url]", err.message);

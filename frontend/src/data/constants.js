@@ -12,7 +12,7 @@ export const allSources = ["Mercado Livre", "Amazon", "Shopee"];
 // Se uma URL quebrar (produto sumiu), basta editar este arquivo.
 export const TEST_URLS = {
   ml:     "https://www.mercadolivre.com.br/echo-dot-5a-geraco-alto-falante-preto-amazon-bivolt-preto/p/MLB27190731",
-  amazon: "https://www.amazon.com.br/dp/B09B8V1LZ3",   // Echo Dot 5ª geração
+  amazon: "https://www.amazon.com.br/dp/B09B8VGCR8",   // Echo Dot 5ª geração
   shopee: "https://shopee.com.br/Fone-Bluetooth-i12-TWS-Inpods12-Sem-Fio-Para-iPhone-Android-Universal-i.355684441.21753556712",
 };
 
@@ -98,6 +98,28 @@ export const getGroupStats = (group, whatsappGroups = [], { affiliateConfigured 
 
 export const formatPrice = (v) =>
   v != null ? `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` : "";
+
+// Formata número grande compacto: 1234 -> "1,2 mil", 1500000 -> "1,5 mi".
+export function formatCompact(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v) || v <= 0) return null;
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1).replace(".", ",").replace(",0", "")} mi`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(1).replace(".", ",").replace(",0", "")} mil`;
+  return String(v);
+}
+
+// Normaliza "vendidos" para texto curto. As lojas guardam de jeitos diferentes:
+// ML traz `sold` (string, ex.: "+50 vendidos"); Shopee traz `soldCount` (número).
+export function soldText(product) {
+  if (product?.soldCount != null && Number(product.soldCount) > 0) {
+    return `${formatCompact(product.soldCount)} vendidos`;
+  }
+  if (product?.sold) {
+    const s = String(product.sold).trim();
+    return /vendid/i.test(s) ? s : `${s} vendidos`;
+  }
+  return null;
+}
 
 // Calcula o horário previsto de envio para cada item da fila, baseado nas
 // janelas, no interval e no lastSend. Retorna array de Date | null (null se

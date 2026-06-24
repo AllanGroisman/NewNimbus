@@ -14,8 +14,8 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 echo "=== Nimbus - stop ==="
 
 echo
-echo "[1/3] PM2 delete (backend, worker, backup)..."
-for proc in nimbus-backend nimbus-worker nimbus-backup-remote; do
+echo "[1/3] PM2 delete (backend, worker, backup, ngrok)..."
+for proc in nimbus-backend nimbus-worker nimbus-backup-remote nimbus-ngrok; do
   if pm2 describe "$proc" >/dev/null 2>&1; then
     pm2 delete "$proc"
     echo "  $proc removido."

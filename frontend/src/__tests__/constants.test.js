@@ -8,6 +8,7 @@ import {
   getGroupStats,
   CATEGORIES, allSources, sidebarItems,
   computeQueueETA, formatETA,
+  soldText, formatCompact,
 } from "../data/constants.js";
 
 describe("Categories — lookup helpers", () => {
@@ -39,6 +40,35 @@ describe("Categories — lookup helpers", () => {
     expect(allSources).toContain("Mercado Livre");
     expect(allSources).toContain("Amazon");
     expect(allSources).toContain("Shopee");
+  });
+});
+
+describe("soldText — vendidos por loja", () => {
+  it("Shopee: usa soldCount (número) e formata compacto", () => {
+    expect(soldText({ soldCount: 1234 })).toBe("1,2 mil vendidos");
+    expect(soldText({ soldCount: 50 })).toBe("50 vendidos");
+    expect(soldText({ soldCount: 2_000_000 })).toBe("2 mi vendidos");
+  });
+
+  it("ML: usa sold (string), preservando 'vendidos' quando já tem", () => {
+    expect(soldText({ sold: "+50 vendidos" })).toBe("+50 vendidos");
+    expect(soldText({ sold: "1.5 mil" })).toBe("1.5 mil vendidos");
+  });
+
+  it("soldCount tem prioridade sobre sold", () => {
+    expect(soldText({ soldCount: 100, sold: "+5 vendidos" })).toBe("100 vendidos");
+  });
+
+  it("retorna null quando não há dado de vendas", () => {
+    expect(soldText({})).toBe(null);
+    expect(soldText({ soldCount: 0 })).toBe(null);
+    expect(soldText(null)).toBe(null);
+  });
+
+  it("formatCompact ignora valores inválidos", () => {
+    expect(formatCompact(0)).toBe(null);
+    expect(formatCompact(-5)).toBe(null);
+    expect(formatCompact(999)).toBe("999");
   });
 });
 

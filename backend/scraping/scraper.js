@@ -721,32 +721,116 @@ function detectStore(url) {
   }
 }
 
-async function scrapeSingleProduct(url) {
-  if (!url || typeof url !== "string" || !url.trim()) {
-    throw new Error("URL inválida");
+// Deriva um nome aproximado do slug da URL (fallback p/ Shopee, cuja PDP é uma
+// SPA que não renderiza pra bot). Ex.: ".../Fone-Bluetooth-i12-i.123.456" →
+// "Fone Bluetooth i12". Pura → testável.
+function slugNameFromUrl(url) {
+  try {
+    const u = new URL(url);
+    let seg = u.pathname.split("/").filter(Boolean).pop() || "";
+    seg = seg.replace(/-i\.\d+\.\d+$/i, "");   // sufixo Shopee i.SHOPID.ITEMID
+    seg = seg.replace(/\.\w{2,5}$/, "");        // extensão eventual (.html)
+    const name = decodeURIComponent(seg).replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
+    return name || null;
+  } catch {
+    return null;
   }
-  const cleanUrl = url.trim();
-  const store = detectStore(cleanUrl);
+}
 
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-blink-features=AutomationControlled"],
-  });
+// Converte a string de cookie de sessão do afiliado ML (formato header
+// "k=v; k2=v2") em pares pro page.setCookie do domínio mercadolivre.com.br.
+function parseMLCookies(cookieStr) {
+  if (!cookieStr || typeof cookieStr !== "string") return [];
+  return cookieStr.split(";").map(s => s.trim()).filter(Boolean).map(pair => {
+    const i = pair.indexOf("=");
+    if (i < 0) return null;
+    return { name: pair.slice(0, i).trim(), value: pair.slice(i + 1).trim(), domain: ".mercadolivre.com.br", path: "/" };
+  }).filter(c => c && c.name);
+}
+
+// Detecta páginas de bloqueio anti-bot: login wall do ML (/gz/account-verification),
+// interstitial "Continuar comprando" e CAPTCHA da Amazon, e produto inexistente.
+// Retorna { blocked, reason, captcha?, interstitial? }.
+async function detectBlockPage(page, store) {
+  if (store === "Mercado Livre" && /\/gz\/account-verification/i.test(page.url())) {
+    return { blocked: true, reason: "Mercado Livre pediu login — verifique o cookie de afiliado nas Configurações." };
+  }
+  return page.evaluate((store) => {
+    const body = document.body?.innerText || "";
+    // O texto do muro às vezes vem no <title>/og:title (não no body) — junta tudo.
+    const title = document.title || "";
+    const og = document.querySelector('meta[property="og:title"]')?.content || "";
+    const hay = `${body}\n${title}\n${og}`;
+    if (store === "Amazon") {
+      if (/enter the characters|captcha|robot check|digite os caracteres/i.test(hay)) {
+        return { blocked: true, captcha: true, reason: "Amazon retornou CAPTCHA — tente daqui a alguns minutos." };
+      }
+      if (/continuar comprando|continue shopping/i.test(body) && !document.querySelector("#productTitle")) {
+        return { blocked: true, interstitial: true, reason: "Amazon mostrou tela intermediária (Continuar comprando)." };
+      }
+      if (/n[aã]o foi poss[ií]vel encontrar|couldn.t find that page|page not found/i.test(hay) && !document.querySelector("#productTitle")) {
+        return { blocked: true, reason: "Produto não encontrado na Amazon (o link pode estar quebrado)." };
+      }
+    }
+    if (store === "Mercado Livre") {
+      if (/acesse sua conta|para continuar, acesse/i.test(body) && !document.querySelector(".ui-pdp-title")) {
+        return { blocked: true, reason: "Mercado Livre pediu login — verifique o cookie de afiliado nas Configurações." };
+      }
+    }
+    return { blocked: false };
+  }, store);
+}
+
+// Uma tentativa de coleta: abre browser próprio (com stealth), navega, contorna
+// interstitials e extrai. Lança erro tipado (err.blocked/err.captcha) em bloqueio.
+async function harvestSingleProduct(cleanUrl, store, userId) {
+  const browser = await launchAmazonBrowser();
   try {
     const page = await browser.newPage();
-    await page.setUserAgent(UA);
-    await page.setExtraHTTPHeaders({ "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8" });
+    await applyAmazonStealth(page);
+
+    // ML: injeta o cookie de sessão do afiliado pra furar o /gz/account-verification.
+    if (store === "Mercado Livre" && userId != null) {
+      try {
+        const affiliate = require("./affiliate");
+        const { cookie } = affiliate.readMLConfig(userId);
+        const cookies = parseMLCookies(cookie);
+        if (cookies.length) await page.setCookie(...cookies);
+      } catch { /* segue sem cookie — detectBlockPage avisa se cair no login */ }
+    }
+
     await page.goto(cleanUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
     // Pequena espera pra conteúdo dinâmico (preço por JS é comum)
-    await new Promise(r => setTimeout(r, 1500));
+    await sleep(1500);
 
     // Em ML/Amazon, espera o seletor principal aparecer (com timeout curto)
     if (store === "Mercado Livre") {
       try { await page.waitForSelector(".ui-pdp-title, h1", { timeout: 5000 }); } catch {}
     } else if (store === "Amazon") {
+      // Tela "Continuar comprando": clica no botão e segue pra PDP real.
+      const pre = await detectBlockPage(page, store);
+      if (pre.interstitial) {
+        const clicked = await page.evaluate(() => {
+          const el = [...document.querySelectorAll("button, input[type=submit], a")]
+            .find(e => /continuar comprando|continue shopping/i.test(e.textContent || e.value || ""));
+          if (el) { el.click(); return true; }
+          return false;
+        });
+        if (clicked) {
+          try { await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }); } catch {}
+          await sleep(1200);
+        }
+      }
       try { await page.waitForSelector("#productTitle, h1#title", { timeout: 5000 }); } catch {}
-      const isCaptcha = await page.evaluate(() => /enter the characters|captcha|robot check/i.test(document.body?.innerText || ""));
-      if (isCaptcha) throw new Error("Amazon retornou CAPTCHA — tente daqui a alguns minutos.");
+    }
+
+    // Muro anti-bot (login/CAPTCHA/404) → erro claro em vez de devolver lixo.
+    const block = await detectBlockPage(page, store);
+    if (block.blocked) {
+      const err = new Error(block.reason);
+      err.blocked = true;
+      err.captcha = !!block.captcha;
+      throw err;
     }
 
     const data = await page.evaluate((store) => {
@@ -832,8 +916,12 @@ async function scrapeSingleProduct(url) {
       return { name, price, originalPrice, discount, img };
     }, store);
 
+    // Shopee: a PDP é SPA vazia pra bot — sem nome via DOM/OG, usa o slug da URL.
+    let name = data.name || null;
+    if (!name && store === "Shopee") name = slugNameFromUrl(cleanUrl);
+
     return {
-      name: data.name || null,
+      name: name || null,
       link: cleanUrl,
       price: data.price ?? null,
       originalPrice: data.originalPrice ?? null,
@@ -845,6 +933,29 @@ async function scrapeSingleProduct(url) {
   } finally {
     await browser.close();
   }
+}
+
+async function scrapeSingleProduct(url, { userId } = {}) {
+  if (!url || typeof url !== "string" || !url.trim()) {
+    throw new Error("URL inválida");
+  }
+  const cleanUrl = url.trim();
+  const store = detectStore(cleanUrl);
+
+  // Amazon serve CAPTCHA/interstitial de forma intermitente → re-tenta com backoff
+  // (browser novo a cada vez). ML/Shopee são determinísticos: 1 tentativa só.
+  const maxAttempts = store === "Amazon" ? AMZ_MAX_ATTEMPTS : 1;
+  let lastErr = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await harvestSingleProduct(cleanUrl, store, userId);
+    } catch (err) {
+      lastErr = err;
+      if (attempt >= maxAttempts) break;
+      await sleep(amzBackoffMs(attempt));
+    }
+  }
+  throw lastErr;
 }
 
 async function autoScroll(page) {
@@ -866,4 +977,4 @@ async function autoScroll(page) {
   await new Promise(r => setTimeout(r, 1000));
 }
 
-module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, CATEGORIES, STORES };
+module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, CATEGORIES, STORES };

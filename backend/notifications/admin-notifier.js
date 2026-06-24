@@ -8,6 +8,8 @@ const DEFAULT_CONFIG = {
   numberId: null,
   groupJid: null,
   groupName: null,
+  // "detailed" = totais + quebra por categoria/loja; "summary" = só totais.
+  scrapingDetail: "detailed",
   events: {
     scraping: true,
     errors: true,
@@ -33,6 +35,9 @@ function writeConfig(cfg) {
     events: { ...current.events, ...(cfg.events || {}) },
   };
   next.enabled = !!next.enabled;
+  if (next.scrapingDetail !== "summary" && next.scrapingDetail !== "detailed") {
+    next.scrapingDetail = "detailed";
+  }
   appConfig.set(CONFIG_KEY, next);
   return next;
 }
@@ -73,6 +78,7 @@ async function notifyScrapingResult(status) {
 
   const r = status.lastResult;
   const hasError = !!status.lastError;
+  const detailed = (cfg.scrapingDetail || "detailed") !== "summary";
   const lines = [];
 
   if (hasError) {
@@ -85,15 +91,16 @@ async function notifyScrapingResult(status) {
   lines.push(`⏱ Duração: ${formatDuration(status.lastDuration)}`);
 
   if (r) {
+    if (r.cancelled) lines.push("⛔ Execução cancelada (resultado parcial)");
     lines.push(`📦 +${r.inserted} novos · ${r.updated} atualizados · ${r.pruned || 0} removidos`);
     lines.push(`🗄 Total no catálogo: ${r.total} produtos`);
 
-    if (r.perCategory && Object.keys(r.perCategory).length > 0) {
+    if (detailed && r.perCategory && Object.keys(r.perCategory).length > 0) {
       lines.push("");
-      lines.push("*Por categoria:*");
+      lines.push("*Por categoria e loja:*");
       for (const [tag, info] of Object.entries(r.perCategory)) {
         if (info.ok) {
-          lines.push(`• ${tag}: +${info.inserted} novos ✅`);
+          lines.push(`• ${tag}: +${info.inserted} novos · ${info.updated} atualiz.`);
         } else {
           lines.push(`• ${tag}: ❌ ${info.error || "erro"}`);
         }

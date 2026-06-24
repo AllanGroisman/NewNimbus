@@ -1,3 +1,6 @@
+# Segredos extraídos manualmente (cookie de sessão ML etc.)
+cookie.md
+
 # Dependencies
 node_modules/
 **/node_modules/

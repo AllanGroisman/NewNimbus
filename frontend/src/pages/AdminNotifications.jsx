@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../data/constants";
+import { PRIMARY, PRIMARY_DARK } from "../data/constants";
 import Toggle from "../components/ui/Toggle";
 import {
   adminNotifConfig,
@@ -79,6 +79,10 @@ export default function PageAdminNotifications({ numbers = [] }) {
     setTestMsg(null);
     setError(null);
     try {
+      // O backend testa a config PERSISTIDA, não o estado local. Salva antes de
+      // testar pra a mensagem ir exatamente pro número/grupo que está na tela.
+      const r = await adminNotifSave(config);
+      setConfig(r.config);
       await adminNotifTest();
       setTestMsg("Mensagem de teste enviada!");
       setTimeout(() => setTestMsg(null), 4000);
@@ -122,7 +126,7 @@ export default function PageAdminNotifications({ numbers = [] }) {
             Liga ou desliga todos os envios sem apagar a configuração.
           </div>
         </div>
-        <Toggle checked={!!config.enabled} onChange={v => update({ enabled: v })} />
+        <Toggle value={!!config.enabled} onChange={v => update({ enabled: v })} />
       </div>
 
       {/* Sessão e grupo */}
@@ -139,7 +143,7 @@ export default function PageAdminNotifications({ numbers = [] }) {
               <div style={labelStyle}>Número / sessão</div>
               <select
                 value={config.numberId || ""}
-                onChange={e => update({ numberId: e.target.value, groupJid: null, groupName: null })}
+                onChange={e => { setGroups([]); update({ numberId: e.target.value, groupJid: null, groupName: null }); }}
                 style={inputStyle}
               >
                 <option value="">Selecione um número...</option>
@@ -212,11 +216,24 @@ export default function PageAdminNotifications({ numbers = [] }) {
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>{desc}</div>
             </div>
             <Toggle
-              checked={!!(config.events?.[key])}
+              value={!!(config.events?.[key])}
               onChange={v => updateEvent(key, v)}
             />
           </div>
         ))}
+        {config.events?.scraping && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={labelStyle}>Nível de detalhe do resumo do scraping</div>
+            <select
+              value={config.scrapingDetail || "detailed"}
+              onChange={e => update({ scrapingDetail: e.target.value })}
+              style={inputStyle}
+            >
+              <option value="detailed">Detalhado — totais + por categoria e loja</option>
+              <option value="summary">Resumo curto — só os totais</option>
+            </select>
+          </div>
+        )}
         <div style={{ color: "var(--color-text-secondary)", fontSize: 12, marginTop: -4 }}>
           Os eventos só são enviados quando as notificações estão ativas e o grupo está configurado.
         </div>

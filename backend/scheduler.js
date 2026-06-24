@@ -49,6 +49,23 @@ function cooldownMinutes(schedule) {
   return v * 60 * 24; // dias (default)
 }
 
+// Número grande compacto: 1234 -> "1,2 mil", 1500000 -> "1,5 mi".
+function formatCompact(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v) || v <= 0) return null;
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1).replace(".", ",").replace(",0", "")} mi`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(1).replace(".", ",").replace(",0", "")} mil`;
+  return String(v);
+}
+
+// "vendidos" pro template. Shopee usa soldCount (número); ML usa sold (string).
+// Sem dado → "" (campo opcional, não polui a mensagem com "—").
+function formatVendas(p) {
+  if (p?.soldCount != null && Number(p.soldCount) > 0) return `${formatCompact(p.soldCount)} vendidos`;
+  if (p?.sold) { const s = String(p.sold).trim(); return /vendid/i.test(s) ? s : `${s} vendidos`; }
+  return "";
+}
+
 function renderTemplate(template, p) {
   const fmt = v => v != null ? `R$ ${Number(v).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` : "—";
   return String(template || "")
@@ -57,6 +74,7 @@ function renderTemplate(template, p) {
     .replace(/\{preco_antigo\}/g, fmt(p.originalPrice))
     .replace(/\{desconto\}/g, p.discount ? `${p.discount}%` : "—")
     .replace(/\{loja\}/g, p.store || "")
+    .replace(/\{vendas\}/g, formatVendas(p))
     .replace(/\{link\}/g, p.link || "");
 }
 
@@ -242,6 +260,7 @@ async function refillQueue(userId, group) {
     rating: p.rating ?? null,
     reviewsCount: p.reviewsCount ?? null,
     sold: p.sold ?? null,
+    soldCount: p.soldCount ?? null,   // Shopee guarda o nº de vendas aqui (ML usa `sold`)
     freeShipping: p.freeShipping ?? false,
     seller: p.seller ?? null,
     addedAt: new Date().toISOString(),

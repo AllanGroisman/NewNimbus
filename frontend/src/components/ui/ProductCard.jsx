@@ -1,26 +1,5 @@
-import { PRIMARY, PRIMARY_DARK, formatPrice } from "../../data/constants";
+import { PRIMARY, PRIMARY_DARK, formatPrice, formatCompact, soldText } from "../../data/constants";
 import Badge from "./Badge";
-
-// Formata número grande compacto: 1234 -> "1,2 mil", 1500000 -> "1,5 mi"
-function formatCompact(n) {
-  const v = Number(n);
-  if (!Number.isFinite(v) || v <= 0) return null;
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1).replace(".", ",").replace(",0", "")} mi`;
-  if (v >= 1_000) return `${(v / 1_000).toFixed(1).replace(".", ",").replace(",0", "")} mil`;
-  return String(v);
-}
-
-// Normaliza "vendidos" para texto curto. Aceita string ("1.5mil vendidos") ou número (soldCount).
-function soldText(product) {
-  if (product.soldCount != null && Number(product.soldCount) > 0) {
-    return `${formatCompact(product.soldCount)} vendidos`;
-  }
-  if (product.sold) {
-    const s = String(product.sold).trim();
-    return /vendid/i.test(s) ? s : `${s} vendidos`;
-  }
-  return null;
-}
 
 function reviewsText(product) {
   if (product.reviewsCount == null) return null;

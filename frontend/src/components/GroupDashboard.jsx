@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
-import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, getGroupCategories, getGroupStats, computeQueueETA, formatETA, formatTimeBR, formatDateBR, isSameDayBR } from "../data/constants";
-import { createWAGroup, leaveWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupQueue, clearGroupHistory, approvePendingItem, rejectPendingItem, fetchUrlMetadata, manualAddToQueue } from "../data/api";
+import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, soldText, getGroupCategories, getGroupStats, computeQueueETA, formatETA, formatTimeBR, formatDateBR, isSameDayBR } from "../data/constants";
+import { createWAGroup, leaveWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupQueue, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue } from "../data/api";
 import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
 import BusyOverlay from "./ui/BusyOverlay";
 
@@ -10,6 +10,7 @@ const TEMPLATE_VARS = [
   { token: "{preco_antigo}", desc: "Preço original" },
   { token: "{desconto}", desc: "% de desconto" },
   { token: "{loja}", desc: "Nome da loja" },
+  { token: "{vendas}", desc: "Nº de vendas (quando houver)" },
   { token: "{link}", desc: "Link de compra" },
 ];
 
@@ -19,6 +20,7 @@ const TEMPLATE_PREVIEW_DATA = {
   preco_antigo: "R$ 2.499",
   desconto: "24%",
   loja: "Mercado Livre",
+  vendas: "1,2 mil vendidos",
   link: "https://merc.li/abc123",
 };
 
@@ -183,7 +185,7 @@ function QueueItemCard({ item, idx, eta, onRemove, onDragStart, onDragOver, onDr
           <QueueField label="Preço" value={fmtBR(item.price)} />
           <QueueField label="Preço antigo" value={fmtBR(item.originalPrice)} />
           <QueueField label="Desconto" value={discountStr} />
-          <QueueField label="Vendidos" value={item.sold} />
+          <QueueField label="Vendidos" value={soldText(item)} />
           <QueueField label="Avaliação" value={item.rating ? `★ ${item.rating}${item.reviewsCount ? ` (${item.reviewsCount})` : ""}` : null} />
           <QueueField label="Frete grátis" value={item.freeShipping ? "Sim" : null} />
           <QueueField label="Adicionado" value={addedAtStr} />
@@ -304,12 +306,17 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       }, { signal: ctrl.signal });
       const ops = await loadAppOps();
       const o = (ops.groups || []).find(g => g.id === group.id);
-      if (o) onUpdate(group.id, { queue: o.queue });
+      // Com auto-aprovação OFF, os itens vão pra `pending` (Aguardando revisão),
+      // não pra `queue` — então precisamos atualizar os dois.
+      if (o) onUpdate(group.id, { queue: o.queue, pending: o.pending });
       const parts = [];
       if (r.added > 0) parts.push(`+${r.added} novo${r.added !== 1 ? "s" : ""}`);
       if (r.removed > 0) parts.push(`-${r.removed} duplicado${r.removed !== 1 ? "s" : ""}`);
       if (parts.length === 0) parts.push("nada novo no catálogo que passe nos filtros");
-      setRefillMsg({ type: r.added > 0 ? "ok" : "warn", text: `${parts.join(", ")} · fila tem ${r.queueSize} item(ns)` });
+      const destino = r.target === "pending"
+        ? `${r.pendingSize} aguardando revisão`
+        : `fila tem ${r.queueSize} item(ns)`;
+      setRefillMsg({ type: r.added > 0 ? "ok" : "warn", text: `${parts.join(", ")} · ${destino}` });
       setTimeout(() => setRefillMsg(null), 5000);
     } catch (err) {
       // AbortError quando usuário cancela: mensagem amigável, sem alarme.
@@ -943,6 +950,31 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       await refreshOps();
     }
   };
+  // Ações em massa: uma única chamada atômica no backend (não dispara N requests
+  // em paralelo, que colidiam no replace-all do pending — unique [groupId, key]).
+  const approveAllProducts = async () => {
+    if (pending.length === 0) return;
+    setQueue(q => [...q, ...pending]);
+    setPending([]);
+    try {
+      await approveAllPending(group.id);
+      await refreshOps();
+    } catch (err) {
+      alert(`Erro ao adicionar todos à fila: ${err.message}`);
+      await refreshOps();
+    }
+  };
+  const rejectAllProducts = async () => {
+    if (pending.length === 0) return;
+    setPending([]);
+    try {
+      await rejectAllPending(group.id);
+      await refreshOps();
+    } catch (err) {
+      alert(`Erro ao rejeitar todos: ${err.message}`);
+      await refreshOps();
+    }
+  };
   const removeFromQueue = qid => setQueue(q => {
     const newQueue = q.filter(i => (i.id ?? i.key) !== qid);
     const times = computeSendTimes(newQueue.length);
@@ -1001,6 +1033,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const windowsDirty = stableJSON(sched?.windows) !== stableJSON(group.schedule?.windows);
   const manageDirty = groupInfo.name !== group.name
     || stableJSON(groupInfo.categories) !== stableJSON(getGroupCategories(group))
+    || stableJSON(scraping?.sources) !== stableJSON(group.scraping?.sources)
     || cooldownDirty;
   const scrapingDirty = stableJSON(scraping) !== stableJSON(group.scraping);
   const filtersDirty = stableJSON(scraping?.filters) !== stableJSON(group.scraping?.filters);
@@ -1022,7 +1055,8 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     { id: "manage", label: "Gerenciar" },
     { id: "messages", label: "Modelos Mensagens" },
     { id: "whatsapp", label: `Grupos (${stats.count})` },
-    { id: "queue", label: `Fila (${queue.length})`, dot: pending.length > 0 },
+    { id: "products", label: "Produtos", dot: pending.length > 0 },
+    { id: "queue", label: `Fila (${queue.length})` },
     { id: "schedule", label: "Janelas de envio" },
     { id: "history", label: "Histórico" },
   ];
@@ -1248,6 +1282,22 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 })}
               </div>
             </div>
+          </div>
+
+          <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+            <div style={{ fontWeight: 500, marginBottom: 4 }}>Fontes de busca</div>
+            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
+              Selecione as lojas onde a campanha vai procurar ofertas.
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {allSources.map(src => {
+                const active = scraping.sources.includes(src);
+                return <div key={src} onClick={() => handleToggleSource(src)} style={{ padding: "6px 14px", borderRadius: 8, border: `0.5px solid ${active ? PRIMARY : "var(--color-border-tertiary)"}`, background: active ? PRIMARY_LIGHT : "transparent", color: active ? PRIMARY_DARK : "var(--color-text-secondary)", fontSize: 13, cursor: "pointer", fontWeight: active ? 500 : 400 }}>{active ? "✓ " : ""}{src}</div>;
+              })}
+            </div>
+            {scraping.sources.length === 0 && (
+              <div style={{ marginTop: 10, fontSize: 11, color: "#A32D2D" }}>Selecione ao menos uma fonte para o scraping funcionar.</div>
+            )}
           </div>
 
           {/* Cooldown: movido da aba Janelas — é uma regra de produto, não de horário */}
@@ -1983,38 +2033,20 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         );
       })()}
 
-      {tab === "queue" && (
+      {tab === "products" && (
         <div>
           <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 20 }}>
-            <div className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-              <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-                <div style={{ fontWeight: 500, marginBottom: 4 }}>Fontes de busca</div>
-                <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
-                  Selecione as lojas onde a campanha vai procurar ofertas.
-                </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {allSources.map(src => {
-                    const active = scraping.sources.includes(src);
-                    return <div key={src} onClick={() => handleToggleSource(src)} style={{ padding: "6px 14px", borderRadius: 8, border: `0.5px solid ${active ? PRIMARY : "var(--color-border-tertiary)"}`, background: active ? PRIMARY_LIGHT : "transparent", color: active ? PRIMARY_DARK : "var(--color-text-secondary)", fontSize: 13, cursor: "pointer", fontWeight: active ? 500 : 400 }}>{active ? "✓ " : ""}{src}</div>;
-                  })}
-                </div>
-                {scraping.sources.length === 0 && (
-                  <div style={{ marginTop: 10, fontSize: 11, color: "#A32D2D" }}>Selecione ao menos uma fonte para o scraping funcionar.</div>
-                )}
-              </div>
-
-              <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 500, marginBottom: 4 }}>Auto-aprovação</div>
-                    <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
-                      {scraping.auto !== false
-                        ? "Produtos novos do scraping entram direto na fila e são enviados automaticamente."
-                        : "Produtos novos ficam aguardando revisão. Você precisa aprovar cada um antes do envio."}
-                    </div>
+            <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 500, marginBottom: 4 }}>Auto-aprovação</div>
+                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                    {scraping.auto !== false
+                      ? "Produtos novos do scraping entram direto na fila e são enviados automaticamente."
+                      : "Produtos novos ficam aguardando revisão. Você precisa aprovar cada um antes do envio."}
                   </div>
-                  <Toggle value={scraping.auto !== false} onChange={v => setScraping(s => ({ ...s, auto: v }))} />
                 </div>
+                <Toggle value={scraping.auto !== false} onChange={v => setScraping(s => ({ ...s, auto: v }))} />
               </div>
             </div>
 
@@ -2188,8 +2220,8 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                   <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>Produtos do scraping que precisam de aprovação</div>
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
-                  <button onClick={() => { [...pending].forEach(p => approveProduct(p.id ?? p.key)); }} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY_LIGHT, color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Aprovar todos</button>
-                  <button onClick={() => { [...pending].forEach(p => rejectProduct(p.id ?? p.key)); }} style={{ padding: "5px 12px", borderRadius: 7, background: "#FCEBEB", color: "#A32D2D", border: "0.5px solid #F7C1C1", fontSize: 12, cursor: "pointer" }}>Rejeitar todos</button>
+                  <button onClick={approveAllProducts} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY_LIGHT, color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Adicionar todos à fila</button>
+                  <button onClick={rejectAllProducts} style={{ padding: "5px 12px", borderRadius: 7, background: "#FCEBEB", color: "#A32D2D", border: "0.5px solid #F7C1C1", fontSize: 12, cursor: "pointer" }}>Rejeitar todos</button>
                 </div>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -2200,16 +2232,20 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                       key={pid}
                       product={p}
                       actions={<>
-                        <button onClick={() => approveProduct(pid)} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY_LIGHT, color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Aprovar</button>
+                        <button onClick={() => approveProduct(pid)} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY_LIGHT, color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Adicionar na fila</button>
                         <button onClick={() => rejectProduct(pid)} style={{ padding: "5px 10px", borderRadius: 7, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 12, cursor: "pointer" }}>Rejeitar</button>
                       </>}
                     />
                   );
                 })}
               </div>
-              <div style={{ margin: "20px 0 12px", borderTop: "0.5px solid var(--color-border-tertiary)" }} />
             </div>
           )}
+        </div>
+      )}
+
+      {tab === "queue" && (
+        <div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
             <div>
               <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 2 }}>Fila de envio</div>
@@ -2244,10 +2280,11 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Fila vazia</div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>
                 A fila é reabastecida automaticamente do catálogo nos horários de envio.
-                Use o botão abaixo pra puxar agora aplicando os filtros desta campanha.
+                Para adicionar produtos agora — buscar do catálogo ou colar um link —
+                use a aba <strong>Produtos</strong>.
               </div>
-              <button onClick={triggerRefill} disabled={refilling} style={{ padding: "8px 18px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: refilling ? "wait" : "pointer", fontWeight: 500, opacity: refilling ? 0.6 : 1 }}>
-                {refilling ? "⟳ Buscando..." : "↻ Buscar do catálogo agora"}
+              <button onClick={() => setTab("products")} style={{ padding: "8px 18px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>
+                Ir para Produtos
               </button>
             </div>
           ) : (() => {

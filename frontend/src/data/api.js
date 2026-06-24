@@ -127,6 +127,14 @@ export async function approvePendingItem(groupId, pendingId) {
 export async function rejectPendingItem(groupId, pendingId) {
   return http("DELETE", `/api/state/groups/${groupId}/pending/${encodeURIComponent(pendingId)}`);
 }
+// Move TODOS os pendentes pra queue numa única escrita (sem race de N requests)
+export async function approveAllPending(groupId) {
+  return http("POST", `/api/state/groups/${groupId}/pending/approve-all`);
+}
+// Remove TODOS os pendentes numa única escrita (rejeita todos)
+export async function rejectAllPending(groupId) {
+  return http("DELETE", `/api/state/groups/${groupId}/pending`);
+}
 
 // ─── Billing (Stripe) ──────────────────────────────────────────────────
 // Status atual: { planId, effectivePlan, status, currentPeriodEnd, daysLeftInTrial, limits, stripeEnabled }

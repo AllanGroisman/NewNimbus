@@ -271,3 +271,26 @@ describe("amzBackoffMs — retry da Amazon", () => {
     }
   });
 });
+
+describe("slugNameFromUrl — nome aproximado pela URL (fallback Shopee)", () => {
+  it("extrai e limpa o slug da Shopee, removendo o sufixo i.SHOPID.ITEMID", () => {
+    expect(scraper.slugNameFromUrl(
+      "https://shopee.com.br/Fone-Bluetooth-i12-TWS-Inpods12-Sem-Fio-i.355684441.21753556712"
+    )).toBe("Fone Bluetooth i12 TWS Inpods12 Sem Fio");
+  });
+
+  it("decodifica %20 e normaliza separadores", () => {
+    expect(scraper.slugNameFromUrl("https://loja.com/Caixa%20de%20Som_JBL-Go"))
+      .toBe("Caixa de Som JBL Go");
+  });
+
+  it("remove extensão de arquivo eventual", () => {
+    expect(scraper.slugNameFromUrl("https://loja.com/produto-legal.html"))
+      .toBe("produto legal");
+  });
+
+  it("retorna null pra URL inválida ou sem path", () => {
+    expect(scraper.slugNameFromUrl("não é url")).toBe(null);
+    expect(scraper.slugNameFromUrl("https://shopee.com.br/")).toBe(null);
+  });
+});
