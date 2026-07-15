@@ -1078,11 +1078,11 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const groupTabs = [
     { id: "overview", label: "Visão geral" },
     { id: "manage", label: "Gerenciar" },
-    { id: "messages", label: "Modelos Mensagens" },
     { id: "whatsapp", label: `Grupos (${stats.count})` },
-    { id: "products", label: "Produtos", dot: pending.length > 0 },
+    { id: "products", label: "Busca de Produtos", dot: pending.length > 0 },
     { id: "queue", label: `Fila (${queue.length})` },
     { id: "schedule", label: "Janelas de envio" },
+    { id: "messages", label: "Modelos Mensagens" },
     { id: "history", label: "Histórico" },
   ];
 
@@ -2288,10 +2288,10 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>
                 A fila é reabastecida automaticamente do catálogo nos horários de envio.
                 Para adicionar produtos agora — buscar do catálogo ou colar um link —
-                use a aba <strong>Produtos</strong>.
+                use a aba <strong>Busca de Produtos</strong>.
               </div>
               <button onClick={() => setTab("products")} style={{ padding: "8px 18px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>
-                Ir para Produtos
+                Ir para Busca de Produtos
               </button>
             </div>
           ) : (() => {
