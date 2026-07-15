@@ -130,6 +130,12 @@ export async function fetchUrlMetadata(url) {
 export async function manualAddToQueue(groupId, payload) {
   return http("POST", `/api/state/groups/${groupId}/manual-add`, payload || {});
 }
+// Persiste a fila reordenada/editada (drag-and-drop, remoção de item). A ordem
+// e a composição vivem numa tabela de ops que o save geral (PUT /api/state) não
+// grava — por isso a fila precisa desta rota dedicada pra sobreviver ao poll.
+export async function saveGroupQueue(groupId, queue) {
+  return http("PUT", `/api/state/groups/${groupId}/queue`, { queue });
+}
 // Limpa a fila de envios da campanha
 export async function clearGroupQueue(groupId) {
   return http("DELETE", `/api/state/groups/${groupId}/queue`);

@@ -1,9 +1,28 @@
 import { useState, useRef, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, soldText, getGroupCategories, getGroupStats, computeQueueETA, formatETA, formatTimeBR, formatDateBR, isSameDayBR } from "../data/constants";
-import { createWAGroup, leaveWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupQueue, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue } from "../data/api";
+import { createWAGroup, leaveWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupQueue, saveGroupQueue, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue } from "../data/api";
 import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
 import { useUnsavedGuard, useRequestNavigation } from "../data/navGuard";
 import BusyOverlay from "./ui/BusyOverlay";
+
+// Persiste a aba aberta por campanha (sobrevive ao F5). Mapa { [groupId]: tabId }
+// num único item de localStorage. Validado contra VALID_TABS pra não restaurar
+// uma aba que não existe mais (ex.: id renomeado/removido).
+const TAB_STORAGE_KEY = "nimbus:campaignTab";
+const VALID_TABS = ["overview", "manage", "whatsapp", "products", "queue", "schedule", "messages", "history"];
+function readSavedTab(groupId) {
+  try {
+    const tabId = JSON.parse(localStorage.getItem(TAB_STORAGE_KEY) || "{}")[groupId];
+    return VALID_TABS.includes(tabId) ? tabId : "overview";
+  } catch { return "overview"; }
+}
+function writeSavedTab(groupId, tabId) {
+  try {
+    const map = JSON.parse(localStorage.getItem(TAB_STORAGE_KEY) || "{}");
+    map[groupId] = tabId;
+    localStorage.setItem(TAB_STORAGE_KEY, JSON.stringify(map));
+  } catch { /* ignora (modo privado/quota) */ }
+}
 
 const TEMPLATE_VARS = [
   { token: "{produto}", desc: "Nome do produto" },
@@ -197,7 +216,9 @@ function QueueItemCard({ item, idx, eta, onRemove, onDragStart, onDragOver, onDr
 }
 
 export default function GroupDashboard({ group, numbers, whatsappGroups = [], affiliateConfigured = true, affiliateStatus = null, onBack, onUpdate, onDelete, onCreateWhatsappGroup, onDeleteWhatsappGroup, onUpdateWhatsappGroup, onGoToSettings, onGoToAffiliate, customTemplates = [], onAddCustomTemplate, onDeleteCustomTemplate, onUpdateCustomTemplate }) {
-  const [tab, setTab] = useState("overview");
+  const [tab, setTab] = useState(() => readSavedTab(group.id));
+  // Guarda a aba atual por campanha pra restaurar no F5.
+  useEffect(() => { writeSavedTab(group.id, tab); }, [group.id, tab]);
   const [sched, setSched] = useState(group.schedule);
   const [scraping, setScraping] = useState(group.scraping);
   const [queue, setQueue] = useState(group.queue);
@@ -979,13 +1000,33 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       await refreshOps();
     }
   };
-  const removeFromQueue = qid => setQueue(q => {
-    const newQueue = q.filter(i => (i.id ?? i.key) !== qid);
-    const times = computeSendTimes(newQueue.length);
-    return newQueue.map((item, i) => ({ ...item, sendAt: times[i] }));
-  });
+  // Persiste a nova ordem/composição da fila na tabela de ops do servidor.
+  // Sem isso o próximo poll (GET /api/state/ops, ordenado por position) reverteria
+  // a mudança local em segundos — a ordem da fila NÃO é gravada pelo save geral.
+  // Em falha, recarrega ops pra refletir o estado real (evita ficar "torto").
+  const persistQueue = async (next) => {
+    try {
+      await saveGroupQueue(group.id, next);
+    } catch (err) {
+      console.warn("[nimbus] falha ao salvar a fila:", err.message);
+      try {
+        const ops = await loadAppOps();
+        const o = (ops.groups || []).find(g => g.id === group.id);
+        if (o) onUpdate(group.id, { queue: o.queue, pending: o.pending });
+      } catch { /* ignora — próximo poll corrige */ }
+    }
+  };
 
-  // Reordenar a fila por drag-and-drop. Persiste via onUpdate pra sobreviver
+  const removeFromQueue = qid => {
+    const newQueue = queue.filter(i => (i.id ?? i.key) !== qid);
+    const times = computeSendTimes(newQueue.length);
+    const withTimes = newQueue.map((item, i) => ({ ...item, sendAt: times[i] }));
+    setQueue(withTimes);
+    onUpdate(group.id, { queue: withTimes });
+    persistQueue(withTimes);
+  };
+
+  // Reordenar a fila por drag-and-drop. Persiste via saveGroupQueue pra sobreviver
   // ao próximo polling de ops (que carrega o estado fresco do servidor).
   // Usa ref pro índice de origem porque setState pode não ter propagado entre
   // dragstart e drop em alguns navegadores.
@@ -1012,6 +1053,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     next.splice(dropIdx, 0, moved);
     setQueue(next);
     onUpdate(group.id, { queue: next });
+    persistQueue(next);
   };
 
   const save = () => { onUpdate(group.id, { schedule: sched, scraping, queue, pending, ...groupInfo }); setSaved(true); setTimeout(() => setSaved(false), 2000); };

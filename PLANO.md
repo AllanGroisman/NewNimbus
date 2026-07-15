@@ -2,7 +2,7 @@
     * ajustar validacao do token de auth (x)
     * Quando fizer alterações, se quiser mudar de aba -> Alerta para salvar alterações (x)
     * Dentro da campanha:
-        * alterar ordem das abas: Visão Geral - Gerencial - Buscar Produtos (alterar nome) - Fila - Janelas de envio - Modelos de Mensagens - Histórico ( )
+        * alterar ordem das abas: Visão Geral - Gerencial - Buscar Produtos (alterar nome) - Fila - Janelas de envio - Modelos de Mensagens - Histórico (x)
     * Visão Geral:
         * Melhorar as métricas: 
             * envios esta semana com números por dia; ( )
@@ -16,7 +16,7 @@
             - Fila de envio do ML ( )
     
     * Fila de Envio: 
-        * Troca de ordem não ta funcionando ( )
+        * Troca de ordem não ta funcionando (x)
 
 
 * NIMBUS (Whats) COMO SISTEMA ADMIN

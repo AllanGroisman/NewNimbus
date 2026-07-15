@@ -776,7 +776,26 @@ app.delete("/api/state/groups/:gid/pending", auth.requireAuth, async (req, res) 
   }
 });
 
-// Limpa o histórico de envios da campanha (reseta cooldown — produtos podem voltar)
+// Persiste a fila reordenada/editada pela UI (drag-and-drop, remoção de item).
+// A ordem e a composição da fila vivem na tabela de ops (groupQueueItem.position),
+// que o PUT /api/state (saveState) NÃO grava — sem esta rota o poll de ops
+// (GET /api/state/ops, ordenado por position asc) reverteria qualquer mudança
+// local em segundos. updateGroupOps faz replace-all regravando as posições na
+// ordem do array recebido.
+app.put("/api/state/groups/:gid/queue", auth.requireAuth, async (req, res) => {
+  try {
+    const groupId = isNaN(Number(req.params.gid)) ? req.params.gid : Number(req.params.gid);
+    const queue = Array.isArray(req.body?.queue) ? req.body.queue : null;
+    if (!queue) return res.status(400).json({ error: "queue deve ser uma lista" });
+    const updated = await storage.updateGroupOps(req.user.id, groupId, { queue });
+    if (!updated) return res.status(404).json({ error: "Campanha não encontrada" });
+    res.json({ ok: true, queue: updated.queue });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Limpa a fila de envios da campanha
 app.delete("/api/state/groups/:gid/queue", auth.requireAuth, async (req, res) => {
   try {
     const groupId = isNaN(Number(req.params.gid)) ? req.params.gid : Number(req.params.gid);
