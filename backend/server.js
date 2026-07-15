@@ -399,6 +399,13 @@ app.get("/api/auth/me", auth.requireAuth, (req, res) => {
   res.json({ user: req.user });
 });
 
+// Renova o token de sessão (sliding session por inatividade). O frontend chama
+// isso enquanto há atividade do usuário — com throttle — para deslizar a janela.
+// Se o usuário ficar ocioso, para de renovar e o token vence sozinho.
+app.post("/api/auth/refresh", auth.requireAuth, (req, res) => {
+  res.json({ token: auth.reissueToken(req.user) });
+});
+
 app.patch("/api/auth/me", auth.requireAuth, async (req, res) => {
   try {
     const user = await auth.updateProfile(req.user.id, req.body || {});

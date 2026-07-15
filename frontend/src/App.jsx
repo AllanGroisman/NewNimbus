@@ -9,7 +9,7 @@ const DEFAULT_SETTINGS = {
   sources: allSources,
   theme: "auto",
 };
-import { authMe, authLogout, loadAppState, saveAppState, loadAppOps, getToken, getAffiliateStatus, billingMe } from "./data/api";
+import { authMe, authLogout, authRefresh, loadAppState, saveAppState, loadAppOps, getToken, clearToken, getLastActivity, setLastActivity, IDLE_TIMEOUT_MS, getAffiliateStatus, billingMe } from "./data/api";
 import Sidebar from "./components/Sidebar";
 import GroupDashboard from "./components/GroupDashboard";
 import PageDashboard from "./pages/Dashboard";
@@ -86,6 +86,15 @@ export default function App() {
     try { savedNav = JSON.parse(localStorage.getItem(NAV_STORAGE_KEY) || "{}"); } catch { /* ignora */ }
     async function bootstrap() {
       if (!getToken()) { setBootstrapping(false); return; }
+      // Inatividade: se a última atividade foi há mais que o timeout, a sessão
+      // expirou enquanto a aba esteve fechada — cai direto no login sem validar.
+      const last = getLastActivity();
+      if (last && Date.now() - last > IDLE_TIMEOUT_MS) {
+        clearToken();
+        setBootstrapping(false);
+        return;
+      }
+      setLastActivity(Date.now());
       try {
         const me = await authMe();
         if (cancelled) return;
@@ -130,6 +139,37 @@ export default function App() {
     window.addEventListener("nimbus:unauthorized", onUnauth);
     return () => { cancelled = true; window.removeEventListener("nimbus:unauthorized", onUnauth); };
   }, []);
+
+  // Timeout de inatividade — desloga após IDLE_TIMEOUT_MS sem atividade do
+  // usuário. Enquanto há atividade, registra o timestamp e renova o token no
+  // servidor (sliding session) com throttle. Um interval checa a ociosidade.
+  useEffect(() => {
+    if (!user) return;
+    const REFRESH_THROTTLE_MS = 10 * 60 * 1000; // renova o token no máx. a cada 10 min
+    let lastRefresh = Date.now();
+
+    const onActivity = () => {
+      const now = Date.now();
+      setLastActivity(now);
+      if (now - lastRefresh >= REFRESH_THROTTLE_MS) {
+        lastRefresh = now;
+        authRefresh().catch(() => {}); // 401 já é tratado pelo http() → logout
+      }
+    };
+
+    const events = ["mousemove", "mousedown", "keydown", "touchstart", "scroll"];
+    const opts = { passive: true };
+    events.forEach(e => window.addEventListener(e, onActivity, opts));
+
+    const interval = setInterval(() => {
+      if (Date.now() - getLastActivity() > IDLE_TIMEOUT_MS) handleLogout();
+    }, 30 * 1000);
+
+    return () => {
+      events.forEach(e => window.removeEventListener(e, onActivity, opts));
+      clearInterval(interval);
+    };
+  }, [user]);
 
   // Persistência com debounce — dispara sempre que algo no estado muda,
   // mas só depois do load inicial pra não sobrescrever com defaults vazios.
@@ -233,6 +273,7 @@ export default function App() {
   }, [user]);
 
   async function handleLogin(loggedUser) {
+    setLastActivity(Date.now()); // inicia a janela de inatividade
     setUser(loggedUser);
     try {
       const state = await loadAppState();

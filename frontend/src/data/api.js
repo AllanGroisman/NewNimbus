@@ -1,5 +1,10 @@
 const API_BASE = "";
 const TOKEN_KEY = "nimbus.token";
+const LAST_ACTIVITY_KEY = "nimbus.lastActivity";
+
+// Sessão expira após este tempo sem atividade do usuário. Fonte única no front —
+// o backend usa TTL de token equivalente (2h) renovado enquanto há atividade.
+export const IDLE_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2h
 
 // ─── Token (localStorage) ──────────────────────────────────────────────
 export function getToken() {
@@ -9,6 +14,14 @@ export function setToken(t) {
   try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); } catch {}
 }
 export function clearToken() { setToken(null); }
+
+// ─── Última atividade (para timeout de inatividade) ─────────────────────
+export function getLastActivity() {
+  try { return Number(localStorage.getItem(LAST_ACTIVITY_KEY)) || 0; } catch { return 0; }
+}
+export function setLastActivity(ts) {
+  try { localStorage.setItem(LAST_ACTIVITY_KEY, String(ts)); } catch {}
+}
 
 async function http(method, path, body, { signal } = {}) {
   const opts = { method, headers: {} };
@@ -72,6 +85,12 @@ export async function authResetPassword(token, newPassword) {
 }
 export async function authMe() {
   return http("GET", "/api/auth/me");
+}
+// Renova o token de sessão (sliding session). Chamado enquanto há atividade.
+export async function authRefresh() {
+  const r = await http("POST", "/api/auth/refresh");
+  if (r.token) setToken(r.token);
+  return r;
 }
 export async function authUpdate(updates) {
   return http("PATCH", "/api/auth/me", updates);

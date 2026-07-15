@@ -97,7 +97,10 @@ async function seedDefaultAdmin() {
 }
 
 let _jwtSecret = process.env.JWT_SECRET || null;
-const TOKEN_TTL = "30d";
+// Sessão expira por inatividade: token curto renovado enquanto há atividade
+// (sliding session). O frontend chama /api/auth/refresh a cada atividade (com
+// throttle); ficando ocioso, o token vence e a próxima request cai em 401.
+const TOKEN_TTL = "2h";
 
 // Carrega (ou gera+persiste) o JWT secret na tabela AppConfig.
 // Chamar no boot ANTES de qualquer sign/verify. Idempotente.
@@ -424,6 +427,13 @@ function verifyToken(token) {
   catch { return null; }
 }
 
+// Emite um token novo com o TTL padrão. Usado pela rota /api/auth/refresh para
+// deslizar a janela de sessão enquanto o usuário está ativo (mesma assinatura
+// de token usada em login()).
+function reissueToken(user) {
+  return jwt.sign({ sub: user.id, email: user.email }, getJwtSecret(), { expiresIn: TOKEN_TTL });
+}
+
 // requireAuth precisa ser sync na assinatura externa — express middleware.
 // Async internamente: aceitamos esse custo pra evitar mudar todas as rotas.
 function requireAuth(req, res, next) {
@@ -594,6 +604,7 @@ module.exports = {
   resetPassword,
   requireAuth,
   requireAdmin,
+  reissueToken,
   updateProfile,
   changePassword,
   findById,
