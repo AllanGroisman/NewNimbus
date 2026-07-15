@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, soldText, getGroupCategories, getGroupStats, computeQueueETA, formatETA, formatTimeBR, formatDateBR, isSameDayBR } from "../data/constants";
 import { createWAGroup, leaveWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupQueue, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue } from "../data/api";
 import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
+import { useUnsavedGuard, useRequestNavigation } from "../data/navGuard";
 import BusyOverlay from "./ui/BusyOverlay";
 
 const TEMPLATE_VARS = [
@@ -1040,6 +1041,28 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const scrapingDirty = stableJSON(scraping) !== stableJSON(group.scraping);
   const filtersDirty = stableJSON(scraping?.filters) !== stableJSON(group.scraping?.filters);
   const scheduleDirty = windowsDirty;
+  const messageDirty = groupInfo.messageTemplate !== group.messageTemplate;
+
+  // Alterações não salvas agregadas (todas as abas editáveis). Usado pelo guard
+  // de navegação pra avisar ao trocar de aba ou sair da campanha.
+  const hasUnsaved = manageDirty || scrapingDirty || filtersDirty
+    || scheduleDirty || windowsDirty || cooldownDirty || messageDirty;
+
+  // Reverte o estado local editável pros valores salvos do grupo (usado no
+  // "Descartar" do guard). Não mexe em queue/pending (dados de polling).
+  const revertLocal = () => {
+    setSched(group.schedule);
+    setScraping(group.scraping);
+    setGroupInfo({
+      name: group.name,
+      categories: getGroupCategories(group),
+      whatsappGroupIds: group.whatsappGroupIds || [],
+      messageTemplate: group.messageTemplate,
+    });
+  };
+
+  const requestNavigation = useRequestNavigation();
+  useUnsavedGuard({ dirty: hasUnsaved, save, discard: revertLocal });
 
   // Estilos compartilhados pros botões de salvar — desabilitado quando não dirty.
   const saveBtnStyle = (dirty) => ({
@@ -1168,7 +1191,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         </div>
       )}
 
-      <Tabs tabs={groupTabs} active={tab} onChange={setTab} />
+      <Tabs tabs={groupTabs} active={tab} onChange={(id) => requestNavigation(() => setTab(id))} />
 
       {tab === "overview" && (
         <div>

@@ -1,5 +1,5 @@
 * FRONT
-    * ajustar validacao do token de auth ( )
+    * ajustar validacao do token de auth (x)
     * Quando fizer alterações, se quiser mudar de aba -> Alerta para salvar alterações ( )
     * Dentro da campanha:
         * alterar ordem das abas: Visão Geral - Gerencial - Buscar Produtos (alterar nome) - Fila - Janelas de envio - Modelos de Mensagens - Histórico ( )

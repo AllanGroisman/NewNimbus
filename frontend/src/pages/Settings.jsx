@@ -4,6 +4,7 @@ import Badge from "../components/ui/Badge";
 import Toggle from "../components/ui/Toggle";
 import Modal from "../components/ui/Modal";
 import { authUpdate, authChangePassword } from "../data/api";
+import { useUnsavedGuard } from "../data/navGuard";
 
 export default function PageSettings({ user, setUser, onLogout, settings = {}, setSettings = () => {} }) {
   const [section, setSection] = useState("account");
@@ -25,6 +26,14 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
   const [pwd, setPwd] = useState({ current: "", next: "", confirm: "" });
   const [pwdMsg, setPwdMsg] = useState(null);
   const [pwdSaving, setPwdSaving] = useState(false);
+
+  // Guard de navegação: avisa ao sair de Configurações com o form de conta editado.
+  const accountDirty = account.name !== (user?.name || "")
+    || account.phone !== (user?.phone || "");
+  const discardAccount = () => setAccount({
+    name: user?.name || "", email: user?.email || "", phone: user?.phone || "",
+  });
+  useUnsavedGuard({ dirty: accountDirty, save: handleSaveAccount, discard: discardAccount });
 
   async function handleSaveAccount() {
     setAccountSaving(true);

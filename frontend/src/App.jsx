@@ -12,6 +12,8 @@ const DEFAULT_SETTINGS = {
 import { authMe, authLogout, authRefresh, loadAppState, saveAppState, loadAppOps, getToken, clearToken, getLastActivity, setLastActivity, IDLE_TIMEOUT_MS, getAffiliateStatus, billingMe } from "./data/api";
 import Sidebar from "./components/Sidebar";
 import GroupDashboard from "./components/GroupDashboard";
+import UnsavedChangesModal from "./components/UnsavedChangesModal";
+import { NavGuardContext } from "./data/navGuard";
 import PageDashboard from "./pages/Dashboard";
 import PageProducts from "./pages/Products";
 import PageWhatsApp from "./pages/WhatsApp";
@@ -53,10 +55,33 @@ export default function App() {
   // Deep-link pra um tutorial específico — setado quando outra página chama
   // openTutorial(id). Limpado depois que a página Tutoriais consome.
   const [tutorialTarget, setTutorialTarget] = useState(null);
-  const openTutorial = (id) => { setTutorialTarget(id); setSelectedGroup(null); setPage("tutorials"); };
+  const openTutorial = (id) => requestNavigation(() => { setTutorialTarget(id); setSelectedGroup(null); setPage("tutorials"); });
   const [user, setUser] = useState(null);
   const [bootstrapping, setBootstrapping] = useState(true);
   const [mobileMenu, setMobileMenu] = useState(false);
+  // Guard de navegação: a tela ativa registra { dirty, save, discard } em guardRef;
+  // requestNavigation intercepta trocas de tela/aba e abre o diálogo quando há
+  // alterações não salvas. pendingNav guarda a navegação aguardando decisão.
+  const guardRef = useRef(null);
+  const [pendingNav, setPendingNav] = useState(null);
+  const register = (guard) => { guardRef.current = guard; };
+  const requestNavigation = (navFn) => {
+    if (guardRef.current?.dirty) setPendingNav(() => navFn);
+    else navFn();
+  };
+  const navGuard = { register, requestNavigation };
+  const closeGuard = () => setPendingNav(null);
+  const guardSave = async () => {
+    const g = guardRef.current;
+    if (g?.save) await g.save();
+    if (pendingNav) pendingNav();
+    setPendingNav(null);
+  };
+  const guardDiscard = () => {
+    guardRef.current?.discard?.();
+    if (pendingNav) pendingNav();
+    setPendingNav(null);
+  };
   // Status de afiliado por loja — controla badge "pausado" (ML) e alertas no sidebar.
   // Default true pra ML/Amazon evita "flash vermelho" antes do primeiro fetch.
   // Shopee fica sempre como "não configurado" enquanto a integração não existe.
@@ -307,8 +332,8 @@ export default function App() {
     return newGroup.id;
   };
 
-  const handleSelectGroup = g => { setSelectedGroup(groups.find(x => x.id === g.id)); setPage("group"); };
-  const handleBack = () => { setSelectedGroup(null); setPage("dashboard"); };
+  const handleSelectGroup = g => requestNavigation(() => { setSelectedGroup(groups.find(x => x.id === g.id)); setPage("group"); });
+  const handleBack = () => requestNavigation(() => { setSelectedGroup(null); setPage("dashboard"); });
   const handleUpdate = (gid, updates) => {
     setGroups(gs => gs.map(g => g.id === gid ? { ...g, ...updates } : g));
     setSelectedGroup(g => g ? { ...g, ...updates } : g);
@@ -452,7 +477,11 @@ export default function App() {
   };
 
   return (
+    <NavGuardContext.Provider value={navGuard}>
     <div className="app-layout" style={{ display: "flex", minHeight: "100vh" }}>
+      {pendingNav && (
+        <UnsavedChangesModal onSave={guardSave} onDiscard={guardDiscard} onCancel={closeGuard} />
+      )}
       <Sidebar
         page={page}
         selectedGroup={selectedGroup}
@@ -462,7 +491,7 @@ export default function App() {
         affiliateConfigured={affiliateConfigured}
         affiliateStatus={affiliateStatus}
         user={user}
-        onNavigate={(id) => { setPage(id); setSelectedGroup(null); setTutorialTarget(null); }}
+        onNavigate={(id) => requestNavigation(() => { setPage(id); setSelectedGroup(null); setTutorialTarget(null); })}
         onSelectGroup={handleSelectGroup}
         onLogout={handleLogout}
         mobileOpen={mobileMenu}
@@ -471,15 +500,15 @@ export default function App() {
       <div className="main-content" style={{ flex: 1, padding: "20px 24px", minWidth: 0, overflowY: "auto" }}>
         {billing && !billing.isAdmin && (
           (billing.status === "past_due" || billing.status === "unpaid") ? (
-            <div onClick={() => setPage("subscription")} style={{ cursor: "pointer", background: "#FCEBEB", border: "0.5px solid #F7C1C1", color: "#A32D2D", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
+            <div onClick={() => requestNavigation(() => setPage("subscription"))} style={{ cursor: "pointer", background: "#FCEBEB", border: "0.5px solid #F7C1C1", color: "#A32D2D", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
               Pagamento pendente — clique para regularizar e manter envios ativos.
             </div>
           ) : billing.status === "trialing" && billing.daysLeftInTrial !== null && billing.daysLeftInTrial <= 2 ? (
-            <div onClick={() => setPage("subscription")} style={{ cursor: "pointer", background: "#FFF7E0", border: "0.5px solid #F0D58A", color: "#7A5800", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
+            <div onClick={() => requestNavigation(() => setPage("subscription"))} style={{ cursor: "pointer", background: "#FFF7E0", border: "0.5px solid #F0D58A", color: "#7A5800", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
               Seu trial expira em {billing.daysLeftInTrial}d. Assine para continuar usando.
             </div>
           ) : billing.effectivePlan === "free" ? (
-            <div onClick={() => setPage("subscription")} style={{ cursor: "pointer", background: "#FFF7E0", border: "0.5px solid #F0D58A", color: "#7A5800", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
+            <div onClick={() => requestNavigation(() => setPage("subscription"))} style={{ cursor: "pointer", background: "#FFF7E0", border: "0.5px solid #F0D58A", color: "#7A5800", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
               Sem plano ativo — envios pausados. Escolha um plano para reativar.
             </div>
           ) : null
@@ -498,8 +527,8 @@ export default function App() {
               onCreateWhatsappGroup={createWhatsappGroup}
               onDeleteWhatsappGroup={deleteWhatsappGroup}
               onUpdateWhatsappGroup={updateWhatsappGroup}
-              onGoToSettings={() => setPage("settings")}
-              onGoToAffiliate={(provider) => setPage(provider === "shopee" ? "shopee" : "mercado-livre")}
+              onGoToSettings={() => requestNavigation(() => setPage("settings"))}
+              onGoToAffiliate={(provider) => requestNavigation(() => setPage(provider === "shopee" ? "shopee" : "mercado-livre"))}
               customTemplates={settings.customTemplates || []}
               onAddCustomTemplate={addCustomTemplate}
               onDeleteCustomTemplate={deleteCustomTemplate}
@@ -509,5 +538,6 @@ export default function App() {
         }
       </div>
     </div>
+    </NavGuardContext.Provider>
   );
 }
