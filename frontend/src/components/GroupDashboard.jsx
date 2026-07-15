@@ -296,6 +296,9 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     refillAbortRef.current = ctrl;
     setRefilling(true);
     setRefillMsg(null);
+    // Buscar TAMBÉM salva a configuração atual (pesquisa + filtros + fontes/auto),
+    // pra não precisar de um botão separado de "salvar filtros".
+    onUpdate(group.id, { scraping });
     try {
       // Manda filtros + sources + categories atuais como override pra usar valores
       // que ainda podem não ter sido persistidos (debounce do auto-save)
@@ -1012,13 +1015,12 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
   const save = () => { onUpdate(group.id, { schedule: sched, scraping, queue, pending, ...groupInfo }); setSaved(true); setTimeout(() => setSaved(false), 2000); };
 
-  // Salva apenas os filtros do scraping — usado pelo botão dedicado dentro
-  // dos filtros avançados, sem comprometer mudanças em sources/auto que ainda
-  // não foram salvas (essas continuam disponíveis via "Salvar configurações").
-  const saveFilters = () => {
-    onUpdate(group.id, { scraping: { ...(group.scraping || {}), filters: scraping.filters } });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+  // Zera todos os filtros e a pesquisa (não persiste — a próxima busca salva).
+  const resetFilters = () => {
+    setScraping(s => ({
+      ...s,
+      filters: { keywords: "", minPrice: 0, maxPrice: null, minDiscount: 0, minRating: 0, minSales: 0 },
+    }));
   };
 
   // Dirty state por aba — usado pra (a) escurecer o botão de salvar quando
@@ -2056,22 +2058,25 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             >
               <span style={{ display: "inline-block", transition: "transform 0.15s", transform: showAdvancedFilters ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
               {showAdvancedFilters ? "Ocultar filtros avançados" : "Mostrar filtros avançados"}
-              <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>(palavras-chave + qualidade)</span>
+              <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>(preço, desconto, avaliação, vendas)</span>
             </button>
 
-            {showAdvancedFilters && <>
             <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-              <div style={{ fontWeight: 500, marginBottom: 4 }}>Palavras-chave</div>
-              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 10 }}>
-                Separe por vírgula. Apenas produtos cujo nome contenha <strong>pelo menos uma</strong> das palavras serão considerados. Deixe vazio para aceitar todos.
+              <div style={{ fontWeight: 500, marginBottom: 8 }}>Pesquisa</div>
+              <div style={{ position: "relative" }}>
+                <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14, color: "var(--color-text-secondary)", pointerEvents: "none" }}>🔍</span>
+                <input
+                  type="text"
+                  value={scraping.filters.keywords}
+                  onChange={e => setScraping(s => ({ ...s, filters: { ...s.filters, keywords: e.target.value } }))}
+                  onKeyDown={e => { if (e.key === "Enter" && !refilling) triggerRefill(); }}
+                  placeholder="Pesquisar produtos (ex: notebook, monitor, fone bluetooth)"
+                  style={{ width: "100%", padding: "10px 12px 10px 36px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", fontFamily: "inherit" }}
+                />
               </div>
-              <textarea
-                value={scraping.filters.keywords}
-                onChange={e => setScraping(s => ({ ...s, filters: { ...s.filters, keywords: e.target.value } }))}
-                rows={2}
-                placeholder="Ex: notebook, monitor, fone bluetooth, ssd"
-                style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }}
-              />
+              <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 8 }}>
+                Separe vários termos por vírgula. Traz produtos cujo nome contenha <strong>pelo menos um</strong> dos termos. Vazio = todos.
+              </div>
               {scraping.filters.keywords.trim() && (
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
                   {scraping.filters.keywords.split(",").map(k => k.trim()).filter(Boolean).map((kw, i) => (
@@ -2083,6 +2088,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               )}
             </div>
 
+            {showAdvancedFilters && <>
             <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
               <div style={{ fontWeight: 500, marginBottom: 4 }}>Filtros de qualidade</div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 16 }}>
@@ -2158,45 +2164,23 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 10, padding: "6px 10px", background: "var(--color-background-secondary)", borderRadius: 6 }}>
                 ⚠️ Filtros de Avaliação e Vendas excluem produtos sem essa info — alguns produtos da Amazon não vêm com rating extraído.
               </div>
-
-              {/* Botão dedicado pra salvar APENAS as alterações de filtros — só fica ativo quando filtros mudam */}
-              <div style={{ display: "flex", gap: 10, marginTop: 14, alignItems: "center", flexWrap: "wrap" }}>
-                <button
-                  onClick={saveFilters}
-                  disabled={!filtersDirty}
-                  title={filtersDirty ? "Salvar as alterações dos filtros avançados" : "Sem alterações nos filtros pra salvar"}
-                  style={{
-                    padding: "8px 18px", borderRadius: 8,
-                    background: filtersDirty ? PRIMARY : "var(--color-background-secondary)",
-                    color: filtersDirty ? "#fff" : "var(--color-text-secondary)",
-                    border: "none", fontSize: 13,
-                    cursor: filtersDirty ? "pointer" : "not-allowed",
-                    fontWeight: 500,
-                    opacity: filtersDirty ? 1 : 0.55,
-                  }}
-                >
-                  Salvar alterações filtros
-                </button>
-                {filtersDirty && (
-                  <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
-                    Filtros alterados — clique para aplicar.
-                  </span>
-                )}
-              </div>
             </div>
             </>}
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <button onClick={triggerRefill} disabled={refilling} title="Salva a configuração atual e busca produtos no catálogo com a pesquisa e os filtros definidos" style={{ padding: "9px 20px", borderRadius: 8, border: "none", background: PRIMARY, color: "#fff", fontSize: 13, cursor: refilling ? "wait" : "pointer", fontWeight: 500, opacity: refilling ? 0.6 : 1 }}>
+                {refilling ? "⟳ Buscando..." : "🔍 Buscar produtos"}
+              </button>
+              <button onClick={resetFilters} title="Zera a pesquisa e todos os filtros" style={{ padding: "9px 18px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>
+                Limpar filtros
+              </button>
               <button
                 onClick={save}
                 disabled={!scrapingDirty && !saved}
-                title={scrapingDirty ? "Salvar configurações do scraping desta campanha" : "Sem alterações pra salvar"}
+                title={scrapingDirty ? "Salvar configurações do scraping desta campanha (ex: auto-aprovação)" : "Sem alterações pra salvar"}
                 style={saveBtnStyle(scrapingDirty)}
               >
                 {saved ? "✓ Salvo!" : "Salvar configurações"}
-              </button>
-              <button onClick={triggerRefill} disabled={refilling} style={{ padding: "9px 18px", borderRadius: 8, border: `0.5px solid ${PRIMARY}`, background: "transparent", color: PRIMARY_DARK, fontSize: 13, cursor: refilling ? "wait" : "pointer", fontWeight: 500, opacity: refilling ? 0.6 : 1 }}>
-                {refilling ? "⟳ Buscando..." : "↻ Buscar do catálogo"}
               </button>
               <button onClick={openManualAdd} style={{ padding: "9px 18px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>
                 + Adicionar link manualmente
@@ -2208,7 +2192,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               )}
             </div>
             <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 8 }}>
-              💡 Os filtros são aplicados sobre o catálogo central. A fila também é reabastecida automaticamente nos horários de envio.
+              💡 Buscar já salva a pesquisa e os filtros atuais. Os filtros são aplicados sobre o catálogo central — a fila também é reabastecida automaticamente nos horários de envio.
             </div>
           </div>
 

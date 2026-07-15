@@ -10,6 +10,7 @@ function reviewsText(product) {
 
 // Card compacto para filas/pendentes (horizontal)
 export function ProductRow({ product, actions, index }) {
+  const hasLink = !!product.link;
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: 12,
@@ -26,13 +27,23 @@ export function ProductRow({ product, actions, index }) {
         }}>{index}</div>
       )}
       {product.img ? (
-        <div style={{
-          width: 48, height: 48, borderRadius: 8, overflow: "hidden",
-          background: "#fff", flexShrink: 0,
-          display: "flex", alignItems: "center", justifyContent: "center",
-        }}>
-          <img src={product.img} alt="" style={{ maxWidth: 48, maxHeight: 48, objectFit: "contain" }} />
-        </div>
+        hasLink ? (
+          <a href={product.link} target="_blank" rel="noopener noreferrer" style={{
+            width: 48, height: 48, borderRadius: 8, overflow: "hidden",
+            background: "#fff", flexShrink: 0,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <img src={product.img} alt="" style={{ maxWidth: 48, maxHeight: 48, objectFit: "contain" }} />
+          </a>
+        ) : (
+          <div style={{
+            width: 48, height: 48, borderRadius: 8, overflow: "hidden",
+            background: "#fff", flexShrink: 0,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <img src={product.img} alt="" style={{ maxWidth: 48, maxHeight: 48, objectFit: "contain" }} />
+          </div>
+        )
       ) : (
         <div style={{
           width: 48, height: 48, borderRadius: 8, background: "var(--color-background-secondary)",
@@ -45,7 +56,11 @@ export function ProductRow({ product, actions, index }) {
           fontSize: 12, fontWeight: 500, lineHeight: 1.3,
           display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
           overflow: "hidden",
-        }}>{product.name}</div>
+        }}>
+          {hasLink
+            ? <a href={product.link} target="_blank" rel="noopener noreferrer" style={{ color: PRIMARY_DARK, textDecoration: "underline" }}>{product.name}</a>
+            : product.name}
+        </div>
         <div style={{ display: "flex", gap: 5, marginTop: 4, flexWrap: "wrap", alignItems: "center" }}>
           {product.store && <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>{product.store}</span>}
           {product.rating && <Badge color="amber">★ {product.rating}</Badge>}
