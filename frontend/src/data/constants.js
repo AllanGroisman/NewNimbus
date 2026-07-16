@@ -78,10 +78,11 @@ export const getGroupStats = (group, whatsappGroups = [], { affiliateConfigured 
   const pausedByAffiliate = pausedByAffiliateML || pausedByAffiliateShopee;
   const pausedManual = !!group?.paused;
   let status;
-  if (pausedManual || pausedByAffiliate) status = "paused";
-  else if (linked.length === 0) status = "empty";
-  else if (connected > 0) status = "connected";
-  else status = "disconnected";
+  if (pausedManual || pausedByAffiliate) status = "paused";       // amarelo (manual/afiliado)
+  else if (linked.length === 0) status = "empty";                 // cinza
+  else if (connected === 0) status = "disconnected";              // vermelho — sem WhatsApp, pausada
+  else if (connected < linked.length) status = "degraded";        // amarelo — parcial (algum caído)
+  else status = "connected";                                      // verde — todos conectados
   return {
     linked,
     count: linked.length,

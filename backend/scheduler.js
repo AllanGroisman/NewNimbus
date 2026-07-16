@@ -144,6 +144,24 @@ function groupPausedByAffiliate(userId, group) {
   return affiliateGate(userId, group).paused;
 }
 
+// Campanha "sem WhatsApp": pausa derivada (não persistida) quando NENHUM número
+// vinculado está conectado. Se pelo menos um está de pé, segue enviando (o
+// sendItem já pula os grupos caídos). Retoma sozinho quando reconectar.
+// `empty` (nenhum grupo vinculado) não é tratado aqui — o dispatch já não envia.
+async function whatsappGate(userId, group, whatsappGroups) {
+  const linkedIds = group.whatsappGroupIds || [];
+  const linked = (whatsappGroups || []).filter(w => linkedIds.includes(w.id));
+  if (!linked.length) return { paused: false, reason: null };
+  const sessions = await wa.listSessions(userId);
+  const connectedNumbers = new Set(
+    (sessions || []).filter(s => s.status === "connected").map(s => s.numberId)
+  );
+  const anyUp = linked.some(w => connectedNumbers.has(w.numberId));
+  return anyUp
+    ? { paused: false, reason: null }
+    : { paused: true, reason: "nenhum WhatsApp vinculado está conectado" };
+}
+
 // Auto-aprovação: produtos vão direto pra queue. Se false, vão pra pending pra
 // o usuário aprovar antes de enviar. Default = true (mantém comportamento legado).
 function isAutoApprove(group) {
@@ -515,6 +533,10 @@ async function sendNextNow(userId, groupId) {
   if (gate.paused) {
     throw new Error(`Campanha pausada: ${gate.reason}.`);
   }
+  const waGate = await whatsappGate(userId, group, state.whatsappGroups || []);
+  if (waGate.paused) {
+    throw new Error(`Campanha pausada: ${waGate.reason}.`);
+  }
 
   // Limpa stale antes — usuário clicou "Enviar agora" esperando filtros atuais.
   const filterCtx = campaignFilterCtx(group);
@@ -562,6 +584,9 @@ async function processGroup(userId, group, whatsappGroups, numbers) {
     return;
   }
   if (groupPausedByAffiliate(userId, group)) {
+    return;
+  }
+  if ((await whatsappGate(userId, group, whatsappGroups)).paused) {
     return;
   }
 

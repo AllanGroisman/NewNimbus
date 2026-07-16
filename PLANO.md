@@ -5,11 +5,11 @@
         * alterar ordem das abas: Visão Geral - Gerencial - Buscar Produtos (alterar nome) - Fila - Janelas de envio - Modelos de Mensagens - Histórico (x)
     * Visão Geral:
         * Melhorar as métricas: 
-            * envios esta semana com números por dia; ( )
+            * envios esta semana com números por dia; (x)
     * Modelos de mensagem:
-        * Não ser por Aba, mas sim por lista suspensa (O padrão fica escrito Padrão, mas é o que fica de titular na lista) ( )
+        * Não ser por Aba, mas sim por lista suspensa (O padrão fica escrito Padrão, mas é o que fica de titular na lista) (x)
     * Busca de Produtos:
-        * Alterar nome para Busca de Produtos ( )
+        * Alterar nome para Busca de Produtos (x)
         * Adicionar produto manualmente:
             - Categoria ser pega automatica ( )
             - Adicionar lista de links (separados por vírgula? por /n? etc...) ( )

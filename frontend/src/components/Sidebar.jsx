@@ -8,21 +8,31 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
   const visibleItems = sidebarItems.filter(it => !it.adminOnly);
   const adminItems = sidebarItems.filter(it => it.adminOnly);
 
-  // Alerta de afiliado por aba — vermelho quando a loja não está configurada.
+  // Nível de alerta por aba: "red" (crítico) ou "amber" (atenção).
+  // Afiliado: vermelho quando a loja não está configurada.
   // Shopee ainda não tem integração, então vai sempre acender enquanto o backend não suportar.
-  // WhatsApp acende quando nenhum número está conectado.
-  const noWhatsappConnected = numbers.length === 0 || !numbers.some(n => n.status === "connected");
-  const affiliateAlert = {
-    "mercado-livre": affiliateStatus ? !affiliateStatus.ml : false,
-    "amazon":        affiliateStatus ? !affiliateStatus.amazon : false,
-    "shopee":        affiliateStatus ? !affiliateStatus.shopee : false,
-    "whatsapp":      noWhatsappConnected,
+  // WhatsApp: vermelho quando nenhum número está conectado; amarelo quando alguns
+  // (mas nem todos) estão desconectados. Usa o status ao vivo das sessões (via App).
+  const connectedCount = numbers.filter(n => n.status === "connected").length;
+  const whatsappLevel = numbers.length === 0 || connectedCount === 0 ? "red"
+    : connectedCount < numbers.length ? "amber"
+    : null;
+  const alertLevel = {
+    "mercado-livre": affiliateStatus && !affiliateStatus.ml ? "red" : null,
+    "amazon":        affiliateStatus && !affiliateStatus.amazon ? "red" : null,
+    "shopee":        affiliateStatus && !affiliateStatus.shopee ? "red" : null,
+    "whatsapp":      whatsappLevel,
   };
 
   const renderItem = (item) => {
     const isActive = page === item.id && !selectedGroup;
-    const showAlert = !!affiliateAlert[item.id];
-    const alertTitle = item.id === "whatsapp" ? "Nenhum WhatsApp conectado" : "Afiliado não configurado";
+    const level = alertLevel[item.id] || null;
+    const showAlert = !!level;
+    const alertTitle = item.id === "whatsapp"
+      ? (level === "amber" ? "Alguns números de WhatsApp desconectados" : "Nenhum WhatsApp conectado")
+      : "Afiliado não configurado";
+    const badgeBg = level === "amber" ? "#EF9F27" : "#E24B4A";
+    const alertTextColor = level === "amber" ? "#8A5A00" : "#A32D2D";
     return (
       <button
         key={item.id}
@@ -32,7 +42,7 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
           display: "flex", alignItems: "center", gap: 10, padding: "9px 16px",
           background: isActive ? PRIMARY_LIGHT : "transparent",
           border: "none", cursor: "pointer", textAlign: "left",
-          color: isActive ? PRIMARY_DARK : (showAlert ? "#A32D2D" : "var(--color-text-primary)"),
+          color: isActive ? PRIMARY_DARK : (showAlert ? alertTextColor : "var(--color-text-primary)"),
           fontWeight: isActive ? 600 : 500, fontSize: 13,
         }}
       >
@@ -42,7 +52,7 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
           <span
             aria-label={alertTitle}
             style={{
-              width: 14, height: 14, borderRadius: "50%", background: "#E24B4A",
+              width: 14, height: 14, borderRadius: "50%", background: badgeBg,
               color: "#fff", fontSize: 10, fontWeight: 700, lineHeight: "14px",
               textAlign: "center", flexShrink: 0,
             }}
@@ -77,8 +87,9 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
         )}
         {groups.map(g => {
           const stats = getGroupStats(g, whatsappGroups, { affiliateConfigured });
-          // Verde = funcionando, amarelo = pausado, vermelho = desconectado, cinza = vazio.
-          const dotColor = stats.status === "paused" ? "#EF9F27"
+          // Verde = todos conectados, amarelo = pausado ou parcial (algum whats caído),
+          // vermelho = sem whats conectado (pausada), cinza = vazio.
+          const dotColor = (stats.status === "paused" || stats.status === "degraded") ? "#EF9F27"
             : stats.status === "connected" ? "#22C55E"
             : stats.status === "empty" ? "var(--color-border-secondary)"
             : "#E24B4A";

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { initialGroups, initialNumbers, initialWhatsappGroups, makeEmptyGroup, DEFAULT_MESSAGE_TEMPLATE } from "./data/mockData";
 import { allSources } from "./data/constants";
 
@@ -9,7 +9,7 @@ const DEFAULT_SETTINGS = {
   sources: allSources,
   theme: "auto",
 };
-import { authMe, authLogout, authRefresh, loadAppState, saveAppState, loadAppOps, getToken, clearToken, getLastActivity, setLastActivity, IDLE_TIMEOUT_MS, getAffiliateStatus, billingMe } from "./data/api";
+import { authMe, authLogout, authRefresh, loadAppState, saveAppState, loadAppOps, getToken, clearToken, getLastActivity, setLastActivity, IDLE_TIMEOUT_MS, getAffiliateStatus, billingMe, listWASessions } from "./data/api";
 import Sidebar from "./components/Sidebar";
 import GroupDashboard from "./components/GroupDashboard";
 import UnsavedChangesModal from "./components/UnsavedChangesModal";
@@ -38,6 +38,7 @@ const NAV_STORAGE_KEY = "nimbus:nav";
 // Polling de OPS: agressivo enquanto a aba está em foco, pausa quando oculta.
 // 3 s mantém UI quase live sem encher o servidor; afiliado fica em 30 s pq muda raro.
 const OPS_POLL_MS = 3 * 1000;
+const SESSION_POLL_MS = 8 * 1000;
 const AFFILIATE_POLL_MS = 30 * 1000;
 // Campos por grupo gerenciados pelo scheduler — atualizados por polling
 const OPS_FIELDS = ["queue", "pending", "history", "sentToday", "sentWeek", "weekData", "lastSend", "avgDiscount"];
@@ -46,6 +47,9 @@ export default function App() {
   const [groups, setGroups] = useState(initialGroups);
   const [numbers, setNumbers] = useState(initialNumbers);
   const [whatsappGroups, setWhatsappGroups] = useState(initialWhatsappGroups);
+  // Status ao vivo das sessões WhatsApp por numberId ({ [numberId]: "connected" | ... }).
+  // Alimentado por poll; usado pra derivar o status real das campanhas (ver liveWhatsappGroups).
+  const [sessionStatus, setSessionStatus] = useState({});
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [page, setPage] = useState(() => {
     try { return JSON.parse(localStorage.getItem(NAV_STORAGE_KEY) || "{}").page || "dashboard"; }
@@ -266,6 +270,56 @@ export default function App() {
     };
   }, [user]);
 
+  // Polling: status ao vivo das sessões WhatsApp. O status guardado em
+  // whatsappGroups[].status (state) não é atualizado quando um número cai, então
+  // sem isto a campanha continuaria "conectada" com o WhatsApp desconectado.
+  // Espelha o poll da página WhatsApp (pausa com a aba oculta, força pull no foco).
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    let timer = null;
+    async function pull() {
+      if (cancelled || (typeof document !== "undefined" && document.hidden)) return;
+      try {
+        const sessions = await listWASessions();
+        if (cancelled) return;
+        const map = {};
+        for (const s of (sessions || [])) map[s.numberId] = s.status;
+        setSessionStatus(map);
+      } catch {
+        // silencioso — mantém o último status conhecido
+      }
+    }
+    const start = () => { if (!timer) timer = setInterval(pull, SESSION_POLL_MS); };
+    const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
+    const onVisibility = () => { if (document.hidden) stop(); else { pull(); start(); } };
+    pull();
+    start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      stop();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [user]);
+
+  // Campanhas com status ao vivo: sobrepõe o status guardado pelo status real da
+  // sessão do número (quando conhecido). Derivado só pra exibição — NÃO alimenta
+  // saveAppState, senão gravaríamos status volátil de volta no estado.
+  const liveWhatsappGroups = useMemo(
+    () => whatsappGroups.map(w => ({
+      ...w,
+      status: sessionStatus[w.numberId] ?? w.status,
+    })),
+    [whatsappGroups, sessionStatus]
+  );
+
+  // Números com status ao vivo — usado pelo indicador do menu (amarelo/vermelho).
+  const liveNumbers = useMemo(
+    () => numbers.map(n => ({ ...n, status: sessionStatus[n.id] ?? n.status })),
+    [numbers, sessionStatus]
+  );
+
   // Polling do status de afiliado — quando muda em Configurações, o badge
   // "pausado" some/aparece sem precisar recarregar a página.
   useEffect(() => {
@@ -450,9 +504,9 @@ export default function App() {
     return <Login onLogin={handleLogin} />;
   }
 
-  const fallbackPage = <PageDashboard groups={groups} whatsappGroups={whatsappGroups} onSelectGroup={handleSelectGroup} onCreateGroup={handleCreateGroup} onUpdate={handleUpdate} affiliateConfigured={affiliateConfigured} onGoToSettings={() => setPage("settings")} />;
+  const fallbackPage = <PageDashboard groups={groups} whatsappGroups={liveWhatsappGroups} onSelectGroup={handleSelectGroup} onCreateGroup={handleCreateGroup} onUpdate={handleUpdate} affiliateConfigured={affiliateConfigured} onGoToSettings={() => setPage("settings")} />;
   const pageMap = {
-    dashboard: <PageDashboard groups={groups} whatsappGroups={whatsappGroups} onSelectGroup={handleSelectGroup} onCreateGroup={handleCreateGroup} onUpdate={handleUpdate} affiliateConfigured={affiliateConfigured} onGoToSettings={() => setPage("settings")} />,
+    dashboard: <PageDashboard groups={groups} whatsappGroups={liveWhatsappGroups} onSelectGroup={handleSelectGroup} onCreateGroup={handleCreateGroup} onUpdate={handleUpdate} affiliateConfigured={affiliateConfigured} onGoToSettings={() => setPage("settings")} />,
     products: user?.role === "admin" ? <PageProducts /> : fallbackPage,
     whatsapp: <PageWhatsApp
       numbers={numbers}
@@ -486,8 +540,8 @@ export default function App() {
         page={page}
         selectedGroup={selectedGroup}
         groups={groups}
-        whatsappGroups={whatsappGroups}
-        numbers={numbers}
+        whatsappGroups={liveWhatsappGroups}
+        numbers={liveNumbers}
         affiliateConfigured={affiliateConfigured}
         affiliateStatus={affiliateStatus}
         user={user}
@@ -518,7 +572,7 @@ export default function App() {
               key={selectedGroup.id}
               group={selectedGroup}
               numbers={numbers}
-              whatsappGroups={whatsappGroups}
+              whatsappGroups={liveWhatsappGroups}
               affiliateConfigured={affiliateConfigured}
               affiliateStatus={affiliateStatus}
               onBack={handleBack}
@@ -529,6 +583,7 @@ export default function App() {
               onUpdateWhatsappGroup={updateWhatsappGroup}
               onGoToSettings={() => requestNavigation(() => setPage("settings"))}
               onGoToAffiliate={(provider) => requestNavigation(() => setPage(provider === "shopee" ? "shopee" : "mercado-livre"))}
+              onGoToWhatsapp={() => requestNavigation(() => setPage("whatsapp"))}
               customTemplates={settings.customTemplates || []}
               onAddCustomTemplate={addCustomTemplate}
               onDeleteCustomTemplate={deleteCustomTemplate}

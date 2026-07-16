@@ -215,7 +215,7 @@ function QueueItemCard({ item, idx, eta, onRemove, onDragStart, onDragOver, onDr
   );
 }
 
-export default function GroupDashboard({ group, numbers, whatsappGroups = [], affiliateConfigured = true, affiliateStatus = null, onBack, onUpdate, onDelete, onCreateWhatsappGroup, onDeleteWhatsappGroup, onUpdateWhatsappGroup, onGoToSettings, onGoToAffiliate, customTemplates = [], onAddCustomTemplate, onDeleteCustomTemplate, onUpdateCustomTemplate }) {
+export default function GroupDashboard({ group, numbers, whatsappGroups = [], affiliateConfigured = true, affiliateStatus = null, onBack, onUpdate, onDelete, onCreateWhatsappGroup, onDeleteWhatsappGroup, onUpdateWhatsappGroup, onGoToSettings, onGoToAffiliate, onGoToWhatsapp, customTemplates = [], onAddCustomTemplate, onDeleteCustomTemplate, onUpdateCustomTemplate }) {
   const [tab, setTab] = useState(() => readSavedTab(group.id));
   // Guarda a aba atual por campanha pra restaurar no F5.
   useEffect(() => { writeSavedTab(group.id, tab); }, [group.id, tab]);
@@ -1148,22 +1148,28 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             {stats.pausedByAffiliateShopee && <Badge color="amber">Pausado · sem afiliado Shopee</Badge>}
             {stats.status === "empty"
               ? <Badge color="gray">Sem grupos do WhatsApp</Badge>
-              : <Badge color={stats.status === "connected" ? "green" : stats.status === "paused" ? "amber" : "red"}>{stats.connected}/{stats.count} conectados</Badge>
+              : stats.status === "disconnected"
+                ? <Badge color="red">Pausada · sem WhatsApp</Badge>
+                : <Badge color={stats.status === "connected" ? "green" : "amber"}>{stats.connected}/{stats.count} conectados</Badge>
             }
             {stats.count > 0 && <Badge color="gray">{stats.members} membros</Badge>}
           </div>
         </div>
         {(() => {
-          // Estado efetivo: manual OU pausada pelo sistema (afiliado faltando).
-          // Botão deve refletir o estado real, não só o manual.
-          const isPaused = !!group.paused || stats.pausedByAffiliate;
+          // Estado efetivo: manual OU pausada pelo sistema (afiliado faltando OU
+          // sem nenhum WhatsApp conectado). Botão deve refletir o estado real.
+          const noWhatsapp = stats.status === "disconnected";
+          const isPaused = !!group.paused || stats.pausedByAffiliate || noWhatsapp;
           const affOnly = !group.paused && stats.pausedByAffiliate;
+          const waOnly = !group.paused && !stats.pausedByAffiliate && noWhatsapp;
           const affTarget = stats.pausedByAffiliateML ? "ml" : (stats.pausedByAffiliateShopee ? "shopee" : null);
           const title = group.paused
             ? "Retomar campanha"
             : affOnly
               ? `Configure o afiliado ${affTarget === "shopee" ? "Shopee" : "Mercado Livre"} para reativar`
-              : "Pausar envios desta campanha";
+              : waOnly
+                ? "Conecte um WhatsApp para reativar (retoma sozinho)"
+                : "Pausar envios desta campanha";
           const handleClick = () => {
             // Tem afiliado faltando? Abre modal explicando e pedindo confirmação
             // antes de retomar (ou redirecionar pra config).
@@ -1173,6 +1179,12 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 needsShopee: stats.pausedByAffiliateShopee,
                 hasManualPause: !!group.paused,
               });
+              return;
+            }
+            // Parada por falta de WhatsApp (não é pausa manual): manda reconectar.
+            // Retoma sozinho assim que um número voltar.
+            if (waOnly) {
+              onGoToWhatsapp?.();
               return;
             }
             if (group.paused) {
@@ -1230,6 +1242,24 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               Configurar Shopee
             </button>
           )}
+        </div>
+      )}
+
+      {stats.status === "disconnected" && (
+        <div style={{ background: "#FCEBEB", border: "0.5px solid #EBB9B8", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 16 }}>🔴</span>
+          <span style={{ fontSize: 13, color: "#A32D2D", flex: 1, minWidth: 200 }}>
+            Campanha <strong>parada</strong> — nenhum WhatsApp vinculado está conectado. Reconecte um número na página WhatsApp; os envios retomam sozinhos.
+          </span>
+        </div>
+      )}
+
+      {stats.status === "degraded" && (
+        <div style={{ background: "#FEF3C7", border: "0.5px solid #F4D08A", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 16 }}>⚠️</span>
+          <span style={{ fontSize: 13, color: "#854F0B", flex: 1, minWidth: 200 }}>
+            <strong>{stats.connected}/{stats.count}</strong> grupos conectados — um ou mais WhatsApp estão desconectados. A campanha segue enviando nos que estão de pé.
+          </span>
         </div>
       )}
 
@@ -1415,90 +1445,64 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             <div style={{ marginBottom: 10 }}>
               <div style={{ fontWeight: 500, marginBottom: 4 }}>Modelo de mensagem</div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
-                Cada aba é um modelo. Clique em + pra criar um novo, edite à esquerda — a prévia atualiza enquanto você digita.
+                Escolha um modelo na lista, edite à esquerda — a prévia atualiza enquanto você digita. Use <strong>+ Novo modelo</strong> para criar outro.
               </div>
             </div>
 
-            {/* Abas estilo Chrome — modelos prontos + meus modelos + (+) */}
-            <div style={{ display: "flex", alignItems: "flex-end", gap: 2, borderBottom: "0.5px solid var(--color-border-tertiary)", marginBottom: 14, overflowX: "auto", paddingTop: 2 }}>
-              {allTabs.map(t => {
-                const isSelected = t.key === activeTplKey;
-                const tabIsDirty = isSelected && isDirty;
-                const isModelActive = isTemplateActive(t.template);
-                return (
-                  <div
-                    key={t.key}
-                    onClick={() => handleTabClick(t)}
-                    title={isModelActive
-                      ? `${t.name} — em uso pela campanha`
-                      : (t.kind === "preset" ? `${t.name} (modelo pronto)` : t.name)}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 6,
-                      padding: "7px 12px",
-                      borderTopLeftRadius: 8, borderTopRightRadius: 8,
-                      borderTop: `0.5px solid ${isSelected ? "var(--color-border-tertiary)" : "transparent"}`,
-                      borderLeft: `0.5px solid ${isSelected ? "var(--color-border-tertiary)" : "transparent"}`,
-                      borderRight: `0.5px solid ${isSelected ? "var(--color-border-tertiary)" : "transparent"}`,
-                      borderBottom: isSelected ? "0.5px solid var(--color-background-primary)" : "0.5px solid transparent",
-                      background: isSelected ? "var(--color-background-primary)" : "transparent",
-                      color: isSelected ? "var(--color-text-primary)" : "var(--color-text-secondary)",
-                      fontWeight: isSelected ? 500 : 400,
-                      fontSize: 12,
-                      cursor: "pointer",
-                      whiteSpace: "nowrap",
-                      marginBottom: -1,
-                      flexShrink: 0,
-                      maxWidth: 240,
-                    }}
-                  >
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {t.name}{tabIsDirty ? " •" : ""}
-                    </span>
-                    {isModelActive && (
-                      <span
-                        title="Modelo atualmente em uso pela campanha"
-                        style={{
-                          display: "inline-flex", alignItems: "center", gap: 4,
-                          padding: "1px 7px", borderRadius: 8,
-                          background: PRIMARY_LIGHT, color: PRIMARY_DARK,
-                          fontSize: 10, fontWeight: 600, lineHeight: 1.4,
-                          flexShrink: 0,
-                        }}
-                      >
-                        <span style={{ width: 6, height: 6, borderRadius: "50%", background: PRIMARY }} />
-                        Ativo
-                      </span>
-                    )}
-                    {t.kind === "custom" && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setConfirmDeleteTpl(t); }}
-                        title="Excluir modelo"
-                        style={{ background: "transparent", border: "none", padding: "0 4px", cursor: "pointer", color: "var(--color-text-secondary)", fontSize: 16, lineHeight: 1, marginLeft: 2, borderRadius: 4 }}
-                      >×</button>
-                    )}
-                  </div>
-                );
-              })}
+            {/* Lista suspensa — modelos prontos + meus modelos + ações */}
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 10, flexWrap: "wrap", borderBottom: "0.5px solid var(--color-border-tertiary)", paddingBottom: 14, marginBottom: 14 }}>
+              <div style={{ flex: "1 1 260px", minWidth: 200 }}>
+                <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Modelo</label>
+                <select
+                  value={activeTplKey}
+                  onChange={e => {
+                    const t = allTabs.find(x => x.key === e.target.value);
+                    if (t) handleTabClick(t);
+                  }}
+                  style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", color: "var(--color-text-primary)", fontSize: 13 }}
+                >
+                  {allTabs.map(t => {
+                    const isModelActive = isTemplateActive(t.template);
+                    const dirtyMark = t.key === activeTplKey && isDirty ? "• " : "";
+                    const suffix = isModelActive
+                      ? " — em uso"
+                      : (t.kind === "preset" ? " (modelo pronto)" : "");
+                    return (
+                      <option key={t.key} value={t.key}>
+                        {dirtyMark}{t.name}{suffix}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
               <button
                 onClick={handleNewTab}
                 title="Criar novo modelo (a partir do conteúdo atual)"
                 style={{
-                  padding: "6px 12px",
-                  borderTopLeftRadius: 8, borderTopRightRadius: 8,
-                  border: "0.5px dashed var(--color-border-secondary)",
-                  borderBottom: "none",
+                  height: 36, padding: "0 16px", borderRadius: 8,
+                  border: "0.5px solid var(--color-border-secondary)",
                   background: "transparent",
                   color: PRIMARY_DARK,
-                  fontSize: 16,
-                  lineHeight: 1,
+                  fontSize: 13, fontWeight: 500,
                   cursor: "pointer",
                   whiteSpace: "nowrap",
-                  marginBottom: -1,
-                  flexShrink: 0,
-                  fontWeight: 500,
-                  marginLeft: 4,
                 }}
-              >+</button>
+              >+ Novo modelo</button>
+              {isCustomTab && activeTab && (
+                <button
+                  onClick={() => setConfirmDeleteTpl(activeTab)}
+                  title="Excluir este modelo"
+                  style={{
+                    height: 36, padding: "0 16px", borderRadius: 8,
+                    border: "0.5px solid var(--color-border-secondary)",
+                    background: "transparent",
+                    color: "var(--color-text-secondary)",
+                    fontSize: 13, fontWeight: 500,
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                >Excluir modelo</button>
+              )}
             </div>
 
             {/* Linha do nome do modelo (só editável em customs) + botão "Salvar alterações" */}

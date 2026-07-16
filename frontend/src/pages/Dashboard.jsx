@@ -109,8 +109,9 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
               const cats = getGroupCategories(g);
               const sources = (g.scraping?.sources || []);
               const win = getWindowStatus(g);
-              // Estado efetivo: manual OU afiliado faltando — botão e badge refletem ambos.
-              const isPaused = !!g.paused || stats.pausedByAffiliate;
+              // Estado efetivo: manual OU afiliado faltando OU sem WhatsApp conectado —
+              // botão reflete todos. (degraded/parcial ainda envia, então não pausa.)
+              const isPaused = !!g.paused || stats.pausedByAffiliate || stats.status === "disconnected";
               const isLive = !stats.paused && stats.status === "connected";
               const missingAff = stats.pausedByAffiliateML && stats.pausedByAffiliateShopee
                 ? "ML e Shopee"
@@ -125,9 +126,11 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                   ? <Badge color="amber">Pausado · sem afiliado {missingAff}</Badge>
                   : stats.status === "connected"
                     ? <Badge color="green">{stats.connected}/{stats.count} conectados</Badge>
-                    : stats.status === "empty"
-                      ? <Badge color="gray">Sem grupos</Badge>
-                      : <Badge color="red">Desconectado</Badge>;
+                    : stats.status === "degraded"
+                      ? <Badge color="amber">{stats.connected}/{stats.count} conectados</Badge>
+                      : stats.status === "empty"
+                        ? <Badge color="gray">Sem grupos</Badge>
+                        : <Badge color="red">Pausada · sem WhatsApp</Badge>;
               return (
                 <div
                   key={g.id}
@@ -145,15 +148,17 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        // Pausa por afiliado faltando: clicar abre a campanha pra ver
-                        // o alerta e o botão "Configurar afiliado" — pausar/retomar manual
-                        // aqui não resolve sozinho.
+                        // Pausa por afiliado faltando OU sem WhatsApp: clicar abre a
+                        // campanha pra ver o alerta — pausar/retomar manual aqui não
+                        // resolve sozinho.
                         if (stats.pausedByAffiliate && !g.paused) { onSelectGroup(g); return; }
+                        if (stats.status === "disconnected" && !g.paused && !stats.pausedByAffiliate) { onSelectGroup(g); return; }
                         togglePause(g);
                       }}
                       title={
                         g.paused ? "Reativar campanha"
                           : stats.pausedByAffiliate ? `Configure o afiliado ${missingAff} para reativar`
+                          : stats.status === "disconnected" ? "Conecte um WhatsApp para reativar (retoma sozinho)"
                           : "Pausar campanha"
                       }
                       style={{
