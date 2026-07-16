@@ -133,6 +133,10 @@ async function harvestMLCards(page, category) {
         const match = discountEl.textContent.match(/(\d+)%/);
         if (match) discountPct = parseInt(match[1]);
       }
+      // Fallback: sem o rótulo de desconto, mas com preço atual e original, calcula.
+      if (discountPct == null && originalPrice && price && originalPrice > price) {
+        discountPct = Math.round((1 - price / originalPrice) * 100);
+      }
 
       results.push({
         name: titleEl.textContent.trim(),
@@ -874,6 +878,10 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
         if (discEl) {
           const m = discEl.textContent.match(/(\d+)%/);
           if (m) discount = parseInt(m[1], 10);
+        }
+        // Fallback: sem o rótulo de desconto, mas com preço atual e original, calcula.
+        if (discount == null && originalPrice && price && originalPrice > price && originalPrice < price * 20) {
+          discount = Math.round((1 - price / originalPrice) * 100);
         }
         const imgEl = document.querySelector(".ui-pdp-gallery__figure img, figure.ui-pdp-gallery__figure img, .ui-pdp-image");
         img = imgEl?.getAttribute("src") || imgEl?.getAttribute("data-zoom") || ogImage;
