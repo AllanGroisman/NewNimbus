@@ -9,6 +9,7 @@ const metrics = require("./infra/metrics");
 const log = require("./infra/logger").child({ module: "scheduler" });
 const billing = require("./billing");
 const auth = require("./auth");
+const userNotifier = require("./notifications/user-notifier");
 
 // Cadência do loop principal (em ms). Roda janelas de envio.
 const TICK_MS = 30 * 1000;
@@ -583,12 +584,19 @@ async function processGroup(userId, group, whatsappGroups, numbers) {
   if (group.paused) {
     return;
   }
-  if (groupPausedByAffiliate(userId, group)) {
+  // Parada por gate (afiliado/whatsapp) — notifica o dono com o motivo (edge-trigger).
+  const affGate = affiliateGate(userId, group);
+  if (affGate.paused) {
+    userNotifier.onCampaignStopped(userId, group.id, group.name, affGate.reason, true).catch(() => {});
     return;
   }
-  if ((await whatsappGate(userId, group, whatsappGroups)).paused) {
+  const waGate = await whatsappGate(userId, group, whatsappGroups);
+  if (waGate.paused) {
+    userNotifier.onCampaignStopped(userId, group.id, group.name, waGate.reason, true).catch(() => {});
     return;
   }
+  // Não está parada por gate: reseta o edge-trigger pra uma próxima parada avisar.
+  userNotifier.onCampaignStopped(userId, group.id, group.name, null, false).catch(() => {});
 
   // Sempre limpa itens stale (config mudou — sources/categorias/filtros não
   // batem mais). Roda antes do refill+dispatch pra não enviar item que já não
@@ -625,7 +633,20 @@ async function processGroup(userId, group, whatsappGroups, numbers) {
         if (removedFromQueue > 0) updates.queue = cleanedQueue;
       }
     }
+    // Notifica o resultado da busca automática (novos produtos aprovados/pendentes).
+    if (newItems.length) {
+      userNotifier.onProductSearch(userId, group.name, {
+        added: newItems.length,
+        approved: target === "queue" ? newItems.length : 0,
+        pending: target === "pending" ? newItems.length : 0,
+      }).catch(() => {});
+    }
   }
+
+  // Fila vazia dentro de uma janela de envio (edge-trigger). Usa a queue já
+  // considerando o refill acima.
+  const effQueueLen = (updates.queue !== undefined ? updates.queue : (group.queue || [])).length;
+  userNotifier.onQueueEmpty(userId, group.id, group.name, inWindow && effQueueLen === 0).catch(() => {});
 
   // Dispatch (só consome de queue — pending precisa de aprovação manual)
   const groupForDispatch = updates.queue ? { ...group, queue: updates.queue } : group;
@@ -745,6 +766,14 @@ async function refillNow(userId, groupId, overrides = {}) {
     if (cleanedQueue.length !== (group.queue || []).length) updates.queue = cleanedQueue;
   }
   await storage.updateGroupOps(userId, groupId, updates);
+  // Notifica o dono sobre a busca manual (botão "Buscar agora").
+  if (newItems.length) {
+    userNotifier.onProductSearch(userId, group.name, {
+      added: newItems.length,
+      approved: target === "queue" ? newItems.length : 0,
+      pending: target === "pending" ? newItems.length : 0,
+    }).catch(() => {});
+  }
   return {
     target,
     queueSize: (updates.queue || group.queue || []).length,

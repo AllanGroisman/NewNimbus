@@ -25,6 +25,7 @@ const billing = require("./billing");
 const stripeMod = require("./billing/stripe");
 const backupApi = require("./backup/api");
 const adminNotifier = require("./notifications/admin-notifier");
+const whatsnimbus = require("./notifications/whatsnimbus");
 
 // Sentry init (Fase 4) — no-op se SENTRY_DSN não estiver definido
 sentry.init({ context: "server" });
@@ -1370,6 +1371,81 @@ app.post("/api/admin/notifications/test", auth.requireAuth, auth.requireAdmin, a
     res.json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+
+// ────────────────────────────────────────────────────────────────────────
+// Admin — WhatsNimbus (o WhatsApp dedicado do sistema, remetente das
+// notificações pros usuários). Sessão sob userId sintético (whatsnimbus.js).
+// ────────────────────────────────────────────────────────────────────────
+
+async function whatsNimbusSnapshot() {
+  const cfg = whatsnimbus.readConfig();
+  let session = null;
+  if (cfg.numberId) {
+    try { session = await wa.getSession(whatsnimbus.WHATSNIMBUS_USER_ID, cfg.numberId); } catch { /* ignore */ }
+  }
+  return {
+    numberId: cfg.numberId,
+    phone: cfg.phone,
+    name: cfg.name,
+    connectedAt: cfg.connectedAt,
+    status: session?.status || (cfg.numberId ? "disconnected" : "idle"),
+    qr: session?.qrDataUrl || null,
+    info: session?.info || null,
+    lastError: session?.lastError || null,
+  };
+}
+
+app.get("/api/admin/whatsnimbus", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    res.json(await whatsNimbusSnapshot());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Inicia (ou retoma) a sessão do WhatsNimbus. Cria um numberId provisório na
+// primeira conexão; após o scan o frontend chama /finalize com o telefone.
+app.post("/api/admin/whatsnimbus/connect", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    let cfg = whatsnimbus.readConfig();
+    if (!cfg.numberId) {
+      cfg = whatsnimbus.writeConfig({ numberId: `wn-${Date.now()}`, phone: null, name: null, connectedAt: null });
+    }
+    await wa.startSession(whatsnimbus.WHATSNIMBUS_USER_ID, cfg.numberId);
+    res.json(await whatsNimbusSnapshot());
+  } catch (err) {
+    console.error("[whatsnimbus] connect:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Chamado pelo frontend quando a sessão conecta: fixa o numberId canônico
+// (= telefone), pra config apontar pra mesma sessão que o local.js canonicaliza.
+app.post("/api/admin/whatsnimbus/finalize", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const { phone, name } = req.body || {};
+    if (!phone) return res.status(400).json({ error: "phone obrigatório" });
+    const canonical = wa.normalizePhone(phone);
+    whatsnimbus.writeConfig({ numberId: canonical, phone: canonical, name: name || null, connectedAt: new Date().toISOString() });
+    res.json(await whatsNimbusSnapshot());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/whatsnimbus/disconnect", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const cfg = whatsnimbus.readConfig();
+    if (cfg.numberId) {
+      try { await wa.deleteSession(whatsnimbus.WHATSNIMBUS_USER_ID, cfg.numberId); } catch { /* ignore */ }
+    }
+    whatsnimbus.clearConfig();
+    res.json(await whatsNimbusSnapshot());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

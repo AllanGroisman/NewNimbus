@@ -6,10 +6,24 @@ import Modal from "../components/ui/Modal";
 import { authUpdate, authChangePassword } from "../data/api";
 import { useUnsavedGuard } from "../data/navGuard";
 
-export default function PageSettings({ user, setUser, onLogout, settings = {}, setSettings = () => {} }) {
+// Eventos que o WhatsNimbus (WhatsApp do sistema) pode avisar por DM.
+const WHATSNIMBUS_EVENTS = [
+  { key: "whatsappDisconnected", label: "WhatsApp desconectado", desc: "Aviso quando um dos seus números cai" },
+  { key: "campaignStopped",      label: "Campanha parada",        desc: "Quando uma campanha para por algum motivo (ex.: afiliado ou WhatsApp)" },
+  { key: "campaignDeactivated",  label: "Campanha desativada",    desc: "Quando você pausa uma campanha" },
+  { key: "campaignReactivated",  label: "Campanha reativada",     desc: "Quando você retoma uma campanha" },
+  { key: "productSearch",        label: "Busca de produtos",      desc: "Resultado das buscas: aprovados / aguardando confirmação" },
+  { key: "queueEmpty",           label: "Fila vazia",             desc: "Quando a fila de uma campanha fica sem produtos" },
+];
+
+export default function PageSettings({ user, setUser, onLogout, settings = {}, setSettings = () => {}, numbers = [] }) {
   const [section, setSection] = useState("account");
   const notifications = settings.notifications || { email: true, push: false, weeklyReport: true, pendingReview: true };
   const setNotifications = (updater) => setSettings(s => ({ ...s, notifications: typeof updater === "function" ? updater(s.notifications || {}) : updater }));
+  const wnEnabled = !!notifications.enabled;
+  const wnDest = notifications.destinationNumberId || "";
+  const wnEvents = notifications.events || {};
+  const setWnEvent = (key, val) => setNotifications(s => ({ ...s, events: { ...(s.events || {}), [key]: val } }));
   const theme = settings.theme || "auto";
   const setTheme = (v) => setSettings(s => ({ ...s, theme: v }));
 
@@ -148,6 +162,60 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
           )}
 
           {section === "notifications" && (
+            <>
+            <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+                <div>
+                  <div style={{ fontWeight: 500, marginBottom: 4 }}>Notificações no WhatsApp (WhatsNimbus)</div>
+                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 4 }}>
+                    Receba avisos do sistema direto no seu WhatsApp.
+                  </div>
+                </div>
+                <Toggle value={wnEnabled} onChange={v => setNotifications(s => ({ ...s, enabled: v }))} />
+              </div>
+
+              {wnEnabled && (
+                <div style={{ marginTop: 12 }}>
+                  <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Número que vai receber os avisos</label>
+                  {numbers.length === 0 ? (
+                    <div style={{ fontSize: 12, color: "var(--color-text-secondary)", background: "var(--color-background-secondary)", borderRadius: 8, padding: "10px 12px" }}>
+                      Você ainda não conectou nenhum número. Vá em <strong>WhatsApp</strong> e conecte um número primeiro.
+                    </div>
+                  ) : (
+                    <select
+                      value={wnDest}
+                      onChange={e => setNotifications(s => ({ ...s, destinationNumberId: e.target.value || null }))}
+                      style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", color: "inherit" }}
+                    >
+                      <option value="">Selecione um número...</option>
+                      {numbers.map(n => (
+                        <option key={n.id} value={n.id}>
+                          {n.label || n.id}{n.phone ? ` (+${n.phone})` : ""}{n.status === "connected" ? " ✓" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {wnEnabled && numbers.length > 0 && !wnDest && (
+                    <div style={{ fontSize: 12, color: "#B45309", marginTop: 4 }}>Escolha um número pra ativar os avisos.</div>
+                  )}
+
+                  <div style={{ fontWeight: 500, fontSize: 13, marginTop: 16, marginBottom: 4 }}>Quais avisos você quer receber</div>
+                  {WHATSNIMBUS_EVENTS.map(ev => (
+                    <div key={ev.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "0.5px solid var(--color-border-tertiary)", gap: 12 }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 500 }}>{ev.label}</div>
+                        <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>{ev.desc}</div>
+                      </div>
+                      <Toggle value={wnEvents[ev.key] !== false} onChange={v => setWnEvent(ev.key, v)} />
+                    </div>
+                  ))}
+                  <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 10 }}>
+                    As alterações são salvas automaticamente.
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
               <div style={{ fontWeight: 500, marginBottom: 4 }}>Preferências de notificação</div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>Escolha como e quando ser avisado</div>
@@ -166,6 +234,7 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
                 </div>
               ))}
             </div>
+            </>
           )}
 
           {section === "appearance" && (

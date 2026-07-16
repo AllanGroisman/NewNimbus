@@ -20,8 +20,8 @@
 
 
 * NIMBUS (Whats) COMO SISTEMA ADMIN
-    * Criar grupos com o Nimbus ( )
-    * Notificações com o Nimbus ( )
+    * Criar grupos com o Nimbus (x)
+    * Notificações com o Nimbus (x)
 
 * NOTIFICAÇÕES DE USUÁRIO
     - Whats Nimbus ( )

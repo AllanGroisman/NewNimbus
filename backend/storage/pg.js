@@ -148,7 +148,10 @@ async function saveState(userId, incoming) {
 
   // groups: upsert por id; campos de config sobrescrevem, ops NÃO.
   const incomingGroups = Array.isArray(incoming.groups) ? incoming.groups : [];
-  const existingIds = (await prisma().group.findMany({ where: { userId }, select: { id: true } })).map(g => Number(g.id));
+  const existingRows = await prisma().group.findMany({ where: { userId }, select: { id: true, paused: true, name: true } });
+  const existingIds = existingRows.map(g => Number(g.id));
+  // Snapshot do `paused` atual pra detectar desativação/reativação após o commit.
+  const prevPaused = new Map(existingRows.map(g => [Number(g.id), !!g.paused]));
   const incomingIds = incomingGroups.map(g => Number(g.id));
 
   // Apaga grupos removidos pelo frontend
@@ -209,6 +212,22 @@ async function saveState(userId, incoming) {
   }
 
   await prisma().$transaction(tx);
+
+  // Notifica desativação/reativação de campanha (transição do `paused` manual).
+  // Só pra grupos que já existiam — criação nova não conta. Fire-and-forget.
+  try {
+    const notifier = require("../notifications/user-notifier");
+    for (const g of incomingGroups) {
+      const gid = Number(g.id);
+      if (!prevPaused.has(gid)) continue;
+      const before = prevPaused.get(gid);
+      const after = !!g.paused;
+      if (before === after) continue;
+      const name = String(g.name || "");
+      if (after) notifier.onCampaignDeactivated(userId, name).catch(() => {});
+      else notifier.onCampaignReactivated(userId, name).catch(() => {});
+    }
+  } catch { /* ignore */ }
 
   return loadState(userId);
 }

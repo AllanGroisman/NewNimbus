@@ -298,3 +298,9 @@ export async function adminNotifConfig()          { return http("GET",  "/api/ad
 export async function adminNotifSave(cfg)         { return http("PUT",  "/api/admin/notifications/config", cfg); }
 export async function adminNotifTest()            { return http("POST", "/api/admin/notifications/test"); }
 export async function adminNotifGroups(numberId)  { return http("GET",  `/api/whatsapp/sessions/${encodeURIComponent(numberId)}/groups`); }
+
+// ─── Admin / WhatsNimbus (remetente do sistema) ────────────────────────────
+export async function whatsNimbusStatus()         { return http("GET",  "/api/admin/whatsnimbus"); }
+export async function whatsNimbusConnect()        { return http("POST", "/api/admin/whatsnimbus/connect"); }
+export async function whatsNimbusFinalize(info)   { return http("POST", "/api/admin/whatsnimbus/finalize", info); }
+export async function whatsNimbusDisconnect()     { return http("POST", "/api/admin/whatsnimbus/disconnect"); }

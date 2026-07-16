@@ -8,7 +8,19 @@ function sessionStatus() {
   if (!_sessionStatus) _sessionStatus = require("../infra/session-status");
   return _sessionStatus;
 }
+// Notifica o usuário (via WhatsNimbus) quando a sessão dele cai. Edge-triggered
+// no user-notifier — chamamos em toda mudança de status; ele decide reenviar ou
+// não. Fire-and-forget: nunca deixa um erro de notificação afetar o Baileys.
+function notifySessionStatus(session) {
+  try {
+    require("../notifications/user-notifier")
+      .onSessionStatus(session.userId, session.numberId, session.status)
+      .catch(() => {});
+  } catch { /* ignore */ }
+}
+
 function publishStatus(session) {
+  notifySessionStatus(session);
   if (!PUBLISH_STATUS) return;
   // Fire-and-forget. Erros de Redis não devem derrubar Baileys.
   sessionStatus().publish(session.userId, session.numberId, {
@@ -332,6 +344,15 @@ async function restoreSessions() {
   try {
     const nums = await prisma().whatsappNumber.findMany({ select: { id: true, userId: true } });
     validNumbers = new Set(nums.map(n => `${n.userId}::${n.id}`));
+    // WhatsNimbus (remetente do sistema) não tem linha em whatsapp_numbers —
+    // é whitelistado pela config pra não ser tratado como auth órfã e limpo.
+    try {
+      const wn = require("../notifications/whatsnimbus");
+      const cfg = wn.readConfig();
+      if (cfg.numberId) validNumbers.add(`${wn.WHATSNIMBUS_USER_ID}::${cfg.numberId}`);
+    } catch (e) {
+      console.error(`[whatsapp] whitelist WhatsNimbus falhou: ${e.message}`);
+    }
   } catch (err) {
     console.error(`[whatsapp] falha listando números (sem reconciliação): ${err.message}`);
   }
