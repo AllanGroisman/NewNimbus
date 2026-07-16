@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, soldText, getGroupCategories, getGroupStats, computeQueueETA, formatETA, formatTimeBR, formatDateBR, isSameDayBR } from "../data/constants";
-import { createWAGroup, leaveWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupQueue, saveGroupQueue, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue } from "../data/api";
+import { createWAGroup, leaveWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupQueue, saveGroupQueue, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue, whatsNimbusAvailable } from "../data/api";
 import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
 import { useUnsavedGuard, useRequestNavigation } from "../data/navGuard";
 import BusyOverlay from "./ui/BusyOverlay";
@@ -241,7 +241,8 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const [importingJid, setImportingJid] = useState(null);
   const [confirmDeleteWG, setConfirmDeleteWG] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
-  const [newWGForm, setNewWGForm] = useState({ name: "", numberIds: numbers[0]?.id ? [numbers[0].id] : [], participants: "" });
+  const [newWGForm, setNewWGForm] = useState({ name: "", numberIds: numbers[0]?.id ? [numbers[0].id] : [], participants: "", includeNimbus: false });
+  const [nimbusAvail, setNimbusAvail] = useState({ connected: false, phone: null });
   const [creatingWG, setCreatingWG] = useState(false);
   const [createWGError, setCreateWGError] = useState(null);
   const [sendingNow, setSendingNow] = useState(false);
@@ -292,6 +293,16 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const pendingKeySig = (group.pending || []).map(p => p.key ?? p.id ?? p.name).join("|");
   useEffect(() => { setQueue(group.queue || []); }, [queueKeySig]);
   useEffect(() => { setPending(group.pending || []); }, [pendingKeySig]);
+
+  // Disponibilidade do WhatsNimbus — habilita usá-lo como participante extra na
+  // criação de grupo (o WhatsApp exige ao menos 1 participante além de você).
+  useEffect(() => {
+    let alive = true;
+    whatsNimbusAvailable()
+      .then(r => { if (alive) setNimbusAvail({ connected: !!r?.connected, phone: r?.phone || null }); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   async function handleClearHistory() {
     setClearingHistory(true);
@@ -695,6 +706,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       name: computeCloneName(wg.name),
       numberIds: wg.numberId ? [wg.numberId] : (numbers[0]?.id ? [numbers[0].id] : []),
       participants: "",
+      includeNimbus: false,
     });
     setAddStep("create");
   };
@@ -829,8 +841,9 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       .split(/[\n,;]/)
       .map(p => p.trim())
       .filter(Boolean);
-    if (parts.length === 0) {
-      setCreateWGError("Informe ao menos um participante (telefone com DDD).");
+    const includeNimbus = !!newWGForm.includeNimbus && nimbusAvail.connected;
+    if (parts.length === 0 && !includeNimbus) {
+      setCreateWGError("Informe ao menos um participante (telefone com DDD) ou marque a opção do WhatsNimbus.");
       return;
     }
     setCreatingWG(true);
@@ -843,7 +856,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         const num = numbers.find(n => n.id === numId);
         const name = useSuffix && num ? `${baseName} — ${num.label}` : baseName;
         try {
-          const result = await createWAGroup(numId, name, parts);
+          const result = await createWAGroup(numId, name, parts, includeNimbus);
           const newId = onCreateWhatsappGroup({
             id: result.jid,
             name: result.name,
@@ -866,7 +879,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         if (created.length === 0) return;
       }
       closeAddModal();
-      setNewWGForm({ name: "", numberIds: numbers[0]?.id ? [numbers[0].id] : [], participants: "" });
+      setNewWGForm({ name: "", numberIds: numbers[0]?.id ? [numbers[0].id] : [], participants: "", includeNimbus: false });
     } finally {
       setCreatingWG(false);
     }
@@ -2063,8 +2076,26 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                     </div>
                   )}
                 </div>
+                {nimbusAvail.connected && (
+                  <label style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "10px 12px", borderRadius: 8, border: `0.5px solid ${newWGForm.includeNimbus ? PRIMARY : "var(--color-border-tertiary)"}`, background: newWGForm.includeNimbus ? PRIMARY_LIGHT : "var(--color-background-secondary)", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={!!newWGForm.includeNimbus}
+                      onChange={e => setNewWGForm(f => ({ ...f, includeNimbus: e.target.checked }))}
+                      style={{ marginTop: 2, cursor: "pointer" }}
+                    />
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 500 }}>Usar o WhatsNimbus como participante</div>
+                      <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                        O número do sistema{nimbusAvail.phone ? ` (+${nimbusAvail.phone})` : ""} entra no grupo, dispensando um número extra seu.
+                      </div>
+                    </div>
+                  </label>
+                )}
                 <div>
-                  <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Participantes iniciais</label>
+                  <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
+                    Participantes iniciais{newWGForm.includeNimbus ? " (opcional)" : ""}
+                  </label>
                   <textarea
                     value={newWGForm.participants}
                     onChange={e => setNewWGForm(f => ({ ...f, participants: e.target.value }))}

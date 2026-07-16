@@ -1519,14 +1519,47 @@ app.get("/api/whatsapp/sessions/:id/groups", auth.requireAuth, async (req, res) 
   }
 });
 
+// Disponibilidade do WhatsNimbus pra o fluxo de criação de grupo (não-admin):
+// permite usar o número do sistema como o participante extra que o WhatsApp exige.
+app.get("/api/whatsnimbus/available", auth.requireAuth, async (req, res) => {
+  try {
+    const cfg = whatsnimbus.readConfig();
+    let connected = false, phone = null;
+    if (cfg.numberId) {
+      const s = await wa.getSession(whatsnimbus.WHATSNIMBUS_USER_ID, cfg.numberId);
+      connected = s?.status === "connected";
+      if (connected) phone = cfg.phone || s?.info?.phone || null;
+    }
+    res.json({ connected, phone });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/api/whatsapp/sessions/:id/groups", auth.requireAuth, async (req, res) => {
   try {
-    const { name, participants = [] } = req.body || {};
+    const { name, participants = [], includeNimbus = false } = req.body || {};
     if (!name || !String(name).trim()) return res.status(400).json({ error: "name obrigatório" });
-    if (!Array.isArray(participants) || participants.length === 0) {
-      return res.status(400).json({ error: "informe ao menos um participante (telefone)" });
+
+    let parts = Array.isArray(participants) ? participants.slice() : [];
+
+    // Opção "usar o WhatsNimbus": anexa o telefone do número do sistema como
+    // participante. Resolvido no servidor (fonte da verdade) — o cliente só pede.
+    if (includeNimbus) {
+      const cfg = whatsnimbus.readConfig();
+      const s = cfg.numberId ? await wa.getSession(whatsnimbus.WHATSNIMBUS_USER_ID, cfg.numberId) : null;
+      if (!cfg.numberId || s?.status !== "connected") {
+        return res.status(400).json({ error: "O WhatsNimbus não está conectado. Conecte-o na aba admin ou informe um participante." });
+      }
+      const wnPhone = cfg.phone || s?.info?.phone;
+      if (wnPhone) parts.push(wnPhone);
     }
-    const group = await wa.createGroup(req.user.id, req.params.id, String(name).trim(), participants);
+
+    parts = [...new Set(parts.map(p => String(p).trim()).filter(Boolean))];
+    if (parts.length === 0) {
+      return res.status(400).json({ error: "informe ao menos um participante (telefone) ou use o WhatsNimbus" });
+    }
+    const group = await wa.createGroup(req.user.id, req.params.id, String(name).trim(), parts);
     res.json(group);
   } catch (err) {
     console.error("[whatsapp] createGroup:", err);

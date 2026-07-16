@@ -216,9 +216,10 @@ export async function listWASessions()   { return http("GET",  `/api/whatsapp/se
 
 // ─── WhatsApp / grupos ─────────────────────────────────────────────────
 export async function listWAGroups(id)   { return http("GET",  `/api/whatsapp/sessions/${id}/groups`); }
-export async function createWAGroup(id, name, participants) {
-  return http("POST", `/api/whatsapp/sessions/${id}/groups`, { name, participants });
+export async function createWAGroup(id, name, participants, includeNimbus = false) {
+  return http("POST", `/api/whatsapp/sessions/${id}/groups`, { name, participants, includeNimbus });
 }
+export async function whatsNimbusAvailable() { return http("GET", "/api/whatsnimbus/available"); }
 export async function getWAInvite(id, jid) {
   return http("GET", `/api/whatsapp/sessions/${id}/groups/${encodeURIComponent(jid)}/invite`);
 }

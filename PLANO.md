@@ -24,16 +24,16 @@
     * Notificações com o Nimbus (x)
 
 * NOTIFICAÇÕES DE USUÁRIO
-    - Whats Nimbus ( )
-    - Criar menu? Ter notificação por Campanha? ( )
-        * Whats desconectado ( )
-        * Campanha desativada ( )
-        * Campanha reativada ( )
-        * Campanha parada (incluindo o motivo) ( )
+    - Whats Nimbus (x)
+    - Criar menu (x)
+        * Whats desconectado (x)
+        * Campanha desativada (x)
+        * Campanha reativada (x)
+        * Campanha parada (incluindo o motivo) (x)
         * Busca de produtos 
-            * X Produtos a serem aprovados ( )
-            * X Produtos buscados e já aprovados  ( )
-        * Fila vazia ( )
+            * X Produtos a serem aprovados (x)
+            * X Produtos buscados e já aprovados  (x)
+        * Fila vazia (x)
         
 
 * AFILIADOS
