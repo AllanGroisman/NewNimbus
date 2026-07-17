@@ -170,6 +170,12 @@ function isAutoApprove(group) {
   return v === undefined ? true : !!v;
 }
 
+// Campanha de repasse: a fila é populada pelos links capturados no grupo líder,
+// não pelo scraping do catálogo. Guarda usada pra pular refill/scraping.
+function isRepasse(group) {
+  return group?.scraping?.kind === "repasse";
+}
+
 // Tenta gerar link de afiliado pra um item conforme a loja.
 // Decisão de "passa ou pula" no refill:
 //   - Loja não-monetizável (sem afiliado pra ela): mantém link original (passa)
@@ -551,7 +557,7 @@ async function sendNextNow(userId, groupId) {
   // Tenta refill se queue está vazia — "enviar agora" é ação manual do user,
   // então força os itens pra queue mesmo se a campanha está em modo de revisão.
   let queue = group.queue || [];
-  if (!queue.length) {
+  if (!queue.length && !isRepasse(group)) {
     const { cleanedQueue, newItems } = await refillQueue(userId, group);
     const refilled = [...cleanedQueue, ...newItems];
     if (refilled.length) {
@@ -561,7 +567,10 @@ async function sendNextNow(userId, groupId) {
     }
   }
 
-  if (!queue.length) throw new Error("Fila vazia — sem produtos no catálogo que passem nos filtros desta campanha. Peça pro admin atualizar o catálogo (página Scraping) ou afrouxe os filtros.");
+  if (!queue.length) {
+    if (isRepasse(group)) throw new Error("Fila vazia — nenhum produto capturado do grupo líder ainda. Aprove os pendentes ou aguarde novos links no grupo líder.");
+    throw new Error("Fila vazia — sem produtos no catálogo que passem nos filtros desta campanha. Peça pro admin atualizar o catálogo (página Scraping) ou afrouxe os filtros.");
+  }
 
   const result = await sendItem(userId, group, state.whatsappGroups || [], queue[0]);
   if (!result) throw new Error("Nenhum envio realizado");
@@ -622,7 +631,8 @@ async function processGroup(userId, group, whatsappGroups, numbers) {
   const queueLen = (group.queue || []).length;
   const pendingLen = (group.pending || []).length;
   const inWindow = !!activeWindow(now, group.schedule);
-  if ((queueLen + pendingLen < REFILL_THRESHOLD) && inWindow) {
+  // Repasse não puxa do catálogo — a fila é alimentada só pelo grupo líder.
+  if (!isRepasse(group) && (queueLen + pendingLen < REFILL_THRESHOLD) && inWindow) {
     const { cleanedQueue, cleanedPending, newItems, target, removedFromQueue } = await refillQueue(userId, group);
     if (newItems.length || removedFromQueue > 0 || cleanedPending.length !== (group.pending || []).length) {
       if (target === "queue") {
@@ -745,6 +755,7 @@ async function refillNow(userId, groupId, overrides = {}) {
   const state = await storage.loadState(userId);
   const group = (state.groups || []).find(g => g.id === groupId);
   if (!group) throw new Error("Campanha não encontrada");
+  if (isRepasse(group)) throw new Error("Campanha de repasse não busca no catálogo — a fila é alimentada pelos links do grupo líder.");
 
   const merged = { ...group };
   if (overrides && (overrides.filters || overrides.sources || overrides.categories)) {
@@ -812,9 +823,24 @@ async function manualAdd(userId, groupId, payload = {}) {
     sold: null,
     freeShipping: false,
     seller: null,
-    addedAt: new Date().toISOString(),
     manual: true,
   };
+
+  return addItemToGroup(userId, group, item, { force });
+}
+
+// Núcleo compartilhado por manualAdd e pela captura de repasse: recebe um item já
+// montado (name/link/store/...), calcula a key, checa duplicata + cooldown e insere
+// na fila ou pending conforme aprovação automática. Não faz scraping nem validação
+// de URL — quem chama já preparou o item.
+//   - Duplicata na fila/pending: lança erro com code duplicate_queue/duplicate_pending.
+//   - Cooldown e !force: retorna { inCooldown: true, ... } (sem inserir).
+//   - Sucesso: retorna { ok: true, target, item, queueSize, pendingSize }.
+async function addItemToGroup(userId, group, item, { force = false } = {}) {
+  const groupId = group.id;
+  item = { ...item };
+  if (!item.addedAt) item.addedAt = new Date().toISOString();
+  if (item.manual === undefined) item.manual = true;
   // Sanitiza NaN
   for (const k of ["price", "originalPrice", "discount"]) {
     if (item[k] != null && (typeof item[k] !== "number" || isNaN(item[k]))) item[k] = null;
@@ -867,4 +893,4 @@ async function manualAdd(userId, groupId, payload = {}) {
   };
 }
 
-module.exports = { start, stop, tick, sendNextNow, refillNow, manualAdd, status, processSendJob };
+module.exports = { start, stop, tick, sendNextNow, refillNow, manualAdd, addItemToGroup, isRepasse, isAutoApprove, status, processSendJob };

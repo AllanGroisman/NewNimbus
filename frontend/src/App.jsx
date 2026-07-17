@@ -379,8 +379,8 @@ export default function App() {
     setPage("dashboard");
   }
 
-  const handleCreateGroup = ({ name, categories }) => {
-    const newGroup = makeEmptyGroup({ id: Date.now(), name, categories, template: settings.messageTemplate });
+  const handleCreateGroup = ({ name, categories, type, repasse }) => {
+    const newGroup = makeEmptyGroup({ id: Date.now(), name, categories, template: settings.messageTemplate, type, repasse });
     setGroups(gs => [...gs, newGroup]);
     setSelectedGroup(newGroup);
     setPage("group");

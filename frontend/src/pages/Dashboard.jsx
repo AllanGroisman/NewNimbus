@@ -35,7 +35,8 @@ function getWindowStatus(group, now = new Date()) {
 
 export default function PageDashboard({ groups, whatsappGroups = [], onSelectGroup, onCreateGroup, onUpdate, affiliateConfigured = true, onGoToSettings }) {
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ name: "", categories: [] });
+  // type: null = tela de escolha; "scraping" | "repasse" = formulário do tipo.
+  const [form, setForm] = useState({ name: "", categories: [], type: null, autoApprove: false });
   // Guarda o grupo aguardando confirmação de pause — retomar é seguro e não pede confirmação.
   const [pendingPause, setPendingPause] = useState(null);
   // Re-renderiza por minuto pra manter "próxima janela" / "tempo restante" em dia.
@@ -50,11 +51,20 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
     categories: f.categories.includes(id) ? f.categories.filter(c => c !== id) : [...f.categories, id],
   }));
 
-  const submit = () => {
-    if (!form.name.trim() || form.categories.length === 0) return;
-    onCreateGroup({ name: form.name.trim(), categories: form.categories });
+  const closeCreate = () => {
     setShowCreate(false);
-    setForm({ name: "", categories: [] });
+    setForm({ name: "", categories: [], type: null, autoApprove: false });
+  };
+
+  const submit = () => {
+    if (form.type === "repasse") {
+      if (!form.name.trim()) return;
+      onCreateGroup({ name: form.name.trim(), categories: [], type: "repasse", repasse: { autoApprove: form.autoApprove } });
+    } else {
+      if (!form.name.trim() || form.categories.length === 0) return;
+      onCreateGroup({ name: form.name.trim(), categories: form.categories, type: "scraping" });
+    }
+    closeCreate();
   };
 
   const togglePause = (g) => {
@@ -253,40 +263,101 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
       )}
 
       {showCreate && (
-        <Modal title="Nova campanha" onClose={() => setShowCreate(false)}>
-          <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>
-            Defina o nome e as categorias de produtos que esta campanha vai monitorar. Você poderá vincular grupos do WhatsApp depois.
-          </div>
-          <div style={{ background: PRIMARY_LIGHT, color: PRIMARY_DARK, padding: "8px 12px", borderRadius: 8, fontSize: 12, marginBottom: 14, lineHeight: 1.4 }}>
-            💡 Já vamos preencher os defaults pra você: modelo de mensagem, filtros (desconto ≥ 25%, avaliação ≥ 4.0), todas as fontes ativas e dois horários de scraping. Tudo isso pode ser ajustado depois.
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div>
-              <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Nome da campanha</label>
-              <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Ex: Tech BR" style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }} />
-            </div>
-            <div>
-              <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 6 }}>Categorias (selecione uma ou mais)</label>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {Object.keys(CATEGORIES).map(id => {
-                  const active = form.categories.includes(id);
-                  return (
-                    <div
-                      key={id}
-                      onClick={() => toggleFormCategory(id)}
-                      style={{ padding: "6px 14px", borderRadius: 8, border: `0.5px solid ${active ? PRIMARY : "var(--color-border-tertiary)"}`, background: active ? PRIMARY_LIGHT : "transparent", color: active ? PRIMARY_DARK : "var(--color-text-secondary)", fontSize: 13, cursor: "pointer", fontWeight: active ? 500 : 400, userSelect: "none" }}
-                    >
-                      {active ? "✓ " : ""}<span style={{ marginRight: 4 }}>{categoryIcon(id)}</span>{categoryLabel(id)}
-                    </div>
-                  );
-                })}
+        <Modal title="Nova campanha" onClose={closeCreate}>
+          {form.type === null ? (
+            // Passo 1: escolher o tipo de campanha.
+            <>
+              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>
+                Escolha como esta campanha vai encontrar os produtos que serão enviados.
               </div>
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 18 }}>
-            <button onClick={() => setShowCreate(false)} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
-            <button onClick={submit} disabled={!form.name.trim() || form.categories.length === 0} style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: (!form.name.trim() || form.categories.length === 0) ? 0.5 : 1 }}>Criar campanha</button>
-          </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div
+                  onClick={() => setForm(f => ({ ...f, type: "scraping" }))}
+                  style={{ padding: "14px 16px", borderRadius: 10, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", cursor: "pointer" }}
+                >
+                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>🔎 Original</div>
+                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)", lineHeight: 1.4 }}>
+                    O sistema busca ofertas automaticamente no Mercado Livre, Shopee e Amazon conforme as categorias e filtros que você definir.
+                  </div>
+                </div>
+                <div
+                  onClick={() => setForm(f => ({ ...f, type: "repasse" }))}
+                  style={{ padding: "14px 16px", borderRadius: 10, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", cursor: "pointer" }}
+                >
+                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>🔁 Repasse</div>
+                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)", lineHeight: 1.4 }}>
+                    Em vez de buscar produtos, o sistema escuta um <strong>grupo líder</strong> e captura os links de produto postados nele, re-afiliando com a sua TAG. Os grupos vinculados replicam as ofertas do líder.
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 18 }}>
+                <button onClick={closeCreate} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+              </div>
+            </>
+          ) : form.type === "repasse" ? (
+            // Passo 2b: campanha de repasse.
+            <>
+              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>
+                Dê um nome à campanha. Você vai escolher o <strong>grupo líder</strong> e os grupos que recebem as ofertas depois, dentro da campanha.
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Nome da campanha</label>
+                  <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Ex: Repasse Ofertas Tech" style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }} />
+                </div>
+                <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+                  <input type="checkbox" checked={form.autoApprove} onChange={e => setForm(f => ({ ...f, autoApprove: e.target.checked }))} />
+                  <span style={{ fontSize: 13 }}>
+                    Aprovação automática
+                    <span style={{ display: "block", fontSize: 11, color: "var(--color-text-secondary)" }}>
+                      {form.autoApprove ? "Links capturados vão direto pra fila de envio." : "Links capturados vão para revisão antes de enviar."}
+                    </span>
+                  </span>
+                </label>
+              </div>
+              <div style={{ display: "flex", gap: 8, justifyContent: "space-between", marginTop: 18 }}>
+                <button onClick={() => setForm(f => ({ ...f, type: null }))} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>← Voltar</button>
+                <button onClick={submit} disabled={!form.name.trim()} style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: !form.name.trim() ? 0.5 : 1 }}>Criar campanha</button>
+              </div>
+            </>
+          ) : (
+            // Passo 2a: campanha original (scraping).
+            <>
+              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>
+                Defina o nome e as categorias de produtos que esta campanha vai monitorar. Você poderá vincular grupos do WhatsApp depois.
+              </div>
+              <div style={{ background: PRIMARY_LIGHT, color: PRIMARY_DARK, padding: "8px 12px", borderRadius: 8, fontSize: 12, marginBottom: 14, lineHeight: 1.4 }}>
+                💡 Já vamos preencher os defaults pra você: modelo de mensagem, filtros (desconto ≥ 25%, avaliação ≥ 4.0), todas as fontes ativas e dois horários de scraping. Tudo isso pode ser ajustado depois.
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Nome da campanha</label>
+                  <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Ex: Tech BR" style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 6 }}>Categorias (selecione uma ou mais)</label>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {Object.keys(CATEGORIES).map(id => {
+                      const active = form.categories.includes(id);
+                      return (
+                        <div
+                          key={id}
+                          onClick={() => toggleFormCategory(id)}
+                          style={{ padding: "6px 14px", borderRadius: 8, border: `0.5px solid ${active ? PRIMARY : "var(--color-border-tertiary)"}`, background: active ? PRIMARY_LIGHT : "transparent", color: active ? PRIMARY_DARK : "var(--color-text-secondary)", fontSize: 13, cursor: "pointer", fontWeight: active ? 500 : 400, userSelect: "none" }}
+                        >
+                          {active ? "✓ " : ""}<span style={{ marginRight: 4 }}>{categoryIcon(id)}</span>{categoryLabel(id)}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8, justifyContent: "space-between", marginTop: 18 }}>
+                <button onClick={() => setForm(f => ({ ...f, type: null }))} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>← Voltar</button>
+                <button onClick={submit} disabled={!form.name.trim() || form.categories.length === 0} style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: (!form.name.trim() || form.categories.length === 0) ? 0.5 : 1 }}>Criar campanha</button>
+              </div>
+            </>
+          )}
         </Modal>
       )}
     </div>

@@ -96,6 +96,16 @@ async function startSession(userId, numberId) {
 
   sock.ev.on("creds.update", saveCreds);
 
+  // Captura de links do grupo líder (campanhas de repasse). Lazy-require pra não
+  // carregar o módulo (nem prisma/scraper) fora do worker. Fire-and-forget: um
+  // erro na captura nunca pode derrubar a sessão Baileys.
+  sock.ev.on("messages.upsert", (ev) => {
+    if (ev?.type !== "notify") return;
+    try {
+      require("../repasse/capture").onUpsert(userId, numberId, ev.messages).catch(() => {});
+    } catch { /* ignore */ }
+  });
+
   sock.ev.on("connection.update", async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
