@@ -25,6 +25,22 @@ function reset() {
 
 const fakeSessions = new Map();
 
+// Helper de teste: marca uma sessão como CONECTADA (QR escaneado). Necessário
+// pra exercitar o whatsappGate do scheduler (scheduler.js:152), que só deixa
+// enviar quando algum número vinculado tem sessão com status "connected".
+// `startSession` deixa a sessão em "open" (iniciada mas não conectada), então
+// os testes de envio precisam chamar isto explicitamente.
+function connect(userId, numberId) {
+  fakeSessions.set(`${userId}::${numberId}`, {
+    numberId,
+    status: "connected",
+    qrDataUrl: null,
+    info: { phone: "5511999999999" },
+    lastError: null,
+  });
+  return { numberId, status: "connected" };
+}
+
 const mock = {
   __calls: calls,
   __reset: reset,
@@ -49,10 +65,12 @@ const mock = {
     return fakeSessions.get(`${userId}::${numberId}`) || null;
   },
   async listSessions(userId) {
+    // Espelha o contrato real (backend/whatsapp/local.js:229): { numberId, status, info, lastError }.
     return [...fakeSessions.entries()]
       .filter(([k]) => k.startsWith(`${userId}::`))
-      .map(([, s]) => ({ id: s.numberId, status: s.status }));
+      .map(([, s]) => ({ numberId: s.numberId, status: s.status, info: s.info || null, lastError: s.lastError || null }));
   },
+  __connect: connect,
   async deleteSession(userId, numberId) {
     calls.deleteSession.push({ userId, numberId });
     fakeSessions.delete(`${userId}::${numberId}`);
@@ -86,4 +104,4 @@ function installMock() {
   return mock;
 }
 
-export { installMock, mock, calls, reset };
+export { installMock, mock, calls, reset, connect };

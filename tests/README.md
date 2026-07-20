@@ -72,8 +72,9 @@ npm test                          # ~4s
 - `env-redis.js` — variante com `QUEUE_BACKEND=redis` pra `redis-queue.test.js`.
 - `app.js` — helper único que importa o backend já configurado pra teste (com mocks de WA + Stripe instalados).
 - `app-redis.js` — variante que monta o app com fila Redis real.
-- `wa-mock.js` — mock no lugar de `backend/whatsapp/index.js`. Toda chamada de envio fica em `calls[]` pra os testes inspecionarem.
+- `wa-mock.js` — mock no lugar de `backend/whatsapp/index.js`. Toda chamada de envio fica em `calls[]` pra os testes inspecionarem. `listSessions` espelha o contrato real (`{ numberId, status, info, lastError }`). Exporta `connect(userId, numberId)` (re-exportado como `waConnect` em `app.js`): marca uma sessão como `status:"connected"` — **necessário** pra qualquer teste de envio, porque o `whatsappGate` (`scheduler.js:152`) só deixa enviar quando algum número vinculado está conectado. `startSession` deixa a sessão em `"open"` (iniciada mas não conectada).
 - `stripe-mock.js` — mock no lugar de `backend/billing/stripe.js`. URL fake, eventos sintéticos.
+- `mailer-mock.js` — mock no lugar de `backend/auth/mailer.js`. Sem ele o register/reset dispara o SMTP **real** e bate na cota horária. O token de verificação continua sendo gravado no DB, então `createTestUser` (que lê o token direto do banco) segue funcionando.
 - `pg-helpers.js` — `truncateAll()` antes de cada teste, helpers de seed.
 - `setup-each.js` — `beforeEach` global (reset de mocks, truncate).
 - `global-setup.js` — `beforeAll` global (warmup do appConfig).

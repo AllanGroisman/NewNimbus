@@ -2,7 +2,7 @@
 // Esse arquivo cobre o miolo do negocio: catalogo -> queue -> envio.
 
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
-import { app, createTestUser, catalog, scheduler, storage, affiliate, waCalls, resetWa } from "../helpers/app.js";
+import { app, createTestUser, catalog, scheduler, storage, affiliate, waCalls, resetWa, waConnect } from "../helpers/app.js";
 import { mlProduct, amazonProduct, makeGroup, makeWhatsAppGroup } from "../helpers/fixtures.js";
 
 // Mock do gerarLinkAfiliadoML — evita chamadas HTTP reais ao ML (cookie de teste é inválido).
@@ -174,6 +174,7 @@ describe("scheduler.sendNextNow — envia primeiro item da queue", () => {
       sources: ["amazon"],
     });
     await auth("put", "/api/state").send({ groups: [group], numbers, whatsappGroups: waGroups });
+    waConnect(user.id, "num-1"); // simula QR escaneado — whatsappGate exige sessão conectada
 
     await storage.updateGroupOps(user.id, 300, {
       queue: [{
@@ -202,6 +203,7 @@ describe("scheduler.sendNextNow — envia primeiro item da queue", () => {
     const waGroups = [makeWhatsAppGroup({ id: "wa-2", numberId: "num-2", jid: "fake2@g.us" })];
     const group = makeGroup({ id: 301, whatsappGroupIds: ["wa-2"], sources: ["amazon"] });
     await auth("put", "/api/state").send({ groups: [group], whatsappGroups: waGroups });
+    waConnect(user.id, "num-2"); // simula QR escaneado
     await storage.updateGroupOps(user.id, 301, {
       queue: [{ id: "i", key: "i", name: "Sem Imagem", link: "https://x.com/a", img: null, price: 10, discount: 10, store: "Amazon", category: "gamer" }],
     });
@@ -255,6 +257,7 @@ describe("scheduler.tick — loop periodico", () => {
       schedule: { windows: [{ from: "00:00", to: "23:59", interval: 0 }], cooldownValue: 24, cooldownUnit: "horas" },
     });
     await auth("put", "/api/state").send({ groups: [group], whatsappGroups: waGroups });
+    waConnect(user.id, "num-tick"); // simula QR escaneado
 
     await scheduler.tick();
 
@@ -298,6 +301,7 @@ describe("POST /api/state/groups/:gid/send-now — endpoint HTTP", () => {
     const waGroups = [makeWhatsAppGroup({ id: "wa-sn", numberId: "num-sn", jid: "sn@g.us" })];
     const group = makeGroup({ id: 600, whatsappGroupIds: ["wa-sn"], sources: ["amazon"] });
     await auth("put", "/api/state").send({ groups: [group], whatsappGroups: waGroups });
+    waConnect(user.id, "num-sn"); // simula QR escaneado
     await storage.updateGroupOps(user.id, 600, {
       queue: [{ id: "x", key: "x", name: "Manual Send", link: "https://x.com/a", img: null, price: 10, discount: 50, store: "Amazon", category: "gamer" }],
     });

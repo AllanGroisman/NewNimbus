@@ -5,10 +5,12 @@
 //   3. backend/server.js entao carrega com o mock no lugar
 
 import "./env.js";
-import { installMock, calls as waCalls, reset as resetWa } from "./wa-mock.js";
+import { installMock, calls as waCalls, reset as resetWa, connect as waConnect } from "./wa-mock.js";
 import { installMock as installStripeMock, calls as stripeCalls, reset as resetStripe, setMock as setStripeMock } from "./stripe-mock.js";
+import { installMock as installMailerMock, calls as mailerCalls, reset as resetMailer } from "./mailer-mock.js";
 const waMock = installMock();
 const stripeMock = installStripeMock();
+const mailerMock = installMailerMock();
 
 import request from "supertest";
 import path from "path";
@@ -75,8 +77,12 @@ export {
   waMock,
   waCalls,
   resetWa,
+  waConnect,
   stripeMock,
   stripeCalls,
   resetStripe,
   setStripeMock,
+  mailerMock,
+  mailerCalls,
+  resetMailer,
 };

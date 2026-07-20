@@ -19,6 +19,13 @@ vi.mock("../data/api", () => ({
   rejectPendingItem: vi.fn(),
   fetchUrlMetadata: vi.fn(),
   manualAddToQueue: vi.fn(),
+  clearGroupQueue: vi.fn(),
+  saveGroupQueue: vi.fn(),
+  approveAllPending: vi.fn(),
+  rejectAllPending: vi.fn(),
+  // Chamada num useEffect no mount (GroupDashboard.jsx:307) — sem isto o
+  // componente estoura ao montar e derruba todos os testes.
+  whatsNimbusAvailable: vi.fn().mockResolvedValue({ connected: false }),
 }));
 
 import GroupDashboard from "../components/GroupDashboard.jsx";

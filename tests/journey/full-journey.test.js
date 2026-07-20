@@ -11,7 +11,7 @@
 // 9. Limpa historico
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { createTestUser, catalog, affiliate, waCalls, resetWa } from "../helpers/app.js";
+import { createTestUser, catalog, affiliate, waCalls, resetWa, waConnect } from "../helpers/app.js";
 import { mlProduct, amazonProduct, makeGroup, makeWhatsAppGroup } from "../helpers/fixtures.js";
 import { truncateAll } from "../helpers/pg-helpers.js";
 
@@ -101,6 +101,7 @@ describe("Jornada completa — primeira sessao do usuario", () => {
 
   it("etapa 8: dispara 'Enviar agora' — chama wa.sendText/Image", async () => {
     resetWa();
+    waConnect(user.user.id, "num-jornada"); // simula QR escaneado — whatsappGate exige sessão conectada
     const r = await user.auth("post", "/api/state/groups/5000/send-now");
     expect(r.status).toBe(200);
     expect(r.body.ok).toBe(true);
