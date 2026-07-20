@@ -91,6 +91,75 @@ describe("OPS_FIELDS — preservacao da escrita do scheduler", () => {
   });
 });
 
+describe("PUT /api/state — concorrência otimista (baseUpdatedAt)", () => {
+  it("save sem baseUpdatedAt passa direto (primeiro save / retrocompat)", async () => {
+    const { auth } = await createTestUser();
+    const r = await auth("put", "/api/state").send({ groups: [makeGroup({ id: 1, name: "A" })] });
+    expect(r.status).toBe(200);
+    expect(r.body.ok).toBe(true);
+    expect(r.body.updatedAt).toBeTruthy(); // vira a versão atual do estado
+  });
+
+  it("save com baseUpdatedAt IGUAL à versão atual → 200 e avança a versão", async () => {
+    const { auth } = await createTestUser();
+    const first = await auth("put", "/api/state").send({ groups: [makeGroup({ id: 1, name: "A" })] });
+    const v1 = first.body.updatedAt;
+
+    const ok = await auth("put", "/api/state").send({
+      groups: [makeGroup({ id: 1, name: "B" })],
+      baseUpdatedAt: v1,
+    });
+    expect(ok.status).toBe(200);
+    expect(ok.body.updatedAt).toBeTruthy();
+    expect(ok.body.updatedAt).not.toBe(v1); // versão nova
+
+    const get = await auth("get", "/api/state");
+    expect(get.body.groups[0].name).toBe("B");
+    expect(get.body.updatedAt).toBe(ok.body.updatedAt);
+  });
+
+  it("save com baseUpdatedAt DEFASADO → 409 STALE_STATE e NÃO sobrescreve", async () => {
+    const { auth } = await createTestUser();
+    const first = await auth("put", "/api/state").send({ groups: [makeGroup({ id: 1, name: "atual" })] });
+    expect(first.status).toBe(200);
+
+    // Cliente tenta salvar baseado numa versão antiga que já não bate mais.
+    const stale = await auth("put", "/api/state").send({
+      groups: [makeGroup({ id: 1, name: "defasado" })],
+      baseUpdatedAt: "2000-01-01T00:00:00.000Z",
+    });
+    expect(stale.status).toBe(409);
+    expect(stale.body.code).toBe("STALE_STATE");
+
+    // O estado no banco continua sendo o mais novo — a escrita velha foi barrada.
+    const get = await auth("get", "/api/state");
+    expect(get.body.groups[0].name).toBe("atual");
+  });
+
+  it("depois de um 409, recarregar a versão e reenviar → 200 (fluxo de recuperação)", async () => {
+    const { auth } = await createTestUser();
+    await auth("put", "/api/state").send({ groups: [makeGroup({ id: 1, name: "atual" })] });
+
+    const stale = await auth("put", "/api/state").send({
+      groups: [makeGroup({ id: 1, name: "x" })],
+      baseUpdatedAt: "2000-01-01T00:00:00.000Z",
+    });
+    expect(stale.status).toBe(409);
+
+    // Recupera: lê a versão real e reenvia com ela.
+    const get = await auth("get", "/api/state");
+    const fresh = get.body.updatedAt;
+    const retry = await auth("put", "/api/state").send({
+      groups: [makeGroup({ id: 1, name: "resolvido" })],
+      baseUpdatedAt: fresh,
+    });
+    expect(retry.status).toBe(200);
+
+    const final = await auth("get", "/api/state");
+    expect(final.body.groups[0].name).toBe("resolvido");
+  });
+});
+
 describe("GET /api/state/ops — polling do frontend", () => {
   it("devolve so os campos operacionais por grupo", async () => {
     const { user, auth } = await createTestUser();

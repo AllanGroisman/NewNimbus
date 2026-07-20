@@ -149,3 +149,49 @@ describe("GroupDashboard — voltar", () => {
     expect(props.onBack).toHaveBeenCalled();
   });
 });
+
+describe("GroupDashboard — desvincular grupo (aba Grupos)", () => {
+  // Setup: campanha com 1 grupo de WhatsApp vinculado, na aba "Grupos".
+  function renderWithLinkedGroup() {
+    return renderDashboard({
+      group: { whatsappGroupIds: ["wg-1"] },
+      numbers: [{ id: "num-1", label: "Número 1", phone: "5511999999999" }],
+      whatsappGroups: [{ id: "wg-1", name: "Grupo Vinculado", numberId: "num-1", members: 5, jid: "wg-1" }],
+    });
+  }
+
+  it("clicar 'Desvincular' abre modal de confirmação (não desvincula direto)", () => {
+    const { props } = renderWithLinkedGroup();
+    fireEvent.click(screen.getByRole("button", { name: /Grupos/ })); // vai pra aba
+
+    fireEvent.click(screen.getByRole("button", { name: /^Desvincular$/ }));
+
+    expect(screen.getByText(/Desvincular grupo\?/i)).toBeInTheDocument();
+    expect(props.onUpdate).not.toHaveBeenCalled(); // ainda não mexeu no estado
+  });
+
+  it("confirmar no modal chama onUpdate removendo o grupo dos vinculados", () => {
+    const { props } = renderWithLinkedGroup();
+    fireEvent.click(screen.getByRole("button", { name: /Grupos/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Desvincular$/ }));
+
+    // Agora há 2 botões "Desvincular" (o da lista + o de confirmar no modal).
+    const botoes = screen.getAllByRole("button", { name: /^Desvincular$/ });
+    fireEvent.click(botoes[botoes.length - 1]); // o do modal
+
+    expect(props.onUpdate).toHaveBeenCalledWith(1, { whatsappGroupIds: [] });
+  });
+});
+
+describe("GroupDashboard — fila vazia no modo repasse", () => {
+  it("mostra mensagem/botão de repasse (Gerenciar), não de Busca de Produtos", () => {
+    renderDashboard({
+      group: { scraping: { kind: "repasse", sources: [], filters: {} }, queue: [] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Fila/ })); // aba Fila
+
+    expect(screen.getByText(/grupo líder/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Ir para Gerenciar/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Ir para Busca de Produtos/i })).not.toBeInTheDocument();
+  });
+});
