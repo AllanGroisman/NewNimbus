@@ -137,6 +137,23 @@ async function loadState(userId) {
 async function saveState(userId, incoming) {
   if (!incoming || typeof incoming !== "object") throw new Error("state inválido");
 
+  // Concorrência otimista: se o cliente informou a versão (`updatedAt`) que
+  // carregou por último e ela não bate mais com o que está no banco, alguém
+  // (outra aba, outro save em voo) já escreveu por cima — rejeita em vez de
+  // aceitar um PUT baseado em estado obsoleto e apagar a mudança mais nova.
+  // `userState.updatedAt` é tocado em TODO saveState bem-sucedido (upsert
+  // abaixo), então serve como versão do estado inteiro do usuário, não só
+  // das settings. Sem `baseUpdatedAt` (primeiro save do usuário) não há o
+  // que comparar — deixa passar.
+  if (incoming.baseUpdatedAt) {
+    const current = await prisma().userState.findUnique({ where: { userId }, select: { updatedAt: true } });
+    if (current && current.updatedAt.toISOString() !== incoming.baseUpdatedAt) {
+      const err = new Error("Estado desatualizado — recarregue antes de salvar");
+      err.code = "STALE_STATE";
+      throw err;
+    }
+  }
+
   const tx = [];
 
   // user_state (settings)

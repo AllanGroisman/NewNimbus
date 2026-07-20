@@ -236,7 +236,7 @@ export function isSameDayBR(d, now = new Date()) {
 }
 
 export const sidebarItems = [
-  { id: "dashboard", icon: "▦", label: "Visão Geral" },
+  { id: "dashboard", icon: "▦", label: "Campanhas" },
   { id: "whatsapp", icon: "◎", label: "WhatsApp" },
   { id: "mercado-livre", icon: "◆", label: "Mercado Livre" },
   { id: "amazon", icon: "◇", label: "Amazon" },

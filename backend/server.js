@@ -487,6 +487,9 @@ app.put("/api/state", auth.requireAuth, async (req, res) => {
     const saved = await storage.saveState(req.user.id, incoming);
     res.json({ ok: true, updatedAt: saved.updatedAt });
   } catch (err) {
+    if (err.code === "STALE_STATE") {
+      return res.status(409).json({ error: err.message, code: "STALE_STATE" });
+    }
     res.status(400).json({ error: err.message });
   }
 });

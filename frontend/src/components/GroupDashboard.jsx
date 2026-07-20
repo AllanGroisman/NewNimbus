@@ -219,11 +219,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const [tab, setTab] = useState(() => readSavedTab(group.id));
   // Guarda a aba atual por campanha pra restaurar no F5.
   useEffect(() => { writeSavedTab(group.id, tab); }, [group.id, tab]);
-  // Campanhas de repasse não têm mais aba própria — a config mora em "Gerenciar".
-  // Redireciona se a aba salva (de antes da mudança, ou de quando ainda não era repasse) for "products".
-  useEffect(() => {
-    if (group.scraping?.kind === "repasse" && tab === "products") setTab("manage");
-  }, [group.scraping?.kind, tab]);
   const [sched, setSched] = useState(group.schedule);
   const [scraping, setScraping] = useState(group.scraping);
   const [queue, setQueue] = useState(group.queue);
@@ -245,6 +240,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const [waGroupsError, setWaGroupsError] = useState(null);
   const [importingJid, setImportingJid] = useState(null);
   const [confirmDeleteWG, setConfirmDeleteWG] = useState(null);
+  const [confirmUnlinkWG, setConfirmUnlinkWG] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
   const [newWGForm, setNewWGForm] = useState({ name: "", numberIds: numbers[0]?.id ? [numbers[0].id] : [], participants: "", includeNimbus: false });
   const [nimbusAvail, setNimbusAvail] = useState({ connected: false, phone: null });
@@ -803,6 +799,18 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     try {
       const list = await listWAGroups(numberId);
       setWaGroupsByNumber(m => ({ ...m, [numberId]: list }));
+      // Sincroniza a contagem de membros ao vivo de volta pros grupos já
+      // importados — sem isso, `members` fica "congelado" no valor do
+      // momento do import/criação (o que a aba Grupos exibe), enquanto este
+      // picker sempre mostra o valor atual, gerando divergência entre as
+      // duas telas pro mesmo grupo.
+      for (const wg of whatsappGroups) {
+        if (wg.numberId !== numberId) continue;
+        const live = list.find(l => l.jid === wg.id);
+        if (live && live.members !== wg.members) {
+          onUpdateWhatsappGroup?.(wg.id, { members: live.members });
+        }
+      }
     } catch (err) {
       const num = numbers.find(n => n.id === numberId);
       setWaGroupsError(`${num?.label || numberId}: ${err.message || "Falha ao listar grupos"}`);
@@ -1139,9 +1147,9 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
   const groupTabs = [
     { id: "overview", label: "Visão geral" },
-    { id: "manage", label: "Gerenciar", dot: isRepasse && pending.length > 0 },
+    { id: "manage", label: "Gerenciar" },
     { id: "whatsapp", label: `Grupos (${stats.count})` },
-    ...(isRepasse ? [] : [{ id: "products", label: "Busca de Produtos", dot: pending.length > 0 }]),
+    { id: "products", label: isRepasse ? "Repasse" : "Busca de Produtos", dot: pending.length > 0 },
     { id: "queue", label: `Fila (${queue.length})` },
     { id: "schedule", label: "Janelas de envio" },
     { id: "messages", label: "Modelos Mensagens" },
@@ -1428,81 +1436,8 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           </div>
 
           {isRepasse && (
-            <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-              <div style={{ fontWeight: 500, marginBottom: 4 }}>Grupo líder</div>
-              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
-                O grupo de onde os links serão capturados. Só um grupo pode ser líder.
-              </div>
-              {scraping.repasse?.leaderJid ? (
-                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, background: "var(--color-background-secondary)", border: `0.5px solid ${PRIMARY}` }}>
-                  <span style={{ fontSize: 18 }}>👑</span>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500 }}>{scraping.repasse.leaderName || scraping.repasse.leaderJid}</div>
-                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
-                      {(numbers.find(n => n.id === scraping.repasse.leaderNumberId)?.label) || `Número ${scraping.repasse.leaderNumberId}`}
-                    </div>
-                  </div>
-                  <button onClick={() => setScraping(s => ({ ...s, repasse: { leaderNumberId: null, leaderJid: null, leaderName: null } }))} style={{ padding: "5px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 12, cursor: "pointer" }}>Trocar</button>
-                </div>
-              ) : numbers.length === 0 ? (
-                <div style={{ fontSize: 12, color: "#854F0B", background: "#FEF3C7", border: "0.5px solid #F4D08A", padding: "10px 12px", borderRadius: 8 }}>
-                  Nenhum número de WhatsApp conectado. Conecte um número na página WhatsApp para escolher o grupo líder.
-                </div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {numbers.map(n => (
-                      <button
-                        key={n.id}
-                        onClick={() => loadGroupsForNumber(n.id)}
-                        style={{ padding: "6px 12px", borderRadius: 8, border: `0.5px solid ${addExistingNumberId === n.id ? PRIMARY : "var(--color-border-tertiary)"}`, background: addExistingNumberId === n.id ? PRIMARY_LIGHT : "transparent", color: addExistingNumberId === n.id ? PRIMARY_DARK : "var(--color-text-primary)", fontSize: 12, cursor: "pointer", fontWeight: addExistingNumberId === n.id ? 500 : 400 }}
-                      >
-                        {n.label || n.phone || n.id}
-                      </button>
-                    ))}
-                  </div>
-                  {loadingWAGroups && <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Carregando grupos…</div>}
-                  {waGroupsError && <div style={{ fontSize: 12, color: "#A32D2D" }}>{waGroupsError}</div>}
-                  {addExistingNumberId && !loadingWAGroups && (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 260, overflowY: "auto" }}>
-                      {(waGroupsByNumber[addExistingNumberId] || []).length === 0 ? (
-                        <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Nenhum grupo encontrado neste número.</div>
-                      ) : (
-                        (waGroupsByNumber[addExistingNumberId] || []).map(wg => (
-                          <div key={wg.jid} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)" }}>
-                            <div style={{ flex: 1 }}>
-                              <div style={{ fontSize: 13, fontWeight: 500 }}>{wg.name}</div>
-                              <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{wg.members || 0} membros</div>
-                            </div>
-                            <button
-                              onClick={() => setScraping(s => ({ ...s, repasse: { leaderNumberId: addExistingNumberId, leaderJid: wg.jid, leaderName: wg.name } }))}
-                              style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY, color: "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}
-                            >
-                              Selecionar
-                            </button>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {isRepasse && (
-            <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 500, marginBottom: 4 }}>Aprovação automática</div>
-                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
-                    {scraping.auto !== false
-                      ? "Links capturados no grupo líder entram direto na fila de envio."
-                      : "Links capturados ficam aguardando revisão. Você aprova cada um antes do envio."}
-                  </div>
-                </div>
-                <Toggle value={scraping.auto !== false} onChange={v => setScraping(s => ({ ...s, auto: v }))} />
-              </div>
+            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", padding: "0 2px" }}>
+              O grupo líder, a aprovação automática e a revisão dos links capturados ficam na aba <strong>Repasse</strong>.
             </div>
           )}
 
@@ -1524,22 +1459,17 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
             <button
               onClick={save}
-              disabled={!(isRepasse ? (manageDirty || scrapingDirty) : manageDirty) && !saved}
-              title={(isRepasse ? (manageDirty || scrapingDirty) : manageDirty) ? "Salvar alterações" : "Sem alterações pra salvar"}
-              style={saveBtnStyle(isRepasse ? (manageDirty || scrapingDirty) : manageDirty)}
+              disabled={!manageDirty && !saved}
+              title={manageDirty ? "Salvar alterações" : "Sem alterações pra salvar"}
+              style={saveBtnStyle(manageDirty)}
             >
               {saved ? "✓ Salvo!" : "Salvar alterações"}
             </button>
-            {isRepasse && (
-              <button onClick={openManualAdd} style={{ padding: "9px 18px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>
-                + Adicionar link manualmente
-              </button>
-            )}
             <button onClick={() => setShowDelete(true)} style={{ padding: "9px 18px", borderRadius: 8, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 13, cursor: "pointer", fontWeight: 500, marginLeft: "auto" }}>Excluir campanha</button>
           </div>
 
           {showDelete && (
-            <Modal title="Excluir grupo?" onClose={() => setShowDelete(false)} danger>
+            <Modal title="Excluir campanha?" onClose={() => setShowDelete(false)} danger>
               <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
                 Isso removerá permanentemente <strong style={{ color: "var(--color-text-primary)" }}>{groupInfo.name}</strong>, seus agendamentos, fila e histórico. Esta ação não pode ser desfeita.
               </p>
@@ -1548,36 +1478,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 <button onClick={() => { onDelete(group.id); setShowDelete(false); }} style={{ padding: "8px 16px", borderRadius: 8, background: "#E24B4A", color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>Sim, excluir</button>
               </div>
             </Modal>
-          )}
-
-          {isRepasse && pending.length > 0 && (
-            <div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 500 }}>Aguardando revisão</div>
-                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>Links capturados do grupo líder que precisam de aprovação</div>
-                </div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <button onClick={approveAllProducts} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY_LIGHT, color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Adicionar todos à fila</button>
-                  <button onClick={rejectAllProducts} style={{ padding: "5px 12px", borderRadius: 7, background: "#FCEBEB", color: "#A32D2D", border: "0.5px solid #F7C1C1", fontSize: 12, cursor: "pointer" }}>Rejeitar todos</button>
-                </div>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {pending.map(p => {
-                  const pid = p.id ?? p.key;
-                  return (
-                    <ProductRow
-                      key={pid}
-                      product={p}
-                      actions={<>
-                        <button onClick={() => approveProduct(pid)} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY_LIGHT, color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Adicionar na fila</button>
-                        <button onClick={() => rejectProduct(pid)} style={{ padding: "5px 10px", borderRadius: 7, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 12, cursor: "pointer" }}>Rejeitar</button>
-                      </>}
-                    />
-                  );
-                })}
-              </div>
-            </div>
           )}
 
         </div>
@@ -1991,7 +1891,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                         ⎘ Criar cópia
                       </button>
                       <div style={{ flex: 1 }} />
-                      <button onClick={() => unlinkWG(w.id)} style={{ padding: "6px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: "pointer" }}>Desvincular</button>
+                      <button onClick={() => setConfirmUnlinkWG(w)} style={{ padding: "6px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: "pointer" }}>Desvincular</button>
                       <button onClick={() => setConfirmDeleteWG(w)} style={{ padding: "6px 12px", borderRadius: 7, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 12, cursor: "pointer" }}>Excluir</button>
                     </div>
                   </div>
@@ -2262,6 +2162,18 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               </div>
             </Modal>
           )}
+
+          {confirmUnlinkWG && (
+            <Modal title="Desvincular grupo?" onClose={() => setConfirmUnlinkWG(null)}>
+              <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+                <strong style={{ color: "var(--color-text-primary)" }}>{confirmUnlinkWG.name}</strong> deixará de receber os envios desta campanha. O grupo em si não é excluído — continua disponível pra vincular de novo ou usar em outras campanhas.
+              </p>
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button onClick={() => setConfirmUnlinkWG(null)} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+                <button onClick={() => { unlinkWG(confirmUnlinkWG.id); setConfirmUnlinkWG(null); }} style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>Desvincular</button>
+              </div>
+            </Modal>
+          )}
         </div>
         );
       })()}
@@ -2494,12 +2406,16 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             <div style={{ textAlign: "center", padding: "30px 20px", background: "var(--color-background-secondary)", borderRadius: 12 }}>
               <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Fila vazia</div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>
-                A fila é reabastecida automaticamente do catálogo nos horários de envio.
-                Para adicionar produtos agora — buscar do catálogo ou colar um link —
-                use a aba <strong>Busca de Produtos</strong>.
+                {isRepasse ? (
+                  <>A fila é reabastecida com os links capturados do grupo líder. Confira a configuração de captura na aba <strong>Gerenciar</strong>.</>
+                ) : (
+                  <>A fila é reabastecida automaticamente do catálogo nos horários de envio.
+                  Para adicionar produtos agora — buscar do catálogo ou colar um link —
+                  use a aba <strong>Busca de Produtos</strong>.</>
+                )}
               </div>
-              <button onClick={() => setTab("products")} style={{ padding: "8px 18px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>
-                Ir para Busca de Produtos
+              <button onClick={() => setTab(isRepasse ? "manage" : "products")} style={{ padding: "8px 18px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>
+                {isRepasse ? "Ir para Gerenciar" : "Ir para Busca de Produtos"}
               </button>
             </div>
           ) : (() => {

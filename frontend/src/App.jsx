@@ -14,6 +14,7 @@ import Sidebar from "./components/Sidebar";
 import GroupDashboard from "./components/GroupDashboard";
 import UnsavedChangesModal from "./components/UnsavedChangesModal";
 import { NavGuardContext } from "./data/navGuard";
+import { mergeGroupOps, mergeGroupsOps } from "./data/opsMerge";
 import PageDashboard from "./pages/Dashboard";
 import PageProducts from "./pages/Products";
 import PageWhatsApp from "./pages/WhatsApp";
@@ -41,8 +42,6 @@ const NAV_STORAGE_KEY = "nimbus:nav";
 const OPS_POLL_MS = 3 * 1000;
 const SESSION_POLL_MS = 8 * 1000;
 const AFFILIATE_POLL_MS = 30 * 1000;
-// Campos por grupo gerenciados pelo scheduler — atualizados por polling
-const OPS_FIELDS = ["queue", "pending", "history", "sentToday", "sentWeek", "weekData", "lastSend", "avgDiscount"];
 
 export default function App() {
   const [groups, setGroups] = useState(initialGroups);
@@ -105,6 +104,16 @@ export default function App() {
   // Controla se já carregamos o estado do servidor — só começamos a salvar depois disso
   const stateLoadedRef = useRef(false);
   const saveTimerRef = useRef(null);
+  // Versão (`updatedAt`) do estado como o servidor a conhece por último — usada
+  // pra concorrência otimista no PUT (evita que um save atrasado sobrescreva
+  // mudanças mais novas) e pra nunca ter 2 PUTs de state em voo ao mesmo tempo.
+  const stateUpdatedAtRef = useRef(null);
+  const savingStateRef = useRef(false);
+  const pendingSaveRef = useRef(null);
+  // Espelha `groups` de forma síncrona pra navFns lidas depois de um `await` (ex.
+  // guardSave) não fecharem sobre um `groups` desatualizado de antes do save.
+  const groupsRef = useRef(groups);
+  useEffect(() => { groupsRef.current = groups; }, [groups]);
 
   // Boot: se há token salvo, valida com o servidor e carrega o estado
   useEffect(() => {
@@ -135,6 +144,7 @@ export default function App() {
         setNumbers(state.numbers || []);
         setWhatsappGroups(state.whatsappGroups || []);
         setSettings({ ...DEFAULT_SETTINGS, ...(state.settings || {}) });
+        stateUpdatedAtRef.current = state.updatedAt || null;
         stateLoadedRef.current = true;
         // Reabre a campanha que estava aberta antes do F5, se ainda existir.
         if (savedNav.groupId != null) {
@@ -201,15 +211,51 @@ export default function App() {
     };
   }, [user]);
 
+  // Envia um PUT de state, nunca dois em voo ao mesmo tempo. Se o debounce
+  // disparar de novo enquanto um save ainda está em andamento, a nova versão
+  // fica em `pendingSaveRef` e é enviada assim que o save atual termina — em
+  // vez de disparar uma 2ª fetch em paralelo (era isso que permitia um PUT
+  // atrasado com dado velho "vencer" um mais novo que tinha ido antes).
+  const flushSave = async (payload) => {
+    savingStateRef.current = true;
+    try {
+      const res = await saveAppState({ ...payload, baseUpdatedAt: stateUpdatedAtRef.current });
+      if (res?.updatedAt) stateUpdatedAtRef.current = res.updatedAt;
+    } catch (err) {
+      if (err.status === 409) {
+        // Servidor rejeitou por estar baseado em versão antiga (concorrência
+        // otimista) — recarrega o estado real do servidor em vez de insistir
+        // em sobrescrever com o que temos local, que já se sabe defasado.
+        try {
+          const fresh = await loadAppState();
+          stateUpdatedAtRef.current = fresh.updatedAt || null;
+          setGroups(fresh.groups || []);
+          setNumbers(fresh.numbers || []);
+          setWhatsappGroups(fresh.whatsappGroups || []);
+          setSettings(s => ({ ...s, ...(fresh.settings || {}) }));
+        } catch { /* próxima tentativa de save cuida disso */ }
+      } else {
+        console.warn("[nimbus] falha ao salvar estado:", err.message);
+      }
+    } finally {
+      savingStateRef.current = false;
+      if (pendingSaveRef.current) {
+        const next = pendingSaveRef.current;
+        pendingSaveRef.current = null;
+        flushSave(next);
+      }
+    }
+  };
+
   // Persistência com debounce — dispara sempre que algo no estado muda,
   // mas só depois do load inicial pra não sobrescrever com defaults vazios.
   useEffect(() => {
     if (!user || !stateLoadedRef.current) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
-      saveAppState({ groups, numbers, whatsappGroups, settings }).catch(err => {
-        console.warn("[nimbus] falha ao salvar estado:", err.message);
-      });
+      const payload = { groups, numbers, whatsappGroups, settings };
+      if (savingStateRef.current) pendingSaveRef.current = payload;
+      else flushSave(payload);
     }, SAVE_DEBOUNCE_MS);
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
   }, [user, groups, numbers, whatsappGroups, settings]);
@@ -241,16 +287,12 @@ export default function App() {
       try {
         const ops = await loadAppOps();
         if (cancelled) return;
-        const opsById = new Map((ops.groups || []).map(g => [g.id, g]));
-        const merge = (g) => {
-          const o = opsById.get(g.id);
-          if (!o) return g;
-          const next = { ...g };
-          for (const f of OPS_FIELDS) if (o[f] !== undefined) next[f] = o[f];
-          return next;
-        };
-        setGroups(prev => prev.map(merge));
-        setSelectedGroup(prev => prev ? merge(prev) : prev);
+        // Merge dos campos de ops preservando a identidade quando nada muda —
+        // sem isso, cada poll (3s) trocaria a referência de `groups` e
+        // dispararia um autosave à toa. Ver frontend/src/data/opsMerge.js.
+        const opsList = ops.groups || [];
+        setGroups(prev => mergeGroupsOps(prev, opsList));
+        setSelectedGroup(prev => prev ? mergeGroupOps(prev, opsList.find(o => o.id === prev.id)) : prev);
       } catch {
         // ignora — próxima rodada tenta de novo
       }
@@ -387,7 +429,11 @@ export default function App() {
     return newGroup.id;
   };
 
-  const handleSelectGroup = g => requestNavigation(() => { setSelectedGroup(groups.find(x => x.id === g.id)); setPage("group"); });
+  // Lê de `groupsRef` (não do `groups` fechado nesta closure) porque essa navFn
+  // pode ficar pendurada em `pendingNav` e só executar depois de um `guardSave()`
+  // assíncrono — nesse ponto `groups` já mudou (o save acabou de atualizá-lo) mas
+  // essa closure ainda apontaria pro valor de antes, sobrescrevendo o resultado do save.
+  const handleSelectGroup = g => requestNavigation(() => { setSelectedGroup(groupsRef.current.find(x => x.id === g.id)); setPage("group"); });
   const handleBack = () => requestNavigation(() => { setSelectedGroup(null); setPage("dashboard"); });
   const handleUpdate = (gid, updates) => {
     setGroups(gs => gs.map(g => g.id === gid ? { ...g, ...updates } : g));
@@ -483,10 +529,6 @@ export default function App() {
   const relinkNumber = (oldId, newId) => {
     if (!oldId || !newId || oldId === newId) return;
     setWhatsappGroups(ws => ws.map(w => w.numberId === oldId ? { ...w, numberId: newId } : w));
-  };
-
-  const setWhatsappGroupStatus = (wgId, status) => {
-    setWhatsappGroups(ws => ws.map(w => w.id === wgId ? { ...w, status } : w));
   };
 
   const updateWhatsappGroup = (wgId, updates) => {

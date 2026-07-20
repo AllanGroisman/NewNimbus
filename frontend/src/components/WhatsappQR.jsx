@@ -9,6 +9,15 @@ export default function WhatsappQR({ sessionId, onConnected, onError, autoStart 
   const [state, setState] = useState({ status: "starting", qr: null, info: null, error: null });
   const pollRef = useRef(null);
   const stoppedRef = useRef(false);
+  // onConnected/onError em refs, atualizadas a cada render: o polling abaixo
+  // roda dentro de um único useEffect (deps [sessionId, autoStart]) que não
+  // reinicia a cada tecla digitada no apelido do número — sem isso, `tick()`
+  // sempre chamaria a versão de `onConnected` capturada no mount, fechada
+  // sobre o apelido que existia antes do usuário digitar o dele.
+  const onConnectedRef = useRef(onConnected);
+  const onErrorRef = useRef(onError);
+  useEffect(() => { onConnectedRef.current = onConnected; }, [onConnected]);
+  useEffect(() => { onErrorRef.current = onError; }, [onError]);
 
   useEffect(() => {
     let cancelled = false;
@@ -20,7 +29,7 @@ export default function WhatsappQR({ sessionId, onConnected, onError, autoStart 
       } catch (err) {
         if (cancelled) return;
         setState(s => ({ ...s, status: "error", error: err.message }));
-        onError?.(err);
+        onErrorRef.current?.(err);
         return;
       }
 
@@ -32,7 +41,7 @@ export default function WhatsappQR({ sessionId, onConnected, onError, autoStart 
           setState({ status: s.status, qr: s.qr, info: s.info, error: s.lastError });
           if (s.status === "connected" && s.info) {
             stoppedRef.current = true;
-            onConnected?.(s.info);
+            onConnectedRef.current?.(s.info);
             return;
           }
         } catch (err) {

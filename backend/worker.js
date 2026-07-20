@@ -23,6 +23,7 @@ const wa = require("./whatsapp");          // resolve pra whatsapp/local
 const scheduler = require("./scheduler");
 const appConfig = require("./config");
 const auth = require("./auth");
+const affiliate = require("./scraping/affiliate");
 const logger = require("./infra/logger");
 const sentry = require("./infra/sentry");
 const heartbeat = require("./infra/worker-heartbeat");
@@ -83,6 +84,9 @@ async function main() {
 
   await appConfig.warmup();
   await auth.warmup();
+  // Cache de afiliados (tag/cookie por usuário) — sem isso a captura de repasse
+  // vê todo mundo como "não configurado" e descarta os links silenciosamente.
+  await affiliate.warmup();
   await auth.bootSeed();
   await queue.init({ producer: false, consumer: true });
 

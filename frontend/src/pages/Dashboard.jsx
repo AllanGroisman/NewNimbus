@@ -81,7 +81,7 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
-        <h2 style={{ fontSize: 18, fontWeight: 500 }}>Visão Geral</h2>
+        <h2 style={{ fontSize: 18, fontWeight: 500 }}>Campanhas</h2>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <button onClick={() => setShowCreate(true)} style={{ padding: "7px 14px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>+ Nova campanha</button>
         </div>

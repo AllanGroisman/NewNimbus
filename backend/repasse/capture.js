@@ -26,7 +26,14 @@ const STORE_STATUS_KEY = {
 
 // ────────────────────────────────────────────────────────────────────────
 // Índice de campanhas líder — evita loadState a cada mensagem.
-// Map key `${userId}::${numberId}::${jid}` -> [{ userId, groupId }]
+// Map key `${numberId}::${jid}` -> [{ userId, groupId }]
+//
+// A chave NÃO inclui o userId da sessão de propósito: o mesmo telefone pode
+// ter mais de uma sessão Baileys (ex.: a do usuário + a do WhatsNimbus, quando
+// o admin conecta o WhatsNimbus com o próprio número). Qualquer sessão que
+// decodifique a mensagem alimenta a campanha — o dono vem do entry (userId da
+// campanha), não da sessão que recebeu. Telefone é globalmente único, então
+// (numberId, jid) já identifica a campanha sem ambiguidade.
 // ────────────────────────────────────────────────────────────────────────
 
 let _leaderIndex = new Map();
@@ -42,21 +49,22 @@ async function rebuildLeaderIndex() {
     if (sc.kind !== "repasse") continue;
     const rp = sc.repasse || {};
     if (!rp.leaderNumberId || !rp.leaderJid) continue;
-    const key = `${r.userId}::${rp.leaderNumberId}::${rp.leaderJid}`;
+    const key = `${rp.leaderNumberId}::${rp.leaderJid}`;
     const entry = { userId: r.userId, groupId: Number(r.id) };
     if (map.has(key)) map.get(key).push(entry);
     else map.set(key, [entry]);
   }
   _leaderIndex = map;
   _leaderIndexAt = Date.now();
+  console.log(`[repasse] índice de líderes reconstruído: ${map.size} grupo(s) líder → ${[...map.keys()].join(", ") || "nenhum"}`);
 }
 
-async function leadersFor(userId, numberId, jid) {
+async function leadersFor(numberId, jid) {
   if (Date.now() - _leaderIndexAt > LEADER_INDEX_TTL_MS) {
     try { await rebuildLeaderIndex(); }
     catch (err) { console.error(`[repasse] falha ao reconstruir índice de líderes: ${err.message}`); }
   }
-  return _leaderIndex.get(`${userId}::${numberId}::${jid}`) || [];
+  return _leaderIndex.get(`${numberId}::${jid}`) || [];
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -146,8 +154,22 @@ function runSerial(userId, fn) {
 // Entrada principal
 // ────────────────────────────────────────────────────────────────────────
 
+// Dedup entre sessões: o mesmo telefone pode ter 2+ sessões Baileys (usuário +
+// WhatsNimbus) e ambas entregam a mesma mensagem. Set com ordem de inserção
+// funciona como LRU barato.
+const _seenMsgIds = new Set();
+const SEEN_MSG_MAX = 500;
+function alreadySeen(msgId) {
+  if (!msgId) return false; // sem id (ex.: testes) → não deduplica
+  if (_seenMsgIds.has(msgId)) return true;
+  _seenMsgIds.add(msgId);
+  if (_seenMsgIds.size > SEEN_MSG_MAX) _seenMsgIds.delete(_seenMsgIds.values().next().value);
+  return false;
+}
+
 // Chamado pelo listener messages.upsert. userId/numberId identificam a sessão
-// Baileys que recebeu; messages é ev.messages.
+// Baileys que recebeu; messages é ev.messages. O match com a campanha usa só
+// (numberId, jid) — o dono vem do índice, não da sessão (ver nota no índice).
 async function onUpsert(userId, numberId, messages) {
   userId = String(userId);
   numberId = String(numberId);
@@ -162,10 +184,24 @@ async function onUpsert(userId, numberId, messages) {
       const urls = extractUrls(text);
       if (!urls.length) continue;
 
-      const leaders = await leadersFor(userId, numberId, remoteJid);
+      const leaders = await leadersFor(numberId, remoteJid);
+      console.log(`[repasse] msg em ${remoteJid} (sessão ${userId}::${numberId}): ${leaders.length} campanha(s) líder | links: ${urls.join(" ")}`);
       if (!leaders.length) continue;
+      if (alreadySeen(msg?.key?.id)) {
+        console.log(`[repasse] msg ${msg.key.id} já processada por outra sessão → ignorada`);
+        continue;
+      }
 
-      jobs.push(runSerial(userId, () => processMessage(userId, leaders, urls)));
+      // Agrupa por dono da campanha: afiliado/estado/serialização são do dono,
+      // não da sessão que recebeu a mensagem.
+      const byOwner = new Map();
+      for (const l of leaders) {
+        if (!byOwner.has(l.userId)) byOwner.set(l.userId, []);
+        byOwner.get(l.userId).push(l);
+      }
+      for (const [ownerId, ownLeaders] of byOwner) {
+        jobs.push(runSerial(ownerId, () => processMessage(ownerId, ownLeaders, urls)));
+      }
     } catch (err) {
       console.error(`[repasse] onUpsert erro: ${err.message}`);
     }
@@ -186,13 +222,20 @@ async function processMessage(userId, leaders, urls) {
       const resolved = await resolveUrl(rawUrl);
       const store = scraper.detectStore(resolved);
       const statusKey = STORE_STATUS_KEY[store];
-      if (!statusKey) continue;                       // loja não suportada → ignora
-      if (!affStatus?.[statusKey]?.configured) continue; // sem afiliado → ignora
+      console.log(`[repasse] link ${rawUrl}${resolved !== rawUrl ? ` → ${resolved}` : ""} | loja=${store || "desconhecida"}`);
+      if (!statusKey) { console.log(`[repasse] loja não suportada → ignorado`); continue; }
+      if (!affStatus?.[statusKey]?.configured) { console.log(`[repasse] afiliado ${store} não configurado → ignorado`); continue; }
 
-      const scraped = await scraper.scrapeSingleProduct(resolved, { userId }).catch(err => {
-        console.warn(`[repasse] scrape falhou pra ${resolved}: ${err.message}`);
+      // Raspa a URL ORIGINAL (não a resolvida): o Puppeteer segue o redirect ele
+      // mesmo, com stealth + cookie de afiliado — igual ao "Adicionar link" manual.
+      // A resolução via fetch cru (resolveUrl) costuma cair no muro de login do ML
+      // e devolver a página errada; o link canônico (resolved) é usado só p/ store
+      // detection e p/ o link armazenado (reafiliação no envio).
+      const scraped = await scraper.scrapeSingleProduct(rawUrl, { userId }).catch(err => {
+        console.warn(`[repasse] scrape falhou pra ${rawUrl}: ${err.message}`);
         return null;
       });
+      console.log(`[repasse] scrape ${scraped ? "ok" : "falhou (segue com nome do slug)"}: ${scraped?.name || scraper.slugNameFromUrl(resolved) || store}`);
 
       const name = (scraped?.name || scraper.slugNameFromUrl(resolved) || store).trim();
       items.push({
@@ -232,15 +275,20 @@ async function processMessage(userId, leaders, urls) {
         // pra confirmar; não reenviar dentro do intervalo é o comportamento certo).
         const r = await scheduler.addItemToGroup(userId, group, item, { force: false });
         if (r?.ok) {
+          console.log(`[repasse] "${base.name}" → ${r.target === "queue" ? "fila" : "revisão"} da campanha ${groupId}`);
           if (r.target === "queue") approved++; else pending++;
           // Recarrega o grupo pra refletir a inserção anterior (dedup correto).
           const fresh = await storage.loadState(userId);
           group = (fresh.groups || []).find(g => g.id === groupId) || group;
+        } else if (r?.inCooldown) {
+          console.log(`[repasse] "${base.name}" em cooldown na campanha ${groupId} → pulado`);
         }
       } catch (err) {
         // Duplicata é esperada (mesmo produto repostado) — silencia.
         if (err.code !== "duplicate_queue" && err.code !== "duplicate_pending") {
           console.error(`[repasse] insert falhou em ${groupId}: ${err.message}`);
+        } else {
+          console.log(`[repasse] "${base.name}" já existe na campanha ${groupId} (${err.code}) → pulado`);
         }
       }
     }

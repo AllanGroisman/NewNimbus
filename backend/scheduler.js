@@ -456,12 +456,17 @@ async function dispatchOne(userId, group, whatsappGroups, numbers) {
   if (!queue.length) return null;
 
   const now = new Date();
-  const win = activeWindow(now, group.schedule);
-  if (!win) return null;
+  // Envio automático (repasse): ignora janelas e intervalo — tudo que está na
+  // fila é despachado (um item por tick). Sem esse flag, respeita janela+intervalo.
+  const autoSend = group.scraping?.autoSend === true;
+  if (!autoSend) {
+    const win = activeWindow(now, group.schedule);
+    if (!win) return null;
 
-  const interval = Number(win.interval) || 30;
-  const since = minutesSince(group.lastSend);
-  if (since < interval) return null;
+    const interval = Number(win.interval) || 30;
+    const since = minutesSince(group.lastSend);
+    if (since < interval) return null;
+  }
 
   if (!(group.whatsappGroupIds || []).length) return null;
 
