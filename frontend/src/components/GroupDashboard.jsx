@@ -2178,6 +2178,150 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         );
       })()}
 
+      {tab === "products" && isRepasse && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ background: PRIMARY_LIGHT, color: PRIMARY_DARK, padding: "10px 14px", borderRadius: 10, fontSize: 12, lineHeight: 1.5 }}>
+            🔁 O sistema escuta o <strong>grupo líder</strong> abaixo e captura os links de produto (Mercado Livre, Shopee e Amazon) postados nele, re-afiliando com a sua TAG.
+          </div>
+
+          {/* Grupo líder */}
+          <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+            <div style={{ fontWeight: 500, marginBottom: 4 }}>Grupo líder</div>
+            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
+              O grupo de onde os links serão capturados. Só um grupo pode ser líder.
+            </div>
+            {scraping.repasse?.leaderJid ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, background: "var(--color-background-secondary)", border: `0.5px solid ${PRIMARY}` }}>
+                <span style={{ fontSize: 18 }}>👑</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>{scraping.repasse.leaderName || scraping.repasse.leaderJid}</div>
+                  <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                    {(numbers.find(n => n.id === scraping.repasse.leaderNumberId)?.label) || `Número ${scraping.repasse.leaderNumberId}`}
+                  </div>
+                </div>
+                <button onClick={() => setScraping(s => ({ ...s, repasse: { leaderNumberId: null, leaderJid: null, leaderName: null } }))} style={{ padding: "5px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 12, cursor: "pointer" }}>Trocar</button>
+              </div>
+            ) : numbers.length === 0 ? (
+              <div style={{ fontSize: 12, color: "#854F0B", background: "#FEF3C7", border: "0.5px solid #F4D08A", padding: "10px 12px", borderRadius: 8 }}>
+                Nenhum número de WhatsApp conectado. Conecte um número na página WhatsApp para escolher o grupo líder.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {numbers.map(n => (
+                    <button
+                      key={n.id}
+                      onClick={() => loadGroupsForNumber(n.id)}
+                      style={{ padding: "6px 12px", borderRadius: 8, border: `0.5px solid ${addExistingNumberId === n.id ? PRIMARY : "var(--color-border-tertiary)"}`, background: addExistingNumberId === n.id ? PRIMARY_LIGHT : "transparent", color: addExistingNumberId === n.id ? PRIMARY_DARK : "var(--color-text-primary)", fontSize: 12, cursor: "pointer", fontWeight: addExistingNumberId === n.id ? 500 : 400 }}
+                    >
+                      {n.label || n.phone || n.id}
+                    </button>
+                  ))}
+                </div>
+                {loadingWAGroups && <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Carregando grupos…</div>}
+                {waGroupsError && <div style={{ fontSize: 12, color: "#A32D2D" }}>{waGroupsError}</div>}
+                {addExistingNumberId && !loadingWAGroups && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 260, overflowY: "auto" }}>
+                    {(waGroupsByNumber[addExistingNumberId] || []).length === 0 ? (
+                      <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Nenhum grupo encontrado neste número.</div>
+                    ) : (
+                      (waGroupsByNumber[addExistingNumberId] || []).map(wg => (
+                        <div key={wg.jid} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)" }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 13, fontWeight: 500 }}>{wg.name}</div>
+                            <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{wg.members || 0} membros</div>
+                          </div>
+                          <button
+                            onClick={() => setScraping(s => ({ ...s, repasse: { leaderNumberId: addExistingNumberId, leaderJid: wg.jid, leaderName: wg.name } }))}
+                            style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY, color: "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}
+                          >
+                            Selecionar
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Aprovação automática */}
+          <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 500, marginBottom: 4 }}>Aprovação automática</div>
+                <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                  {scraping.auto !== false
+                    ? "Links capturados no grupo líder entram direto na fila de envio."
+                    : "Links capturados ficam aguardando revisão. Você aprova cada um antes do envio."}
+                </div>
+              </div>
+              <Toggle value={scraping.auto !== false} onChange={v => setScraping(s => ({ ...s, auto: v }))} />
+            </div>
+          </div>
+
+          {/* Envio automático — ignora as janelas de envio */}
+          <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 500, marginBottom: 4 }}>Envio automático</div>
+                <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                  {scraping.autoSend === true
+                    ? "Tudo que entra na fila é enviado na hora, ignorando as janelas de envio."
+                    : "Os envios respeitam as janelas e o intervalo configurados."}
+                </div>
+              </div>
+              <Toggle value={scraping.autoSend === true} onChange={v => setScraping(s => ({ ...s, autoSend: v }))} />
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <button
+              onClick={save}
+              disabled={!scrapingDirty && !saved}
+              title={scrapingDirty ? "Salvar configurações do repasse" : "Sem alterações pra salvar"}
+              style={saveBtnStyle(scrapingDirty)}
+            >
+              {saved ? "✓ Salvo!" : "Salvar configurações"}
+            </button>
+            <button onClick={openManualAdd} style={{ padding: "9px 18px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>
+              + Adicionar link manualmente
+            </button>
+          </div>
+
+          {pending.length > 0 && (
+            <div style={{ marginTop: 6 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 500 }}>Aguardando revisão</div>
+                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>Links capturados do grupo líder que precisam de aprovação</div>
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={approveAllProducts} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY_LIGHT, color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Adicionar todos à fila</button>
+                  <button onClick={rejectAllProducts} style={{ padding: "5px 12px", borderRadius: 7, background: "#FCEBEB", color: "#A32D2D", border: "0.5px solid #F7C1C1", fontSize: 12, cursor: "pointer" }}>Rejeitar todos</button>
+                </div>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {pending.map(p => {
+                  const pid = p.id ?? p.key;
+                  return (
+                    <ProductRow
+                      key={pid}
+                      product={p}
+                      actions={<>
+                        <button onClick={() => approveProduct(pid)} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY_LIGHT, color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Adicionar na fila</button>
+                        <button onClick={() => rejectProduct(pid)} style={{ padding: "5px 10px", borderRadius: 7, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 12, cursor: "pointer" }}>Rejeitar</button>
+                      </>}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {tab === "products" && !isRepasse && (
         <div>
           <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 20 }}>
@@ -2407,15 +2551,15 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Fila vazia</div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>
                 {isRepasse ? (
-                  <>A fila é reabastecida com os links capturados do grupo líder. Confira a configuração de captura na aba <strong>Gerenciar</strong>.</>
+                  <>A fila é reabastecida com os links capturados do grupo líder. Confira a configuração de captura na aba <strong>Repasse</strong>.</>
                 ) : (
                   <>A fila é reabastecida automaticamente do catálogo nos horários de envio.
                   Para adicionar produtos agora — buscar do catálogo ou colar um link —
                   use a aba <strong>Busca de Produtos</strong>.</>
                 )}
               </div>
-              <button onClick={() => setTab(isRepasse ? "manage" : "products")} style={{ padding: "8px 18px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>
-                {isRepasse ? "Ir para Gerenciar" : "Ir para Busca de Produtos"}
+              <button onClick={() => setTab("products")} style={{ padding: "8px 18px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>
+                {isRepasse ? "Ir para Repasse" : "Ir para Busca de Produtos"}
               </button>
             </div>
           ) : (() => {

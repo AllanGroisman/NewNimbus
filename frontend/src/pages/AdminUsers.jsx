@@ -10,6 +10,8 @@ import {
   adminVerifyUserEmail,
   adminSetUserSuspended,
   adminResendUserVerification,
+  adminGetRegistration,
+  adminSetRegistration,
 } from "../data/api";
 
 const PLAN_LABEL = { free: "Free", basic: "Basic", pro: "Pro", business: "Business" };
@@ -34,6 +36,10 @@ export default function PageAdminUsers({ currentUser }) {
   const [search, setSearch]         = useState("");
   const [filter, setFilter]         = useState("all"); // all | unverified | suspended | admin
 
+  // Bloqueio de cadastro (beta fechado). null = ainda carregando.
+  const [regBlocked, setRegBlocked] = useState(null);
+  const [regBusy, setRegBusy]       = useState(false);
+
   // Modais
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [pwdUser, setPwdUser]             = useState(null);
@@ -48,8 +54,9 @@ export default function PageAdminUsers({ currentUser }) {
     setLoading(true);
     setError(null);
     try {
-      const r = await adminListUsers();
+      const [r, reg] = await Promise.all([adminListUsers(), adminGetRegistration()]);
       setUsers(r.users || []);
+      setRegBlocked(!!reg.blocked);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -58,6 +65,20 @@ export default function PageAdminUsers({ currentUser }) {
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  async function toggleRegistration() {
+    const next = !regBlocked;
+    setRegBusy(true);
+    setError(null);
+    try {
+      const r = await adminSetRegistration(next);
+      setRegBlocked(!!r.blocked);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setRegBusy(false);
+    }
+  }
 
   async function withBusy(userId, fn) {
     setBusy(b => ({ ...b, [userId]: true }));
@@ -151,7 +172,10 @@ export default function PageAdminUsers({ currentUser }) {
       {/* Cabeçalho */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <div>
-          <h2 style={{ fontSize: 18, fontWeight: 500, margin: 0 }}>Usuários</h2>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <h2 style={{ fontSize: 18, fontWeight: 500, margin: 0 }}>Usuários</h2>
+            {regBlocked && <Badge color="red">Cadastro fechado (beta)</Badge>}
+          </div>
           <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 4, display: "flex", gap: 12, flexWrap: "wrap" }}>
             <span>{users.length} cadastrado{users.length !== 1 ? "s" : ""}</span>
             <span>{adminCount} admin{adminCount !== 1 ? "s" : ""}</span>
@@ -159,9 +183,16 @@ export default function PageAdminUsers({ currentUser }) {
             {suspendedCount > 0 && <span style={{ color: "#A32D2D" }}>{suspendedCount} suspenso{suspendedCount !== 1 ? "s" : ""}</span>}
           </div>
         </div>
-        <button onClick={refresh} disabled={loading} style={btnStyle()}>
-          {loading ? "⟳" : "⟳ Atualizar"}
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {regBlocked !== null && (
+            <button onClick={toggleRegistration} disabled={regBusy} style={btnStyle(regBlocked ? "warning" : "default")}>
+              {regBusy ? "…" : regBlocked ? "🔒 Cadastro bloqueado — Liberar" : "🔓 Cadastro liberado — Bloquear"}
+            </button>
+          )}
+          <button onClick={refresh} disabled={loading} style={btnStyle()}>
+            {loading ? "⟳" : "⟳ Atualizar"}
+          </button>
+        </div>
       </div>
 
       {error && (

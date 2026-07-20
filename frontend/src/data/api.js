@@ -57,6 +57,7 @@ export async function authRegister({ name, email, password }) {
   // Backend não devolve token — precisa verificar email primeiro.
   return http("POST", "/api/auth/register", { name, email, password });
 }
+export async function authRegistrationStatus() { return http("GET", "/api/auth/registration-status"); }
 export async function authLogin({ email, password }) {
   const r = await http("POST", "/api/auth/login", { email, password });
   if (r.token) setToken(r.token);
@@ -256,6 +257,8 @@ export async function adminSetUserSuspended(id, suspended) {
 export async function adminResendUserVerification(id) {
   return http("POST", `/api/admin/users/${id}/resend-verification`);
 }
+export async function adminGetRegistration()        { return http("GET", "/api/admin/registration"); }
+export async function adminSetRegistration(blocked) { return http("PUT", "/api/admin/registration", { blocked }); }
 
 // ─── Admin / Backups ───────────────────────────────────────────────────
 export async function adminBackupsLocal()              { return http("GET",    "/api/admin/backups/local"); }

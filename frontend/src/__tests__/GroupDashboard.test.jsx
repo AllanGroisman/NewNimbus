@@ -184,14 +184,14 @@ describe("GroupDashboard — desvincular grupo (aba Grupos)", () => {
 });
 
 describe("GroupDashboard — fila vazia no modo repasse", () => {
-  it("mostra mensagem/botão de repasse (Gerenciar), não de Busca de Produtos", () => {
+  it("mostra mensagem/botão de repasse (Repasse), não de Busca de Produtos", () => {
     renderDashboard({
       group: { scraping: { kind: "repasse", sources: [], filters: {} }, queue: [] },
     });
     fireEvent.click(screen.getByRole("button", { name: /Fila/ })); // aba Fila
 
     expect(screen.getByText(/grupo líder/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Ir para Gerenciar/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Ir para Repasse/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Ir para Busca de Produtos/i })).not.toBeInTheDocument();
   });
 });

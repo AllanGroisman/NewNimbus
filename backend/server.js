@@ -316,6 +316,11 @@ app.post("/api/auth/register", registerLimiter, async (req, res) => {
   }
 });
 
+// Público: a tela de login usa pra esconder o cadastro no beta fechado.
+app.get("/api/auth/registration-status", (req, res) => {
+  res.json({ blocked: auth.isRegistrationBlocked() });
+});
+
 app.post("/api/auth/login", loginLimiter, async (req, res) => {
   try {
     const { email, password } = req.body || {};
@@ -1117,6 +1122,17 @@ app.put("/api/admin/scraper/config", auth.requireAuth, auth.requireAdmin, (req, 
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
+});
+
+// Bloqueio de cadastro (beta fechado) — toggle global via AppConfig.
+app.get("/api/admin/registration", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json({ blocked: auth.isRegistrationBlocked() });
+});
+
+app.put("/api/admin/registration", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  const blocked = !!(req.body && req.body.blocked);
+  appConfig.set("registration-blocked", { blocked });
+  res.json({ blocked });
 });
 
 app.post("/api/admin/scraper/run", auth.requireAuth, auth.requireAdmin, async (req, res) => {

@@ -5,6 +5,7 @@ import {
   authLogin, authRegister, authGoogle,
   authVerifyEmail, authResendVerification,
   authForgotPassword, authResetPassword,
+  authRegistrationStatus,
 } from "../data/api";
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
@@ -58,7 +59,22 @@ export default function Login({ onLogin }) {
   const [infoMessage, setInfoMessage] = useState(null);
   const [resetToken, setResetToken] = useState(null);
   const [resendCooldown, setResendCooldown] = useState(0); // segundos restantes
+  const [signupOpen, setSignupOpen] = useState(true); // beta fechado esconde cadastro
   const googleBtnRef = useRef(null);
+
+  // Descobre se o cadastro está aberto (beta fechado). Em erro, mantém aberto.
+  useEffect(() => {
+    let alive = true;
+    authRegistrationStatus()
+      .then(r => {
+        if (!alive) return;
+        setSignupOpen(!r.blocked);
+        // Se caiu na aba de cadastro mas está fechado, volta pro login.
+        if (r.blocked) setMode(m => (m === "register" ? "login" : m));
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   // Countdown do cooldown de reenvio
   useEffect(() => {
@@ -378,8 +394,9 @@ export default function Login({ onLogin }) {
     );
   }
 
-  // Tabs Entrar/Cadastrar só aparecem em login/register.
-  const showTabs = mode === "login" || mode === "register";
+  // Tabs Entrar/Cadastrar só aparecem em login/register — e some quando o
+  // cadastro está fechado (beta), deixando só o login.
+  const showTabs = (mode === "login" || mode === "register") && signupOpen;
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
@@ -409,6 +426,12 @@ export default function Login({ onLogin }) {
                 }}
               >{m === "login" ? "Entrar" : "Cadastrar"}</button>
             ))}
+          </div>
+        )}
+
+        {!signupOpen && mode === "login" && (
+          <div style={{ textAlign: "center", marginBottom: 16, fontSize: 12, color: "var(--color-text-secondary)" }}>
+            Cadastros temporariamente fechados (beta).
           </div>
         )}
 

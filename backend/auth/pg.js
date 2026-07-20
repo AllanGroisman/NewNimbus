@@ -7,6 +7,7 @@ const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { prisma } = require("../db");
+const appConfig = require("../config");
 const mailer = require("./mailer");
 
 // Limites e regras de input padronizadas (compartilhadas com o frontend via copy).
@@ -47,6 +48,22 @@ const ADMIN_EMAILS = String(process.env.ADMIN_EMAILS || "")
 
 function isAdminEmail(email) {
   return ADMIN_EMAILS.includes(String(email || "").trim().toLowerCase());
+}
+
+// Beta fechado: admin pode desligar novos cadastros. Flag global em AppConfig
+// (key "registration-blocked", { blocked: bool }), lida do cache síncrono.
+function isRegistrationBlocked() {
+  return appConfig.get("registration-blocked")?.blocked === true;
+}
+
+// Barra criação de conta quando o cadastro está bloqueado. Emails em
+// ADMIN_EMAILS sempre passam (pra você nunca ficar travado pra fora).
+function assertRegistrationAllowed(email) {
+  if (isRegistrationBlocked() && !isAdminEmail(email)) {
+    const err = new Error("Cadastro temporariamente indisponível. Estamos em beta fechado.");
+    err.code = "registration_blocked";
+    throw err;
+  }
 }
 
 // Conta admin garantida no boot: força email + senha + role=admin.
@@ -188,6 +205,8 @@ async function register({ name, email, password }) {
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Email inválido");
   if (email.length > MAX_EMAIL_LEN) throw new Error(`Email não pode ter mais que ${MAX_EMAIL_LEN} caracteres`);
   validatePassword(password);
+
+  assertRegistrationAllowed(email);
 
   const existing = await findByEmail(email);
   if (existing) throw new Error("Já existe uma conta com este email");
@@ -389,6 +408,9 @@ async function loginWithGoogle({ idToken }) {
 
   let user = await findByEmail(email);
   if (!user) {
+    // Conta nova via Google entra no bloqueio de cadastro (usuário já existente
+    // continua logando normalmente).
+    assertRegistrationAllowed(email);
     // Cria conta nova — passwordHash random (Google-only).
     const randomPass = crypto.randomBytes(32).toString("hex");
     user = await prisma().user.create({
@@ -617,6 +639,7 @@ module.exports = {
   adminSetSuspended,
   adminResendVerification,
   isAdminEmail,
+  isRegistrationBlocked,
   // Limites/regras exportados pra ficar uma fonte só.
   MAX_NAME_LEN,
   MAX_EMAIL_LEN,

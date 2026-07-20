@@ -265,6 +265,52 @@ describe("scheduler.tick — loop periodico", () => {
     const g = state.groups.find(g => g.id === 999);
     expect(g.queue.length + g.history.length).toBeGreaterThan(0);
   });
+
+  it("scraping.autoSend=true despacha mesmo SEM janela ativa", async () => {
+    const { user, auth } = await createUserWithMLAffiliate();
+    const waGroups = [makeWhatsAppGroup({ id: "wa-auto", numberId: "num-auto", jid: "auto@g.us" })];
+    // windows: [] → activeWindow() sempre null (nenhuma janela ativa, determinístico).
+    const group = makeGroup({
+      id: 1001,
+      whatsappGroupIds: ["wa-auto"],
+      sources: ["amazon"],
+      schedule: { windows: [], cooldownValue: 24, cooldownUnit: "horas" },
+    });
+    group.scraping.autoSend = true;
+    await auth("put", "/api/state").send({ groups: [group], whatsappGroups: waGroups });
+    waConnect(user.id, "num-auto");
+    await storage.updateGroupOps(user.id, 1001, {
+      queue: [{ id: "a", key: "a", name: "Auto Envio", link: "https://www.amazon.com.br/dp/B0CAUTO0001", img: null, price: 10, discount: 50, store: "Amazon", category: "gamer" }],
+    });
+
+    await scheduler.tick();
+
+    const g = (await storage.loadState(user.id)).groups.find(g => g.id === 1001);
+    expect(g.queue).toHaveLength(0);
+    expect(g.history).toHaveLength(1);
+  });
+
+  it("sem autoSend e sem janela ativa NÃO despacha", async () => {
+    const { user, auth } = await createUserWithMLAffiliate();
+    const waGroups = [makeWhatsAppGroup({ id: "wa-noauto", numberId: "num-noauto", jid: "noauto@g.us" })];
+    const group = makeGroup({
+      id: 1002,
+      whatsappGroupIds: ["wa-noauto"],
+      sources: ["amazon"],
+      schedule: { windows: [], cooldownValue: 24, cooldownUnit: "horas" },
+    });
+    await auth("put", "/api/state").send({ groups: [group], whatsappGroups: waGroups });
+    waConnect(user.id, "num-noauto");
+    await storage.updateGroupOps(user.id, 1002, {
+      queue: [{ id: "b", key: "b", name: "Sem Auto", link: "https://www.amazon.com.br/dp/B0CNOAUTO01", img: null, price: 10, discount: 50, store: "Amazon", category: "gamer" }],
+    });
+
+    await scheduler.tick();
+
+    const g = (await storage.loadState(user.id)).groups.find(g => g.id === 1002);
+    expect(g.queue).toHaveLength(1);
+    expect(g.history).toHaveLength(0);
+  });
 });
 
 describe("POST /api/state/groups/:gid/refill — endpoint HTTP", () => {
