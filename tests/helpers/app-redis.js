@@ -44,6 +44,11 @@ let _testSendHandler = null; // permite testes overridarem o handler de send (pr
 
 async function setupQueue() {
   if (_initialized) return;
+  // Baseline limpa ANTES de criar os workers — seguro dar flushdb aqui porque
+  // nenhum Worker BullMQ está vivo ainda. Entre testes NÃO se pode fazer isso
+  // (ver cleanQueues): flushdb apaga os markers internos do BullMQ e desincroniza
+  // os workers vivos, deixando jobs presos em "waiting".
+  await flushRedis();
   await appConfig.warmup();
   await queueMod.init({ producer: true, consumer: true });
   queueMod.setSendHandler(async (job) => {
@@ -71,8 +76,10 @@ async function teardownQueue() {
   _testSendHandler = null;
 }
 
-// Limpa todas as keys do Redis (nimbus.* + bull.*). Usar entre testes pra
-// resetar filas sem fechar conexão.
+// Limpa todas as keys do Redis (flushdb bruto). SÓ é seguro quando NÃO há
+// Worker BullMQ vivo (ex.: baseline no setupQueue, antes dos workers). Entre
+// testes, use cleanQueues() — flushdb embaixo de um worker vivo apaga os
+// markers internos do BullMQ e trava o consumo de jobs.
 async function flushRedis() {
   const IORedis = require(path.join(backendDir, "node_modules", "ioredis"));
   const client = new IORedis(process.env.REDIS_URL || "redis://localhost:6379");
@@ -80,6 +87,36 @@ async function flushRedis() {
     await client.flushdb();
   } finally {
     client.disconnect();
+  }
+}
+
+// Limpeza entre testes SEM quebrar os workers vivos: usa a própria API do
+// BullMQ (drain + clean) via handles efêmeros das mesmas filas. drain remove
+// waiting+delayed; clean remove os estados terminais. Diferente do flushdb,
+// não toca nos markers, então o worker continua consumindo normalmente.
+const QUEUE_NAMES = ["nimbus.send-message", "nimbus.control"]; // = SEND_QUEUE/CONTROL_QUEUE em infra/queue.js
+async function cleanQueues() {
+  if (!queueMod.isRedis()) return;
+  const { Queue } = require(path.join(backendDir, "node_modules", "bullmq"));
+  const IORedis = require(path.join(backendDir, "node_modules", "ioredis"));
+  const connection = new IORedis(process.env.REDIS_URL || "redis://localhost:6379", {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+  });
+  try {
+    for (const name of QUEUE_NAMES) {
+      const q = new Queue(name, { connection });
+      try {
+        await q.drain(true); // remove waiting + delayed
+        for (const st of ["completed", "failed", "wait", "active", "delayed", "paused"]) {
+          try { await q.clean(0, 100000, st); } catch { /* estado pode não existir */ }
+        }
+      } finally {
+        await q.close();
+      }
+    }
+  } finally {
+    connection.disconnect();
   }
 }
 
@@ -115,5 +152,5 @@ export {
   app, request, createTestUser, uniqueEmail,
   auth, storage, catalog, scheduler, affiliate, billing, queueMod, wa,
   waMock, waCalls, resetWa, stripeMock,
-  setupQueue, teardownQueue, flushRedis, setSendHandler,
+  setupQueue, teardownQueue, flushRedis, cleanQueues, setSendHandler,
 };

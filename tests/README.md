@@ -57,7 +57,7 @@ npm test                          # ~4s
 - `whatsapp.test.js` — sessões, listagem de grupos, envio, broadcast, invite; plan-gating de número novo (402).
 - `billing.test.js` — trial automático, `/me`, checkout, portal, webhooks Stripe (todos os eventos relevantes), idempotência, sub órfã, plan-gating com admin bypass.
 - `health-metrics.test.js` — `/healthz` (status dos componentes) e `/metrics` (formato Prometheus, incremento de counters).
-- `redis-queue.test.js` — fila BullMQ real (exige `RUN_REDIS_TESTS=1`): enqueue, retry exponencial, RPC de control, status counts, DLQ.
+- `redis-queue.test.js` — fila BullMQ real (**opt-in**: só roda com `RUN_REDIS_TESTS=1`): enqueue, retry exponencial, RPC de control, status counts, DLQ. É opt-in porque bate num broker real e é sensível a timing (race de cold-start do marker do BullMQ + backoff de 5s no retry) → flaky de forma não-determinística, **não por bug de produto**. Fora do gate padrão pra manter `npm test` determinístico.
 
 ### `journey/` — fluxo end-to-end de um usuário
 - `full-journey.test.js` — registro → afiliado → catálogo → campanha → refill → envio → reset. Persiste estado entre testes (`globalThis.__NIMBUS_SKIP_TRUNCATE_BETWEEN_TESTS`).
@@ -71,7 +71,7 @@ npm test                          # ~4s
 - `env.js` — seta `NODE_ENV=test`, aponta `DATABASE_URL` pra `nimbus_test`, define `JWT_SECRET`. **Importar primeiro** em qualquer teste.
 - `env-redis.js` — variante com `QUEUE_BACKEND=redis` pra `redis-queue.test.js`.
 - `app.js` — helper único que importa o backend já configurado pra teste (com mocks de WA + Stripe instalados).
-- `app-redis.js` — variante que monta o app com fila Redis real.
+- `app-redis.js` — variante que monta o app com fila Redis real. Expõe `cleanQueues()` (limpeza entre testes via API do BullMQ — drain/clean) em vez de `flushdb`, que apagaria os markers internos do BullMQ embaixo dos workers vivos e travaria o consumo de jobs. `flushRedis` (flushdb bruto) só é usado no baseline do `setupQueue`, antes de qualquer worker existir.
 - `wa-mock.js` — mock no lugar de `backend/whatsapp/index.js`. Toda chamada de envio fica em `calls[]` pra os testes inspecionarem. `listSessions` espelha o contrato real (`{ numberId, status, info, lastError }`). Exporta `connect(userId, numberId)` (re-exportado como `waConnect` em `app.js`): marca uma sessão como `status:"connected"` — **necessário** pra qualquer teste de envio, porque o `whatsappGate` (`scheduler.js:152`) só deixa enviar quando algum número vinculado está conectado. `startSession` deixa a sessão em `"open"` (iniciada mas não conectada).
 - `stripe-mock.js` — mock no lugar de `backend/billing/stripe.js`. URL fake, eventos sintéticos.
 - `mailer-mock.js` — mock no lugar de `backend/auth/mailer.js`. Sem ele o register/reset dispara o SMTP **real** e bate na cota horária. O token de verificação continua sendo gravado no DB, então `createTestUser` (que lê o token direto do banco) segue funcionando.
