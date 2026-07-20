@@ -2,7 +2,7 @@
 // (recém-movido pra ser visível em todas as abas). Não cobre toda a UI, só os
 // pontos críticos que mudaram recentemente.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 // Mock dos imports de api antes de importar o componente

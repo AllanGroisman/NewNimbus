@@ -182,12 +182,6 @@ export default function PageAdminScraper() {
     return <div style={{ padding: 40, textAlign: "center", color: "var(--color-text-secondary)" }}>Carregando...</div>;
   }
 
-  const stats = status?.config ? {
-    total: 0,
-    byCategory: {},
-    byStore: {},
-    updatedAt: null,
-  } : null;
   const lastResult = status?.lastResult;
   const fmtDate = (iso) => iso ? new Date(iso).toLocaleString("pt-BR") : "—";
 

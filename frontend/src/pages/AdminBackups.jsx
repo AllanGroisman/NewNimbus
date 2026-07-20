@@ -18,11 +18,6 @@ function fmtSize(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 }
 
-function fmtDate(iso) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
-}
-
 function nameToDate(name) {
   // db-20260522-183000.sql.gz → "2026-05-22 18:30"
   const m = name.match(/db-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})/);

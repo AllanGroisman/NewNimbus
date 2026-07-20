@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { PRIMARY, PRIMARY_DARK } from "../data/constants";
+import { PRIMARY } from "../data/constants";
 import {
   whatsNimbusStatus,
   whatsNimbusConnect,

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, CATEGORIES, categoryIcon } from "../data/constants";
+import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, categoryIcon } from "../data/constants";
 import { adminCatalog, adminScraperConfig, adminRunScraper, adminScraperStatus } from "../data/api";
 import { ProductGridCard } from "../components/ui/ProductCard";
 

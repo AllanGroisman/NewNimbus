@@ -14,18 +14,6 @@ import {
   getAffiliateStatus, saveAffiliate, clearAffiliate,
 } from "../data/api.js";
 
-function mockFetch(responses) {
-  // `responses` é array (ordem) ou função (req → res)
-  if (Array.isArray(responses)) {
-    let i = 0;
-    return vi.fn(async () => {
-      const r = responses[Math.min(i++, responses.length - 1)];
-      return makeResponse(r);
-    });
-  }
-  return vi.fn(async (...args) => makeResponse(responses(...args)));
-}
-
 function makeResponse({ status = 200, body = {}, ok } = {}) {
   return {
     status,
