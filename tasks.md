@@ -3,7 +3,7 @@
 
 [x] Conta nova Assinatura: Quero tirar esses 7 dias grátis de conta PRO iniciais.
 
-[] Quero conferir que se o número de WhatsApps, número de campanhas e número de grupos por campanha, categorias de produtos por campanha, está sendo respeitado de acordo com a assinatura do cliente. Por enquanto as diferenças entre os usuários é a seguinte:
+[x] Quero conferir que se o número de WhatsApps, número de campanhas e número de grupos por campanha, categorias de produtos por campanha, está sendo respeitado de acordo com a assinatura do cliente. Por enquanto as diferenças entre os usuários é a seguinte:
 
 Básico: 69,90; 1 número de WhatsApp; 1 campanha; 3 grupos por campanha; 2 categorias por grupo.
 

@@ -363,25 +363,27 @@ async function sendItem(userId, group, whatsappGroups, item) {
     itemForSend = { ...item, link: item.affiliateLink };
   } else if (item.store === "Mercado Livre" && item.link) {
     // Fallback pra itens legados ou inseridos manualmente (sem affiliateLink).
+    // Mesma política de convertItemAffiliate: se o afiliado está configurado e a
+    // conversão falha, NÃO manda link sem comissão — descarta (lança erro).
     const aff = await affiliate.gerarLinkAfiliadoML(userId, item.link);
     if (aff) {
       itemForSend = { ...item, link: aff };
     } else if (affiliate.status(userId).ml.configured) {
-      console.warn(`[scheduler] afiliado ML falhou pra "${item.name?.slice(0, 40)}" — enviando com link original`);
+      throw new Error(`Afiliado ML falhou pra "${item.name?.slice(0, 40)}" — item descartado (sem link com comissão).`);
     }
   } else if (item.store === "Amazon" && item.link) {
     const aff = affiliate.gerarLinkAfiliadoAmazon(userId, item.link);
     if (aff) {
       itemForSend = { ...item, link: aff };
     } else if (affiliate.status(userId).amazon.configured) {
-      console.warn(`[scheduler] afiliado Amazon falhou pra "${item.name?.slice(0, 40)}" — enviando com link original`);
+      throw new Error(`Afiliado Amazon falhou pra "${item.name?.slice(0, 40)}" — item descartado (sem link com comissão).`);
     }
   } else if (item.store === "Shopee" && item.link) {
     const aff = await affiliate.gerarLinkAfiliadoShopee(userId, item.link);
     if (aff) {
       itemForSend = { ...item, link: aff };
     } else if (affiliate.status(userId).shopee.configured) {
-      console.warn(`[scheduler] afiliado Shopee falhou pra "${item.name?.slice(0, 40)}" — enviando com link original`);
+      throw new Error(`Afiliado Shopee falhou pra "${item.name?.slice(0, 40)}" — item descartado (sem link com comissão).`);
     }
   }
   // Defesa: itens já no catálogo/fila podem ter URL de thumb da Amazon — sobe pra
@@ -898,4 +900,4 @@ async function addItemToGroup(userId, group, item, { force = false } = {}) {
   };
 }
 
-module.exports = { start, stop, tick, sendNextNow, refillNow, manualAdd, addItemToGroup, isRepasse, isAutoApprove, status, processSendJob };
+module.exports = { start, stop, tick, sendNextNow, refillNow, manualAdd, addItemToGroup, isRepasse, isAutoApprove, resolveSources, status, processSendJob };

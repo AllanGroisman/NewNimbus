@@ -31,6 +31,7 @@ import PageAdminUsers from "./pages/AdminUsers";
 import PageAdminBackups from "./pages/AdminBackups";
 import PageAdminNotifications from "./pages/AdminNotifications";
 import PageAdminWhatsNimbus from "./pages/AdminWhatsNimbus";
+import PageAdminRepasse from "./pages/AdminRepasse";
 import PageTutoriais from "./pages/Tutoriais";
 import Login from "./pages/Login";
 
@@ -573,6 +574,7 @@ export default function App() {
     "admin-ml":       user?.role === "admin" ? <PageAdminML /> : fallbackPage,
     "admin-amazon":   user?.role === "admin" ? <PageAdminAmazon /> : fallbackPage,
     "admin-shopee":   user?.role === "admin" ? <PageAdminShopee /> : fallbackPage,
+    "admin-repasse":  user?.role === "admin" ? <PageAdminRepasse /> : fallbackPage,
     "admin-users":          user?.role === "admin" ? <PageAdminUsers currentUser={user} /> : fallbackPage,
     "admin-backups":        user?.role === "admin" ? <PageAdminBackups /> : fallbackPage,
     "admin-notifications":  user?.role === "admin" ? <PageAdminNotifications numbers={numbers} /> : fallbackPage,

@@ -837,6 +837,11 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
       throw err;
     }
 
+    // URL pós-navegação/redirects — o Puppeteer já contornou o muro (cookie de
+    // sessão do afiliado) pra chegar aqui, diferente de um fetch cru sem cookie
+    // (que costuma travar no captcha do ML). É o link confiável pra guardar/afiliar.
+    const finalUrl = page.url();
+
     const data = await page.evaluate((store) => {
       const meta = (sel) => document.querySelector(sel)?.getAttribute("content")?.trim() || null;
       const ogTitle = meta('meta[property="og:title"]') || meta('meta[name="og:title"]') || document.title?.trim() || null;
@@ -853,7 +858,7 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
         return isNaN(v) ? null : v;
       };
 
-      let name = null, price = null, originalPrice = null, discount = null, img = null;
+      let name = null, price = null, originalPrice = null, discount = null, img = null, sold = null;
 
       if (store === "Mercado Livre") {
         const titleEl = document.querySelector("h1.ui-pdp-title, .ui-pdp-title");
@@ -885,6 +890,14 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
         }
         const imgEl = document.querySelector(".ui-pdp-gallery__figure img, figure.ui-pdp-gallery__figure img, .ui-pdp-image");
         img = imgEl?.getAttribute("src") || imgEl?.getAttribute("data-zoom") || ogImage;
+        // Best-effort: não há seletor confirmado pra "vendidos" na PDP — tenta achar
+        // o texto em qualquer lugar da página (ex. "500 vendidos", "2 mil vendidos").
+        const soldMatch = (document.body?.innerText || "").match(/([\d.,]+)\s*(mil\s*)?vendid[oa]s?/i);
+        if (soldMatch) {
+          let n = parseFloat(soldMatch[1].replace(/\./g, "").replace(",", "."));
+          if (soldMatch[2]) n *= 1000;
+          if (!isNaN(n)) sold = Math.round(n);
+        }
       } else if (store === "Amazon") {
         const titleEl = document.querySelector("#productTitle, h1#title span, h1#title");
         name = titleEl?.textContent?.trim() || ogTitle;
@@ -921,7 +934,7 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
         }
       }
 
-      return { name, price, originalPrice, discount, img };
+      return { name, price, originalPrice, discount, img, sold };
     }, store);
 
     // Shopee: a PDP é SPA vazia pra bot — sem nome via DOM/OG, usa o slug da URL.
@@ -931,9 +944,11 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
     return {
       name: name || null,
       link: cleanUrl,
+      finalUrl,
       price: data.price ?? null,
       originalPrice: data.originalPrice ?? null,
       discount: data.discount ?? null,
+      sold: data.sold ?? null,
       img: store === "Amazon" ? upgradeAmazonImageUrl(data.img) : (data.img || null),
       store: store || null,
       scrapedAt: new Date().toISOString(),
@@ -943,12 +958,129 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
   }
 }
 
+// Extrai shopId/itemId do formato padrão de URL de produto Shopee
+// (".../<slug>-i.<shopId>.<itemId>", com ou sem query string atrás).
+function extractShopeeIds(url) {
+  try {
+    const u = new URL(url);
+    const m = u.pathname.match(/-i\.(\d+)\.(\d+)$/i);
+    if (!m) return null;
+    return { shopId: m[1], itemId: m[2] };
+  } catch {
+    return null;
+  }
+}
+
+// Segue redirect HTTP puro (sem Puppeteer) — suficiente pra Shopee, que (ao
+// contrário do ML) não costuma jogar link curto num muro anti-bot.
+async function resolveShopeeUrl(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(url, { method: "GET", redirect: "follow", headers: { "User-Agent": UA }, signal: controller.signal });
+    const finalUrl = res.url || url;
+    try { await res.body?.cancel?.(); } catch { /* ignore */ }
+    return finalUrl;
+  } catch {
+    return url;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Busca detalhe de um item Shopee via API pública (mesmo endpoint usado em
+// fetchShopeeReviewCount, mas lendo o objeto de produto inteiro, não só
+// cmt_count). Best-effort: qualquer falha devolve null, nunca lança.
+// ATENÇÃO: os nomes de campo abaixo (sold/historical_sold/price_before_discount/
+// raw_discount) ainda não foram confirmados contra uma resposta real da API —
+// validar em teste ao vivo e ajustar se vierem null sistematicamente.
+async function fetchShopeeItemDetail(itemId, shopId) {
+  if (!itemId || !shopId) return null;
+  const url = `https://shopee.com.br/api/v4/item/get?itemid=${encodeURIComponent(itemId)}&shopid=${encodeURIComponent(shopId)}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": UA,
+        "Accept": "application/json",
+        "Accept-Language": "pt-BR,pt;q=0.9",
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": "https://shopee.com.br/",
+      },
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const d = json?.data ?? json?.item ?? null;
+    if (!d) return null;
+
+    const price = parsePrice(d.price ?? d.price_min ?? d.priceMin ?? null);
+    const priceBefore = parsePrice(d.price_before_discount ?? d.priceBeforeDiscount ?? null);
+    const rawDiscount = Number(d.raw_discount ?? d.discount ?? NaN);
+    const discount = Number.isFinite(rawDiscount) && rawDiscount > 0
+      ? Math.round(rawDiscount)
+      : (priceBefore && price && priceBefore > price ? Math.round((1 - price / priceBefore) * 100) : null);
+    const soldRaw = Number(d.sold ?? d.historical_sold ?? NaN);
+    const sold = Number.isFinite(soldRaw) ? soldRaw : null;
+    const images = Array.isArray(d.images) ? d.images : (d.image ? [d.image] : []);
+    const img = images[0] ? `https://cf.shopee.com.br/file/${images[0]}` : null;
+
+    return {
+      name: d.name || d.title || null,
+      img,
+      price: price ?? null,
+      originalPrice: (priceBefore && priceBefore !== price) ? priceBefore : null,
+      discount,
+      sold,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Caminho primário pra Shopee: API pública (sem Puppeteer). Mais confiável que
+// OG tags porque a PDP da Shopee é uma SPA que nem sempre serve as meta tags
+// pro bot. Retorna null se não conseguir IDs ou se a API não trouxer nome —
+// nesse caso o chamador cai no fallback antigo (Puppeteer + OG).
+async function scrapeShopeeSingleViaApi(cleanUrl) {
+  let ids = extractShopeeIds(cleanUrl);
+  let finalUrl = cleanUrl;
+  if (!ids) {
+    finalUrl = await resolveShopeeUrl(cleanUrl);
+    ids = extractShopeeIds(finalUrl);
+  }
+  if (!ids) return null;
+  const detail = await fetchShopeeItemDetail(ids.itemId, ids.shopId);
+  if (!detail || !detail.name) return null;
+  return {
+    name: detail.name,
+    link: finalUrl,
+    finalUrl,
+    price: detail.price,
+    originalPrice: detail.originalPrice,
+    discount: detail.discount,
+    sold: detail.sold,
+    img: detail.img,
+    store: "Shopee",
+    scrapedAt: new Date().toISOString(),
+  };
+}
+
 async function scrapeSingleProduct(url, { userId } = {}) {
   if (!url || typeof url !== "string" || !url.trim()) {
     throw new Error("URL inválida");
   }
   const cleanUrl = url.trim();
   const store = detectStore(cleanUrl);
+
+  if (store === "Shopee") {
+    const viaApi = await scrapeShopeeSingleViaApi(cleanUrl).catch(() => null);
+    if (viaApi) return viaApi;
+    // API falhou (IDs não encontrados, endpoint fora) — cai no fallback abaixo.
+  }
 
   // Amazon serve CAPTCHA/interstitial de forma intermitente → re-tenta com backoff
   // (browser novo a cada vez). ML/Shopee são determinísticos: 1 tentativa só.
@@ -985,4 +1117,4 @@ async function autoScroll(page) {
   await new Promise(r => setTimeout(r, 1000));
 }
 
-module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, CATEGORIES, STORES };
+module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, extractShopeeIds, fetchShopeeItemDetail, CATEGORIES, STORES };

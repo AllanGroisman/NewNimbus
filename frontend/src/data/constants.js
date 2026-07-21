@@ -249,6 +249,7 @@ export const sidebarItems = [
   { id: "admin-ml",       icon: "◆", label: "Mercado Livre",  adminOnly: true },
   { id: "admin-amazon",   icon: "◇", label: "Amazon",         adminOnly: true },
   { id: "admin-shopee",   icon: "◈", label: "Shopee",         adminOnly: true },
+  { id: "admin-repasse",  icon: "⟲", label: "Repasse",        adminOnly: true },
   { id: "admin-users",          icon: "♟", label: "Usuários",       adminOnly: true },
   { id: "admin-backups",        icon: "⊡", label: "Backups",        adminOnly: true },
   { id: "admin-notifications",  icon: "◉", label: "Notificações",   adminOnly: true },

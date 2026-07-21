@@ -1332,6 +1332,68 @@ app.get("/api/admin/catalog", auth.requireAuth, auth.requireAdmin, async (req, r
   }
 });
 
+// Log de captura de campanhas de repasse — visibilidade do admin sobre cada
+// link visto num grupo líder e o que aconteceu com ele (fila/pendente/descarte).
+app.get("/api/admin/repasse/logs", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const { prisma } = require("./db");
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const pageSize = Math.min(200, Math.max(10, parseInt(req.query.pageSize) || 50));
+    const where = {};
+    if (req.query.userId) where.userId = String(req.query.userId);
+    if (req.query.groupId) where.groupId = BigInt(req.query.groupId);
+    if (req.query.store) where.store = String(req.query.store);
+    if (req.query.outcome) where.outcome = String(req.query.outcome);
+
+    const [total, rows] = await Promise.all([
+      prisma().repasseCaptureLog.count({ where }),
+      prisma().repasseCaptureLog.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+
+    const groupIds = [...new Set(rows.map(r => r.groupId))];
+    const userIds = [...new Set(rows.map(r => r.userId))];
+    const [groups, users] = await Promise.all([
+      groupIds.length ? prisma().group.findMany({ where: { id: { in: groupIds } }, select: { id: true, name: true } }) : [],
+      userIds.length ? prisma().user.findMany({ where: { id: { in: userIds } }, select: { id: true, email: true, name: true } }) : [],
+    ]);
+    const groupById = new Map(groups.map(g => [g.id.toString(), g.name]));
+    const userById = new Map(users.map(u => [u.id, u]));
+
+    const items = rows.map(r => ({
+      id: r.id.toString(),
+      groupId: r.groupId.toString(),
+      groupName: groupById.get(r.groupId.toString()) || null,
+      userId: r.userId,
+      userEmail: userById.get(r.userId)?.email || null,
+      waJid: r.waJid,
+      rawUrl: r.rawUrl,
+      resolvedUrl: r.resolvedUrl,
+      store: r.store,
+      sourceAllowed: r.sourceAllowed,
+      affiliateConfigured: r.affiliateConfigured,
+      scrapeOk: r.scrapeOk,
+      productName: r.productName,
+      productImg: r.productImg,
+      price: r.price,
+      originalPrice: r.originalPrice,
+      discount: r.discount,
+      sold: r.sold,
+      outcome: r.outcome,
+      reason: r.reason,
+      createdAt: r.createdAt,
+    }));
+
+    res.json({ page, pageSize, total, items });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Apaga TODOS os produtos do catálogo de uma vez (botão "Apagar todos").
 app.delete("/api/admin/catalog", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {

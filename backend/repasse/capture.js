@@ -15,6 +15,37 @@ const affiliate = require("../scraping/affiliate");
 const storage = require("../storage");
 const userNotifier = require("../notifications/user-notifier");
 
+// Best-effort: registra uma tentativa de captura (link, campanha) pro painel
+// admin. Nunca deve quebrar o pipeline — qualquer falha é engolida.
+async function logCapture(fields) {
+  try {
+    const { prisma } = require("../db");
+    await prisma().repasseCaptureLog.create({
+      data: {
+        groupId: BigInt(fields.groupId),
+        userId: String(fields.userId),
+        waJid: fields.waJid || "",
+        rawUrl: fields.rawUrl,
+        resolvedUrl: fields.resolvedUrl || null,
+        store: fields.store || null,
+        sourceAllowed: fields.sourceAllowed ?? null,
+        affiliateConfigured: fields.affiliateConfigured ?? null,
+        scrapeOk: fields.scrapeOk ?? null,
+        productName: fields.productName || null,
+        productImg: fields.productImg || null,
+        price: fields.price ?? null,
+        originalPrice: fields.originalPrice ?? null,
+        discount: fields.discount ?? null,
+        sold: fields.sold ?? null,
+        outcome: fields.outcome,
+        reason: fields.reason || null,
+      },
+    });
+  } catch (err) {
+    console.error(`[repasse] falha ao gravar log de captura: ${err.message}`);
+  }
+}
+
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
 
 // Lojas que sabemos monetizar e a chave correspondente em affiliate.status().
@@ -200,7 +231,7 @@ async function onUpsert(userId, numberId, messages) {
         byOwner.get(l.userId).push(l);
       }
       for (const [ownerId, ownLeaders] of byOwner) {
-        jobs.push(runSerial(ownerId, () => processMessage(ownerId, ownLeaders, urls)));
+        jobs.push(runSerial(ownerId, () => processMessage(ownerId, ownLeaders, urls, remoteJid)));
       }
     } catch (err) {
       console.error(`[repasse] onUpsert erro: ${err.message}`);
@@ -211,44 +242,73 @@ async function onUpsert(userId, numberId, messages) {
   return Promise.allSettled(jobs);
 }
 
-async function processMessage(userId, leaders, urls) {
+async function processMessage(userId, leaders, urls, waJid) {
   const scheduler = require("../scheduler");
   const affStatus = affiliate.status(userId);
 
   // Resolve + valida + enriquece cada URL uma vez; reaproveita entre campanhas.
+  // Guarda também as tentativas descartadas (loja não suportada / afiliado não
+  // configurado) pra registrar no log de captura em cada campanha líder.
   const items = [];
+  const discarded = [];
   for (const rawUrl of urls) {
     try {
       const resolved = await resolveUrl(rawUrl);
       const store = scraper.detectStore(resolved);
       const statusKey = STORE_STATUS_KEY[store];
       console.log(`[repasse] link ${rawUrl}${resolved !== rawUrl ? ` → ${resolved}` : ""} | loja=${store || "desconhecida"}`);
-      if (!statusKey) { console.log(`[repasse] loja não suportada → ignorado`); continue; }
-      if (!affStatus?.[statusKey]?.configured) { console.log(`[repasse] afiliado ${store} não configurado → ignorado`); continue; }
+      if (!statusKey) {
+        console.log(`[repasse] loja não suportada → ignorado`);
+        discarded.push({ rawUrl, resolved, store, reason: "loja não suportada" });
+        continue;
+      }
+      const affiliateConfigured = !!affStatus?.[statusKey]?.configured;
+      if (!affiliateConfigured) {
+        console.log(`[repasse] afiliado ${store} não configurado → ignorado`);
+        discarded.push({ rawUrl, resolved, store, affiliateConfigured, reason: `afiliado ${store} não configurado` });
+        continue;
+      }
 
       // Raspa a URL ORIGINAL (não a resolvida): o Puppeteer segue o redirect ele
       // mesmo, com stealth + cookie de afiliado — igual ao "Adicionar link" manual.
-      // A resolução via fetch cru (resolveUrl) costuma cair no muro de login do ML
-      // e devolver a página errada; o link canônico (resolved) é usado só p/ store
-      // detection e p/ o link armazenado (reafiliação no envio).
-      const scraped = await scraper.scrapeSingleProduct(rawUrl, { userId }).catch(err => {
+      // A resolução via fetch cru (resolveUrl) costuma cair no muro de login/captcha
+      // do ML e devolver a página errada — por isso o link ARMAZENADO (usado na
+      // reafiliação no envio) prefere o finalUrl que o próprio Puppeteer navegou
+      // (scraped.finalUrl), caindo pro `resolved` só quando o scrape falha.
+      let scraped = null, scrapeErr = null;
+      try {
+        scraped = await scraper.scrapeSingleProduct(rawUrl, { userId });
+      } catch (err) {
+        scrapeErr = err;
         console.warn(`[repasse] scrape falhou pra ${rawUrl}: ${err.message}`);
-        return null;
-      });
+      }
+
+      // Bloqueio/captcha do ML: nem o Puppeteer conseguiu passar, e o `resolved`
+      // (fetch cru) é sabidamente a mesma página de bloqueio — não existe link
+      // confiável pra guardar, então descarta em vez de propagar um item quebrado.
+      if (!scraped && scrapeErr?.blocked && store === "Mercado Livre") {
+        console.log(`[repasse] bloqueio/captcha do ML → descartado`);
+        discarded.push({ rawUrl, resolved, store, affiliateConfigured, reason: scrapeErr.captcha ? "captcha do ML" : "bloqueio do ML (login)" });
+        continue;
+      }
+
       console.log(`[repasse] scrape ${scraped ? "ok" : "falhou (segue com nome do slug)"}: ${scraped?.name || scraper.slugNameFromUrl(resolved) || store}`);
 
       const name = (scraped?.name || scraper.slugNameFromUrl(resolved) || store).trim();
       items.push({
+        rawUrl,
+        affiliateConfigured,
+        scrapeOk: !!scraped,
         name,
-        link: resolved,
+        link: scraped?.finalUrl || resolved,
         img: scraped?.img || null,
         price: scraped?.price ?? null,
         originalPrice: scraped?.originalPrice ?? null,
         discount: scraped?.discount ?? null,
+        sold: scraped?.sold ?? null,
         store,
         rating: null,
         reviewsCount: null,
-        sold: null,
         freeShipping: false,
         seller: null,
         manual: true,
@@ -256,6 +316,20 @@ async function processMessage(userId, leaders, urls) {
       });
     } catch (err) {
       console.error(`[repasse] erro processando ${rawUrl}: ${err.message}`);
+      discarded.push({ rawUrl, reason: `erro: ${err.message}` });
+    }
+  }
+
+  // Descartes globais (loja não suportada / afiliado ausente) valem pra
+  // qualquer campanha líder desse grupo — registra uma linha por campanha.
+  for (const { groupId } of leaders) {
+    for (const d of discarded) {
+      logCapture({
+        groupId, userId, waJid,
+        rawUrl: d.rawUrl, resolvedUrl: d.resolved, store: d.store,
+        affiliateConfigured: d.affiliateConfigured ?? null,
+        outcome: "discarded", reason: d.reason,
+      });
     }
   }
 
@@ -267,8 +341,23 @@ async function processMessage(userId, leaders, urls) {
     let group = (state.groups || []).find(g => g.id === groupId);
     if (!group) continue;
 
+    const allowedSources = scheduler.resolveSources(group.scraping?.sources);
+
     let approved = 0, pending = 0;
     for (const base of items) {
+      const storeSourceId = scraper.normalizeSource(base.store);
+      const sourceAllowed = !!storeSourceId && allowedSources.includes(storeSourceId);
+      if (!sourceAllowed) {
+        console.log(`[repasse] "${base.name}" (${base.store}) fonte não habilitada na campanha ${groupId} → pulado`);
+        logCapture({
+          groupId, userId, waJid,
+          rawUrl: base.rawUrl, resolvedUrl: base.link, store: base.store,
+          sourceAllowed: false, affiliateConfigured: base.affiliateConfigured, scrapeOk: base.scrapeOk,
+          productName: base.name, productImg: base.img, price: base.price, originalPrice: base.originalPrice,
+          discount: base.discount, sold: base.sold, outcome: "discarded", reason: "fonte não habilitada",
+        });
+        continue;
+      }
       try {
         const item = { ...base, category: (Array.isArray(group.categories) ? group.categories[0] : null) || null };
         // force:false → produto em cooldown volta { inCooldown } e é pulado (sem UI
@@ -277,19 +366,39 @@ async function processMessage(userId, leaders, urls) {
         if (r?.ok) {
           console.log(`[repasse] "${base.name}" → ${r.target === "queue" ? "fila" : "revisão"} da campanha ${groupId}`);
           if (r.target === "queue") approved++; else pending++;
+          logCapture({
+            groupId, userId, waJid,
+            rawUrl: base.rawUrl, resolvedUrl: base.link, store: base.store,
+            sourceAllowed: true, affiliateConfigured: base.affiliateConfigured, scrapeOk: base.scrapeOk,
+            productName: base.name, outcome: r.target === "queue" ? "queued" : "pending",
+          });
           // Recarrega o grupo pra refletir a inserção anterior (dedup correto).
           const fresh = await storage.loadState(userId);
           group = (fresh.groups || []).find(g => g.id === groupId) || group;
         } else if (r?.inCooldown) {
           console.log(`[repasse] "${base.name}" em cooldown na campanha ${groupId} → pulado`);
+          logCapture({
+            groupId, userId, waJid,
+            rawUrl: base.rawUrl, resolvedUrl: base.link, store: base.store,
+            sourceAllowed: true, affiliateConfigured: base.affiliateConfigured, scrapeOk: base.scrapeOk,
+            productName: base.name, outcome: "cooldown",
+          });
         }
       } catch (err) {
         // Duplicata é esperada (mesmo produto repostado) — silencia.
-        if (err.code !== "duplicate_queue" && err.code !== "duplicate_pending") {
+        const isDup = err.code === "duplicate_queue" || err.code === "duplicate_pending";
+        if (!isDup) {
           console.error(`[repasse] insert falhou em ${groupId}: ${err.message}`);
         } else {
           console.log(`[repasse] "${base.name}" já existe na campanha ${groupId} (${err.code}) → pulado`);
         }
+        logCapture({
+          groupId, userId, waJid,
+          rawUrl: base.rawUrl, resolvedUrl: base.link, store: base.store,
+          sourceAllowed: true, affiliateConfigured: base.affiliateConfigured, scrapeOk: base.scrapeOk,
+          productName: base.name, productImg: base.img, price: base.price, originalPrice: base.originalPrice,
+          discount: base.discount, sold: base.sold, outcome: isDup ? "duplicate" : "error", reason: isDup ? err.code : err.message,
+        });
       }
     }
 

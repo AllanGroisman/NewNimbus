@@ -26,9 +26,9 @@ model User {
 
   // Email verification — emailVerified=false bloqueia login até confirmar.
   // Contas Google nascem com emailVerified=true (Google já validou).
-  emailVerified        Boolean   @default(false)
-  emailVerifyToken     String?   @unique
-  emailVerifyExpires   DateTime?
+  emailVerified      Boolean   @default(false)
+  emailVerifyToken   String?   @unique
+  emailVerifyExpires DateTime?
 
   // Password reset por email.
   passwordResetToken   String?   @unique
@@ -67,10 +67,10 @@ model UserState {
 model Group {
   // ID legado é numérico (Date.now() do frontend). Mantemos como BigInt
   // pra não quebrar referências persistidas no frontend.
-  id              BigInt @id
+  id              BigInt  @id
   userId          String
   name            String
-  messageTemplate String @default("")
+  messageTemplate String  @default("")
   paused          Boolean @default(false)
 
   // Campos estruturados como jsonb — formato e tamanho variáveis,
@@ -86,16 +86,16 @@ model Group {
 
   // Ops — só o scheduler/worker escreve. Coluna separada da config do usuário
   // elimina a race condition que hoje exige o hack OPS_FIELDS.
-  sentToday    Int      @default(0)
-  sentWeek     Int      @default(0)
-  weekData     Json     @default("[0,0,0,0,0,0,0]")
-  lastSend     String   @default("—") // ISO ou "—" pra compat com UI atual
-  avgDiscount  String   @default("—")
+  sentToday   Int    @default(0)
+  sentWeek    Int    @default(0)
+  weekData    Json   @default("[0,0,0,0,0,0,0]")
+  lastSend    String @default("—") // ISO ou "—" pra compat com UI atual
+  avgDiscount String @default("—")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user    User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   history GroupHistory[]
   queue   GroupQueueItem[]
   pending GroupPendingItem[]
@@ -108,24 +108,53 @@ model Group {
 // Histórico de envios — cardinalidade alta, vira tabela.
 // Index (groupId, sentAt DESC) cobre a query principal: "últimos 200 do grupo".
 model GroupHistory {
-  id         BigInt   @id @default(autoincrement())
-  groupId    BigInt
-  productKey String
-  name       String
-  link       String
-  img        String?
-  store      String?
-  price      Float?
+  id            BigInt   @id @default(autoincrement())
+  groupId       BigInt
+  productKey    String
+  name          String
+  link          String
+  img           String?
+  store         String?
+  price         Float?
   originalPrice Float?
-  discount   Int?
-  sentAt     DateTime
-  groupCount Int      @default(1)
+  discount      Int?
+  sentAt        DateTime
+  groupCount    Int      @default(1)
 
   group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
 
   @@index([groupId, sentAt(sort: Desc)])
   @@index([groupId, productKey])
   @@map("group_history")
+}
+
+// Log de captura de campanhas de repasse — uma linha por (link, campanha)
+// tentado, pra visibilidade no admin. Não entra em loadState/saveState;
+// escrita é best-effort a partir de repasse/capture.js.
+model RepasseCaptureLog {
+  id                  BigInt   @id @default(autoincrement())
+  groupId             BigInt
+  userId              String
+  waJid               String
+  rawUrl              String
+  resolvedUrl         String?
+  store               String?
+  sourceAllowed       Boolean?
+  affiliateConfigured Boolean?
+  scrapeOk            Boolean?
+  productName         String?
+  productImg          String?
+  price               Float?
+  originalPrice       Float?
+  discount            Int?
+  sold                Int?
+  outcome             String
+  reason              String?
+  createdAt           DateTime @default(now())
+
+  @@index([groupId, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("repasse_capture_log")
 }
 
 // Fila de envio — itens já aprovados, esperando janela.
@@ -135,7 +164,7 @@ model GroupQueueItem {
   groupId    BigInt
   productKey String
   position   Int      @default(0)
-  payload    Json     // item completo (name, link, price, etc) — usado no envio
+  payload    Json // item completo (name, link, price, etc) — usado no envio
   addedAt    DateTime @default(now())
 
   group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
@@ -168,12 +197,12 @@ model GroupPendingItem {
 // Não confundir com Group (campanha) — aqui é o grupo do app WhatsApp em si.
 model WhatsappGroup {
   // ID gerado pelo frontend (Date.now() ou uuid) — string pra aceitar ambos.
-  id        String  @id
-  userId    String
-  numberId  String   // sessão Baileys que controla esse grupo
-  jid       String   // ex "120363...@g.us"
-  name      String
-  metadata  Json     @default("{}")
+  id       String @id
+  userId   String
+  numberId String // sessão Baileys que controla esse grupo
+  jid      String // ex "120363...@g.us"
+  name     String
+  metadata Json   @default("{}")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -183,11 +212,11 @@ model WhatsappGroup {
 
 // Números de WhatsApp do usuário (sessões Baileys).
 model WhatsappNumber {
-  id        String  @id
-  userId    String
-  label     String?
-  phone     String?
-  metadata  Json    @default("{}")
+  id       String  @id
+  userId   String
+  label    String?
+  phone    String?
+  metadata Json    @default("{}")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -198,10 +227,10 @@ model WhatsappNumber {
 // Auth state Baileys em Postgres (useDatabaseAuthState).
 // PK composta serializa por sessão+chave; valores codificados com BufferJSON.
 model BaileysAuth {
-  sessionId String   // formato: "<userId>::<numberId>"
-  keyType   String   // "creds" | "pre-key" | "session" | "sender-key" | "app-state-sync-key" | "app-state-sync-version" | "sender-key-memory"
-  keyId     String   // "" para creds; ID específico pras outras
-  value     String   // JSON.stringify(v, BufferJSON.replacer) — Bytea seria ainda melhor mas complica migração
+  sessionId String // formato: "<userId>::<numberId>"
+  keyType   String // "creds" | "pre-key" | "session" | "sender-key" | "app-state-sync-key" | "app-state-sync-version" | "sender-key-memory"
+  keyId     String // "" para creds; ID específico pras outras
+  value     String // JSON.stringify(v, BufferJSON.replacer) — Bytea seria ainda melhor mas complica migração
   updatedAt DateTime @default(now()) @updatedAt
 
   @@id([sessionId, keyType, keyId])
@@ -274,16 +303,16 @@ model AffiliateConfig {
 // Novos usuários nascem free/inactive — acesso só após o primeiro checkout (sem trial).
 // stripeCustomerId/stripeSubscriptionId só ficam preenchidos após o primeiro checkout.
 model Subscription {
-  id                    String    @id @default(uuid())
-  userId                String    @unique
-  stripeCustomerId      String?   @unique
-  stripeSubscriptionId  String?   @unique
-  planId                String    @default("free") // "free" | "basic" | "pro" | "business"
-  status                String    @default("inactive") // active | trialing | past_due | canceled | incomplete | unpaid | inactive
-  currentPeriodEnd      DateTime?
-  cancelAtPeriodEnd     Boolean   @default(false)
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
+  id                   String    @id @default(uuid())
+  userId               String    @unique
+  stripeCustomerId     String?   @unique
+  stripeSubscriptionId String?   @unique
+  planId               String    @default("free") // "free" | "basic" | "pro" | "business"
+  status               String    @default("inactive") // active | trialing | past_due | canceled | incomplete | unpaid | inactive
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean   @default(false)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
