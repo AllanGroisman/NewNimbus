@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, CATEGORIES, categoryLabel, categoryColor, categoryIcon, getGroupCategories, getGroupStats, formatTimeBR, formatDateTimeBR, isSameDayBR } from "../data/constants";
 import Badge from "../components/ui/Badge";
+import UsageBadge from "../components/ui/UsageBadge";
 import Modal from "../components/ui/Modal";
 
 // Calcula status da janela: ativa agora (até quando) ou próxima (em quanto tempo).
@@ -33,7 +34,7 @@ function getWindowStatus(group, now = new Date()) {
   return { kind: "next", text: `Amanhã ${first.from}`, sub: `em ${fmtMins(wait)}` };
 }
 
-export default function PageDashboard({ groups, whatsappGroups = [], onSelectGroup, onCreateGroup, onUpdate, affiliateConfigured = true, onGoToSettings }) {
+export default function PageDashboard({ groups, whatsappGroups = [], onSelectGroup, onCreateGroup, onUpdate, affiliateConfigured = true, onGoToSettings, limits }) {
   const [showCreate, setShowCreate] = useState(false);
   // type: null = tela de escolha; "scraping" | "repasse" = formulário do tipo.
   const [form, setForm] = useState({ name: "", categories: [], type: null, autoApprove: false });
@@ -81,7 +82,10 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
-        <h2 style={{ fontSize: 18, fontWeight: 500 }}>Campanhas</h2>
+        <h2 style={{ fontSize: 18, fontWeight: 500, display: "flex", alignItems: "center", gap: 8 }}>
+          Campanhas
+          <UsageBadge current={groups.length} limit={limits?.groups} label="campanhas criadas" />
+        </h2>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <button onClick={() => setShowCreate(true)} style={{ padding: "7px 14px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>+ Nova campanha</button>
         </div>
@@ -135,9 +139,9 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                 : stats.pausedByAffiliate
                   ? <Badge color="amber">Pausado · sem afiliado {missingAff}</Badge>
                   : stats.status === "connected"
-                    ? <Badge color="green">{stats.connected}/{stats.count} conectados</Badge>
+                    ? <Badge color="green">Ativa</Badge>
                     : stats.status === "degraded"
-                      ? <Badge color="amber">{stats.connected}/{stats.count} conectados</Badge>
+                      ? <Badge color="amber">Parcial · algum WhatsApp caiu</Badge>
                       : stats.status === "empty"
                         ? <Badge color="gray">Sem grupos</Badge>
                         : <Badge color="red">Pausada · sem WhatsApp</Badge>;
@@ -204,7 +208,13 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                     </div>
                     <div>
                       <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Grupos</div>
-                      <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-primary)" }}>{stats.count}</div>
+                      <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-primary)" }}>
+                        {limits?.whatsappGroupsPerCampaign == null
+                          ? stats.count
+                          : limits.whatsappGroupsPerCampaign >= 99
+                            ? `${stats.count} (ilimitado)`
+                            : `${stats.count}/${limits.whatsappGroupsPerCampaign}`}
+                      </div>
                       <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 1 }}>{stats.members} membro{stats.members !== 1 ? "s" : ""}</div>
                     </div>
                     <div>

@@ -102,6 +102,7 @@ const FORMAT_BUTTONS = [
   { token: "`", label: "</>", title: "Monoespaço (`texto`)", style: { fontFamily: "monospace", fontSize: 11 } },
 ];
 import Badge from "./ui/Badge";
+import UsageBadge from "./ui/UsageBadge";
 import StatCard from "./ui/StatCard";
 import MiniBar from "./ui/MiniBar";
 import Tabs from "./ui/Tabs";
@@ -215,7 +216,7 @@ function QueueItemCard({ item, idx, eta, onRemove, onDragStart, onDragOver, onDr
   );
 }
 
-export default function GroupDashboard({ group, numbers, whatsappGroups = [], affiliateConfigured = true, affiliateStatus = null, onBack, onUpdate, onDelete, onCreateWhatsappGroup, onDeleteWhatsappGroup, onUpdateWhatsappGroup, onGoToSettings, onGoToAffiliate, onGoToWhatsapp, customTemplates = [], onAddCustomTemplate, onDeleteCustomTemplate, onUpdateCustomTemplate }) {
+export default function GroupDashboard({ group, numbers, whatsappGroups = [], affiliateConfigured = true, affiliateStatus = null, onBack, onUpdate, onDelete, onCreateWhatsappGroup, onDeleteWhatsappGroup, onUpdateWhatsappGroup, onGoToSettings, onGoToAffiliate, onGoToWhatsapp, customTemplates = [], onAddCustomTemplate, onDeleteCustomTemplate, onUpdateCustomTemplate, limits }) {
   const [tab, setTab] = useState(() => readSavedTab(group.id));
   // Guarda a aba atual por campanha pra restaurar no F5.
   useEffect(() => { writeSavedTab(group.id, tab); }, [group.id, tab]);
@@ -1178,7 +1179,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               ? <Badge color="gray">Sem grupos do WhatsApp</Badge>
               : stats.status === "disconnected"
                 ? <Badge color="red">Pausada · sem WhatsApp</Badge>
-                : <Badge color={stats.status === "connected" ? "green" : "amber"}>{stats.connected}/{stats.count} conectados</Badge>
+                : null
             }
             {stats.count > 0 && <Badge color="gray">{stats.members} membros</Badge>}
           </div>
@@ -1398,7 +1399,10 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             </div>
             {!isRepasse && (
               <div>
-                <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 6 }}>Categorias <span style={{ color: "var(--color-text-tertiary, var(--color-text-secondary))" }}>(selecione uma ou mais)</span></label>
+                <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  Categorias <span style={{ color: "var(--color-text-tertiary, var(--color-text-secondary))" }}>(selecione uma ou mais)</span>
+                  <UsageBadge current={(groupInfo.categories || []).length} limit={limits?.categoriesPerGroup} label="categorias selecionadas" />
+                </label>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {Object.keys(CATEGORIES).map(id => {
                     const active = groupInfo.categories.includes(id);
@@ -1744,7 +1748,10 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
             <div>
-              <div style={{ fontSize: 14, fontWeight: 500 }}>Grupos do WhatsApp</div>
+              <div style={{ fontSize: 14, fontWeight: 500, display: "flex", alignItems: "center", gap: 8 }}>
+                Grupos do WhatsApp
+                <UsageBadge current={groupInfo.whatsappGroupIds.length} limit={limits?.whatsappGroupsPerCampaign} label="grupos criados" />
+              </div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>
                 Esta campanha envia para os grupos abaixo. Cada grupo recebe a mesma fila de produtos.
               </div>

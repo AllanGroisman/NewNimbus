@@ -235,6 +235,10 @@ export default function App() {
           setWhatsappGroups(fresh.whatsappGroups || []);
           setSettings(s => ({ ...s, ...(fresh.settings || {}) }));
         } catch { /* próxima tentativa de save cuida disso */ }
+      } else if (err.status === 402) {
+        // Limite do plano excedido — backend recusou o save. Sem isso o
+        // usuário não teria nenhum feedback (só um console.warn silencioso).
+        window.alert(err.message || "Limite do plano excedido.");
       } else {
         console.warn("[nimbus] falha ao salvar estado:", err.message);
       }
@@ -548,9 +552,9 @@ export default function App() {
     return <Login onLogin={handleLogin} />;
   }
 
-  const fallbackPage = <PageDashboard groups={groups} whatsappGroups={liveWhatsappGroups} onSelectGroup={handleSelectGroup} onCreateGroup={handleCreateGroup} onUpdate={handleUpdate} affiliateConfigured={affiliateConfigured} onGoToSettings={() => setPage("settings")} />;
+  const fallbackPage = <PageDashboard groups={groups} whatsappGroups={liveWhatsappGroups} onSelectGroup={handleSelectGroup} onCreateGroup={handleCreateGroup} onUpdate={handleUpdate} affiliateConfigured={affiliateConfigured} onGoToSettings={() => setPage("settings")} limits={billing?.limits} />;
   const pageMap = {
-    dashboard: <PageDashboard groups={groups} whatsappGroups={liveWhatsappGroups} onSelectGroup={handleSelectGroup} onCreateGroup={handleCreateGroup} onUpdate={handleUpdate} affiliateConfigured={affiliateConfigured} onGoToSettings={() => setPage("settings")} />,
+    dashboard: <PageDashboard groups={groups} whatsappGroups={liveWhatsappGroups} onSelectGroup={handleSelectGroup} onCreateGroup={handleCreateGroup} onUpdate={handleUpdate} affiliateConfigured={affiliateConfigured} onGoToSettings={() => setPage("settings")} limits={billing?.limits} />,
     products: user?.role === "admin" ? <PageProducts /> : fallbackPage,
     whatsapp: <PageWhatsApp
       numbers={numbers}
@@ -558,6 +562,7 @@ export default function App() {
       whatsappGroups={whatsappGroups}
       onRemoveNumber={removeNumberAndGroups}
       onRelinkNumber={relinkNumber}
+      limits={billing?.limits}
     />,
     settings: <PageSettings user={user} setUser={setUser} onLogout={handleLogout} settings={settings} setSettings={setSettings} numbers={numbers} onAffiliateChange={applyAffiliateStatus} />,
     subscription: <PageSubscription />,
@@ -633,6 +638,7 @@ export default function App() {
               onAddCustomTemplate={addCustomTemplate}
               onDeleteCustomTemplate={deleteCustomTemplate}
               onUpdateCustomTemplate={updateCustomTemplate}
+              limits={billing?.limits}
             />
           : pageMap[page] || pageMap["dashboard"]
         }

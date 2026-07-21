@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK } from "../data/constants";
 import Badge from "../components/ui/Badge";
+import UsageBadge from "../components/ui/UsageBadge";
 import Modal from "../components/ui/Modal";
 import Spinner from "../components/ui/Spinner";
 import WhatsappQR from "../components/WhatsappQR";
@@ -25,6 +26,7 @@ export default function PageWhatsApp({
   whatsappGroups = [],
   onRemoveNumber,
   onRelinkNumber,
+  limits,
 }) {
   const [showQR, setShowQR] = useState(null); // sessionId em conexão | "new" | null
   const [newLabel, setNewLabel] = useState("");
@@ -94,7 +96,12 @@ export default function PageWhatsApp({
   // na lista (status "desconectado"). Assim o numberId é preservado e, ao reconectar
   // via QR, os grupos vinculados continuam apontando pro mesmo número.
   const disconnect = async (id) => {
-    try { await deleteWASession(id); } catch {}
+    try {
+      await deleteWASession(id);
+    } catch (err) {
+      window.alert(err.message || "Não foi possível desconectar no servidor. Tente novamente.");
+      return;
+    }
     setNumbers(ns => ns.map(n => n.id === id ? { ...n, status: "disconnected", lastActivity: "—" } : n));
     setConfirmDisconnect(null);
   };
@@ -102,7 +109,12 @@ export default function PageWhatsApp({
   // Remove o número por completo: limpa sessão no backend e apaga o número + seus
   // grupos vinculados (via App). Use quando não quiser mais esse número.
   const removeNumber = async (id) => {
-    try { await deleteWASession(id); } catch {}
+    try {
+      await deleteWASession(id);
+    } catch (err) {
+      window.alert(err.message || "Não foi possível remover a sessão no servidor. Tente novamente.");
+      return;
+    }
     onRemoveNumber?.(id);
     setConfirmRemove(null);
   };
@@ -114,7 +126,12 @@ export default function PageWhatsApp({
   // novo. O numberId (= telefone) é preservado, então os grupos vinculados
   // continuam apontando pro mesmo número. O WhatsappQR (autoStart) reabre a sessão.
   const reconnect = async (id) => {
-    try { await deleteWASession(id); } catch {}
+    try {
+      await deleteWASession(id);
+    } catch (err) {
+      window.alert(err.message || "Não foi possível limpar a sessão anterior no servidor. Tente novamente.");
+      return;
+    }
     setPendingNumberId(id);
     setShowQR(id);
   };
@@ -165,7 +182,11 @@ export default function PageWhatsApp({
   // No sucesso, quem fecha o modal é o handleConnected (não passa por aqui).
   const cancelQR = async () => {
     if (pendingNumberId) {
-      try { await deleteWASession(pendingNumberId); } catch {}
+      try {
+        await deleteWASession(pendingNumberId);
+      } catch (err) {
+        window.alert((err.message || "Não foi possível limpar a sessão pendente no servidor.") + " Pode ter sobrado uma sessão pendente — verifique antes de tentar de novo.");
+      }
     }
     setShowQR(null);
     setPendingNumberId(null);
@@ -187,9 +208,12 @@ export default function PageWhatsApp({
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
         <div>
-          <h2 style={{ fontSize: 18, fontWeight: 500 }}>WhatsApp</h2>
+          <h2 style={{ fontSize: 18, fontWeight: 500, display: "flex", alignItems: "center", gap: 8 }}>
+            WhatsApp
+            <UsageBadge current={numbers.length} limit={limits?.numbers} label="números conectados" />
+          </h2>
           <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 4 }}>
-            {numbers.filter(n => effectiveStatus(n) === "connected").length}/{numbers.length} número{numbers.length !== 1 ? "s" : ""} conectado{numbers.filter(n => effectiveStatus(n) === "connected").length !== 1 ? "s" : ""} · gerencie os números aqui; grupos vão na aba de cada campanha.
+            Gerencie os números aqui; grupos vão na aba de cada campanha.
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
