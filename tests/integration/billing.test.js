@@ -1,5 +1,5 @@
 // Cobre billing end-to-end:
-//   - Trial automático no register (planId=pro, status=trialing, ~7d)
+//   - Conta nova sem trial (planId=free, status=inactive)
 //   - /api/billing/me — status + limits + admin bypass
 //   - /api/billing/checkout — fluxo feliz + erros (plano inválido, etc)
 //   - /api/billing/portal — exige customer Stripe existente
@@ -28,26 +28,27 @@ function postEvent(event, opts = {}) {
     .send(JSON.stringify(event));
 }
 
-describe("Billing — trial automático no register", () => {
-  it("usuário recém-criado cai em trialing/pro por ~7 dias", async () => {
+describe("Billing — conta nova sem trial", () => {
+  it("usuário recém-criado cai em free/inactive — sem acesso até assinar", async () => {
     const { auth } = await createTestUser();
     const res = await auth("get", "/api/billing/me");
     expect(res.status).toBe(200);
-    expect(res.body.status).toBe("trialing");
-    expect(res.body.planId).toBe("pro");
-    expect(res.body.effectivePlan).toBe("pro");
-    expect(res.body.daysLeftInTrial).toBeGreaterThan(5);
-    expect(res.body.daysLeftInTrial).toBeLessThanOrEqual(7);
-    expect(res.body.limits.groups).toBe(5);           // pro = 5 campanhas
-    expect(res.body.limits.whatsappGroupsPerCampaign).toBe(15); // pro = 15 grupos WA por campanha
-    expect(res.body.limits.autoScraping).toBe(true);
+    expect(res.body.status).toBe("inactive");
+    expect(res.body.planId).toBe("free");
+    expect(res.body.effectivePlan).toBe("free");
+    expect(res.body.daysLeftInTrial).toBeNull();
+    expect(res.body.limits.groups).toBe(0);           // free = 0 campanhas
+    expect(res.body.limits.numbers).toBe(0);
+    expect(res.body.limits.autoScraping).toBe(false);
   });
 
-  it("idempotente — múltiplas chamadas de /billing/me não mudam o fim do trial", async () => {
-    const { auth } = await createTestUser();
-    const a = await auth("get", "/api/billing/me");
-    const b = await auth("get", "/api/billing/me");
-    expect(a.body.currentPeriodEnd).toBe(b.body.currentPeriodEnd);
+  it("/billing/me não cria row nem trial em leituras repetidas", async () => {
+    const { user, auth } = await createTestUser();
+    await auth("get", "/api/billing/me");
+    await auth("get", "/api/billing/me");
+    // Nenhum row de subscription foi criado só por ler o status.
+    const sub = await billing.getByUserId(user.id);
+    expect(sub).toBeNull();
   });
 
   it("/billing/me retorna stripeEnabled=true com mock", async () => {
@@ -280,18 +281,88 @@ describe("Billing — webhook handler", () => {
     });
     expect(res.status).toBe(200);
   });
+
+  it("metadata.planId tem prioridade sobre o price (blinda price_id trocado)", async () => {
+    const { user } = await createTestUser();
+    await billing.update(user.id, { stripeCustomerId: "cus_meta", stripeSubscriptionId: "sub_meta", planId: "pro", status: "active" });
+
+    // price mapeia pra pro, mas metadata diz business — deve prevalecer business.
+    await postEvent({
+      id: "evt_meta_1",
+      type: "customer.subscription.updated",
+      data: {
+        object: {
+          id: "sub_meta",
+          customer: "cus_meta",
+          status: "active",
+          current_period_end: Math.floor(Date.now() / 1000) + 30 * 86400,
+          metadata: { planId: "business" },
+          items: { data: [{ price: { id: "price_test_pro" } }] },
+        },
+      },
+    });
+    const sub = await billing.getByUserId(user.id);
+    expect(sub.planId).toBe("business");
+  });
+});
+
+describe("Billing — sync (reconciliação ativa)", () => {
+  it("corrige o plano local a partir da assinatura ao vivo no Stripe", async () => {
+    const { user, auth } = await createTestUser();
+    // Simula: checkout ligou o customer, mas o webhook do plano não chegou.
+    await billing.update(user.id, { stripeCustomerId: "cus_sync_1", planId: "pro", status: "trialing" });
+    setStripeMock({
+      activeSubscription: {
+        id: "sub_sync_1",
+        customer: "cus_sync_1",
+        status: "active",
+        current_period_end: Math.floor(Date.now() / 1000) + 30 * 86400,
+        metadata: { planId: "business" },
+        items: { data: [{ price: { id: "price_test_business" } }] },
+      },
+    });
+    const res = await auth("post", "/api/billing/sync").send({});
+    expect(res.status).toBe(200);
+    expect(res.body.synced).toBe(true);
+    expect(res.body.planId).toBe("business");
+    expect(res.body.status).toBe("active");
+    const sub = await billing.getByUserId(user.id);
+    expect(sub.planId).toBe("business");
+  });
+
+  it("sem stripeCustomerId responde synced=false e status free", async () => {
+    const { auth } = await createTestUser();
+    const res = await auth("post", "/api/billing/sync").send({});
+    expect(res.status).toBe(200);
+    expect(res.body.synced).toBe(false);
+    expect(res.body.planId).toBe("free");
+  });
+
+  it("retorna 501 quando Stripe desabilitado", async () => {
+    setStripeMock({ enabled: false });
+    const { auth } = await createTestUser();
+    const res = await auth("post", "/api/billing/sync").send({});
+    expect(res.status).toBe(501);
+  });
 });
 
 describe("Billing — plan-gating no PUT /api/state", () => {
-  it("trial Pro: aceita 5 grupos (campanhas)", async () => {
-    const { auth } = await createTestUser();
+  // Helper: cria user já com assinatura Pro ativa (o trial não existe mais).
+  async function createProUser() {
+    const ctx = await createTestUser();
+    await billing.update(ctx.user.id, { planId: "pro", status: "active" });
+    return ctx;
+  }
+
+  it("Pro: aceita 5 grupos (campanhas)", async () => {
+    const { auth } = await createProUser();
     const groups = Array.from({ length: 5 }, (_, i) => makeGroup({ id: i + 1, name: `G${i + 1}` }));
     const res = await auth("put", "/api/state").send({ groups, numbers: [], whatsappGroups: [] });
     expect(res.status).toBe(200);
   });
 
-  it("trial Pro: rejeita 6 grupos com 402 + planRequired=business", async () => {
-    const { auth } = await createTestUser();
+  it("Pro: rejeita 6 grupos com 402 + planRequired=business", async () => {
+    const { auth } = await createProUser();
     const groups = Array.from({ length: 6 }, (_, i) => makeGroup({ id: i + 1, name: `G${i + 1}` }));
     const res = await auth("put", "/api/state").send({ groups, numbers: [], whatsappGroups: [] });
     expect(res.status).toBe(402);
@@ -300,8 +371,8 @@ describe("Billing — plan-gating no PUT /api/state", () => {
     expect(res.body.planRequired).toBe("business");
   });
 
-  it("trial Pro: aceita 3 numbers, rejeita 4", async () => {
-    const { auth } = await createTestUser();
+  it("Pro: aceita 3 numbers, rejeita 4", async () => {
+    const { auth } = await createProUser();
     const okRes = await auth("put", "/api/state").send({
       groups: [], numbers: [1, 2, 3].map(i => ({ id: `n${i}`, phone: `5511${i}` })), whatsappGroups: [],
     });

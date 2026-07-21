@@ -171,6 +171,11 @@ export async function billingMe() {
 export async function billingCheckout(planId) {
   return http("POST", "/api/billing/checkout", { planId });
 }
+// Reconciliação ativa — busca a assinatura ao vivo no Stripe e devolve o status
+// atualizado (mesmo shape do billingMe). Chamado ao voltar do checkout.
+export async function billingSync() {
+  return http("POST", "/api/billing/sync");
+}
 // Customer Portal — alterar cartão / cancelar / ver faturas
 export async function billingPortal() {
   return http("POST", "/api/billing/portal");

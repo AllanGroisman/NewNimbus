@@ -271,7 +271,7 @@ model AffiliateConfig {
 // ────────────────────────────────────────────────────────────────────────
 
 // Assinatura por usuário (1:1). planId="free" significa sem acesso.
-// Novos usuários nascem em trial (planId=pro, status=trialing) por 7 dias.
+// Novos usuários nascem free/inactive — acesso só após o primeiro checkout (sem trial).
 // stripeCustomerId/stripeSubscriptionId só ficam preenchidos após o primeiro checkout.
 model Subscription {
   id                    String    @id @default(uuid())

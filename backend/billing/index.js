@@ -1,28 +1,11 @@
 const store = require("./pg");
 const limits = require("./limits");
 
-// Cria trial de 7 dias do plano Pro pra usuário recém-registrado.
-// Idempotente — não sobrescreve sub existente.
-async function startTrialFor(userId) {
-  const existing = await store.getByUserId(userId);
-  if (existing) return existing;
-  const trialEnd = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-  return store.ensureForUser(userId, {
-    planId: "pro",
-    status: "trialing",
-    currentPeriodEnd: trialEnd,
-  });
-}
-
 // Hidrata sub do usuário pra responder /api/billing/me e gating.
-// Cria trial automaticamente em primeira leitura se ainda não houver row —
-// cobre usuários que já existiam quando o billing foi implantado.
-// Admin não recebe trial (bypass via limits.effectivePlanId).
+// Sem row = free/inactive (sem acesso até assinar). Não há mais trial automático.
+// Admin recebe Business via bypass em limits.effectivePlanId.
 async function getStatus(userId, userRole) {
   let sub = await store.getByUserId(userId);
-  if (!sub && userRole !== "admin") {
-    sub = await startTrialFor(userId);
-  }
   if (!sub) {
     sub = {
       planId: "free",
@@ -63,7 +46,6 @@ function isActive(sub, userRole) {
 
 module.exports = {
   ...store,
-  startTrialFor,
   getStatus,
   isActive,
   limits,

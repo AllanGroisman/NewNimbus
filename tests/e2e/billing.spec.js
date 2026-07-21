@@ -1,6 +1,6 @@
 // Fluxo externo (só UI): Assinatura — planos renderizam; Stripe desabilitado no
-// E2E mostra o aviso "Pagamentos desabilitados". Usa um usuário comum em trial
-// (não-admin) pra evitar o banner de bypass do admin.
+// E2E mostra o aviso "Pagamentos desabilitados". Usa um usuário comum
+// (não-admin, free/inactive) pra evitar o banner de bypass do admin.
 
 import { test, expect } from "@playwright/test";
 import { createVerifiedUser, seedToken } from "./helpers/auth.js";

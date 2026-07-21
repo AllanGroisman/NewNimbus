@@ -106,7 +106,11 @@ function constructEvent(rawBody, signature) {
 function normalizeSubscription(sub) {
   const item = sub.items?.data?.[0];
   const priceId = item?.price?.id || null;
-  const planId = priceId ? planFromPrice(priceId) : null;
+  // Prefere o planId explícito gravado no checkout (subscription_data.metadata.planId).
+  // Fallback pro mapa price→plan. Blinda contra price_id defasado/trocado no .env.
+  const metaPlan = sub.metadata?.planId;
+  const validMeta = ["basic", "pro", "business"].includes(metaPlan) ? metaPlan : null;
+  const planId = validMeta || (priceId ? planFromPrice(priceId) : null);
   const currentPeriodEnd = sub.current_period_end
     ? new Date(sub.current_period_end * 1000)
     : null;
@@ -120,6 +124,23 @@ function normalizeSubscription(sub) {
   };
 }
 
+// Busca a assinatura ao vivo do customer no Stripe e devolve normalizada.
+// Usado pela reconciliação ativa (POST /api/billing/sync) — corrige o plano
+// mesmo quando o webhook customer.subscription.updated não chega (ex: ngrok defasado).
+async function getActiveSubscriptionForCustomer(customerId) {
+  if (!customerId) return null;
+  const res = await client().subscriptions.list({
+    customer: customerId,
+    status: "all",
+    limit: 10,
+  });
+  const subs = res.data || [];
+  if (!subs.length) return null;
+  const active = subs.find((s) => ["active", "trialing", "past_due"].includes(s.status))
+    || subs.slice().sort((a, b) => b.created - a.created)[0];
+  return normalizeSubscription(active);
+}
+
 module.exports = {
   client,
   enabled,
@@ -130,4 +151,5 @@ module.exports = {
   createPortalSession,
   constructEvent,
   normalizeSubscription,
+  getActiveSubscriptionForCustomer,
 };

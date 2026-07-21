@@ -9,7 +9,7 @@ const DEFAULT_SETTINGS = {
   sources: allSources,
   theme: "auto",
 };
-import { authMe, authLogout, authRefresh, loadAppState, saveAppState, loadAppOps, getToken, clearToken, getLastActivity, setLastActivity, IDLE_TIMEOUT_MS, getAffiliateStatus, billingMe, listWASessions } from "./data/api";
+import { authMe, authLogout, authRefresh, loadAppState, saveAppState, loadAppOps, getToken, clearToken, getLastActivity, setLastActivity, IDLE_TIMEOUT_MS, getAffiliateStatus, billingMe, billingSync, listWASessions } from "./data/api";
 import Sidebar from "./components/Sidebar";
 import GroupDashboard from "./components/GroupDashboard";
 import UnsavedChangesModal from "./components/UnsavedChangesModal";
@@ -161,8 +161,9 @@ export default function App() {
     }
     bootstrap();
 
-    // ?checkout=success/cancel — após retorno do Stripe Checkout, limpa query e refaz billingMe.
-    // O webhook normalmente chega antes desse callback, mas damos 1.5s de folga.
+    // ?checkout=success/cancel — após retorno do Stripe Checkout, limpa query e
+    // reconcilia o plano. billingSync busca a assinatura ao vivo no Stripe, então
+    // o plano é corrigido na hora mesmo se o webhook não tiver chegado.
     const qs = new URLSearchParams(window.location.search);
     const checkout = qs.get("checkout");
     if (checkout === "success" || checkout === "cancel") {
@@ -170,7 +171,7 @@ export default function App() {
       const newSearch = qs.toString();
       window.history.replaceState({}, "", window.location.pathname + (newSearch ? `?${newSearch}` : ""));
       if (checkout === "success") {
-        setTimeout(() => { billingMe().then(setBilling).catch(() => {}); }, 1500);
+        billingSync().then(setBilling).catch(() => { billingMe().then(setBilling).catch(() => {}); });
       }
     }
 

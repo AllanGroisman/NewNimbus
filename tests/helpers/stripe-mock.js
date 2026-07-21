@@ -26,12 +26,16 @@ const calls = {
   getOrCreateCustomer: [],
   createCheckoutSession: [],
   createPortalSession: [],
+  getActiveSubscriptionForCustomer: [],
 };
 
 let state = {
   enabled: true,
   // Permite forçar uma exception em constructEvent (testa 400 de signature inválida)
   shouldFailConstructEvent: false,
+  // Assinatura ao vivo devolvida por getActiveSubscriptionForCustomer (sync endpoint).
+  // null = customer sem assinatura no Stripe.
+  activeSubscription: null,
 };
 
 const PRICE_IDS = {
@@ -50,7 +54,7 @@ function reset() {
     if (Array.isArray(calls[k])) calls[k].length = 0;
     else calls[k] = 0;
   }
-  state = { enabled: true, shouldFailConstructEvent: false };
+  state = { enabled: true, shouldFailConstructEvent: false, activeSubscription: null };
 }
 
 function setMock(opts = {}) {
@@ -96,11 +100,13 @@ const mock = {
     return JSON.parse(str);
   },
 
-  // Idêntico ao real
+  // Idêntico ao real — prefere metadata.planId, fallback pro mapa de preços.
   normalizeSubscription(sub) {
     const item = sub.items?.data?.[0];
     const priceId = item?.price?.id || null;
-    const planId = priceId ? PRICE_TO_PLAN[priceId] : null;
+    const metaPlan = sub.metadata?.planId;
+    const validMeta = ["basic", "pro", "business"].includes(metaPlan) ? metaPlan : null;
+    const planId = validMeta || (priceId ? PRICE_TO_PLAN[priceId] : null);
     const currentPeriodEnd = sub.current_period_end
       ? new Date(sub.current_period_end * 1000)
       : null;
@@ -112,6 +118,14 @@ const mock = {
       currentPeriodEnd,
       cancelAtPeriodEnd: !!sub.cancel_at_period_end,
     };
+  },
+
+  // Reconciliação ativa (sync endpoint). Devolve state.activeSubscription já
+  // normalizada, ou null se o customer não tem assinatura no Stripe.
+  async getActiveSubscriptionForCustomer(customerId) {
+    calls.getActiveSubscriptionForCustomer.push({ customerId });
+    if (!customerId || !state.activeSubscription) return null;
+    return this.normalizeSubscription(state.activeSubscription);
   },
 };
 

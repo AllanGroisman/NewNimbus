@@ -305,10 +305,7 @@ app.post("/api/auth/register", registerLimiter, async (req, res) => {
   try {
     const { name, email, password } = req.body || {};
     const user = await auth.register({ name, email, password });
-    // Trial automático de 7 dias do plano Pro — sem cartão. Idempotente.
-    // Inicia já: quando o usuário verificar o email, o trial vai estar correndo.
-    try { await billing.startTrialFor(user.id); }
-    catch (err) { logger.warn({ err: err.message, userId: user.id }, "[billing] trial start falhou"); }
+    // Sem trial: novas contas nascem free/inactive — acesso só após checkout.
     // Sem token: usuário precisa verificar email antes de logar.
     res.json({ user, requiresVerification: true });
   } catch (err) {
@@ -386,15 +383,11 @@ app.post("/api/auth/reset-password", loginLimiter, async (req, res) => {
 
 // Login via Google Identity Services. Frontend recebe um ID token do GIS
 // e POSTa aqui. Backend valida com Google e cria/loga o usuário.
-// Se for criação nova, inicia trial automático de 7 dias (mesmo fluxo do register).
+// Contas novas nascem free/inactive — sem trial; acesso só após checkout.
 app.post("/api/auth/google", loginLimiter, async (req, res) => {
   try {
     const { idToken, credential } = req.body || {};
     const result = await auth.loginWithGoogle({ idToken: idToken || credential });
-    if (result.created) {
-      try { await billing.startTrialFor(result.user.id); }
-      catch (err) { logger.warn({ err: err.message, userId: result.user.id }, "[billing] trial start falhou"); }
-    }
     res.json({ token: result.token, user: result.user });
   } catch (err) {
     res.status(401).json({ error: err.message });
@@ -576,6 +569,27 @@ app.post("/api/billing/portal", auth.requireAuth, async (req, res) => {
     res.json({ url: session.url });
   } catch (err) {
     logger.error({ err: err.message }, "[billing] portal falhou");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Reconciliação ativa — busca a assinatura ao vivo no Stripe e atualiza o plano local.
+// Chamado pelo frontend ao voltar do checkout (?checkout=success), então o plano é
+// corrigido na hora mesmo se o webhook customer.subscription.updated não chegar.
+app.post("/api/billing/sync", auth.requireAuth, async (req, res) => {
+  try {
+    if (!stripeMod.enabled()) return res.status(501).json({ error: "Stripe não configurado" });
+    const sub = await billing.getByUserId(req.user.id);
+    if (sub?.stripeCustomerId) {
+      const norm = await stripeMod.getActiveSubscriptionForCustomer(sub.stripeCustomerId);
+      if (norm) await billing.update(req.user.id, norm);
+      const status = await billing.getStatus(req.user.id, req.user.role);
+      return res.json({ ...status, stripeEnabled: true, synced: !!norm });
+    }
+    const status = await billing.getStatus(req.user.id, req.user.role);
+    res.json({ ...status, stripeEnabled: true, synced: false });
+  } catch (err) {
+    logger.error({ err: err.message }, "[billing] sync falhou");
     res.status(500).json({ error: err.message });
   }
 });
