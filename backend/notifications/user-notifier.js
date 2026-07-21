@@ -8,10 +8,18 @@
 // edge-triggered: só disparam na TRANSIÇÃO pra o estado de alerta, evitando spam
 // a cada tick do scheduler. O Map de estado é por processo — cada tipo de evento
 // dispara sempre do mesmo processo (worker p/ scheduler+sessões), então basta.
+//
+// Quedas de conexão (WhatsApp caiu, campanha parada por gate) passam por um GRACE
+// de tempo antes de virar aviso (ver stateAlert): se recuperar dentro da janela,
+// nenhum aviso sai — mata o falso alarme de blips curtos e de deploys/reinícios do
+// worker. Se o aviso de queda chegou a sair, a recuperação dispara um aviso de "voltou".
 const { prisma } = require("../db");
 const whatsnimbus = require("./whatsnimbus");
 
 const TAG = "*[WhatsNimbus]*";
+
+// Espera antes de considerar uma queda como "real" e avisar. Recuperou antes: silêncio.
+const NOTIFY_GRACE_MS = Number(process.env.NOTIFY_GRACE_MS) || 60000;
 
 const DEFAULT_EVENTS = {
   whatsappDisconnected: true,
@@ -49,6 +57,37 @@ function transition(key, activeNow) {
   const prev = lastState.get(key);
   lastState.set(key, !!activeNow);
   return !!activeNow && prev !== true;
+}
+
+// ── Alerta de estado com grace + recuperação ──────────────────────────────────
+// Para eventos de QUEDA (WhatsApp caiu, campanha parada). Estado por chave:
+// { timer, notified }.
+//   isDown=true:  se já notificou ou já tem timer correndo -> nada; senão arma um
+//                 timer de graceMs — só ao disparar (ainda caído) marca notified e
+//                 chama onDown. O timer é auto-consistente: se recuperasse antes,
+//                 o isDown=false o teria cancelado.
+//   isDown=false: timer pendente -> cancela em silêncio (FALSO ALARME); já
+//                 notificou -> chama onRecover; nunca esteve caído -> nada.
+const alertState = new Map();
+function stateAlert(key, isDown, { graceMs = NOTIFY_GRACE_MS, onDown, onRecover } = {}) {
+  const st = alertState.get(key);
+  if (isDown) {
+    if (st && (st.notified || st.timer)) return; // já alertou ou grace correndo
+    const entry = { timer: null, notified: false };
+    entry.timer = setTimeout(() => {
+      entry.timer = null;
+      entry.notified = true;
+      Promise.resolve().then(onDown).catch(() => {});
+    }, graceMs);
+    if (entry.timer.unref) entry.timer.unref(); // não segura o processo vivo
+    alertState.set(key, entry);
+    return;
+  }
+  // isDown === false (voltou ao normal / conectado)
+  if (!st) return;
+  alertState.delete(key);
+  if (st.timer) { clearTimeout(st.timer); return; } // recuperou dentro do grace: silêncio
+  if (st.notified) Promise.resolve().then(onRecover).catch(() => {});
 }
 
 // ── Núcleo de envio ─────────────────────────────────────────────────────────
@@ -105,43 +144,32 @@ async function onSessionStatus(userId, numberId, status) {
     // WhatsNimbus não é usuário: ignora a própria sessão do remetente.
     if (String(userId) === whatsnimbus.WHATSNIMBUS_USER_ID) return;
     const key = `${userId}:wa:${numberId}`;
-    const isDown = status === "disconnected" || status === "logged_out";
 
     if (status === "connected") {
       connectedOnce.add(key);
-      transition(key, false);            // reset: uma próxima queda volta a notificar
-      transition(`${key}:stuck`, false); // reset: um próximo episódio "preso" volta a avisar
+      // Voltou a conectar: se um aviso de queda chegou a sair, avisa a recuperação.
+      stateAlert(key, false, {
+        onRecover: async () => {
+          const label = await labelOfNumber(userId, numberId);
+          await deliver(userId, "whatsappDisconnected",
+            `${TAG} ✅\nSeu WhatsApp *${label}* voltou a conectar.`);
+        },
+      });
       return;
     }
-    if (!isDown) return;              // connecting/awaiting_qr: ignora
-    if (!connectedOnce.has(key)) return; // nunca subiu: não é "desconexão"
-    if (!transition(key, true)) return;
-
-    const label = await labelOfNumber(userId, numberId);
-    await deliver(userId, "whatsappDisconnected",
-      `${TAG} ⚠️\nSeu WhatsApp *${label}* desconectou.\nReconecte no painel pra não interromper os envios.`);
+    // Qualquer status != connected é "caído" (disconnected/logged_out/connecting/
+    // awaiting_qr). Só conta pra número que JÁ subiu (evita alarme no QR inicial).
+    // O grace do stateAlert absorve reconexões curtas: só avisa se seguir caído.
+    if (!connectedOnce.has(key)) return;
+    stateAlert(key, true, {
+      onDown: async () => {
+        const label = await labelOfNumber(userId, numberId);
+        await deliver(userId, "whatsappDisconnected",
+          `${TAG} ⚠️\nSeu WhatsApp *${label}* desconectou.\nReconecte no painel pra não interromper os envios.`);
+      },
+    });
   } catch (err) {
     console.error(`[user-notifier] onSessionStatus: ${err.message}`);
-  }
-}
-
-// Reconexão em background presa há muito tempo (status segue "connecting", então
-// onSessionStatus a ignora). Aqui avisamos o dono UMA vez por episódio pra ele
-// reconectar no painel — o reset acontece quando o número volta a "connected".
-// Reusa a preferência "whatsappDisconnected" (do ponto de vista dele, é o mesmo
-// problema). Só avisa números que JÁ subiram (evita alarme no QR inicial).
-async function onSessionStuck(userId, numberId) {
-  try {
-    if (String(userId) === whatsnimbus.WHATSNIMBUS_USER_ID) return;
-    const key = `${userId}:wa:${numberId}`;
-    if (!connectedOnce.has(key)) return;
-    if (!transition(`${key}:stuck`, true)) return;
-
-    const label = await labelOfNumber(userId, numberId);
-    await deliver(userId, "whatsappDisconnected",
-      `${TAG} ⚠️\nSeu WhatsApp *${label}* está com dificuldade para reconectar.\nReconecte no painel pra não interromper os envios.`);
-  } catch (err) {
-    console.error(`[user-notifier] onSessionStuck: ${err.message}`);
   }
 }
 
@@ -155,13 +183,21 @@ async function onCampaignReactivated(userId, groupName) {
     `${TAG} ▶️\nA campanha *${groupName}* foi *reativada*.`);
 }
 
-// stopped: true = gate bloqueando o envio agora. Chamar SEMPRE (true e false)
-// pra o edge-trigger resetar e voltar a notificar numa próxima parada.
+// stopped: true = gate bloqueando o envio agora. Chamar SEMPRE (true e false) a
+// cada tick. O grace do stateAlert absorve paradas curtas (ex.: número reconectando
+// entre dois ticks): só avisa se seguir parada. Ao voltar, avisa a recuperação.
 async function onCampaignStopped(userId, groupId, groupName, reason, stopped) {
   const key = `${userId}:stopped:${groupId}`;
-  if (!transition(key, stopped)) return;
-  await deliver(userId, "campaignStopped",
-    `${TAG} 🛑\nA campanha *${groupName}* foi *parada*.\nMotivo: ${reason}`);
+  stateAlert(key, stopped, {
+    onDown: async () => {
+      await deliver(userId, "campaignStopped",
+        `${TAG} 🛑\nA campanha *${groupName}* foi *parada*.\nMotivo: ${reason}`);
+    },
+    onRecover: async () => {
+      await deliver(userId, "campaignStopped",
+        `${TAG} ✅\nA campanha *${groupName}* voltou a operar.`);
+    },
+  });
 }
 
 // Resultado de uma busca (refill). approved/pending já vêm calculados pelo caller.
@@ -184,10 +220,13 @@ async function onQueueEmpty(userId, groupId, groupName, isEmpty) {
 module.exports = {
   readUserConfig,
   onSessionStatus,
-  onSessionStuck,
   onCampaignDeactivated,
   onCampaignReactivated,
   onCampaignStopped,
   onProductSearch,
   onQueueEmpty,
+  // Exportado pra teste: núcleo do debounce/recuperação (sem IO).
+  stateAlert,
+  NOTIFY_GRACE_MS,
+  __clearAlertState: () => alertState.clear(),
 };

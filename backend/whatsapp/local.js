@@ -90,23 +90,16 @@ function classifyClose(err, { shuttingDown = false } = {}) {
 }
 
 // A reconexão em background fica em "connecting" indefinidamente (spinner na tela,
-// sem "Reconectar" aparente). O custo é que o envio fica bloqueado e o usuário não
-// era avisado. Depois desta graça, consideramos a sessão "presa" e disparamos um
-// alerta (uma vez por episódio) pra ele reconectar no painel. Pode virar env depois.
+// sem "Reconectar" aparente). Depois desta graça, marcamos a sessão como "presa"
+// (`session.stuck`), que o frontend usa pra revelar o botão "Reconectar". A
+// NOTIFICAÇÃO ao dono é responsabilidade do user-notifier (grace + recuperação a
+// partir do status), não daqui — aqui só computamos o flag de UI.
 const STUCK_RECONNECT_MS = 90_000;
 
 // Puro/testável: a sessão está reconectando (connecting) há mais que o limiar?
 function isStuckReconnecting(reconnectingSince, now, thresholdMs = STUCK_RECONNECT_MS) {
   if (!reconnectingSince) return false;
   return (now - reconnectingSince) >= thresholdMs;
-}
-
-function notifySessionStuck(userId, numberId) {
-  try {
-    require("../notifications/user-notifier")
-      .onSessionStuck(userId, numberId)
-      .catch(() => {});
-  } catch { /* ignore */ }
 }
 
 function normalizePhone(p) { return String(p).replace(/\D/g, ""); }
@@ -215,14 +208,12 @@ async function startSession(userId, numberId) {
       }
 
       // Marca o início do episódio de reconexão (uma vez, até reconectar). Se já
-      // arrasta há mais que a graça, marcamos `stuck` (o frontend usa isso pra
-      // revelar "Reconectar" — fonte da verdade é o backend, não depende da tela
-      // aberta) e avisamos o usuário. Os "close" recorrem a cada ≤30s, então a
-      // checagem aqui basta; a idempotência do aviso fica no user-notifier.
+      // arrasta há mais que a graça, marcamos `stuck` — o frontend usa isso pra
+      // revelar "Reconectar" (fonte da verdade é o backend, não depende da tela
+      // aberta). A notificação ao dono sai pelo user-notifier a partir do status.
       if (!session.reconnectingSince) session.reconnectingSince = Date.now();
       session.stuck = isStuckReconnecting(session.reconnectingSince, Date.now());
       publishStatus(session);
-      if (session.stuck) notifySessionStuck(userId, numberId);
 
       session.restartCount = (session.restartCount || 0) + 1;
       const delay = Math.min(30000, 1500 * session.restartCount);
