@@ -292,9 +292,18 @@ async function processMessage(userId, leaders, urls, waJid) {
         continue;
       }
 
-      console.log(`[repasse] scrape ${scraped ? "ok" : "falhou (segue com nome do slug)"}: ${scraped?.name || scraper.slugNameFromUrl(resolved) || store}`);
+      console.log(`[repasse] scrape ${scraped ? "ok" : "falhou"}: ${scraped?.name || store}`);
 
-      const name = (scraped?.name || scraper.slugNameFromUrl(resolved) || store).trim();
+      // Sem nome, foto, preço e preço antigo confiáveis, não dá pra saber se o
+      // link é de fato um produto (ex.: página de busca, categoria, link caído).
+      // Descarta em vez de inserir um item incompleto/inválido na campanha.
+      if (!scraped?.name || !scraped?.img || scraped?.price == null || scraped?.originalPrice == null) {
+        console.log(`[repasse] dados insuficientes (nome/foto/preço/preço antigo) → provavelmente não é produto, descartado`);
+        discarded.push({ rawUrl, resolved, store, affiliateConfigured, reason: "dados insuficientes (não é produto)" });
+        continue;
+      }
+
+      const name = scraped.name.trim();
       items.push({
         rawUrl,
         affiliateConfigured,
