@@ -988,64 +988,16 @@ async function resolveShopeeUrl(url) {
   }
 }
 
-// Busca detalhe de um item Shopee via API pública (mesmo endpoint usado em
-// fetchShopeeReviewCount, mas lendo o objeto de produto inteiro, não só
-// cmt_count). Best-effort: qualquer falha devolve null, nunca lança.
-// ATENÇÃO: os nomes de campo abaixo (sold/historical_sold/price_before_discount/
-// raw_discount) ainda não foram confirmados contra uma resposta real da API —
-// validar em teste ao vivo e ajustar se vierem null sistematicamente.
-async function fetchShopeeItemDetail(itemId, shopId) {
-  if (!itemId || !shopId) return null;
-  const url = `https://shopee.com.br/api/v4/item/get?itemid=${encodeURIComponent(itemId)}&shopid=${encodeURIComponent(shopId)}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8000);
-  try {
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": UA,
-        "Accept": "application/json",
-        "Accept-Language": "pt-BR,pt;q=0.9",
-        "X-Requested-With": "XMLHttpRequest",
-        "Referer": "https://shopee.com.br/",
-      },
-      signal: controller.signal,
-    });
-    if (!res.ok) return null;
-    const json = await res.json();
-    const d = json?.data ?? json?.item ?? null;
-    if (!d) return null;
-
-    const price = parsePrice(d.price ?? d.price_min ?? d.priceMin ?? null);
-    const priceBefore = parsePrice(d.price_before_discount ?? d.priceBeforeDiscount ?? null);
-    const rawDiscount = Number(d.raw_discount ?? d.discount ?? NaN);
-    const discount = Number.isFinite(rawDiscount) && rawDiscount > 0
-      ? Math.round(rawDiscount)
-      : (priceBefore && price && priceBefore > price ? Math.round((1 - price / priceBefore) * 100) : null);
-    const soldRaw = Number(d.sold ?? d.historical_sold ?? NaN);
-    const sold = Number.isFinite(soldRaw) ? soldRaw : null;
-    const images = Array.isArray(d.images) ? d.images : (d.image ? [d.image] : []);
-    const img = images[0] ? `https://cf.shopee.com.br/file/${images[0]}` : null;
-
-    return {
-      name: d.name || d.title || null,
-      img,
-      price: price ?? null,
-      originalPrice: (priceBefore && priceBefore !== price) ? priceBefore : null,
-      discount,
-      sold,
-    };
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-// Caminho primário pra Shopee: API pública (sem Puppeteer). Mais confiável que
-// OG tags porque a PDP da Shopee é uma SPA que nem sempre serve as meta tags
-// pro bot. Retorna null se não conseguir IDs ou se a API não trouxer nome —
-// nesse caso o chamador cai no fallback antigo (Puppeteer + OG).
-async function scrapeShopeeSingleViaApi(cleanUrl) {
+// Caminho primário pra Shopee: API OFICIAL de afiliados (Affiliate Open API,
+// GraphQL — mesma usada no scraping em massa), filtrando por itemId/shopId em
+// vez de keyword/categoria. Descartado o plano original de bater na API
+// pública `v4/item/get` — ela devolve 403 (anti-bot, error 90309999) mesmo
+// vindo de dentro do próprio Puppeteer (testado ao vivo), então não dá pra
+// confiar nela. A API de afiliados exige as credenciais (appId/appSecret) DO
+// PRÓPRIO USUÁRIO — ok porque a captura já garantiu que ele tem afiliado
+// Shopee configurado antes de chegar aqui.
+async function scrapeShopeeSingleViaApi(cleanUrl, userId) {
+  const affiliate = require("./affiliate");
   let ids = extractShopeeIds(cleanUrl);
   let finalUrl = cleanUrl;
   if (!ids) {
@@ -1053,17 +1005,19 @@ async function scrapeShopeeSingleViaApi(cleanUrl) {
     ids = extractShopeeIds(finalUrl);
   }
   if (!ids) return null;
-  const detail = await fetchShopeeItemDetail(ids.itemId, ids.shopId);
-  if (!detail || !detail.name) return null;
+  const node = await affiliate.fetchShopeeItemByIds(userId, ids.itemId, ids.shopId).catch(() => null);
+  if (!node) return null;
+  const mapped = shopeeNodeToProduct(node, null);
+  if (!mapped.name) return null;
   return {
-    name: detail.name,
+    name: mapped.name,
     link: finalUrl,
     finalUrl,
-    price: detail.price,
-    originalPrice: detail.originalPrice,
-    discount: detail.discount,
-    sold: detail.sold,
-    img: detail.img,
+    price: mapped.price,
+    originalPrice: mapped.originalPrice,
+    discount: mapped.discount,
+    sold: mapped.soldCount || null,
+    img: mapped.img,
     store: "Shopee",
     scrapedAt: new Date().toISOString(),
   };
@@ -1077,7 +1031,7 @@ async function scrapeSingleProduct(url, { userId } = {}) {
   const store = detectStore(cleanUrl);
 
   if (store === "Shopee") {
-    const viaApi = await scrapeShopeeSingleViaApi(cleanUrl).catch(() => null);
+    const viaApi = await scrapeShopeeSingleViaApi(cleanUrl, userId).catch(() => null);
     if (viaApi) return viaApi;
     // API falhou (IDs não encontrados, endpoint fora) — cai no fallback abaixo.
   }
@@ -1117,4 +1071,4 @@ async function autoScroll(page) {
   await new Promise(r => setTimeout(r, 1000));
 }
 
-module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, extractShopeeIds, fetchShopeeItemDetail, CATEGORIES, STORES };
+module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, extractShopeeIds, CATEGORIES, STORES };

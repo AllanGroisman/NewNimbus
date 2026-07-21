@@ -393,6 +393,46 @@ function signShopeeRequest({ appId, appSecret, timestamp, payload }) {
   return `SHA256 Credential=${appId}, Timestamp=${timestamp}, Signature=${signature}`;
 }
 
+// Lookup de UM item por itemId/shopId (usado pelo repasse: link único do grupo
+// líder, sem busca por keyword/categoria). Mesmo endpoint/schema do scraping em
+// massa (productOfferV2), só filtrando por ID em vez de keyword/productCatId.
+function buildShopeeItemLookupPayload(itemId, shopId) {
+  const query = `query{productOfferV2(itemId:${Number(itemId)},shopId:${Number(shopId)}){nodes{itemId shopId productName productLink offerLink imageUrl price priceMin priceDiscountRate sales commissionRate ratingStar}pageInfo{page limit hasNextPage}}}`;
+  return JSON.stringify({ query });
+}
+
+// Busca um item específico da Shopee usando o afiliado DO USUÁRIO (não o
+// admin/scraper) — é o que o repasse precisa, já que a captura já garantiu
+// que esse usuário tem afiliado Shopee configurado. Retorna o node cru (ou
+// null) — o chamador mapeia os campos (mesmo formato de shopeeNodeToProduct).
+async function fetchShopeeItemByIds(userId, itemId, shopId) {
+  const { appId, appSecret } = readShopeeConfig(userId);
+  if (!appId || !appSecret) return null;
+  const timestamp = Math.floor(Date.now() / 1000);
+  const payload = buildShopeeItemLookupPayload(itemId, shopId);
+  const authHeader = signShopeeRequest({ appId, appSecret, timestamp, payload });
+  try {
+    const res = await fetch(SHOPEE_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": authHeader, "User-Agent": UA },
+      body: payload,
+    });
+    if (!res.ok) {
+      console.error(`[afiliados Shopee] fetchShopeeItemByIds HTTP ${res.status}`);
+      return null;
+    }
+    const data = await res.json();
+    if (data?.errors?.length) {
+      console.warn(`[afiliados Shopee] fetchShopeeItemByIds erro API: ${JSON.stringify(data.errors).slice(0, 200)}`);
+      return null;
+    }
+    return data?.data?.productOfferV2?.nodes?.[0] || null;
+  } catch (err) {
+    console.error(`[afiliados Shopee] fetchShopeeItemByIds falhou: ${err.message}`);
+    return null;
+  }
+}
+
 function buildShopeeShortLinkPayload(originUrl) {
   const safe = String(originUrl).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   const query = `mutation{generateShortLink(input:{originUrl:"${safe}",subIds:["","","","",""]}){shortLink}}`;
@@ -785,6 +825,7 @@ module.exports = {
   // Shopee
   gerarLinkAfiliadoShopee,
   fetchShopeeOffers,
+  fetchShopeeItemByIds,
   readShopeeConfig,
   writeShopeeConfig,
   clearShopeeConfig,
