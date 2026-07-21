@@ -5,7 +5,7 @@
 // mount. Estes testes garantem que a versão ATUAL do callback é a chamada.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, act } from "@testing-library/react";
+import { render, act, screen } from "@testing-library/react";
 
 vi.mock("../data/api", () => ({
   startWASession: vi.fn().mockResolvedValue({ ok: true }),
@@ -56,6 +56,33 @@ describe("WhatsappQR — usa o callback mais recente (fix de closure)", () => {
     expect(cbAtual).toHaveBeenCalledTimes(1);
     expect(cbAtual).toHaveBeenCalledWith({ phone: "5511999999999", name: "Zé" });
     expect(cbMount).not.toHaveBeenCalled(); // o callback velho NUNCA é chamado
+  });
+
+  it("status 'connecting' pós-scan mostra 'Conectando...' e NÃO 'Erro de conexão'", async () => {
+    // Após escanear o QR o backend passa por um close normal (restartRequired) que
+    // agora vira "connecting" — a tela deve mostrar o spinner de sincronização, nunca erro.
+    getWASession.mockResolvedValue({ status: "connecting", qr: null, info: null, lastError: null });
+
+    await act(async () => {
+      render(<WhatsappQR sessionId="num-3" onConnected={vi.fn()} />);
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+
+    expect(screen.getByText(/Conectando\.\.\./)).toBeTruthy();
+    expect(screen.queryByText(/Erro de conexão/)).toBeNull();
+  });
+
+  it("lastError residual durante 'connecting' não dispara o bloco de erro", async () => {
+    // Defesa em profundidade: mesmo que um lastError antigo chegue enquanto o status
+    // ainda é "connecting", o branch de erro (só terminal) não deve aparecer.
+    getWASession.mockResolvedValue({ status: "connecting", qr: null, info: null, lastError: "Stream Errored (restart required)" });
+
+    await act(async () => {
+      render(<WhatsappQR sessionId="num-4" onConnected={vi.fn()} />);
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+
+    expect(screen.queryByText(/Erro de conexão/)).toBeNull();
   });
 
   it("chama onError quando o start da sessão falha", async () => {

@@ -37,6 +37,7 @@ async function publish(userId, numberId, data) {
     qr: data.qr || null,                     // data URL pra UI mostrar
     info: data.info || null,                 // { id, name, phone }
     lastError: data.lastError || null,
+    stuck: data.stuck || false,              // reconexão presa há muito tempo
     updatedAt: new Date().toISOString(),
   };
   await client().setex(KEY(userId, numberId), TTL_SECONDS, JSON.stringify(payload));

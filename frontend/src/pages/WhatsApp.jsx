@@ -2,8 +2,9 @@ import { useState, useRef, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK } from "../data/constants";
 import Badge from "../components/ui/Badge";
 import Modal from "../components/ui/Modal";
+import Spinner from "../components/ui/Spinner";
 import WhatsappQR from "../components/WhatsappQR";
-import { deleteWASession, startWASession, listWASessions } from "../data/api";
+import { deleteWASession, listWASessions } from "../data/api";
 
 const STATUS_POLL_MS = 8000;
 
@@ -36,6 +37,16 @@ export default function PageWhatsApp({
   // O `numbers` do estado tem um status que só muda em ações locais; este reflete
   // a conexão real no servidor (cai/reconecta em background sem o usuário agir).
   const [liveStatus, setLiveStatus] = useState({});
+  // Há quanto tempo cada número está "connecting" (numberId -> timestamp). Se a
+  // reconexão em background arrasta além de STUCK_CONNECTING_MS, revelamos um link
+  // "Reconectar" ao lado do spinner (o alerta do WhatsNimbus diz "reconecte no
+  // painel" — o painel precisa oferecer a ação). O poll de 8s re-renderiza, então
+  // o link aparece sozinho ao cruzar o limiar, sem timer dedicado.
+  // Ids "presos" reconectando (numberId -> true). O backend é a fonte da verdade:
+  // marca `stuck` quando a reconexão em background passa da graça (~90s) e publica
+  // junto do status. Assim o botão "Reconectar" aparece mesmo que a página não
+  // estivesse aberta durante a contagem.
+  const [stuckIds, setStuckIds] = useState({});
   useEffect(() => {
     let cancelled = false;
     let timer = null;
@@ -45,8 +56,13 @@ export default function PageWhatsApp({
         const sessions = await listWASessions();
         if (cancelled) return;
         const map = {};
-        for (const s of (sessions || [])) map[s.numberId] = s.status;
+        const stuck = {};
+        for (const s of (sessions || [])) {
+          map[s.numberId] = s.status;
+          if (s.stuck) stuck[s.numberId] = true;
+        }
         setLiveStatus(map);
+        setStuckIds(stuck);
       } catch {
         // silencioso — mantém último status conhecido
       }
@@ -91,11 +107,16 @@ export default function PageWhatsApp({
     setConfirmRemove(null);
   };
 
-  // Reabre o QR para um número que perdeu sessão
+  // Reabre o QR para um número que perdeu sessão. Limpa a sessão/credenciais
+  // antigas ANTES de abrir o popup: um número em estado terminal (logout real ou
+  // desconexão manual) tem creds inválidas/ausentes — reusá-las dispara 401 e
+  // "Erro de conexão" sem nunca gerar QR. Começando limpo, o Baileys emite um QR
+  // novo. O numberId (= telefone) é preservado, então os grupos vinculados
+  // continuam apontando pro mesmo número. O WhatsappQR (autoStart) reabre a sessão.
   const reconnect = async (id) => {
+    try { await deleteWASession(id); } catch {}
     setPendingNumberId(id);
     setShowQR(id);
-    try { await startWASession(id); } catch (err) { console.error(err); }
   };
 
   // Inicia o fluxo de adicionar um número novo
@@ -138,9 +159,12 @@ export default function PageWhatsApp({
     setPendingLabel("");
   };
 
-  // Cancela o fluxo de QR (apaga sessão pendente do backend)
+  // Cancela o fluxo de QR. Fechou o popup sem conectar (tanto "novo" quanto
+  // "reconectar"): apaga a sessão pendente no backend pra não deixar um QR
+  // reciclando em loop — que apareceria como "Conectando..." eterno na lista.
+  // No sucesso, quem fecha o modal é o handleConnected (não passa por aqui).
   const cancelQR = async () => {
-    if (showQR === "new" && pendingNumberId) {
+    if (pendingNumberId) {
       try { await deleteWASession(pendingNumberId); } catch {}
     }
     setShowQR(null);
@@ -190,12 +214,22 @@ export default function PageWhatsApp({
           const st = effectiveStatus(n);
           const ui = statusUI(st);
           const connected = st === "connected";
+          // Reconexão em background (restart pós-scan, conflito, queda de rede) chega
+          // como "connecting": mostramos spinner "Conectando...", sem o "Reconectar"
+          // aparente. "awaiting_qr" NÃO entra aqui — significa "precisa escanear", um
+          // estado acionável: cai no botão Reconectar (só ocorre com o popup aberto ou
+          // numa sessão órfã que o usuário precisa retomar).
+          const connecting = st === "connecting";
+          // Preso reconectando: connecting há mais que o limiar → oferece "Reconectar".
+          const stuck = connecting && !!stuckIds[n.id];
           return (
             <div key={n.id} style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: "14px 16px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                    <span title={ui.label} style={{ width: 8, height: 8, borderRadius: "50%", background: ui.dot, flexShrink: 0 }} />
+                    {connecting
+                      ? <Spinner size={10} style={{ flexShrink: 0 }} />
+                      : <span title={ui.label} style={{ width: 8, height: 8, borderRadius: "50%", background: ui.dot, flexShrink: 0 }} />}
                     {isEditing ? (
                       <input
                         ref={editInputRef}
@@ -227,14 +261,23 @@ export default function PageWhatsApp({
                     {n.lastActivity && <Badge color="gray">Atividade: {n.lastActivity}</Badge>}
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  {connected
-                    ? <button onClick={() => setConfirmDisconnect(n.id)} style={{ padding: "6px 14px", borderRadius: 8, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 12, cursor: "pointer" }}>Desconectar</button>
-                    : <>
-                        <button onClick={() => reconnect(n.id)} style={{ padding: "6px 14px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Reconectar</button>
-                        <button onClick={() => setConfirmRemove(n.id)} title="Remove o número e seus grupos" style={{ padding: "6px 14px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-secondary)", fontSize: 12, cursor: "pointer" }}>Remover</button>
-                      </>
-                  }
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  {connected ? (
+                    <button onClick={() => setConfirmDisconnect(n.id)} style={{ padding: "6px 14px", borderRadius: 8, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 12, cursor: "pointer" }}>Desconectar</button>
+                  ) : connecting ? (
+                    <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--color-text-secondary)" }}>
+                      <Spinner size={14} />
+                      Conectando...
+                      {stuck && (
+                        <button onClick={() => reconnect(n.id)} style={{ background: "transparent", border: "none", color: PRIMARY, cursor: "pointer", fontSize: 12, padding: 0, textDecoration: "underline" }}>Reconectar</button>
+                      )}
+                    </span>
+                  ) : (
+                    <>
+                      <button onClick={() => reconnect(n.id)} style={{ padding: "6px 14px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Reconectar</button>
+                      <button onClick={() => setConfirmRemove(n.id)} title="Remove o número e seus grupos" style={{ padding: "6px 14px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-secondary)", fontSize: 12, cursor: "pointer" }}>Remover</button>
+                    </>
+                  )}
                 </div>
               </div>
             </div>

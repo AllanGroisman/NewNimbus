@@ -33,6 +33,7 @@ async function getSession(userId, numberId) {
     qrDataUrl: s.qr || null,    // alias — server.js usa qrDataUrl
     info: s.info || null,
     lastError: s.lastError || null,
+    stuck: s.stuck || false,
   };
 }
 
@@ -43,6 +44,7 @@ async function listSessions(userId) {
     status: s.status,
     info: s.info || null,
     lastError: s.lastError || null,
+    stuck: s.stuck || false,
   }));
 }
 

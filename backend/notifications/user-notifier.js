@@ -109,7 +109,8 @@ async function onSessionStatus(userId, numberId, status) {
 
     if (status === "connected") {
       connectedOnce.add(key);
-      transition(key, false); // reset: uma próxima queda volta a notificar
+      transition(key, false);            // reset: uma próxima queda volta a notificar
+      transition(`${key}:stuck`, false); // reset: um próximo episódio "preso" volta a avisar
       return;
     }
     if (!isDown) return;              // connecting/awaiting_qr: ignora
@@ -121,6 +122,26 @@ async function onSessionStatus(userId, numberId, status) {
       `${TAG} ⚠️\nSeu WhatsApp *${label}* desconectou.\nReconecte no painel pra não interromper os envios.`);
   } catch (err) {
     console.error(`[user-notifier] onSessionStatus: ${err.message}`);
+  }
+}
+
+// Reconexão em background presa há muito tempo (status segue "connecting", então
+// onSessionStatus a ignora). Aqui avisamos o dono UMA vez por episódio pra ele
+// reconectar no painel — o reset acontece quando o número volta a "connected".
+// Reusa a preferência "whatsappDisconnected" (do ponto de vista dele, é o mesmo
+// problema). Só avisa números que JÁ subiram (evita alarme no QR inicial).
+async function onSessionStuck(userId, numberId) {
+  try {
+    if (String(userId) === whatsnimbus.WHATSNIMBUS_USER_ID) return;
+    const key = `${userId}:wa:${numberId}`;
+    if (!connectedOnce.has(key)) return;
+    if (!transition(`${key}:stuck`, true)) return;
+
+    const label = await labelOfNumber(userId, numberId);
+    await deliver(userId, "whatsappDisconnected",
+      `${TAG} ⚠️\nSeu WhatsApp *${label}* está com dificuldade para reconectar.\nReconecte no painel pra não interromper os envios.`);
+  } catch (err) {
+    console.error(`[user-notifier] onSessionStuck: ${err.message}`);
   }
 }
 
@@ -163,6 +184,7 @@ async function onQueueEmpty(userId, groupId, groupName, isEmpty) {
 module.exports = {
   readUserConfig,
   onSessionStatus,
+  onSessionStuck,
   onCampaignDeactivated,
   onCampaignReactivated,
   onCampaignStopped,

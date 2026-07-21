@@ -28,6 +28,7 @@ function publishStatus(session) {
     qr: session.qrDataUrl || null,
     info: session.info || null,
     lastError: session.lastError || null,
+    stuck: session.stuck || false,
   }).catch(err => console.error(`[whatsapp-local] publishStatus falhou: ${err.message}`));
 }
 
@@ -62,6 +63,51 @@ const sessions = new Map();
 let shuttingDown = false;
 
 function key(userId, numberId) { return `${userId}::${numberId}`; }
+
+// Classifica um `connection: "close"` do Baileys num resultado puro e testável.
+// Regra central da Task 1: só é estado terminal (mostra "Reconectar"/erro na tela)
+// o logout real e o desligamento do worker. Todo o resto — restartRequired (515,
+// o close NORMAL logo após escanear o QR), conflito (401 device_removed) e quedas
+// de rede — vira "connecting" com lastError limpo, porque o handler reconecta
+// sozinho; assim a UI mostra "Conectando..." (spinner) em vez de piscar erro.
+//
+// O WhatsApp manda 401 tanto pra logout real quanto pra "conflict"/device_removed
+// (mesma conta em outro lugar, ou overlap de processos num restart). No conflito as
+// credenciais continuam VÁLIDAS — apagá-las forçava re-scan a cada restart. Então
+// só é logout definitivo o 401 que NÃO seja conflito.
+function classifyClose(err, { shuttingDown = false } = {}) {
+  const code = err?.output?.statusCode;
+  const reasonTag = err?.data?.content?.[0]?.tag;
+  const isConflict = reasonTag === "conflict" || /\(conflict\)/i.test(err?.message || "");
+  const loggedOut = code === DisconnectReason.loggedOut && !isConflict;
+
+  if (loggedOut) return { status: "logged_out", lastError: err?.message || null, reconnect: false };
+  // Encerrando o worker: sock.end() disparou este close. Não reconecta e rebaixa
+  // pra "disconnected" (coerente com closeAll), pra tela não ficar num "connecting"
+  // eterno de uma sessão que o worker não tem mais.
+  if (shuttingDown) return { status: "disconnected", lastError: err?.message || null, reconnect: false };
+  return { status: "connecting", lastError: null, reconnect: true };
+}
+
+// A reconexão em background fica em "connecting" indefinidamente (spinner na tela,
+// sem "Reconectar" aparente). O custo é que o envio fica bloqueado e o usuário não
+// era avisado. Depois desta graça, consideramos a sessão "presa" e disparamos um
+// alerta (uma vez por episódio) pra ele reconectar no painel. Pode virar env depois.
+const STUCK_RECONNECT_MS = 90_000;
+
+// Puro/testável: a sessão está reconectando (connecting) há mais que o limiar?
+function isStuckReconnecting(reconnectingSince, now, thresholdMs = STUCK_RECONNECT_MS) {
+  if (!reconnectingSince) return false;
+  return (now - reconnectingSince) >= thresholdMs;
+}
+
+function notifySessionStuck(userId, numberId) {
+  try {
+    require("../notifications/user-notifier")
+      .onSessionStuck(userId, numberId)
+      .catch(() => {});
+  } catch { /* ignore */ }
+}
 
 function normalizePhone(p) { return String(p).replace(/\D/g, ""); }
 function jidFromPhone(phone) { return `${normalizePhone(phone)}@s.whatsapp.net`; }
@@ -126,6 +172,8 @@ async function startSession(userId, numberId) {
         phone: (sock.user.id || "").split(":")[0].split("@")[0] || null,
       } : null;
       session.restartCount = 0;
+      session.reconnectingSince = null;
+      session.stuck = false;
       publishStatus(session);
 
       // O numberId definitivo é o telefone. O id usado pra abrir o QR é provisório
@@ -148,29 +196,33 @@ async function startSession(userId, numberId) {
       if (session.migrating) return;
 
       const err = lastDisconnect?.error;
-      const code = err?.output?.statusCode;
-      // O WhatsApp manda 401 tanto pra logout real quanto pra "conflict"/device_removed
-      // (mesma conta conectada em outro lugar, ou overlap de processos durante um
-      // restart). No conflito as credenciais continuam VÁLIDAS — apagá-las forçava
-      // re-scan a cada restart. Então só tratamos como logout definitivo o 401 que
-      // NÃO seja conflito; conflito cai no fluxo de reconexão abaixo.
-      const reasonTag = err?.data?.content?.[0]?.tag;
-      const isConflict = reasonTag === "conflict" || /\(conflict\)/i.test(err?.message || "");
-      const loggedOut = code === DisconnectReason.loggedOut && !isConflict;
+      const { status, lastError, reconnect } = classifyClose(err, { shuttingDown });
 
-      session.status = loggedOut ? "logged_out" : "disconnected";
-      session.lastError = err?.message || null;
+      session.status = status;
+      session.lastError = lastError;
       session.qr = null;
       session.qrDataUrl = null;
+
+      // Estado terminal (logout real do usuário, ou worker encerrando): não
+      // reconecta sozinho. No logout NÃO apagamos as credenciais aqui — a remoção
+      // definitiva acontece só pela ação explícita do usuário (deleteSession), pra
+      // nunca derrubar sessão boa sem querer.
+      if (!reconnect) {
+        session.reconnectingSince = null;
+        session.stuck = false;
+        publishStatus(session);
+        return;
+      }
+
+      // Marca o início do episódio de reconexão (uma vez, até reconectar). Se já
+      // arrasta há mais que a graça, marcamos `stuck` (o frontend usa isso pra
+      // revelar "Reconectar" — fonte da verdade é o backend, não depende da tela
+      // aberta) e avisamos o usuário. Os "close" recorrem a cada ≤30s, então a
+      // checagem aqui basta; a idempotência do aviso fica no user-notifier.
+      if (!session.reconnectingSince) session.reconnectingSince = Date.now();
+      session.stuck = isStuckReconnecting(session.reconnectingSince, Date.now());
       publishStatus(session);
-
-      // Logout real (usuário desvinculou o aparelho): não reconecta sozinho. NÃO
-      // apagamos as credenciais aqui — a remoção definitiva acontece só pela ação
-      // explícita do usuário (deleteSession), pra nunca derrubar sessão boa sem querer.
-      if (loggedOut) return;
-
-      // Encerrando o worker: sock.end() disparou este close. Não reconecta.
-      if (shuttingDown) return;
+      if (session.stuck) notifySessionStuck(userId, numberId);
 
       session.restartCount = (session.restartCount || 0) + 1;
       const delay = Math.min(30000, 1500 * session.restartCount);
@@ -235,6 +287,7 @@ function listSessions(userId) {
       status: s.status,
       info: s.info || null,
       lastError: s.lastError || null,
+      stuck: s.stuck || false,
     }));
 }
 
@@ -443,6 +496,8 @@ module.exports = {
   jidFromPhone,
   normalizePhone,
   status,
+  classifyClose,
+  isStuckReconnecting,
 };
 
 function makeStub() {

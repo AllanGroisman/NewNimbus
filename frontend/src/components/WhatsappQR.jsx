@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { PRIMARY, PRIMARY_DARK } from "../data/constants";
 import { startWASession, getWASession, deleteWASession } from "../data/api";
+import Spinner from "./ui/Spinner";
 
 // Inicia (ou retoma) a sessão Baileys do `sessionId` no backend e
 // faz polling no status. Mostra QR enquanto aguarda scan; chama
 // onConnected({ phone, name, jid }) ao conectar.
 export default function WhatsappQR({ sessionId, onConnected, onError, autoStart = true }) {
   const [state, setState] = useState({ status: "starting", qr: null, info: null, error: null });
+  // Bump força o efeito abaixo a reiniciar (novo startWASession + polling) —
+  // usado pelo "cancele e tente novamente" pra pedir um QR fresco.
+  const [restartNonce, setRestartNonce] = useState(0);
   const pollRef = useRef(null);
   const stoppedRef = useRef(false);
   // onConnected/onError em refs, atualizadas a cada render: o polling abaixo
@@ -58,21 +62,25 @@ export default function WhatsappQR({ sessionId, onConnected, onError, autoStart 
       stoppedRef.current = true;
       if (pollRef.current) clearTimeout(pollRef.current);
     };
-  }, [sessionId, autoStart]);
+  }, [sessionId, autoStart, restartNonce]);
 
+  // "cancele e tente novamente": apaga a sessão atual (QR expirado/travado) e
+  // reinicia do zero via restartNonce, pedindo um QR novo ao backend.
   const cancelAndCleanup = async () => {
     stoppedRef.current = true;
     if (pollRef.current) clearTimeout(pollRef.current);
+    setState({ status: "starting", qr: null, info: null, error: null });
     try { await deleteWASession(sessionId); } catch {}
+    setRestartNonce(n => n + 1);
   };
 
   return (
     <div>
       <div style={{ background: "var(--color-background-secondary)", borderRadius: 12, padding: 20, textAlign: "center", marginBottom: 14, minHeight: 280 }}>
         {state.status === "starting" || (state.status === "connecting" && !state.qr) ? (
-          <div style={{ padding: "60px 0", color: "var(--color-text-secondary)" }}>
-            <div style={{ fontSize: 28, marginBottom: 10 }}>⟳</div>
-            <div style={{ fontSize: 13 }}>Conectando ao WhatsApp...</div>
+          <div style={{ padding: "60px 0", color: "var(--color-text-secondary)", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+            <Spinner size={30} />
+            <div style={{ fontSize: 13 }}>Conectando... sincronizando suas conversas</div>
           </div>
         ) : state.status === "awaiting_qr" && state.qr ? (
           <>
@@ -91,7 +99,7 @@ export default function WhatsappQR({ sessionId, onConnected, onError, autoStart 
             {state.info?.name && <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 4 }}>{state.info.name}</div>}
             {state.info?.phone && <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>+{state.info.phone}</div>}
           </div>
-        ) : state.status === "error" || state.error ? (
+        ) : state.status === "error" || (state.error && (state.status === "disconnected" || state.status === "logged_out")) ? (
           <div style={{ padding: "60px 20px", color: "#A32D2D" }}>
             <div style={{ fontSize: 28, marginBottom: 10 }}>⚠</div>
             <div style={{ fontSize: 13, fontWeight: 500 }}>Erro de conexão</div>
