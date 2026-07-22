@@ -9,6 +9,9 @@ import BusyOverlay from "./ui/BusyOverlay";
 // num único item de localStorage. Validado contra VALID_TABS pra não restaurar
 // uma aba que não existe mais (ex.: id renomeado/removido).
 const TAB_STORAGE_KEY = "nimbus:campaignTab";
+// Lembra se a pessoa já viu a explicação de "o que é uma campanha de repasse"
+// (mostrada só na primeira vez; depois fica só o botãozinho de ajuda).
+const REPASSE_INTRO_SEEN_KEY = "nimbus:repasseIntroSeen";
 const VALID_TABS = ["overview", "manage", "whatsapp", "products", "queue", "schedule", "messages", "history"];
 function readSavedTab(groupId) {
   try {
@@ -1145,12 +1148,20 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   });
 
   const isRepasse = scraping?.kind === "repasse";
+  const [showRepasseIntro, setShowRepasseIntro] = useState(() => {
+    try { return !localStorage.getItem(REPASSE_INTRO_SEEN_KEY); } catch { return true; }
+  });
+  const [showRepasseHelpModal, setShowRepasseHelpModal] = useState(false);
+  const dismissRepasseIntro = () => {
+    try { localStorage.setItem(REPASSE_INTRO_SEEN_KEY, "1"); } catch { /* ignora (modo privado/quota) */ }
+    setShowRepasseIntro(false);
+  };
 
   const groupTabs = [
     { id: "overview", label: "Visão geral" },
     { id: "manage", label: "Gerenciar" },
-    { id: "whatsapp", label: `Grupos (${stats.count})` },
     { id: "products", label: isRepasse ? "Repasse" : "Busca de Produtos", dot: pending.length > 0 },
+    { id: "whatsapp", label: `Grupos (${stats.count})` },
     { id: "queue", label: `Fila (${queue.length})` },
     { id: "schedule", label: "Janelas de envio" },
     { id: "messages", label: "Modelos Mensagens" },
@@ -1384,12 +1395,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
       {tab === "manage" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {isRepasse && (
-            <div style={{ background: PRIMARY_LIGHT, color: PRIMARY_DARK, padding: "10px 14px", borderRadius: 10, fontSize: 12, lineHeight: 1.5 }}>
-              🔁 Esta é uma campanha de <strong>repasse</strong>. O sistema escuta o grupo líder abaixo e captura os links de produto (Mercado Livre, Shopee e Amazon) postados nele, re-afiliando com a sua TAG. A busca no catálogo fica desabilitada.
-            </div>
-          )}
-
           <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
             <div style={{ fontWeight: 500, marginBottom: 4 }}>Informações da campanha</div>
             <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>{isRepasse ? "Nome" : "Nome e categorias"}</div>
@@ -2187,9 +2192,21 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
       {tab === "products" && isRepasse && (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div style={{ background: PRIMARY_LIGHT, color: PRIMARY_DARK, padding: "10px 14px", borderRadius: 10, fontSize: 12, lineHeight: 1.5 }}>
-            🔁 O sistema escuta o <strong>grupo líder</strong> abaixo e captura os links de produto (Mercado Livre, Shopee e Amazon) postados nele, re-afiliando com a sua TAG.
-          </div>
+          {showRepasseIntro ? (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 10, background: PRIMARY_LIGHT, color: PRIMARY_DARK, padding: "10px 14px", borderRadius: 10, fontSize: 12, lineHeight: 1.5 }}>
+              <div style={{ flex: 1 }}>
+                🔁 O sistema escuta o <strong>grupo líder</strong> abaixo e captura os links de produto (Mercado Livre, Shopee e Amazon) postados nele, re-afiliando com a sua TAG.
+              </div>
+              <button onClick={dismissRepasseIntro} style={{ padding: "4px 10px", borderRadius: 7, border: `0.5px solid ${PRIMARY_DARK}`, background: "transparent", color: PRIMARY_DARK, fontSize: 12, cursor: "pointer", fontWeight: 500, whiteSpace: "nowrap" }}>Entendi</button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setShowRepasseHelpModal(true)}
+              style={{ alignSelf: "flex-start", padding: "5px 10px", borderRadius: 7, border: "0.5px solid var(--color-border-tertiary)", background: "transparent", color: "var(--color-text-secondary)", fontSize: 12, cursor: "pointer" }}
+            >
+              ❓ O que é uma campanha de repasse?
+            </button>
+          )}
 
           {/* Grupo líder */}
           <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
@@ -2227,12 +2244,27 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 </div>
                 {loadingWAGroups && <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Carregando grupos…</div>}
                 {waGroupsError && <div style={{ fontSize: 12, color: "#A32D2D" }}>{waGroupsError}</div>}
-                {addExistingNumberId && !loadingWAGroups && (
+                {addExistingNumberId && !loadingWAGroups && (waGroupsByNumber[addExistingNumberId] || []).length > 0 && (
+                  <input
+                    autoFocus
+                    value={addExistingSearch}
+                    onChange={e => setAddExistingSearch(e.target.value)}
+                    placeholder="Buscar grupo pelo nome..."
+                    style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }}
+                  />
+                )}
+                {addExistingNumberId && !loadingWAGroups && (() => {
+                  const q = addExistingSearch.trim().toLowerCase();
+                  const rawLeaderGroups = waGroupsByNumber[addExistingNumberId] || [];
+                  const filteredLeaderGroups = rawLeaderGroups.filter(wg => !q || (wg.name || "").toLowerCase().includes(q));
+                  return (
                   <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 260, overflowY: "auto" }}>
-                    {(waGroupsByNumber[addExistingNumberId] || []).length === 0 ? (
-                      <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Nenhum grupo encontrado neste número.</div>
+                    {filteredLeaderGroups.length === 0 ? (
+                      <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                        {rawLeaderGroups.length === 0 ? "Nenhum grupo encontrado neste número." : `Nenhum grupo bate com "${addExistingSearch}".`}
+                      </div>
                     ) : (
-                      (waGroupsByNumber[addExistingNumberId] || []).map(wg => (
+                      filteredLeaderGroups.map(wg => (
                         <div key={wg.jid} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)" }}>
                           <div style={{ flex: 1 }}>
                             <div style={{ fontSize: 13, fontWeight: 500 }}>{wg.name}</div>
@@ -2248,7 +2280,8 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                       ))
                     )}
                   </div>
-                )}
+                  );
+                })()}
               </div>
             )}
           </div>
@@ -2699,6 +2732,14 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             </div>
           }
         </div>
+      )}
+
+      {showRepasseHelpModal && (
+        <Modal title="Campanha de repasse" onClose={() => setShowRepasseHelpModal(false)}>
+          <div style={{ fontSize: 13, lineHeight: 1.6, color: "var(--color-text-primary)" }}>
+            🔁 Esta é uma campanha de <strong>repasse</strong>. O sistema escuta o grupo líder abaixo e captura os links de produto (Mercado Livre, Shopee e Amazon) postados nele, re-afiliando com a sua TAG. A busca no catálogo fica desabilitada.
+          </div>
+        </Modal>
       )}
 
       {confirmClearHistory && (

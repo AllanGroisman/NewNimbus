@@ -51,6 +51,16 @@ function upgradeAmazonImageUrl(url) {
   return url.replace(/\._[A-Za-z0-9_,]+_(?=\.(?:jpg|jpeg|png|webp|gif)(?:\?|$))/i, "");
 }
 
+// URLs de imagem do ML (mlstatic.com) terminam com um sufixo de tamanho antes
+// da extensão: "-O" (~500x280, usado nos cards de listagem e como thumbnail
+// da galeria da PDP) e "-F" (1920x1076, resolução alta). Trocando o sufixo
+// pra "-F" a CDN serve a versão em alta — fica nítida no WhatsApp.
+function upgradeMLImageUrl(url) {
+  if (!url || typeof url !== "string") return url;
+  if (!/mlstatic\.com/i.test(url)) return url;
+  return url.replace(/-[A-Z](?=\.(?:jpg|jpeg|png|webp)(?:\?|$))/i, "-F");
+}
+
 // Categorias suportadas. Cada categoria mapeia pra um identificador por loja.
 // - mlCode: ID da categoria do Mercado Livre (na URL de ofertas)
 // - amzDept: ID do departamento na página de ofertas da Amazon (/deals). Usado no
@@ -189,6 +199,7 @@ async function scrapeML({ category, limit = 200 } = {}) {
         for (const p of cards) {
           if (!p.link || seen.has(p.link)) continue;
           seen.add(p.link);
+          p.img = upgradeMLImageUrl(p.img);
           raw.push(p);
           added++;
         }
@@ -785,12 +796,46 @@ async function detectBlockPage(page, store) {
   }, store);
 }
 
+// Clica no botão "Ir para o produto" da landing de afiliado do ML
+// (mercadolivre.com.br/social/...). A navegação pode acontecer na mesma aba
+// ou abrir uma aba nova (target="_blank") — trata os dois casos e devolve a
+// page de trabalho correta (a nova aba, se for o caso). Best-effort: se não
+// achar o botão ou a navegação não acontecer a tempo, devolve a page original
+// e deixa o waitForSelector/detectBlockPage seguintes reportarem a falha.
+async function clickGoToProductML(browser, page) {
+  const clicked = await page.evaluate(() => {
+    const el = [...document.querySelectorAll("a, button")]
+      .find(e => /ir\s+para\s+o?\s*produto|ver\s+produto/i.test((e.textContent || "").trim()));
+    if (el) { el.click(); return true; }
+    return false;
+  });
+  if (!clicked) return page;
+
+  const newTabPromise = new Promise((resolve) => {
+    browser.once("targetcreated", async (target) => {
+      try { resolve(await target.page()); } catch { resolve(null); }
+    });
+  });
+  const [navigated, newPage] = await Promise.all([
+    page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 10000 }).then(() => true).catch(() => false),
+    Promise.race([newTabPromise, sleep(10000).then(() => null)]),
+  ]);
+
+  if (newPage) {
+    try { await newPage.waitForSelector("body", { timeout: 10000 }); } catch {}
+    try { await page.close(); } catch {}
+    return newPage;
+  }
+  if (navigated) return page;
+  return page;
+}
+
 // Uma tentativa de coleta: abre browser próprio (com stealth), navega, contorna
 // interstitials e extrai. Lança erro tipado (err.blocked/err.captcha) em bloqueio.
 async function harvestSingleProduct(cleanUrl, store, userId) {
   const browser = await launchAmazonBrowser();
   try {
-    const page = await browser.newPage();
+    let page = await browser.newPage();
     await applyAmazonStealth(page);
 
     // ML: injeta o cookie de sessão do afiliado pra furar o /gz/account-verification.
@@ -809,6 +854,12 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
 
     // Em ML/Amazon, espera o seletor principal aparecer (com timeout curto)
     if (store === "Mercado Livre") {
+      // Link de afiliado (mercadolivre.com.br/social/...): é uma landing com o
+      // produto + dados do afiliado, com um botão "Ir para o produto" que precisa
+      // ser clicado pra chegar na PDP real (nome/preço só existem lá).
+      if (/\/social\//i.test(page.url())) {
+        page = await clickGoToProductML(browser, page);
+      }
       try { await page.waitForSelector(".ui-pdp-title, h1", { timeout: 5000 }); } catch {}
     } else if (store === "Amazon") {
       // Tela "Continuar comprando": clica no botão e segue pra PDP real.
@@ -889,7 +940,7 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
           discount = Math.round((1 - price / originalPrice) * 100);
         }
         const imgEl = document.querySelector(".ui-pdp-gallery__figure img, figure.ui-pdp-gallery__figure img, .ui-pdp-image");
-        img = imgEl?.getAttribute("src") || imgEl?.getAttribute("data-zoom") || ogImage;
+        img = imgEl?.getAttribute("data-zoom") || imgEl?.getAttribute("src") || ogImage;
         // Best-effort: não há seletor confirmado pra "vendidos" na PDP — tenta achar
         // o texto em qualquer lugar da página (ex. "500 vendidos", "2 mil vendidos").
         const soldMatch = (document.body?.innerText || "").match(/([\d.,]+)\s*(mil\s*)?vendid[oa]s?/i);
@@ -949,7 +1000,9 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
       originalPrice: data.originalPrice ?? null,
       discount: data.discount ?? null,
       sold: data.sold ?? null,
-      img: store === "Amazon" ? upgradeAmazonImageUrl(data.img) : (data.img || null),
+      img: store === "Amazon" ? upgradeAmazonImageUrl(data.img)
+         : store === "Mercado Livre" ? upgradeMLImageUrl(data.img)
+         : (data.img || null),
       store: store || null,
       scrapedAt: new Date().toISOString(),
     };
@@ -1071,4 +1124,4 @@ async function autoScroll(page) {
   await new Promise(r => setTimeout(r, 1000));
 }
 
-module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, extractShopeeIds, CATEGORIES, STORES };
+module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, upgradeMLImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, extractShopeeIds, CATEGORIES, STORES };
