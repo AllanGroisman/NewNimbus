@@ -14,6 +14,8 @@ import {
   adminSetRegistration,
 } from "../data/api";
 
+const USERS_POLL_MS = 20 * 1000;
+
 const PLAN_LABEL = { free: "Free", basic: "Basic", pro: "Pro", business: "Business" };
 const PLAN_COLOR = { free: "gray", basic: "blue", pro: "green", business: "purple" };
 
@@ -65,6 +67,30 @@ export default function PageAdminUsers({ currentUser }) {
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  // Polling de fundo, sem o spinner de tela cheia — pra ver cadastros/mudanças
+  // feitas por outro admin sem precisar de F5. Pausa com a aba oculta.
+  useEffect(() => {
+    let cancelled = false;
+    let timer = null;
+    async function tick() {
+      if (!cancelled && !document.hidden) {
+        try {
+          const [r, reg] = await Promise.all([adminListUsers(), adminGetRegistration()]);
+          if (!cancelled) { setUsers(r.users || []); setRegBlocked(!!reg.blocked); }
+        } catch { /* mantém a última lista conhecida */ }
+      }
+      if (!cancelled) timer = setTimeout(tick, USERS_POLL_MS);
+    }
+    timer = setTimeout(tick, USERS_POLL_MS);
+    const onVisibility = () => { if (!document.hidden) { clearTimeout(timer); tick(); } };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
 
   async function toggleRegistration() {
     const next = !regBlocked;

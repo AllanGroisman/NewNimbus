@@ -222,10 +222,9 @@ export async function listWASessions()   { return http("GET",  `/api/whatsapp/se
 
 // ─── WhatsApp / grupos ─────────────────────────────────────────────────
 export async function listWAGroups(id)   { return http("GET",  `/api/whatsapp/sessions/${id}/groups`); }
-export async function createWAGroup(id, name, participants, includeNimbus = false) {
-  return http("POST", `/api/whatsapp/sessions/${id}/groups`, { name, participants, includeNimbus });
+export async function createWAGroup(id, name, participants) {
+  return http("POST", `/api/whatsapp/sessions/${id}/groups`, { name, participants });
 }
-export async function whatsNimbusAvailable() { return http("GET", "/api/whatsnimbus/available"); }
 export async function getWAInvite(id, jid) {
   return http("GET", `/api/whatsapp/sessions/${id}/groups/${encodeURIComponent(jid)}/invite`);
 }
@@ -318,7 +317,7 @@ export async function adminRepasseLogs({ page = 1, pageSize = 50, userId, groupI
 export async function adminNotifConfig()          { return http("GET",  "/api/admin/notifications/config"); }
 export async function adminNotifSave(cfg)         { return http("PUT",  "/api/admin/notifications/config", cfg); }
 export async function adminNotifTest()            { return http("POST", "/api/admin/notifications/test"); }
-export async function adminNotifGroups(numberId)  { return http("GET",  `/api/whatsapp/sessions/${encodeURIComponent(numberId)}/groups`); }
+export async function adminNotifGroups()          { return http("GET",  "/api/admin/whatsnimbus/groups"); }
 
 // ─── Admin / WhatsNimbus (remetente do sistema) ────────────────────────────
 export async function whatsNimbusStatus()         { return http("GET",  "/api/admin/whatsnimbus"); }

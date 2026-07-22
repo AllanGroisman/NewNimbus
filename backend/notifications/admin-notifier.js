@@ -1,11 +1,10 @@
 const appConfig = require("../config");
+const whatsnimbus = require("./whatsnimbus");
 
 const CONFIG_KEY = "admin-notifications-config";
 
 const DEFAULT_CONFIG = {
   enabled: false,
-  userId: null,
-  numberId: null,
   groupJid: null,
   groupName: null,
   // "detailed" = totais + quebra por categoria/loja; "summary" = só totais.
@@ -49,9 +48,10 @@ function getWa() {
 
 async function send(text) {
   const cfg = readConfig();
-  if (!cfg.enabled || !cfg.userId || !cfg.numberId || !cfg.groupJid) return;
+  const wn = whatsnimbus.readConfig();
+  if (!cfg.enabled || !wn.numberId || !cfg.groupJid) return;
   try {
-    await getWa().sendText(String(cfg.userId), String(cfg.numberId), cfg.groupJid, text);
+    await getWa().sendText(whatsnimbus.WHATSNIMBUS_USER_ID, String(wn.numberId), cfg.groupJid, text);
   } catch (err) {
     console.error("[admin-notifier] falha ao enviar mensagem:", err.message);
   }
@@ -145,8 +145,12 @@ async function notifySystemOnline() {
 
 async function sendTest() {
   const cfg = readConfig();
-  if (!cfg.userId || !cfg.numberId || !cfg.groupJid) {
-    throw new Error("Configure o número e o grupo antes de testar.");
+  const wn = whatsnimbus.readConfig();
+  if (!wn.numberId) {
+    throw new Error("Conecte o WhatsNimbus antes de testar.");
+  }
+  if (!cfg.groupJid) {
+    throw new Error("Configure o grupo antes de testar.");
   }
 
   const lines = [
@@ -158,7 +162,7 @@ async function sendTest() {
   // Força envio mesmo com enabled=false para testar a config
   const text = lines.join("\n");
   try {
-    await getWa().sendText(String(cfg.userId), String(cfg.numberId), cfg.groupJid, text);
+    await getWa().sendText(whatsnimbus.WHATSNIMBUS_USER_ID, String(wn.numberId), cfg.groupJid, text);
   } catch (err) {
     throw new Error(`Falha ao enviar: ${err.message}`);
   }

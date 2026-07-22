@@ -7,7 +7,7 @@ require("./config/loadEnv"); // carrega .env + override por modo (prod | ngrok)
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
-const rateLimit = require("express-rate-limit");
+const { rateLimit, ipKeyGenerator } = require("express-rate-limit");
 const { CATEGORIES, STORES, scrapeSingleProduct } = require("./scraping/scraper");
 const wa = require("./whatsapp");
 const auth = require("./auth");
@@ -214,12 +214,27 @@ const registerLimiter = rateLimit({
   skip: skipLimitInTests,
   message: { error: "Muitas tentativas de cadastro. Aguarde 1 minuto." },
 });
+// Chave por usuário autenticado (sub do JWT) quando houver token válido —
+// senão o polling de várias abas de um mesmo usuário (ops 3s + sessão 8s +
+// afiliado 30s ≈ 30 req/min/aba) soma no MESMO balde de outros usuários atrás
+// do mesmo IP/NAT, e um 429 aí é engolido em silêncio pelo polling do
+// frontend (App.jsx) — a tela para de atualizar sem nenhum aviso, dando a
+// falsa impressão de que só o F5 resolve. Cai pra IP só em rotas sem token.
+function apiLimiterKey(req) {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+  const payload = token ? auth.verifyToken(token) : null;
+  return payload?.sub ? `user:${payload.sub}` : ipKeyGenerator(req.ip);
+}
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 300, // generoso pra polling do frontend (state/ops a cada 30s × várias abas)
+  // ~30 req/min/aba de polling (ops 3s + sessão 8s + afiliado 30s) — dá margem
+  // pra várias abas do mesmo usuário sem esbarrar no limite.
+  max: 180,
   standardHeaders: true,
   legacyHeaders: false,
   skip: skipLimitInTests,
+  keyGenerator: apiLimiterKey,
   message: { error: "Limite de requisições atingido. Aguarde 1 minuto." },
 });
 app.use("/api/", apiLimiter);
@@ -1452,8 +1467,7 @@ app.get("/api/admin/notifications/config", auth.requireAuth, auth.requireAdmin, 
 app.put("/api/admin/notifications/config", auth.requireAuth, auth.requireAdmin, (req, res) => {
   try {
     const body = req.body || {};
-    // userId é sempre sobrescrito pelo usuário logado — garante que a sessão WA pertence ao admin
-    const saved = adminNotifier.writeConfig({ ...body, userId: req.user.id });
+    const saved = adminNotifier.writeConfig(body);
     res.json({ ok: true, config: saved });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -1544,6 +1558,17 @@ app.post("/api/admin/whatsnimbus/disconnect", auth.requireAuth, auth.requireAdmi
   }
 });
 
+app.get("/api/admin/whatsnimbus/groups", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const cfg = whatsnimbus.readConfig();
+    if (!cfg.numberId) return res.status(400).json({ error: "WhatsNimbus não está conectado." });
+    const groups = await wa.listGroups(whatsnimbus.WHATSNIMBUS_USER_ID, cfg.numberId);
+    res.json(groups);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 // ────────────────────────────────────────────────────────────────────────
 // WhatsApp (Baileys)
@@ -1614,45 +1639,20 @@ app.get("/api/whatsapp/sessions/:id/groups", auth.requireAuth, async (req, res) 
   }
 });
 
-// Disponibilidade do WhatsNimbus pra o fluxo de criação de grupo (não-admin):
-// permite usar o número do sistema como o participante extra que o WhatsApp exige.
-app.get("/api/whatsnimbus/available", auth.requireAuth, async (req, res) => {
-  try {
-    const cfg = whatsnimbus.readConfig();
-    let connected = false, phone = null;
-    if (cfg.numberId) {
-      const s = await wa.getSession(whatsnimbus.WHATSNIMBUS_USER_ID, cfg.numberId);
-      connected = s?.status === "connected";
-      if (connected) phone = cfg.phone || s?.info?.phone || null;
-    }
-    res.json({ connected, phone });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 app.post("/api/whatsapp/sessions/:id/groups", auth.requireAuth, async (req, res) => {
   try {
-    const { name, participants = [], includeNimbus = false } = req.body || {};
+    const { name, participants = [] } = req.body || {};
     if (!name || !String(name).trim()) return res.status(400).json({ error: "name obrigatório" });
 
     let parts = Array.isArray(participants) ? participants.slice() : [];
-
-    // Opção "usar o WhatsNimbus": anexa o telefone do número do sistema como
-    // participante. Resolvido no servidor (fonte da verdade) — o cliente só pede.
-    if (includeNimbus) {
-      const cfg = whatsnimbus.readConfig();
-      const s = cfg.numberId ? await wa.getSession(whatsnimbus.WHATSNIMBUS_USER_ID, cfg.numberId) : null;
-      if (!cfg.numberId || s?.status !== "connected") {
-        return res.status(400).json({ error: "O WhatsNimbus não está conectado. Conecte-o na aba admin ou informe um participante." });
-      }
-      const wnPhone = cfg.phone || s?.info?.phone;
-      if (wnPhone) parts.push(wnPhone);
-    }
-
     parts = [...new Set(parts.map(p => String(p).trim()).filter(Boolean))];
+
+    const s = await wa.getSession(req.user.id, req.params.id);
     if (parts.length === 0) {
-      return res.status(400).json({ error: "informe ao menos um participante (telefone) ou use o WhatsNimbus" });
+      // Sem participantes informados: o WhatsApp exige ao menos 1 além do criador.
+      // Usa o próprio número do criador — na prática o grupo fica só com ele mesmo.
+      if (!s?.info?.phone) return res.status(400).json({ error: "Sessão não encontrada ou sem número associado." });
+      parts = [s.info.phone];
     }
     const group = await wa.createGroup(req.user.id, req.params.id, String(name).trim(), parts);
     res.json(group);

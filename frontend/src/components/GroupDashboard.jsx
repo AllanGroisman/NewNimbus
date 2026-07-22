@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, soldText, getGroupCategories, getGroupStats, computeQueueETA, formatETA, formatTimeBR, formatDateBR, isSameDayBR } from "../data/constants";
-import { createWAGroup, leaveWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupQueue, saveGroupQueue, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue, whatsNimbusAvailable } from "../data/api";
+import { createWAGroup, leaveWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupQueue, saveGroupQueue, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue } from "../data/api";
 import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
 import { useUnsavedGuard, useRequestNavigation } from "../data/navGuard";
 import BusyOverlay from "./ui/BusyOverlay";
@@ -235,7 +235,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   });
   const [saved, setSaved] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
-  // Modal "Adicionar grupo": null = fechado, "choose" | "create" | "existing"
+  // Modal "Adicionar grupo": null = fechado, "choose" | "create-numbers" | "create-details" | "existing"
   const [addStep, setAddStep] = useState(null);
   const [addExistingNumberId, setAddExistingNumberId] = useState(null);
   const [addExistingSearch, setAddExistingSearch] = useState("");
@@ -246,8 +246,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const [confirmDeleteWG, setConfirmDeleteWG] = useState(null);
   const [confirmUnlinkWG, setConfirmUnlinkWG] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
-  const [newWGForm, setNewWGForm] = useState({ name: "", numberIds: numbers[0]?.id ? [numbers[0].id] : [], participants: "", includeNimbus: false });
-  const [nimbusAvail, setNimbusAvail] = useState({ connected: false, phone: null });
+  const [newWGForm, setNewWGForm] = useState({ name: "", numberIds: numbers[0]?.id ? [numbers[0].id] : [], participants: "" });
   const [creatingWG, setCreatingWG] = useState(false);
   const [createWGError, setCreateWGError] = useState(null);
   const [sendingNow, setSendingNow] = useState(false);
@@ -298,16 +297,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const pendingKeySig = (group.pending || []).map(p => p.key ?? p.id ?? p.name).join("|");
   useEffect(() => { setQueue(group.queue || []); }, [queueKeySig]);
   useEffect(() => { setPending(group.pending || []); }, [pendingKeySig]);
-
-  // Disponibilidade do WhatsNimbus — habilita usá-lo como participante extra na
-  // criação de grupo (o WhatsApp exige ao menos 1 participante além de você).
-  useEffect(() => {
-    let alive = true;
-    whatsNimbusAvailable()
-      .then(r => { if (alive) setNimbusAvail({ connected: !!r?.connected, phone: r?.phone || null }); })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, []);
 
   async function handleClearHistory() {
     setClearingHistory(true);
@@ -705,15 +694,14 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   };
 
   // Abre o modal de criação pré-preenchido com nome "X #N" e mesmo número.
-  // Participantes ficam vazios — WhatsApp exige ao menos 1 participante além de ti.
+  // Número já conhecido (o mesmo do grupo clonado) — pula direto pra tela de detalhes.
   const cloneGroup = (wg) => {
     setNewWGForm({
       name: computeCloneName(wg.name),
       numberIds: wg.numberId ? [wg.numberId] : (numbers[0]?.id ? [numbers[0].id] : []),
       participants: "",
-      includeNimbus: false,
     });
-    setAddStep("create");
+    setAddStep("create-details");
   };
 
   // Edição da descrição (estado local — guarda só no Nimbus, não no WhatsApp).
@@ -858,11 +846,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       .split(/[\n,;]/)
       .map(p => p.trim())
       .filter(Boolean);
-    const includeNimbus = !!newWGForm.includeNimbus && nimbusAvail.connected;
-    if (parts.length === 0 && !includeNimbus) {
-      setCreateWGError("Informe ao menos um participante (telefone com DDD) ou marque a opção do WhatsNimbus.");
-      return;
-    }
     setCreatingWG(true);
     const baseName = newWGForm.name.trim();
     const useSuffix = selectedIds.length > 1;
@@ -873,7 +856,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         const num = numbers.find(n => n.id === numId);
         const name = useSuffix && num ? `${baseName} — ${num.label}` : baseName;
         try {
-          const result = await createWAGroup(numId, name, parts, includeNimbus);
+          const result = await createWAGroup(numId, name, parts);
           const newId = onCreateWhatsappGroup({
             id: result.jid,
             name: result.name,
@@ -896,7 +879,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         if (created.length === 0) return;
       }
       closeAddModal();
-      setNewWGForm({ name: "", numberIds: numbers[0]?.id ? [numbers[0].id] : [], participants: "", includeNimbus: false });
+      setNewWGForm({ name: "", numberIds: numbers[0]?.id ? [numbers[0].id] : [], participants: "" });
     } finally {
       setCreatingWG(false);
     }
@@ -1919,7 +1902,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <button
-                  onClick={() => setAddStep("create")}
+                  onClick={() => setAddStep("create-numbers")}
                   disabled={numbers.length === 0}
                   style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "14px 16px", borderRadius: 10, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", cursor: numbers.length === 0 ? "not-allowed" : "pointer", textAlign: "left", opacity: numbers.length === 0 ? 0.5 : 1 }}
                 >
@@ -2071,29 +2054,25 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             );
           })()}
 
-          {addStep === "create" && (
+          {addStep === "create-numbers" && (
             <Modal title="Criar grupo no WhatsApp" onClose={closeAddModal}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
                 <button onClick={() => setAddStep("choose")} style={{ padding: "4px 10px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: "pointer" }}>← Voltar</button>
               </div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14, lineHeight: 1.5 }}>
-                Um novo grupo será criado <strong>de fato no WhatsApp</strong> e vinculado a esta campanha. O WhatsApp exige pelo menos um participante além de você.
+                Escolha em qual número de WhatsApp o grupo vai ser criado.
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <div>
-                  <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Nome do grupo</label>
-                  <input value={newWGForm.name} onChange={e => setNewWGForm(f => ({ ...f, name: e.target.value }))} placeholder={`Ex: ${group.name} — Regional`} style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }} />
-                </div>
                 <div>
                   <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 6 }}>
                     Números que vão criar <span style={{ color: "var(--color-text-tertiary, var(--color-text-secondary))" }}>(selecione um ou mais — cria 1 grupo por número)</span>
                   </label>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 180, overflowY: "auto", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 8, padding: 8, background: "var(--color-background-secondary)" }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 220, overflowY: "auto", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 8, padding: 8, background: "var(--color-background-secondary)" }}>
                     {numbers.map(n => {
                       const checked = (newWGForm.numberIds || []).includes(n.id);
                       const connected = n.status === "connected";
                       return (
-                        <label key={n.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 6, cursor: connected ? "pointer" : "not-allowed", opacity: connected ? 1 : 0.5, background: checked ? PRIMARY_LIGHT : "transparent" }}>
+                        <label key={n.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 6, cursor: connected ? "pointer" : "not-allowed", opacity: connected ? 1 : 0.5 }}>
                           <input
                             type="checkbox"
                             checked={checked}
@@ -2119,25 +2098,32 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                     </div>
                   )}
                 </div>
-                {nimbusAvail.connected && (
-                  <label style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "10px 12px", borderRadius: 8, border: `0.5px solid ${newWGForm.includeNimbus ? PRIMARY : "var(--color-border-tertiary)"}`, background: newWGForm.includeNimbus ? PRIMARY_LIGHT : "var(--color-background-secondary)", cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={!!newWGForm.includeNimbus}
-                      onChange={e => setNewWGForm(f => ({ ...f, includeNimbus: e.target.checked }))}
-                      style={{ marginTop: 2, cursor: "pointer" }}
-                    />
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 500 }}>Usar o WhatsNimbus como participante</div>
-                      <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>
-                        O número do sistema{nimbusAvail.phone ? ` (+${nimbusAvail.phone})` : ""} entra no grupo, dispensando um número extra seu.
-                      </div>
-                    </div>
-                  </label>
-                )}
+              </div>
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 18 }}>
+                <button onClick={closeAddModal} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+                <button onClick={() => setAddStep("create-details")} disabled={(newWGForm.numberIds || []).length === 0} style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: (newWGForm.numberIds || []).length === 0 ? 0.5 : 1 }}>
+                  Próximo →
+                </button>
+              </div>
+            </Modal>
+          )}
+
+          {addStep === "create-details" && (
+            <Modal title="Criar grupo no WhatsApp" onClose={closeAddModal}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                <button onClick={() => setAddStep("create-numbers")} style={{ padding: "4px 10px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: "pointer" }}>← Voltar</button>
+              </div>
+              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14, lineHeight: 1.5 }}>
+                Um novo grupo será criado <strong>de fato no WhatsApp</strong> e vinculado a esta campanha.
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Nome do grupo</label>
+                  <input value={newWGForm.name} onChange={e => setNewWGForm(f => ({ ...f, name: e.target.value }))} placeholder={`Ex: ${group.name} — Regional`} style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }} />
+                </div>
                 <div>
                   <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
-                    Participantes iniciais{newWGForm.includeNimbus ? " (opcional)" : ""}
+                    Participantes iniciais
                   </label>
                   <textarea
                     value={newWGForm.participants}
@@ -2147,7 +2133,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                     style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", resize: "vertical", fontFamily: "inherit" }}
                   />
                   <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4 }}>
-                    Um por linha (ou separados por vírgula). Inclua o código do país (+55).
+                    Um por linha (ou separados por vírgula). Inclua o código do país (+55). Se deixar vazio, o grupo é criado sem participantes extras — só você.
                   </div>
                 </div>
                 {createWGError && (

@@ -43,6 +43,8 @@ const NAV_STORAGE_KEY = "nimbus:nav";
 const OPS_POLL_MS = 3 * 1000;
 const SESSION_POLL_MS = 8 * 1000;
 const AFFILIATE_POLL_MS = 30 * 1000;
+// Teto do backoff em 429 (rate-limit): intervalo nunca passa de POLL_MS × este fator.
+const MAX_BACKOFF_MULT = 8;
 
 export default function App() {
   const [groups, setGroups] = useState(initialGroups);
@@ -93,6 +95,19 @@ export default function App() {
   const [affiliateStatus, setAffiliateStatus] = useState({ ml: true, amazon: true, shopee: false });
   // Billing — { planId, effectivePlan, status, daysLeftInTrial, limits, stripeEnabled, isAdmin }
   const [billing, setBilling] = useState(null);
+  // Nomes dos polls (ops/session/affiliate) atualmente em backoff por rate-limit (429).
+  // Não-vazio => mostra aviso discreto: sem isso, um 429 silencioso faz a tela parar
+  // de atualizar sem nenhum sinal, e só o F5 "resolve" (recarrega tudo de uma vez).
+  const [degradedPolls, setDegradedPolls] = useState(() => new Set());
+  const markPollDegraded = (name, degraded) => {
+    setDegradedPolls(prev => {
+      const has = prev.has(name);
+      if (degraded === has) return prev;
+      const next = new Set(prev);
+      degraded ? next.add(name) : next.delete(name);
+      return next;
+    });
+  };
   const affiliateConfigured = !!affiliateStatus.ml;
   const applyAffiliateStatus = (s) => {
     setAffiliateStatus({
@@ -288,28 +303,36 @@ export default function App() {
     if (!user || !stateLoadedRef.current) return;
     let cancelled = false;
     let timer = null;
+    let backoffMult = 1; // dobra a cada 429 (até MAX_BACKOFF_MULT), reseta no 1º sucesso
     async function pull() {
       if (cancelled || (typeof document !== "undefined" && document.hidden)) return;
       try {
         const ops = await loadAppOps();
         if (cancelled) return;
+        backoffMult = 1;
+        markPollDegraded("ops", false);
         // Merge dos campos de ops preservando a identidade quando nada muda —
         // sem isso, cada poll (3s) trocaria a referência de `groups` e
         // dispararia um autosave à toa. Ver frontend/src/data/opsMerge.js.
         const opsList = ops.groups || [];
         setGroups(prev => mergeGroupsOps(prev, opsList));
         setSelectedGroup(prev => prev ? mergeGroupOps(prev, opsList.find(o => o.id === prev.id)) : prev);
-      } catch {
-        // ignora — próxima rodada tenta de novo
+      } catch (err) {
+        // 429 (rate-limit) não é transitório do mesmo jeito que uma falha de rede —
+        // insistir no intervalo cheio só mantém a janela sempre estourada. Recua
+        // (dobra o intervalo, até um teto) e avisa a UI em vez de ficar em silêncio.
+        if (err?.status === 429) {
+          backoffMult = Math.min(backoffMult * 2, MAX_BACKOFF_MULT);
+          markPollDegraded("ops", true);
+        }
       }
+      if (!cancelled) timer = setTimeout(pull, OPS_POLL_MS * backoffMult);
     }
-    const start = () => { if (!timer) timer = setInterval(pull, OPS_POLL_MS); };
-    const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
+    const stop = () => { if (timer) { clearTimeout(timer); timer = null; } };
     const onVisibility = () => {
       if (document.hidden) { stop(); }
-      else { pull(); start(); }
+      else { stop(); pull(); }
     };
-    start();
     pull();
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
@@ -327,23 +350,29 @@ export default function App() {
     if (!user) return;
     let cancelled = false;
     let timer = null;
+    let backoffMult = 1;
     async function pull() {
       if (cancelled || (typeof document !== "undefined" && document.hidden)) return;
       try {
         const sessions = await listWASessions();
         if (cancelled) return;
+        backoffMult = 1;
+        markPollDegraded("session", false);
         const map = {};
         for (const s of (sessions || [])) map[s.numberId] = s.status;
         setSessionStatus(map);
-      } catch {
-        // silencioso — mantém o último status conhecido
+      } catch (err) {
+        if (err?.status === 429) {
+          backoffMult = Math.min(backoffMult * 2, MAX_BACKOFF_MULT);
+          markPollDegraded("session", true);
+        }
+        // demais erros: silencioso — mantém o último status conhecido
       }
+      if (!cancelled) timer = setTimeout(pull, SESSION_POLL_MS * backoffMult);
     }
-    const start = () => { if (!timer) timer = setInterval(pull, SESSION_POLL_MS); };
-    const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
-    const onVisibility = () => { if (document.hidden) stop(); else { pull(); start(); } };
+    const stop = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    const onVisibility = () => { if (document.hidden) stop(); else { stop(); pull(); } };
     pull();
-    start();
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       cancelled = true;
@@ -375,22 +404,28 @@ export default function App() {
     if (!user) return;
     let cancelled = false;
     let timer = null;
+    let backoffMult = 1;
     async function pull() {
       if (cancelled || (typeof document !== "undefined" && document.hidden)) return;
       try {
         const s = await getAffiliateStatus();
-        if (!cancelled) applyAffiliateStatus(s);
-      } catch {
-        // silencioso
+        if (cancelled) return;
+        backoffMult = 1;
+        markPollDegraded("affiliate", false);
+        applyAffiliateStatus(s);
+      } catch (err) {
+        if (err?.status === 429) {
+          backoffMult = Math.min(backoffMult * 2, MAX_BACKOFF_MULT);
+          markPollDegraded("affiliate", true);
+        }
       }
+      if (!cancelled) timer = setTimeout(pull, AFFILIATE_POLL_MS * backoffMult);
     }
-    const start = () => { if (!timer) timer = setInterval(pull, AFFILIATE_POLL_MS); };
-    const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
+    const stop = () => { if (timer) { clearTimeout(timer); timer = null; } };
     const onVisibility = () => {
       if (document.hidden) stop();
-      else { pull(); start(); }
+      else { stop(); pull(); }
     };
-    start();
     pull();
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
@@ -577,7 +612,7 @@ export default function App() {
     "admin-repasse":  user?.role === "admin" ? <PageAdminRepasse /> : fallbackPage,
     "admin-users":          user?.role === "admin" ? <PageAdminUsers currentUser={user} /> : fallbackPage,
     "admin-backups":        user?.role === "admin" ? <PageAdminBackups /> : fallbackPage,
-    "admin-notifications":  user?.role === "admin" ? <PageAdminNotifications numbers={numbers} /> : fallbackPage,
+    "admin-notifications":  user?.role === "admin" ? <PageAdminNotifications onGoToWhatsNimbus={() => requestNavigation(() => setPage("admin-whatsnimbus"))} /> : fallbackPage,
     "admin-whatsnimbus":    user?.role === "admin" ? <PageAdminWhatsNimbus /> : fallbackPage,
     "tutorials":     <PageTutoriais targetTutorialId={tutorialTarget} />,
   };
@@ -604,6 +639,11 @@ export default function App() {
         onToggleMobile={setMobileMenu}
       />
       <div className="main-content" style={{ flex: 1, padding: "20px 24px", minWidth: 0, overflowY: "auto" }}>
+        {degradedPolls.size > 0 && (
+          <div style={{ background: "#FFF7E0", border: "0.5px solid #F0D58A", color: "#7A5800", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
+            Atualização automática mais lenta no momento (muitas requisições) — tentando novamente. Se algo parecer desatualizado, recarregue a página.
+          </div>
+        )}
         {billing && !billing.isAdmin && (
           (billing.status === "past_due" || billing.status === "unpaid") ? (
             <div onClick={() => requestNavigation(() => setPage("subscription"))} style={{ cursor: "pointer", background: "#FCEBEB", border: "0.5px solid #F7C1C1", color: "#A32D2D", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>

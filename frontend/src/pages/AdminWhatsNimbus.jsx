@@ -20,6 +20,8 @@ const STATUS_META = {
   idle:        { color: "var(--color-text-secondary)", label: "Não configurado" },
 };
 
+const BG_STATUS_POLL_MS = 20 * 1000;
+
 export default function PageAdminWhatsNimbus() {
   const [snap, setSnap] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -42,6 +44,27 @@ export default function PageAdminWhatsNimbus() {
   useEffect(() => {
     (async () => { await refresh(); setLoading(false); })();
     return () => { if (pollRef.current) clearTimeout(pollRef.current); };
+  }, []);
+
+  // Polling de fundo: sem isso, se o número cair sozinho (fora do fluxo de QR),
+  // o admin só percebe dando F5. Não atropela o polling rápido de startPolling()
+  // (pollRef ocupado) nem roda com a aba oculta.
+  useEffect(() => {
+    let cancelled = false;
+    let timer = null;
+    const schedule = () => { if (!cancelled) timer = setTimeout(tick, BG_STATUS_POLL_MS); };
+    async function tick() {
+      if (!cancelled && !document.hidden && !pollRef.current) await refresh();
+      schedule();
+    }
+    schedule();
+    const onVisibility = () => { if (!document.hidden && !pollRef.current) refresh(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, []);
 
   function stopPolling() {

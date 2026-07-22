@@ -3,6 +3,8 @@ import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../data/constants";
 import Modal from "../components/ui/Modal";
 import { billingMe, billingCheckout, billingPortal } from "../data/api";
 
+const BILLING_POLL_MS = 20 * 1000;
+
 const PLAN_META = {
   basic: {
     name: "Básico",
@@ -78,7 +80,7 @@ export default function PageSubscription() {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    async function pull() {
       try {
         const data = await billingMe();
         if (!cancelled) { setMe(data); setError(""); }
@@ -87,8 +89,19 @@ export default function PageSubscription() {
       } finally {
         if (!cancelled) setLoading(false);
       }
-    })();
-    return () => { cancelled = true; };
+    }
+    pull();
+    // Polling leve — o plano pode mudar em segundo plano (webhook do Stripe
+    // processando após o checkout, ou um admin alterando o plano manualmente),
+    // e sem isso o usuário só via a mudança dando F5. Pausa com a aba oculta.
+    let timer = setInterval(() => { if (!document.hidden) pull(); }, BILLING_POLL_MS);
+    const onVisibility = () => { if (!document.hidden) pull(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, []);
 
   async function startCheckout(planId) {

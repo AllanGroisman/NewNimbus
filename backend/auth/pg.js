@@ -626,6 +626,7 @@ module.exports = {
   resetPassword,
   requireAuth,
   requireAdmin,
+  verifyToken,
   reissueToken,
   updateProfile,
   changePassword,

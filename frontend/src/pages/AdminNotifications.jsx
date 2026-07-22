@@ -6,13 +6,14 @@ import {
   adminNotifSave,
   adminNotifTest,
   adminNotifGroups,
+  whatsNimbusStatus,
 } from "../data/api";
 
 const labelStyle = { fontSize: 12, fontWeight: 600, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 };
 const cardStyle = { background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: 10, padding: "20px 24px", marginBottom: 16 };
-const inputStyle = { width: "100%", padding: "8px 10px", border: "1px solid var(--color-border)", borderRadius: 6, fontSize: 13, background: "var(--color-surface)", color: "var(--color-text-primary)", boxSizing: "border-box" };
 const btnPrimary = { background: PRIMARY, color: "#fff", border: "none", borderRadius: 6, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" };
 const btnSecondary = { background: "transparent", color: PRIMARY_DARK, border: `1px solid ${PRIMARY}`, borderRadius: 6, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" };
+const inputStyle = { width: "100%", padding: "8px 10px", border: "1px solid var(--color-border)", borderRadius: 6, fontSize: 13, background: "var(--color-surface)", color: "var(--color-text-primary)", boxSizing: "border-box" };
 
 const EVENT_LABELS = {
   scraping:     { label: "Resumo do scraping", desc: "Envia um resumo ao final de cada execução do scraper global." },
@@ -20,9 +21,11 @@ const EVENT_LABELS = {
   systemOnline: { label: "Sistema online",     desc: "Avisa quando o backend é (re)iniciado." },
 };
 
-export default function PageAdminNotifications({ numbers = [] }) {
+export default function PageAdminNotifications({ onGoToWhatsNimbus }) {
   const [config, setConfig] = useState(null);
+  const [whatsNimbus, setWhatsNimbus] = useState(null);
   const [groups, setGroups] = useState([]);
+  const [groupSearch, setGroupSearch] = useState("");
   const [loadingGroups, setLoadingGroups] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -31,11 +34,14 @@ export default function PageAdminNotifications({ numbers = [] }) {
   const [savedMsg, setSavedMsg] = useState(null);
   const [testMsg, setTestMsg] = useState(null);
 
+  const isConnected = whatsNimbus?.status === "connected";
+
   useEffect(() => {
     (async () => {
       try {
-        const cfg = await adminNotifConfig();
+        const [cfg, wn] = await Promise.all([adminNotifConfig(), whatsNimbusStatus()]);
         setConfig(cfg);
+        setWhatsNimbus(wn);
       } catch (err) {
         setError(err.message);
       } finally {
@@ -44,19 +50,20 @@ export default function PageAdminNotifications({ numbers = [] }) {
     })();
   }, []);
 
-  async function fetchGroups() {
-    if (!config?.numberId) return;
-    setLoadingGroups(true);
-    setError(null);
-    try {
-      const r = await adminNotifGroups(config.numberId);
-      setGroups(Array.isArray(r) ? r : []);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoadingGroups(false);
-    }
-  }
+  useEffect(() => {
+    if (!isConnected) return;
+    (async () => {
+      setLoadingGroups(true);
+      try {
+        const r = await adminNotifGroups();
+        setGroups(Array.isArray(r) ? r : []);
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setLoadingGroups(false);
+      }
+    })();
+  }, [isConnected]);
 
   async function save() {
     setSaving(true);
@@ -80,7 +87,7 @@ export default function PageAdminNotifications({ numbers = [] }) {
     setError(null);
     try {
       // O backend testa a config PERSISTIDA, não o estado local. Salva antes de
-      // testar pra a mensagem ir exatamente pro número/grupo que está na tela.
+      // testar pra a mensagem ir exatamente pro grupo que está na tela.
       const r = await adminNotifSave(config);
       setConfig(r.config);
       await adminNotifTest();
@@ -96,19 +103,19 @@ export default function PageAdminNotifications({ numbers = [] }) {
   const update = (patch) => setConfig(c => ({ ...c, ...patch }));
   const updateEvent = (key, val) => setConfig(c => ({ ...c, events: { ...(c.events || {}), [key]: val } }));
 
-  const selectedNumber = numbers.find(n => n.id === config?.numberId);
-  const isConnected = selectedNumber?.status === "connected";
-
   if (loading || !config) {
     return <div style={{ padding: 40, textAlign: "center", color: "var(--color-text-secondary)" }}>Carregando...</div>;
   }
+
+  const q = groupSearch.trim().toLowerCase();
+  const filteredGroups = groups.filter(g => !q || (g.name || "").toLowerCase().includes(q));
 
   return (
     <div style={{ padding: "28px 32px", maxWidth: 640 }}>
       <div style={{ marginBottom: 24 }}>
         <div style={{ fontSize: 20, fontWeight: 700, color: "var(--color-text-primary)" }}>Notificações WhatsApp</div>
         <div style={{ fontSize: 13, color: "var(--color-text-secondary)", marginTop: 4 }}>
-          Receba logs e alertas do sistema diretamente em um grupo do WhatsApp.
+          Receba logs e alertas do sistema em um grupo do WhatsApp, enviados pelo número do WhatsNimbus.
         </div>
       </div>
 
@@ -129,77 +136,81 @@ export default function PageAdminNotifications({ numbers = [] }) {
         <Toggle value={!!config.enabled} onChange={v => update({ enabled: v })} />
       </div>
 
-      {/* Sessão e grupo */}
+      {/* Grupo de destino */}
       <div style={cardStyle}>
         <div style={{ fontSize: 15, fontWeight: 700, color: "var(--color-text-primary)", marginBottom: 16 }}>Grupo de destino</div>
 
-        {numbers.length === 0 ? (
+        {!isConnected ? (
           <div style={{ fontSize: 13, color: "var(--color-text-secondary)", background: "var(--color-surface-alt)", borderRadius: 8, padding: "12px 14px" }}>
-            Nenhum número WhatsApp cadastrado. Vá em <strong>WhatsApp</strong> e conecte um número primeiro.
+            O WhatsNimbus não está conectado.{" "}
+            {onGoToWhatsNimbus ? (
+              <span onClick={onGoToWhatsNimbus} style={{ color: PRIMARY_DARK, fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}>
+                Conecte o WhatsNimbus
+              </span>
+            ) : (
+              <strong>Conecte o WhatsNimbus</strong>
+            )}{" "}
+            para escolher o grupo.
           </div>
         ) : (
-          <>
-            <div style={{ marginBottom: 14 }}>
-              <div style={labelStyle}>Número / sessão</div>
-              <select
-                value={config.numberId || ""}
-                onChange={e => { setGroups([]); update({ numberId: e.target.value, groupJid: null, groupName: null }); }}
-                style={inputStyle}
-              >
-                <option value="">Selecione um número...</option>
-                {numbers.map(n => (
-                  <option key={n.id} value={n.id}>
-                    {n.label || n.id}
-                    {n.phone ? ` (${n.phone})` : ""}
-                    {n.status === "connected" ? " ✓" : ""}
-                  </option>
-                ))}
-              </select>
-              {config.numberId && !isConnected && (
-                <div style={{ fontSize: 12, color: "#B45309", marginTop: 4 }}>
-                  Esta sessão não está conectada. As notificações não serão enviadas até reconectar.
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {config.groupJid && (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, background: "var(--color-surface-alt)", border: `1px solid ${PRIMARY}` }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--color-text-primary)" }}>{config.groupName || config.groupJid}</div>
                 </div>
-              )}
-            </div>
-
-            <div style={{ marginBottom: 14 }}>
-              <div style={labelStyle}>Grupo WhatsApp</div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <select
-                  value={config.groupJid || ""}
-                  onChange={e => {
-                    const g = groups.find(g => g.jid === e.target.value);
-                    update({ groupJid: e.target.value || null, groupName: g?.name || null });
-                  }}
-                  style={{ ...inputStyle, flex: 1 }}
-                  disabled={groups.length === 0}
-                >
-                  <option value="">
-                    {groups.length === 0
-                      ? config.groupJid
-                        ? `${config.groupName || config.groupJid} (clique em Buscar)`
-                        : "Clique em Buscar Grupos..."
-                      : "Selecione um grupo..."}
-                  </option>
-                  {groups.map(g => (
-                    <option key={g.jid} value={g.jid}>{g.name || g.jid}</option>
-                  ))}
-                </select>
                 <button
-                  style={{ ...btnSecondary, whiteSpace: "nowrap" }}
-                  onClick={fetchGroups}
-                  disabled={!config.numberId || loadingGroups}
+                  onClick={() => update({ groupJid: null, groupName: null })}
+                  style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid var(--color-border)", background: "transparent", color: "var(--color-text-primary)", fontSize: 12, cursor: "pointer" }}
                 >
-                  {loadingGroups ? "Buscando..." : "Buscar Grupos"}
+                  Trocar
                 </button>
               </div>
-              {config.groupName && (
-                <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 4 }}>
-                  Grupo selecionado: <strong>{config.groupName}</strong>
+            )}
+
+            {loadingGroups && <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Carregando grupos…</div>}
+
+            {!loadingGroups && !config.groupJid && groups.length > 0 && (
+              <input
+                autoFocus
+                value={groupSearch}
+                onChange={e => setGroupSearch(e.target.value)}
+                placeholder="Buscar grupo pelo nome..."
+                style={inputStyle}
+              />
+            )}
+
+            {!loadingGroups && !config.groupJid && (
+              groups.length === 0 ? (
+                <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                  Nenhum grupo encontrado. O WhatsNimbus precisa participar de algum grupo do WhatsApp primeiro.
                 </div>
-              )}
-            </div>
-          </>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 260, overflowY: "auto" }}>
+                  {filteredGroups.length === 0 ? (
+                    <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                      Nenhum grupo bate com "{groupSearch}".
+                    </div>
+                  ) : (
+                    filteredGroups.map(g => (
+                      <div key={g.jid} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 8, border: "1px solid var(--color-border)", background: "var(--color-surface-alt)" }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-primary)" }}>{g.name || g.jid}</div>
+                          <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{g.members || 0} membros</div>
+                        </div>
+                        <button
+                          onClick={() => update({ groupJid: g.jid, groupName: g.name || null })}
+                          style={{ padding: "5px 12px", borderRadius: 6, background: PRIMARY, color: "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}
+                        >
+                          Selecionar
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )
+            )}
+          </div>
         )}
       </div>
 
@@ -245,9 +256,9 @@ export default function PageAdminNotifications({ numbers = [] }) {
           {saving ? "Salvando..." : "Salvar"}
         </button>
         <button
-          style={{ ...btnSecondary, opacity: (!config.groupJid || !config.numberId) ? 0.5 : 1 }}
+          style={{ ...btnSecondary, opacity: (!config.groupJid || !isConnected) ? 0.5 : 1 }}
           onClick={runTest}
-          disabled={testing || !config.groupJid || !config.numberId}
+          disabled={testing || !config.groupJid || !isConnected}
           title={!config.groupJid ? "Configure o grupo antes de testar" : ""}
         >
           {testing ? "Enviando..." : "Enviar Teste"}

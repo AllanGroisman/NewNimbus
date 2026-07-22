@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../data/constants";
 import Modal from "../components/ui/Modal";
 import {
@@ -10,6 +10,8 @@ import {
   adminDeleteLocalBackup,
   adminDeleteRemoteBackup,
 } from "../data/api";
+
+const BACKUPS_POLL_MS = 20 * 1000;
 
 function fmtSize(bytes) {
   if (!bytes) return "—";
@@ -74,6 +76,11 @@ export default function PageAdminBackups() {
   const [toast,   setToast]   = useState(null);
   const [busy,    setBusy]    = useState({});   // "local:filename" | "remote:filename" → true
   const [creating,setCreating]= useState(false);
+  // Espelham busy/creating pro polling de fundo ler o valor atual sem re-criar o timer.
+  const busyRef = useRef(busy);
+  useEffect(() => { busyRef.current = busy; }, [busy]);
+  const creatingRef = useRef(creating);
+  useEffect(() => { creatingRef.current = creating; }, [creating]);
 
   // Confirm modal
   const [confirm, setConfirm] = useState(null); // { action, item, source, label, danger }
@@ -109,6 +116,37 @@ export default function PageAdminBackups() {
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  // Polling de fundo — backups/restores feitos em outra aba/sessão (ou via cron)
+  // só apareciam com F5. Pausa com a aba oculta e enquanto uma ação local (criar/
+  // enviar/excluir/restaurar) já está em andamento, pra não disputar com refresh().
+  useEffect(() => {
+    let cancelled = false;
+    let timer = null;
+    async function tick() {
+      const idle = Object.keys(busyRef.current).length === 0 && !creatingRef.current;
+      if (!cancelled && !document.hidden && idle) {
+        try {
+          const [loc, rem] = await Promise.all([adminBackupsLocal(), adminBackupsRemote()]);
+          if (!cancelled) {
+            setLocal(loc.items || []);
+            setB2ok(rem.ok !== false);
+            setRemoteWritable(rem.writable !== false);
+            setRemote(rem.items || []);
+          }
+        } catch { /* mantém a última lista conhecida */ }
+      }
+      if (!cancelled) timer = setTimeout(tick, BACKUPS_POLL_MS);
+    }
+    timer = setTimeout(tick, BACKUPS_POLL_MS);
+    const onVisibility = () => { if (!document.hidden) { clearTimeout(timer); tick(); } };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
 
   function withBusy(key, fn) {
     setBusy(b => ({ ...b, [key]: true }));
