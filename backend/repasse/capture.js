@@ -294,11 +294,13 @@ async function processMessage(userId, leaders, urls, waJid) {
 
       console.log(`[repasse] scrape ${scraped ? "ok" : "falhou"}: ${scraped?.name || store}`);
 
-      // Sem nome, foto, preço e preço antigo confiáveis, não dá pra saber se o
-      // link é de fato um produto (ex.: página de busca, categoria, link caído).
-      // Descarta em vez de inserir um item incompleto/inválido na campanha.
-      if (!scraped?.name || !scraped?.img || scraped?.price == null || scraped?.originalPrice == null) {
-        console.log(`[repasse] dados insuficientes (nome/foto/preço/preço antigo) → provavelmente não é produto, descartado`);
+      // Sem nome, foto e preço confiáveis, não dá pra saber se o link é de fato
+      // um produto (ex.: página de busca, categoria, link caído). Descarta em
+      // vez de inserir um item incompleto/inválido na campanha. Preço antigo
+      // (originalPrice) NÃO é exigido: produtos sem desconto ativo (ex. preço
+      // cheio na Shopee) são válidos e não devem ser descartados por isso.
+      if (!scraped?.name || !scraped?.img || scraped?.price == null) {
+        console.log(`[repasse] dados insuficientes (nome/foto/preço) → provavelmente não é produto, descartado`);
         discarded.push({ rawUrl, resolved, store, affiliateConfigured, reason: "dados insuficientes (não é produto)" });
         continue;
       }

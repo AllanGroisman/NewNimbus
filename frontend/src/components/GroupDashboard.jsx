@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, soldText, getGroupCategories, getGroupStats, computeQueueETA, formatETA, formatTimeBR, formatDateBR, isSameDayBR } from "../data/constants";
-import { createWAGroup, leaveWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupQueue, saveGroupQueue, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue } from "../data/api";
+import { createWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupQueue, saveGroupQueue, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue } from "../data/api";
 import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
 import { useUnsavedGuard, useRequestNavigation } from "../data/navGuard";
 import BusyOverlay from "./ui/BusyOverlay";
@@ -219,7 +219,7 @@ function QueueItemCard({ item, idx, eta, onRemove, onDragStart, onDragOver, onDr
   );
 }
 
-export default function GroupDashboard({ group, numbers, whatsappGroups = [], affiliateConfigured = true, affiliateStatus = null, onBack, onUpdate, onDelete, onCreateWhatsappGroup, onDeleteWhatsappGroup, onUpdateWhatsappGroup, onGoToSettings, onGoToAffiliate, onGoToWhatsapp, customTemplates = [], onAddCustomTemplate, onDeleteCustomTemplate, onUpdateCustomTemplate, limits }) {
+export default function GroupDashboard({ group, numbers, whatsappGroups = [], affiliateConfigured = true, affiliateStatus = null, onBack, onUpdate, onDelete, onCreateWhatsappGroup, onUpdateWhatsappGroup, onGoToSettings, onGoToAffiliate, onGoToWhatsapp, customTemplates = [], onAddCustomTemplate, onDeleteCustomTemplate, onUpdateCustomTemplate, limits }) {
   const [tab, setTab] = useState(() => readSavedTab(group.id));
   // Guarda a aba atual por campanha pra restaurar no F5.
   useEffect(() => { writeSavedTab(group.id, tab); }, [group.id, tab]);
@@ -243,7 +243,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const [loadingWAGroups, setLoadingWAGroups] = useState(false);
   const [waGroupsError, setWaGroupsError] = useState(null);
   const [importingJid, setImportingJid] = useState(null);
-  const [confirmDeleteWG, setConfirmDeleteWG] = useState(null);
   const [confirmUnlinkWG, setConfirmUnlinkWG] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
   const [newWGForm, setNewWGForm] = useState({ name: "", numberIds: numbers[0]?.id ? [numbers[0].id] : [], participants: "" });
@@ -893,13 +892,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     } catch (err) {
       alert(`Erro ao atualizar link: ${err.message}`);
     }
-  };
-
-  // Excluir grupo (sair no WhatsApp + remover do estado)
-  const handleDeleteWG = async (wg) => {
-    try { await leaveWAGroup(wg.numberId, wg.id); } catch (err) { console.error(err); }
-    onDeleteWhatsappGroup(wg.id);
-    setConfirmDeleteWG(null);
   };
 
   const addWindow = () => setSched(s => ({ ...s, windows: [...s.windows, { id: Date.now(), from: "10:00", to: "14:00", interval: 30 }] }));
@@ -1887,7 +1879,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                       </button>
                       <div style={{ flex: 1 }} />
                       <button onClick={() => setConfirmUnlinkWG(w)} style={{ padding: "6px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: "pointer" }}>Desvincular</button>
-                      <button onClick={() => setConfirmDeleteWG(w)} style={{ padding: "6px 12px", borderRadius: 7, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 12, cursor: "pointer" }}>Excluir</button>
                     </div>
                   </div>
                 );
@@ -2145,18 +2136,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 <button onClick={submitCreateWG} disabled={!newWGForm.name.trim() || (newWGForm.numberIds || []).length === 0 || creatingWG} style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: (!newWGForm.name.trim() || (newWGForm.numberIds || []).length === 0 || creatingWG) ? 0.5 : 1 }}>
                   {creatingWG ? "⟳ Criando..." : (newWGForm.numberIds || []).length > 1 ? `Criar e vincular (${newWGForm.numberIds.length})` : "Criar e vincular"}
                 </button>
-              </div>
-            </Modal>
-          )}
-
-          {confirmDeleteWG && (
-            <Modal title="Excluir grupo do WhatsApp?" onClose={() => setConfirmDeleteWG(null)} danger>
-              <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
-                <strong style={{ color: "var(--color-text-primary)" }}>{confirmDeleteWG.name}</strong> será removido permanentemente e desvinculado de todas as campanhas. Os envios pendentes para este grupo serão cancelados.
-              </p>
-              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                <button onClick={() => setConfirmDeleteWG(null)} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
-                <button onClick={() => handleDeleteWG(confirmDeleteWG)} style={{ padding: "8px 16px", borderRadius: 8, background: "#E24B4A", color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>Excluir permanentemente</button>
               </div>
             </Modal>
           )}

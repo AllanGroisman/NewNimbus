@@ -725,7 +725,7 @@ function detectStore(url) {
   try {
     const u = new URL(url);
     const host = u.hostname.toLowerCase();
-    if (/mercadolivre|mercadolibre/.test(host) || /merc\.li|mlb\.li/.test(host)) return "Mercado Livre";
+    if (/mercadolivre|mercadolibre/.test(host) || /merc\.li|mlb\.li|meli\.la/.test(host)) return "Mercado Livre";
     if (/amazon|amzn/.test(host)) return "Amazon";
     if (/shopee/.test(host)) return "Shopee";
     if (/americanas/.test(host)) return "Americanas";
@@ -990,7 +990,7 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
 
     // Shopee: a PDP é SPA vazia pra bot — sem nome via DOM/OG, usa o slug da URL.
     let name = data.name || null;
-    if (!name && store === "Shopee") name = slugNameFromUrl(cleanUrl);
+    if (!name && store === "Shopee") name = slugNameFromUrl(finalUrl);
 
     return {
       name: name || null,
