@@ -396,6 +396,209 @@ describe("Billing — plan-gating no PUT /api/state", () => {
   });
 });
 
+describe("Billing — trial de R$1 (15 dias, só Básico, 1x por conta)", () => {
+  it("checkout com trial no basic passa withTrial=true pro Stripe", async () => {
+    const { auth } = await createTestUser();
+    const res = await auth("post", "/api/billing/checkout").send({ planId: "basic", trial: true });
+    expect(res.status).toBe(200);
+    expect(stripeCalls.createCheckoutSession).toHaveLength(1);
+    expect(stripeCalls.createCheckoutSession[0].withTrial).toBe(true);
+  });
+
+  it("checkout sem trial não passa withTrial", async () => {
+    const { auth } = await createTestUser();
+    await auth("post", "/api/billing/checkout").send({ planId: "basic" });
+    expect(stripeCalls.createCheckoutSession[0].withTrial).toBe(false);
+  });
+
+  it("trial em plano != basic → 400", async () => {
+    const { auth } = await createTestUser();
+    const res = await auth("post", "/api/billing/checkout").send({ planId: "pro", trial: true });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Básico/);
+  });
+
+  it("trial já usado (trialUsedAt) → 400", async () => {
+    const { user, auth } = await createTestUser();
+    await billing.update(user.id, { trialUsedAt: new Date() });
+    const res = await auth("post", "/api/billing/checkout").send({ planId: "basic", trial: true });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/já utilizado/i);
+  });
+
+  it("ex-assinante (stripeSubscriptionId) não é elegível → 400", async () => {
+    const { user, auth } = await createTestUser();
+    await billing.update(user.id, { stripeSubscriptionId: "sub_old", planId: "free", status: "canceled" });
+    const res = await auth("post", "/api/billing/checkout").send({ planId: "basic", trial: true });
+    expect(res.status).toBe(400);
+  });
+
+  it("/billing/me expõe trialEligible=true pra conta nova e false após trial", async () => {
+    const { user, auth } = await createTestUser();
+    const before = await auth("get", "/api/billing/me");
+    expect(before.body.trialEligible).toBe(true);
+    await billing.update(user.id, { trialUsedAt: new Date() });
+    const after = await auth("get", "/api/billing/me");
+    expect(after.body.trialEligible).toBe(false);
+  });
+
+  it("webhook com trial_end grava trialUsedAt", async () => {
+    const { user } = await createTestUser();
+    await billing.update(user.id, { stripeCustomerId: "cus_trial_1" });
+    await postEvent({
+      id: "evt_trial_1",
+      type: "customer.subscription.created",
+      data: {
+        object: {
+          id: "sub_trial_1",
+          customer: "cus_trial_1",
+          status: "trialing",
+          trial_end: Math.floor(Date.now() / 1000) + 15 * 86400,
+          current_period_end: Math.floor(Date.now() / 1000) + 15 * 86400,
+          items: { data: [{ price: { id: "price_test_basic" } }] },
+        },
+      },
+    });
+    const sub = await billing.getByUserId(user.id);
+    expect(sub.status).toBe("trialing");
+    expect(sub.trialUsedAt).not.toBeNull();
+  });
+});
+
+describe("Billing — /me com fresh, usage e plans", () => {
+  it("?fresh=1 reconcilia com o Stripe e é throttled na repetição imediata", async () => {
+    const { user, auth } = await createTestUser();
+    await billing.update(user.id, { stripeCustomerId: "cus_fresh_1", planId: "basic", status: "active" });
+    setStripeMock({
+      activeSubscription: {
+        id: "sub_fresh_1",
+        customer: "cus_fresh_1",
+        status: "active",
+        current_period_end: Math.floor(Date.now() / 1000) + 30 * 86400,
+        items: { data: [{ price: { id: "price_test_pro" } }] },
+      },
+    });
+    const res = await auth("get", "/api/billing/me?fresh=1");
+    expect(res.status).toBe(200);
+    expect(res.body.planId).toBe("pro"); // corrigido pelo Stripe ao vivo
+    expect(stripeCalls.getActiveSubscriptionForCustomer).toHaveLength(1);
+    // Repetição imediata cai no throttle — não chama o Stripe de novo.
+    await auth("get", "/api/billing/me?fresh=1");
+    expect(stripeCalls.getActiveSubscriptionForCustomer).toHaveLength(1);
+  });
+
+  it("sem fresh não chama o Stripe", async () => {
+    const { user, auth } = await createTestUser();
+    await billing.update(user.id, { stripeCustomerId: "cus_nofresh", planId: "basic", status: "active" });
+    await auth("get", "/api/billing/me");
+    expect(stripeCalls.getActiveSubscriptionForCustomer).toHaveLength(0);
+  });
+
+  it("inclui usage com contagens do state e plans com preços", async () => {
+    const { user, auth } = await createTestUser();
+    await billing.update(user.id, { planId: "pro", status: "active" });
+    const groups = [
+      makeGroup({ id: 1, name: "G1" }),
+      makeGroup({ id: 2, name: "G2" }),
+    ];
+    await auth("put", "/api/state").send({
+      groups,
+      numbers: [{ id: "n1", phone: "551199" }],
+      whatsappGroups: [],
+    });
+    const res = await auth("get", "/api/billing/me");
+    expect(res.body.usage.groups).toBe(2);
+    expect(res.body.usage.numbers).toBe(1);
+    expect(res.body.plans).toHaveLength(3);
+    const basic = res.body.plans.find(p => p.id === "basic");
+    expect(basic.priceBRL).toBe(69.90);
+    expect(basic.limits.groups).toBe(1);
+  });
+});
+
+describe("Billing — /details", () => {
+  it("sem customer retorna struct vazia sem chamar o Stripe", async () => {
+    const { auth } = await createTestUser();
+    const res = await auth("get", "/api/billing/details");
+    expect(res.status).toBe(200);
+    expect(res.body.hasStripeCustomer).toBe(false);
+    expect(res.body.upcomingInvoice).toBeNull();
+    expect(res.body.invoices).toEqual([]);
+    expect(stripeCalls.getUpcomingInvoice).toHaveLength(0);
+  });
+
+  it("com customer retorna próxima fatura, cartão e histórico", async () => {
+    const { user, auth } = await createTestUser();
+    await billing.update(user.id, { stripeCustomerId: "cus_det_1", stripeSubscriptionId: "sub_det_1", planId: "basic", status: "active" });
+    setStripeMock({
+      upcomingInvoice: { amountBRL: 69.9, currency: "brl", nextPaymentAttempt: new Date() },
+      paymentMethod: { brand: "visa", last4: "4242", expMonth: 12, expYear: 2027 },
+      invoices: [{ id: "in_1", date: new Date(), amountBRL: 1, status: "paid", hostedUrl: "https://x/1", pdfUrl: "https://x/1.pdf" }],
+    });
+    const res = await auth("get", "/api/billing/details");
+    expect(res.status).toBe(200);
+    expect(res.body.upcomingInvoice.amountBRL).toBe(69.9);
+    expect(res.body.paymentMethod.last4).toBe("4242");
+    expect(res.body.invoices).toHaveLength(1);
+    expect(res.body.invoices[0].status).toBe("paid");
+  });
+
+  it("Stripe desabilitado retorna 200 com struct vazia", async () => {
+    setStripeMock({ enabled: false });
+    const { auth } = await createTestUser();
+    const res = await auth("get", "/api/billing/details");
+    expect(res.status).toBe(200);
+    expect(res.body.stripeEnabled).toBe(false);
+  });
+});
+
+describe("Billing — reactivate", () => {
+  it("desfaz cancelamento agendado e persiste no banco", async () => {
+    const { user, auth } = await createTestUser();
+    await billing.update(user.id, {
+      stripeCustomerId: "cus_re_1", stripeSubscriptionId: "sub_re_1",
+      planId: "pro", status: "active", cancelAtPeriodEnd: true,
+    });
+    setStripeMock({
+      activeSubscription: {
+        id: "sub_re_1",
+        customer: "cus_re_1",
+        status: "active",
+        cancel_at_period_end: true,
+        current_period_end: Math.floor(Date.now() / 1000) + 10 * 86400,
+        items: { data: [{ price: { id: "price_test_pro" } }] },
+      },
+    });
+    const res = await auth("post", "/api/billing/reactivate").send({});
+    expect(res.status).toBe(200);
+    expect(res.body.cancelAtPeriodEnd).toBe(false);
+    expect(stripeCalls.reactivateSubscription).toHaveLength(1);
+    const sub = await billing.getByUserId(user.id);
+    expect(sub.cancelAtPeriodEnd).toBe(false);
+  });
+
+  it("sem assinatura → 400", async () => {
+    const { auth } = await createTestUser();
+    const res = await auth("post", "/api/billing/reactivate").send({});
+    expect(res.status).toBe(400);
+  });
+
+  it("sem cancelamento agendado → 400", async () => {
+    const { user, auth } = await createTestUser();
+    await billing.update(user.id, { stripeSubscriptionId: "sub_ok", planId: "pro", status: "active", cancelAtPeriodEnd: false });
+    const res = await auth("post", "/api/billing/reactivate").send({});
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/não está agendado/i);
+  });
+
+  it("Stripe desabilitado → 501", async () => {
+    setStripeMock({ enabled: false });
+    const { auth } = await createTestUser();
+    const res = await auth("post", "/api/billing/reactivate").send({});
+    expect(res.status).toBe(501);
+  });
+});
+
 describe("Billing — admin bypass", () => {
   it("admin recebe business permanente e passa em qualquer contagem", async () => {
     const { user, auth } = await createTestUser();

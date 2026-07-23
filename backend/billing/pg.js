@@ -35,6 +35,9 @@ async function ensureForUser(userId, defaults = {}) {
 async function update(userId, patch) {
   const data = { ...patch };
   if (patch.currentPeriodEnd) data.currentPeriodEnd = new Date(patch.currentPeriodEnd);
+  if (patch.trialUsedAt) data.trialUsedAt = new Date(patch.trialUsedAt);
+  // trialEnd vem de normalizeSubscription mas não é coluna — nunca persistir.
+  delete data.trialEnd;
   return prisma().subscription.upsert({
     where: { userId },
     create: {
@@ -43,6 +46,7 @@ async function update(userId, patch) {
       status: data.status || "inactive",
       currentPeriodEnd: data.currentPeriodEnd || null,
       cancelAtPeriodEnd: !!data.cancelAtPeriodEnd,
+      trialUsedAt: data.trialUsedAt || null,
       stripeCustomerId: data.stripeCustomerId || null,
       stripeSubscriptionId: data.stripeSubscriptionId || null,
     },

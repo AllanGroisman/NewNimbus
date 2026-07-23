@@ -163,13 +163,24 @@ export async function rejectAllPending(groupId) {
 }
 
 // ─── Billing (Stripe) ──────────────────────────────────────────────────
-// Status atual: { planId, effectivePlan, status, currentPeriodEnd, daysLeftInTrial, limits, stripeEnabled }
-export async function billingMe() {
-  return http("GET", "/api/billing/me");
+// Status atual: { planId, effectivePlan, status, currentPeriodEnd, daysLeftInTrial,
+// daysUntilPeriodEnd, limits, usage, trialEligible, plans, stripeEnabled }
+// fresh=true → backend reconcilia com o Stripe antes (usar no mount da página).
+export async function billingMe(fresh) {
+  return http("GET", "/api/billing/me" + (fresh ? "?fresh=1" : ""));
 }
 // Cria Checkout Session e devolve { url } — frontend chama window.location.assign(url)
-export async function billingCheckout(planId) {
-  return http("POST", "/api/billing/checkout", { planId });
+// opts.trial=true → checkout "15 dias por R$1" (só Básico, 1x por conta)
+export async function billingCheckout(planId, opts) {
+  return http("POST", "/api/billing/checkout", { planId, trial: !!opts?.trial });
+}
+// Detalhes de cobrança: { upcomingInvoice, paymentMethod, invoices } — mount da página
+export async function billingDetails() {
+  return http("GET", "/api/billing/details");
+}
+// Desfaz cancelamento agendado — devolve status atualizado (mesmo shape do billingMe)
+export async function billingReactivate() {
+  return http("POST", "/api/billing/reactivate");
 }
 // Reconciliação ativa — busca a assinatura ao vivo no Stripe e devolve o status
 // atualizado (mesmo shape do billingMe). Chamado ao voltar do checkout.

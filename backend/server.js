@@ -154,6 +154,12 @@ async function handleStripeEvent(event) {
         logger.warn({ subId: obj.id }, "[billing] subscription sem userId — ignorando");
         return;
       }
+      // Marca trialUsedAt na primeira vez que vemos uma sub com trial — queima
+      // a elegibilidade do trial de R$1 (set-if-null = idempotente).
+      if (norm.trialEnd) {
+        const existing = await billing.getByUserId(userId);
+        if (!existing?.trialUsedAt) norm.trialUsedAt = new Date();
+      }
       await billing.update(userId, norm);
       return;
     }
@@ -519,32 +525,129 @@ app.get("/api/state/ops", auth.requireAuth, async (req, res) => {
 // Billing (Stripe)
 // ────────────────────────────────────────────────────────────────────────
 
+// Reconciliação com o Stripe: busca a assinatura ao vivo e atualiza o banco.
+// Usada pelo POST /sync e pelo GET /me?fresh=1. Também marca trialUsedAt
+// na primeira vez que uma sub com trial aparece (set-if-null = idempotente).
+async function reconcileWithStripe(userId) {
+  const sub = await billing.getByUserId(userId);
+  if (!sub?.stripeCustomerId) return false;
+  const norm = await stripeMod.getActiveSubscriptionForCustomer(sub.stripeCustomerId);
+  if (!norm) return false;
+  if (norm.trialEnd && !sub.trialUsedAt) norm.trialUsedAt = new Date();
+  await billing.update(userId, norm);
+  return true;
+}
+
+// Throttle do fresh sync — memória do processo (backend roda em processo único
+// no pm2). Evita que o poll de 20s da página martele o Stripe.
+const FRESH_SYNC_TTL_MS = 60 * 1000;
+const freshSyncAt = new Map(); // userId → timestamp do último sync
+
+// Contagens de uso do plano (campanhas, números, etc.) pra página de assinatura.
+// Espelha as chaves de limits.js pro frontend parear limite × uso.
+async function computeUsage(userId) {
+  const state = await storage.loadState(userId);
+  const groups = Array.isArray(state?.groups) ? state.groups : [];
+  const numbers = Array.isArray(state?.numbers) ? state.numbers : [];
+  return {
+    groups: groups.length,
+    numbers: numbers.length,
+    maxWhatsappGroupsPerCampaign: groups.reduce((max, g) => {
+      const n = Array.isArray(g?.whatsappGroupIds) ? g.whatsappGroupIds.length : 0;
+      return n > max ? n : max;
+    }, 0),
+    maxCategoriesPerGroup: groups.reduce((max, g) => {
+      const n = Array.isArray(g?.categories) ? g.categories.length : 0;
+      return n > max ? n : max;
+    }, 0),
+    autoScrapingInUse: groups.some((g) => g?.scraping?.auto === true),
+  };
+}
+
 // Status atual da assinatura do usuário — usado pelo frontend pra renderizar
 // plano ativo, limites, dias restantes do trial e badges past_due.
+// ?fresh=1 reconcilia com o Stripe antes (throttled) — usado no mount da página;
+// o poll periódico chama sem fresh e lê só o banco.
 app.get("/api/billing/me", auth.requireAuth, async (req, res) => {
   try {
+    if (req.query.fresh && stripeMod.enabled()) {
+      const last = freshSyncAt.get(req.user.id) || 0;
+      if (Date.now() - last > FRESH_SYNC_TTL_MS) {
+        freshSyncAt.set(req.user.id, Date.now());
+        try {
+          await reconcileWithStripe(req.user.id);
+        } catch (err) {
+          // Nunca quebra a página por falha do Stripe — cai pro dado do banco.
+          logger.warn({ err: err.message }, "[billing] fresh sync falhou — usando banco");
+        }
+      }
+    }
     const status = await billing.getStatus(req.user.id, req.user.role);
-    res.json({ ...status, stripeEnabled: stripeMod.enabled() });
+    let usage = null;
+    try {
+      usage = await computeUsage(req.user.id);
+    } catch (err) {
+      logger.warn({ err: err.message }, "[billing] computeUsage falhou");
+    }
+    res.json({ ...status, usage, stripeEnabled: stripeMod.enabled() });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Cria Checkout Session pra um plano. Body: { planId }.
+// Detalhes de cobrança pro mount da página (nunca polled): próxima fatura,
+// cartão cadastrado e histórico de faturas. Falha parcial → campo null/[].
+app.get("/api/billing/details", auth.requireAuth, async (req, res) => {
+  try {
+    const empty = { upcomingInvoice: null, paymentMethod: null, invoices: [] };
+    if (!stripeMod.enabled()) {
+      return res.json({ stripeEnabled: false, hasStripeCustomer: false, ...empty });
+    }
+    const sub = await billing.getByUserId(req.user.id);
+    if (!sub?.stripeCustomerId) {
+      return res.json({ stripeEnabled: true, hasStripeCustomer: false, ...empty });
+    }
+    const [upcoming, pm, invoices] = await Promise.allSettled([
+      stripeMod.getUpcomingInvoice(sub.stripeCustomerId),
+      stripeMod.getDefaultPaymentMethod(sub.stripeCustomerId, sub.stripeSubscriptionId),
+      stripeMod.listInvoices(sub.stripeCustomerId),
+    ]);
+    res.json({
+      stripeEnabled: true,
+      hasStripeCustomer: true,
+      upcomingInvoice: upcoming.status === "fulfilled" ? upcoming.value : null,
+      paymentMethod: pm.status === "fulfilled" ? pm.value : null,
+      invoices: invoices.status === "fulfilled" ? invoices.value : [],
+    });
+  } catch (err) {
+    logger.error({ err: err.message }, "[billing] details falhou");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Cria Checkout Session pra um plano. Body: { planId, trial? }.
+// trial=true → "15 dias por R$1" (só plano Básico, 1x por usuário).
 // Responde { url } — frontend faz window.location.assign(url).
 app.post("/api/billing/checkout", auth.requireAuth, async (req, res) => {
   try {
     if (!stripeMod.enabled()) return res.status(501).json({ error: "Stripe não configurado" });
     const planId = String(req.body?.planId || "").trim();
+    const withTrial = !!req.body?.trial;
     if (!["basic", "pro", "business"].includes(planId)) {
       return res.status(400).json({ error: "planId inválido" });
     }
     if (!stripeMod.priceFor(planId)) {
       return res.status(500).json({ error: `Price ID do plano "${planId}" não configurado no servidor` });
     }
+    if (withTrial && planId !== "basic") {
+      return res.status(400).json({ error: "Trial disponível apenas no plano Básico" });
+    }
 
     // Garante sub existente; pega customer se já tem.
     const sub = await billing.ensureForUser(req.user.id, { planId: "free", status: "inactive" });
+    if (withTrial && (sub.trialUsedAt || sub.stripeSubscriptionId)) {
+      return res.status(400).json({ error: "Trial já utilizado nesta conta" });
+    }
     const customer = await stripeMod.getOrCreateCustomer({
       userId: req.user.id,
       email: req.user.email,
@@ -561,6 +664,7 @@ app.post("/api/billing/checkout", auth.requireAuth, async (req, res) => {
       planId,
       customer,
       userId: req.user.id,
+      withTrial,
     });
     metrics.recordCheckout?.(planId, "ok");
     res.json({ url: session.url });
@@ -594,17 +698,33 @@ app.post("/api/billing/portal", auth.requireAuth, async (req, res) => {
 app.post("/api/billing/sync", auth.requireAuth, async (req, res) => {
   try {
     if (!stripeMod.enabled()) return res.status(501).json({ error: "Stripe não configurado" });
-    const sub = await billing.getByUserId(req.user.id);
-    if (sub?.stripeCustomerId) {
-      const norm = await stripeMod.getActiveSubscriptionForCustomer(sub.stripeCustomerId);
-      if (norm) await billing.update(req.user.id, norm);
-      const status = await billing.getStatus(req.user.id, req.user.role);
-      return res.json({ ...status, stripeEnabled: true, synced: !!norm });
-    }
+    const synced = await reconcileWithStripe(req.user.id);
     const status = await billing.getStatus(req.user.id, req.user.role);
-    res.json({ ...status, stripeEnabled: true, synced: false });
+    res.json({ ...status, stripeEnabled: true, synced });
   } catch (err) {
     logger.error({ err: err.message }, "[billing] sync falhou");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Reativa assinatura com cancelamento agendado (cancel_at_period_end → false).
+// Permite desfazer o cancelamento direto na página, sem passar pelo portal.
+app.post("/api/billing/reactivate", auth.requireAuth, async (req, res) => {
+  try {
+    if (!stripeMod.enabled()) return res.status(501).json({ error: "Stripe não configurado" });
+    const sub = await billing.getByUserId(req.user.id);
+    if (!sub?.stripeSubscriptionId) {
+      return res.status(400).json({ error: "Sem assinatura ativa para reativar" });
+    }
+    if (!sub.cancelAtPeriodEnd) {
+      return res.status(400).json({ error: "Cancelamento não está agendado" });
+    }
+    const norm = await stripeMod.reactivateSubscription(sub.stripeSubscriptionId);
+    await billing.update(req.user.id, norm);
+    const status = await billing.getStatus(req.user.id, req.user.role);
+    res.json({ ...status, stripeEnabled: true });
+  } catch (err) {
+    logger.error({ err: err.message }, "[billing] reactivate falhou");
     res.status(500).json({ error: err.message });
   }
 });

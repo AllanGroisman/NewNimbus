@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../data/constants";
 import Modal from "../components/ui/Modal";
-import { billingMe, billingCheckout, billingPortal } from "../data/api";
+import { billingMe, billingCheckout, billingPortal, billingDetails, billingReactivate } from "../data/api";
 
 const BILLING_POLL_MS = 20 * 1000;
 
@@ -14,8 +14,7 @@ const PLAN_META = {
       "1 número de WhatsApp",
       "1 campanha",
       "3 grupos por campanha",
-      "2 categorias",
-      "Scraping manual",
+      "2 categorias de produtos",
     ],
   },
   pro: {
@@ -27,10 +26,7 @@ const PLAN_META = {
       "3 números de WhatsApp",
       "5 campanhas",
       "15 grupos por campanha",
-      "Todas as categorias",
-      "Scraping automático",
-      "Dashboard por grupo",
-      "Filtros avançados",
+      "Todas as categorias de produtos",
     ],
   },
   business: {
@@ -40,9 +36,8 @@ const PLAN_META = {
     features: [
       "5 números de WhatsApp",
       "Campanhas ilimitadas",
-      "Grupos ilimitados",
-      "Scraping automático",
-      "Relatórios avançados",
+      "Grupos ilimitados por campanha",
+      "Todas as categorias de produtos",
       "Suporte prioritário",
     ],
   },
@@ -60,6 +55,21 @@ function fmtDate(iso) {
   catch { return String(iso); }
 }
 
+// Nome amigável da bandeira do cartão (Stripe manda em minúsculas).
+const CARD_BRANDS = { visa: "Visa", mastercard: "Mastercard", amex: "Amex", elo: "Elo", hipercard: "Hipercard" };
+function cardBrandLabel(brand) {
+  return CARD_BRANDS[brand] || (brand ? brand.charAt(0).toUpperCase() + brand.slice(1) : "Cartão");
+}
+
+// Badge de status de fatura do Stripe (paid/open/void/uncollectible/draft).
+function invoiceBadge(status) {
+  if (status === "paid") return { label: "Paga", color: "#3B6D11", bg: "#EAF3DE", border: "#C5DBA7" };
+  if (status === "open") return { label: "Em aberto", color: "#854F0B", bg: "#FFF7E0", border: "#F0D58A" };
+  if (status === "void") return { label: "Anulada", color: "var(--color-text-secondary)", bg: "var(--color-background-secondary)", border: "var(--color-border-tertiary)" };
+  if (status === "uncollectible") return { label: "Não paga", color: "#A32D2D", bg: "#FCEBEB", border: "#F7C1C1" };
+  return { label: status || "—", color: "var(--color-text-secondary)", bg: "var(--color-background-secondary)", border: "var(--color-border-tertiary)" };
+}
+
 function statusBadge(status, trialDays, cancelAtPeriodEnd) {
   if (cancelAtPeriodEnd) return { label: "Cancelamento agendado", color: "#854F0B", bg: "#FFF7E0", border: "#F0D58A" };
   if (status === "trialing") return { label: `Trial (${trialDays ?? 0}d restantes)`, color: "#185FA5", bg: "#E6F1FB", border: "#B6D5EF" };
@@ -74,15 +84,20 @@ function statusBadge(status, trialDays, cancelAtPeriodEnd) {
 export default function PageSubscription() {
   const [me, setMe] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(null); // planId em checkout, "portal", ou "cancel"
+  const [busy, setBusy] = useState(null); // planId em checkout, "portal", "cancel" ou "reactivate"
   const [error, setError] = useState("");
   const [showCancel, setShowCancel] = useState(false);
+  // Detalhes de cobrança (próxima fatura, cartão, histórico) — carrega 1x no
+  // mount, separado do status pra não bloquear a página se o Stripe demorar.
+  const [details, setDetails] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
-    async function pull() {
+    async function pull(fresh) {
       try {
-        const data = await billingMe();
+        // fresh=true (mount) faz o backend reconciliar com o Stripe ao vivo;
+        // o polling lê só o banco (mais leve).
+        const data = await billingMe(fresh);
         if (!cancelled) { setMe(data); setError(""); }
       } catch (err) {
         if (!cancelled) setError(err.message);
@@ -90,12 +105,25 @@ export default function PageSubscription() {
         if (!cancelled) setLoading(false);
       }
     }
-    pull();
+    async function pullDetails() {
+      try {
+        const data = await billingDetails();
+        if (!cancelled) setDetails(data);
+      } catch {
+        // Não bloqueia a página — seções de detalhe mostram fallback.
+        if (!cancelled) setDetails(null);
+      }
+    }
+    pull(true);
+    pullDetails();
     // Polling leve — o plano pode mudar em segundo plano (webhook do Stripe
     // processando após o checkout, ou um admin alterando o plano manualmente),
     // e sem isso o usuário só via a mudança dando F5. Pausa com a aba oculta.
     let timer = setInterval(() => { if (!document.hidden) pull(); }, BILLING_POLL_MS);
-    const onVisibility = () => { if (!document.hidden) pull(); };
+    // Ao voltar pra esta aba (ex.: depois de mexer no Stripe em outra aba),
+    // reconcilia com o Stripe (fresh — o backend tem throttle de 60s) e
+    // recarrega os detalhes (cartão/próxima fatura podem ter mudado).
+    const onVisibility = () => { if (!document.hidden) { pull(true); pullDetails(); } };
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       cancelled = true;
@@ -104,14 +132,37 @@ export default function PageSubscription() {
     };
   }, []);
 
-  async function startCheckout(planId) {
+  async function startCheckout(planId, opts) {
     setBusy(planId);
     setError("");
+    // Abre a aba em branco AINDA no clique (síncrono) — se abrisse depois do
+    // await, o bloqueador de popup do navegador impediria a aba nova.
+    const win = window.open("", "_blank");
     try {
-      const { url } = await billingCheckout(planId);
-      window.location.assign(url);
+      const { url } = await billingCheckout(planId, opts);
+      if (win) win.location = url;
+      else window.location.assign(url); // popup bloqueado → segue na mesma aba
+    } catch (err) {
+      if (win) win.close();
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Desfaz cancelamento agendado direto na página (sem passar pelo portal).
+  async function reactivate() {
+    setBusy("reactivate");
+    setError("");
+    try {
+      const updated = await billingReactivate();
+      // Merge — a resposta não traz `usage`, então preserva o que já temos.
+      setMe(prev => ({ ...prev, ...updated }));
+      // Recarrega detalhes — a próxima fatura volta a existir após reativar.
+      billingDetails().then(setDetails).catch(() => {});
     } catch (err) {
       setError(err.message);
+    } finally {
       setBusy(null);
     }
   }
@@ -119,11 +170,16 @@ export default function PageSubscription() {
   async function openPortal(action) {
     setBusy(action || "portal");
     setError("");
+    // Mesmo padrão do checkout — abre a aba antes do await pra não ser bloqueada.
+    const win = window.open("", "_blank");
     try {
       const { url } = await billingPortal();
-      window.location.assign(url);
+      if (win) win.location = url;
+      else window.location.assign(url); // popup bloqueado → segue na mesma aba
     } catch (err) {
+      if (win) win.close();
       setError(err.message);
+    } finally {
       setBusy(null);
     }
   }
@@ -173,8 +229,17 @@ export default function PageSubscription() {
       )}
 
       {me.cancelAtPeriodEnd && (
-        <div style={{ background: "#FFF7E0", border: "0.5px solid #F0D58A", color: "#7A5800", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
-          Seu cancelamento está agendado — acesso até <strong>{fmtDate(me.currentPeriodEnd)}</strong>. Pode reverter no portal a qualquer momento antes dessa data.
+        <div style={{ background: "#FFF7E0", border: "0.5px solid #F0D58A", color: "#7A5800", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <span>
+            Sua assinatura termina em <strong>{me.daysUntilPeriodEnd ?? "—"} {me.daysUntilPeriodEnd === 1 ? "dia" : "dias"}</strong> ({fmtDate(me.currentPeriodEnd)}). Até lá, tudo continua funcionando.
+          </span>
+          <button
+            onClick={reactivate}
+            disabled={!!busy}
+            style={{ padding: "7px 14px", borderRadius: 8, background: "#22C55E", color: "#fff", border: "none", fontSize: 12, fontWeight: 500, cursor: busy ? "wait" : "pointer", opacity: busy ? 0.6 : 1, whiteSpace: "nowrap" }}
+          >
+            {busy === "reactivate" ? "Reativando…" : "Reativar assinatura"}
+          </button>
         </div>
       )}
 
@@ -223,6 +288,72 @@ export default function PageSubscription() {
         </div>
       </div>
 
+      {/* ─── SEU PLANO EM USO ─── */}
+      {currentPlan !== "free" && (
+        <>
+          <h3 style={{ fontSize: 14, fontWeight: 500, marginBottom: 12 }}>Seu plano em uso</h3>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12, marginBottom: 28 }}>
+            {/* Benefícios × uso */}
+            <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10, padding: 14 }}>
+              <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 10 }}>Benefícios e uso</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                <UsageRow label="Campanhas" used={me.usage?.groups} limit={me.limits?.groups} />
+                <UsageRow label="Números de WhatsApp" used={me.usage?.numbers} limit={me.limits?.numbers} />
+                <UsageRow label="Grupos por campanha (máx.)" used={me.usage?.maxWhatsappGroupsPerCampaign} limit={me.limits?.whatsappGroupsPerCampaign} />
+                <UsageRow label="Categorias de produtos por campanha (máx.)" used={me.usage?.maxCategoriesPerGroup} limit={me.limits?.categoriesPerGroup} />
+              </div>
+            </div>
+
+            {/* Próxima fatura */}
+            <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10, padding: 14 }}>
+              <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 10 }}>Próxima cobrança</div>
+              {details === null ? (
+                <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Carregando…</div>
+              ) : details.upcomingInvoice ? (
+                <>
+                  <div style={{ fontSize: 22, fontWeight: 500, marginBottom: 4 }}>{fmtPrice(details.upcomingInvoice.amountBRL)}</div>
+                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+                    {me.status === "trialing"
+                      ? <>Primeira cobrança após o trial, em <strong style={{ color: "var(--color-text-primary)" }}>{fmtDate(details.upcomingInvoice.nextPaymentAttempt || me.currentPeriodEnd)}</strong>.</>
+                      : <>Cobrança automática em <strong style={{ color: "var(--color-text-primary)" }}>{fmtDate(details.upcomingInvoice.nextPaymentAttempt || me.currentPeriodEnd)}</strong>.</>}
+                  </div>
+                </>
+              ) : (
+                <div style={{ fontSize: 12, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+                  {me.cancelAtPeriodEnd
+                    ? "Sem cobrança futura — cancelamento agendado."
+                    : "Sem cobrança futura agendada."}
+                </div>
+              )}
+            </div>
+
+            {/* Cartão cadastrado */}
+            <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10, padding: 14 }}>
+              <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 10 }}>Forma de pagamento</div>
+              {details === null ? (
+                <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Carregando…</div>
+              ) : details.paymentMethod ? (
+                <div style={{ fontSize: 13, marginBottom: 12 }}>
+                  {cardBrandLabel(details.paymentMethod.brand)} •••• {details.paymentMethod.last4}
+                  <span style={{ color: "var(--color-text-secondary)", fontSize: 12 }}> · expira {String(details.paymentMethod.expMonth).padStart(2, "0")}/{String(details.paymentMethod.expYear).slice(-2)}</span>
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>Nenhum cartão salvo.</div>
+              )}
+              {me.hasStripeCustomer && (
+                <button
+                  onClick={() => openPortal("card")}
+                  disabled={!!busy}
+                  style={{ padding: "7px 14px", borderRadius: 8, background: "transparent", color: "var(--color-text-primary)", border: "0.5px solid var(--color-border-secondary)", fontSize: 12, cursor: busy ? "wait" : "pointer", fontWeight: 500 }}
+                >
+                  {busy === "card" ? "Abrindo…" : "Trocar cartão"}
+                </button>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
       {/* ─── PLANOS ─── */}
       <h3 style={{ fontSize: 14, fontWeight: 500, marginBottom: 4 }}>
         {hasActiveSub ? "Mudar de plano" : "Escolha seu plano"}
@@ -233,13 +364,18 @@ export default function PageSubscription() {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14, marginBottom: 28 }}>
         {PLAN_ORDER.map(id => {
           const p = PLAN_META[id];
+          // Preço vem do backend (fonte única em limits.js); PLAN_META é fallback.
+          const price = me.plans?.find(pl => pl.id === id)?.priceBRL ?? p.price;
           const current = currentPlan === id;
+          // Trial de R$1: só no Básico, só pra quem nunca assinou/trialou.
+          const trialOffer = id === "basic" && !!me.trialEligible && me.stripeEnabled && !current;
           const recommended = p.recommended && !current;
           const currentIdx = PLAN_ORDER.indexOf(currentPlan);
           const isUpgrade = currentIdx >= 0 && PLAN_ORDER.indexOf(id) > currentIdx;
           const isDowngrade = currentIdx >= 0 && PLAN_ORDER.indexOf(id) < currentIdx;
           const ctaLabel = current ? "Plano atual"
             : busy === id ? "Abrindo Stripe…"
+            : trialOffer ? "Testar por R$ 1,00"
             : "Assinar";
           const ctaHint = current ? null : isUpgrade ? "Upgrade" : isDowngrade ? "Mudar para este" : null;
           return (
@@ -254,6 +390,8 @@ export default function PageSubscription() {
                     : "0.5px solid var(--color-border-tertiary)",
                 borderRadius: 12, padding: 18, position: "relative",
                 display: "flex", flexDirection: "column",
+                // Plano atual fica esmaecido — não dá pra "mudar" pra ele mesmo.
+                opacity: current ? 0.55 : 1,
               }}
             >
               {current && (
@@ -261,15 +399,20 @@ export default function PageSubscription() {
                   SEU PLANO
                 </div>
               )}
-              {recommended && (
+              {recommended && !trialOffer && (
                 <div style={{ position: "absolute", top: -10, left: "50%", transform: "translateX(-50%)", background: PRIMARY, color: "#fff", fontSize: 10, padding: "3px 10px", borderRadius: 6, fontWeight: 600, whiteSpace: "nowrap", letterSpacing: 0.3 }}>
                   MAIS POPULAR
+                </div>
+              )}
+              {trialOffer && (
+                <div style={{ position: "absolute", top: -10, left: "50%", transform: "translateX(-50%)", background: "#22C55E", color: "#fff", fontSize: 10, padding: "3px 10px", borderRadius: 6, fontWeight: 600, whiteSpace: "nowrap", letterSpacing: 0.3 }}>
+                  15 DIAS POR R$1
                 </div>
               )}
               <div style={{ fontWeight: 500, fontSize: 15, marginBottom: 2 }}>{p.name}</div>
               <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 12 }}>{p.tagline}</div>
               <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginBottom: 6 }}>
-                <span style={{ fontSize: 24, fontWeight: 500, color: "var(--color-text-primary)" }}>{fmtPrice(p.price)}</span>
+                <span style={{ fontSize: 24, fontWeight: 500, color: "var(--color-text-primary)" }}>{fmtPrice(price)}</span>
                 <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>/mês</span>
               </div>
               {ctaHint && (
@@ -287,19 +430,19 @@ export default function PageSubscription() {
                 ))}
               </ul>
               <button
-                onClick={() => !current && startCheckout(id)}
+                onClick={() => !current && startCheckout(id, trialOffer ? { trial: true } : undefined)}
                 disabled={current || !!busy || !me.stripeEnabled}
                 style={{
                   width: "100%", padding: "9px", borderRadius: 8,
                   background: current
                     ? "var(--color-background-secondary)"
-                    : (recommended ? PRIMARY : "transparent"),
+                    : (recommended || trialOffer ? PRIMARY : "transparent"),
                   color: current
                     ? "var(--color-text-secondary)"
-                    : (recommended ? "#fff" : PRIMARY_DARK),
+                    : (recommended || trialOffer ? "#fff" : PRIMARY_DARK),
                   border: current
                     ? "0.5px solid var(--color-border-tertiary)"
-                    : (recommended ? "none" : `0.5px solid ${PRIMARY}`),
+                    : (recommended || trialOffer ? "none" : `0.5px solid ${PRIMARY}`),
                   fontSize: 13, fontWeight: 500,
                   cursor: current || !!busy || !me.stripeEnabled ? "not-allowed" : "pointer",
                   opacity: !me.stripeEnabled && !current ? 0.5 : 1,
@@ -307,10 +450,66 @@ export default function PageSubscription() {
               >
                 {ctaLabel}
               </button>
+              {trialOffer && (
+                <button
+                  onClick={() => startCheckout(id)}
+                  disabled={!!busy}
+                  style={{ marginTop: 8, background: "none", border: "none", padding: 0, fontSize: 11, color: "var(--color-text-secondary)", textDecoration: "underline", cursor: busy ? "wait" : "pointer" }}
+                >
+                  ou assinar direto por {fmtPrice(price)}/mês
+                </button>
+              )}
             </div>
           );
         })}
       </div>
+
+      {/* ─── HISTÓRICO DE FATURAS ─── */}
+      {me.hasStripeCustomer && (
+        <>
+          <h3 style={{ fontSize: 14, fontWeight: 500, marginBottom: 12 }}>Histórico de faturas</h3>
+          <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10, padding: "4px 14px", marginBottom: 28, overflowX: "auto" }}>
+            {details === null ? (
+              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", padding: "12px 0" }}>Carregando…</div>
+            ) : (details.invoices?.length || 0) === 0 ? (
+              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", padding: "12px 0" }}>Nenhuma fatura ainda.</div>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ textAlign: "left", color: "var(--color-text-secondary)" }}>
+                    <th style={{ padding: "10px 8px 8px 0", fontWeight: 500 }}>Data</th>
+                    <th style={{ padding: "10px 8px 8px 0", fontWeight: 500 }}>Valor</th>
+                    <th style={{ padding: "10px 8px 8px 0", fontWeight: 500 }}>Status</th>
+                    <th style={{ padding: "10px 0 8px", fontWeight: 500 }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {details.invoices.map(inv => {
+                    const b = invoiceBadge(inv.status);
+                    return (
+                      <tr key={inv.id} style={{ borderTop: "0.5px solid var(--color-border-tertiary)" }}>
+                        <td style={{ padding: "9px 8px 9px 0" }}>{fmtDate(inv.date)}</td>
+                        <td style={{ padding: "9px 8px 9px 0", fontWeight: 500 }}>{fmtPrice(inv.amountBRL)}</td>
+                        <td style={{ padding: "9px 8px 9px 0" }}>
+                          <span style={{ background: b.bg, color: b.color, border: `0.5px solid ${b.border}`, fontSize: 11, padding: "2px 8px", borderRadius: 6, fontWeight: 500 }}>{b.label}</span>
+                        </td>
+                        <td style={{ padding: "9px 0", textAlign: "right", whiteSpace: "nowrap" }}>
+                          {inv.hostedUrl && (
+                            <a href={inv.hostedUrl} target="_blank" rel="noreferrer" style={{ color: PRIMARY_DARK, marginRight: 10 }}>Abrir</a>
+                          )}
+                          {inv.pdfUrl && (
+                            <a href={inv.pdfUrl} target="_blank" rel="noreferrer" style={{ color: PRIMARY_DARK }}>PDF</a>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </>
+      )}
 
       {/* ─── GERENCIAR / CANCELAR ─── */}
       <h3 style={{ fontSize: 14, fontWeight: 500, marginBottom: 12 }}>Gerenciar assinatura</h3>
@@ -338,7 +537,7 @@ export default function PageSubscription() {
           <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4, color: hasActiveSub ? "#A32D2D" : "var(--color-text-primary)" }}>Cancelar assinatura</div>
           <div style={{ fontSize: 12, color: "var(--color-text-secondary)", lineHeight: 1.5, marginBottom: 12 }}>
             {me.cancelAtPeriodEnd
-              ? `Cancelamento já agendado — acesso até ${fmtDate(me.currentPeriodEnd)}. Pode reverter no portal.`
+              ? `Cancelamento já agendado — acesso até ${fmtDate(me.currentPeriodEnd)}. Pode reverter aqui mesmo.`
               : hasActiveSub
                 ? "Você continua com acesso até o fim do período já pago. Os dados ficam guardados caso decida voltar."
                 : "Você não tem uma assinatura ativa pra cancelar."
@@ -366,6 +565,11 @@ export default function PageSubscription() {
       {/* ─── FAQ ─── */}
       <h3 style={{ fontSize: 14, fontWeight: 500, marginBottom: 12 }}>Perguntas frequentes</h3>
       <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10, padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
+        <FAQ q="Como funciona o teste de 15 dias por R$1?">
+          Disponível no plano Básico, para quem nunca assinou. Você paga R$ 1,00 hoje e usa tudo por 15 dias.
+          No 16º dia começa a cobrança normal de {fmtPrice(me.plans?.find(p => p.id === "basic")?.priceBRL ?? PLAN_META.basic.price)}/mês —
+          cancele antes e não paga mais nada. Vale uma vez por conta.
+        </FAQ>
         <FAQ q="O que acontece quando eu cancelo?">
           Você continua com acesso completo até o fim do período já pago — depois disso a conta vira plano Free
           e os envios automáticos param. Seus dados (campanhas, grupos, histórico) ficam guardados por 30 dias
@@ -395,7 +599,7 @@ export default function PageSubscription() {
         <Modal title={me.cancelAtPeriodEnd ? "Reativar assinatura?" : "Cancelar assinatura?"} onClose={() => setShowCancel(false)} danger={!me.cancelAtPeriodEnd}>
           {me.cancelAtPeriodEnd ? (
             <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
-              O cancelamento agendado vai ser desfeito no portal da Stripe. A renovação volta a acontecer
+              O cancelamento agendado será desfeito e a renovação volta a acontecer
               normalmente em <strong style={{ color: "var(--color-text-primary)" }}>{fmtDate(me.currentPeriodEnd)}</strong>.
             </p>
           ) : (
@@ -419,7 +623,12 @@ export default function PageSubscription() {
               {me.cancelAtPeriodEnd ? "Voltar" : "Manter assinatura"}
             </button>
             <button
-              onClick={() => { setShowCancel(false); openPortal("cancel"); }}
+              onClick={() => {
+                setShowCancel(false);
+                // Reativar acontece direto na página; cancelar de fato vai pro portal.
+                if (me.cancelAtPeriodEnd) reactivate();
+                else openPortal("cancel");
+              }}
               style={{
                 padding: "8px 16px", borderRadius: 8,
                 background: me.cancelAtPeriodEnd ? "#22C55E" : "#E24B4A",
@@ -430,6 +639,30 @@ export default function PageSubscription() {
             </button>
           </div>
         </Modal>
+      )}
+    </div>
+  );
+}
+
+// Linha "usado/limite" com barrinha de progresso. Limites ≥99 são tratados
+// como ilimitados (convenção de limits.js: 99/999 = sem limite prático).
+function UsageRow({ label, used, limit }) {
+  const unlimited = typeof limit === "number" && limit >= 99;
+  const u = typeof used === "number" ? used : null;
+  const pct = unlimited || !limit || u === null ? 0 : Math.min(100, Math.round((u / limit) * 100));
+  const full = !unlimited && limit > 0 && u !== null && u >= limit;
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
+        <span style={{ color: "var(--color-text-secondary)" }}>{label}</span>
+        <span style={{ fontWeight: 500 }}>
+          {u === null ? "—" : u}/{unlimited ? "Ilimitado" : limit}
+        </span>
+      </div>
+      {!unlimited && (
+        <div style={{ height: 4, borderRadius: 2, background: "var(--color-background-secondary)", overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${pct}%`, borderRadius: 2, background: full ? "#E9A23B" : PRIMARY, transition: "width .3s" }} />
+        </div>
       )}
     </div>
   );

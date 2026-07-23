@@ -23,6 +23,12 @@ async function getStatus(userId, userRole) {
     const ms = new Date(sub.currentPeriodEnd).getTime() - Date.now();
     daysLeftInTrial = Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
   }
+  // Dias até o fim do período atual — usado no banner "Sua assinatura termina em X dias".
+  let daysUntilPeriodEnd = null;
+  if (sub.currentPeriodEnd) {
+    const ms = new Date(sub.currentPeriodEnd).getTime() - Date.now();
+    daysUntilPeriodEnd = Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
+  }
   return {
     planId: sub.planId,
     effectivePlan,
@@ -30,10 +36,26 @@ async function getStatus(userId, userRole) {
     currentPeriodEnd: sub.currentPeriodEnd,
     cancelAtPeriodEnd: !!sub.cancelAtPeriodEnd,
     daysLeftInTrial,
+    daysUntilPeriodEnd,
     limits: planLimits,
     hasStripeCustomer: !!sub.stripeCustomerId,
     isAdmin: userRole === "admin",
+    // Trial de R$1 só pra quem nunca assinou nem usou trial (assinantes antigos
+    // não têm trialUsedAt, mas têm stripeSubscriptionId).
+    trialEligible: !sub.trialUsedAt && !sub.stripeSubscriptionId,
+    // Catálogo público — frontend lê preços daqui em vez de hardcodar.
+    plans: publicPlans(),
   };
+}
+
+// Catálogo de planos assináveis exposto ao frontend (sem "free").
+function publicPlans() {
+  return ["basic", "pro", "business"].map((id) => ({
+    id,
+    label: limits.PLANS[id].label,
+    priceBRL: limits.PLANS[id].priceBRL,
+    limits: limits.PLANS[id].limits,
+  }));
 }
 
 // Indica se o scheduler pode processar grupos desse usuário.

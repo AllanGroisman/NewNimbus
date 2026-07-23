@@ -11,19 +11,37 @@ vi.mock("../data/api.js", () => ({
   billingMe: vi.fn(),
   billingCheckout: vi.fn(),
   billingPortal: vi.fn(),
+  billingDetails: vi.fn(),
+  billingReactivate: vi.fn(),
 }));
 
-import { billingMe, billingCheckout, billingPortal } from "../data/api.js";
+import { billingMe, billingCheckout, billingPortal, billingDetails, billingReactivate } from "../data/api.js";
 
 function setBillingMe(data) {
   billingMe.mockResolvedValue(data);
 }
 
+function setBillingDetails(data) {
+  billingDetails.mockResolvedValue(data);
+}
+
+const EMPTY_DETAILS = {
+  stripeEnabled: true, hasStripeCustomer: false,
+  upcomingInvoice: null, paymentMethod: null, invoices: [],
+};
+
+let fakeWin;
+
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default: detalhes vazios — testes que precisam sobrescrevem com setBillingDetails.
+  billingDetails.mockResolvedValue(EMPTY_DETAILS);
   // Mock de window.location.assign — pra não tentar navegar
   delete window.location;
   window.location = { assign: vi.fn(), href: "" };
+  // Mock de window.open — checkout/portal abrem o Stripe em aba nova
+  fakeWin = { location: "", close: vi.fn() };
+  window.open = vi.fn(() => fakeWin);
 });
 
 describe("Subscription — loading state", () => {
@@ -124,7 +142,26 @@ describe("Subscription — checkout flow", () => {
     // Primeiro botão é o do plano basic
     fireEvent.click(assinarBtns[0]);
 
-    await waitFor(() => expect(billingCheckout).toHaveBeenCalledWith("basic"));
+    await waitFor(() => expect(billingCheckout).toHaveBeenCalledWith("basic", undefined));
+    // Abre em aba nova (aberta em branco no clique, URL setada depois)
+    expect(window.open).toHaveBeenCalledWith("", "_blank");
+    await waitFor(() => expect(fakeWin.location).toBe("https://stripe.test/cs_basic"));
+    expect(window.location.assign).not.toHaveBeenCalled();
+  });
+
+  it("popup bloqueado (window.open → null) cai pro redirect na mesma aba", async () => {
+    setBillingMe({
+      planId: "pro", effectivePlan: "pro", status: "trialing",
+      daysLeftInTrial: 6, hasStripeCustomer: false, stripeEnabled: true, isAdmin: false,
+      limits: { numbers: 3, groups: 15 },
+    });
+    billingCheckout.mockResolvedValue({ url: "https://stripe.test/cs_basic" });
+    window.open = vi.fn(() => null); // bloqueador de popup
+
+    render(<PageSubscription />);
+    await waitFor(() => screen.getByText(/Nimbus Pro/));
+    fireEvent.click(screen.getAllByRole("button", { name: /Assinar/i })[0]);
+
     await waitFor(() => expect(window.location.assign).toHaveBeenCalledWith("https://stripe.test/cs_basic"));
   });
 
@@ -141,6 +178,8 @@ describe("Subscription — checkout flow", () => {
     fireEvent.click(screen.getAllByRole("button", { name: /Assinar/i })[0]);
 
     await waitFor(() => expect(screen.getByText(/Stripe falhou/)).toBeInTheDocument());
+    // A aba aberta em branco é fechada quando o checkout falha
+    expect(fakeWin.close).toHaveBeenCalled();
   });
 });
 
@@ -169,7 +208,10 @@ describe("Subscription — portal", () => {
     fireEvent.click(screen.getByRole("button", { name: /Gerenciar pagamento/i }));
 
     await waitFor(() => expect(billingPortal).toHaveBeenCalled());
-    await waitFor(() => expect(window.location.assign).toHaveBeenCalledWith("https://billing.stripe.test/p/x"));
+    // Portal também abre em aba nova
+    expect(window.open).toHaveBeenCalledWith("", "_blank");
+    await waitFor(() => expect(fakeWin.location).toBe("https://billing.stripe.test/p/x"));
+    expect(window.location.assign).not.toHaveBeenCalled();
   });
 
   it("não mostra 'Gerenciar pagamento' quando hasStripeCustomer=false", async () => {
@@ -181,6 +223,150 @@ describe("Subscription — portal", () => {
     render(<PageSubscription />);
     await waitFor(() => screen.getByText(/Nimbus Pro/));
     expect(screen.queryByRole("button", { name: /Gerenciar pagamento/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("Subscription — trial de R$1", () => {
+  const eligibleMe = {
+    planId: "free", effectivePlan: "free", status: "inactive",
+    hasStripeCustomer: false, stripeEnabled: true, isAdmin: false,
+    trialEligible: true,
+    limits: { numbers: 0, groups: 0 },
+  };
+
+  it("trialEligible=true mostra CTA 'Testar por R$ 1,00' no Básico", async () => {
+    setBillingMe(eligibleMe);
+    render(<PageSubscription />);
+    await waitFor(() => expect(screen.getByText(/15 DIAS POR R\$1/)).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /Testar por R\$ 1,00/i })).toBeInTheDocument();
+  });
+
+  it("CTA de trial chama billingCheckout com { trial: true }", async () => {
+    setBillingMe(eligibleMe);
+    billingCheckout.mockResolvedValue({ url: "https://stripe.test/cs_trial" });
+    render(<PageSubscription />);
+    await waitFor(() => screen.getByRole("button", { name: /Testar por R\$ 1,00/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Testar por R\$ 1,00/i }));
+    await waitFor(() => expect(billingCheckout).toHaveBeenCalledWith("basic", { trial: true }));
+  });
+
+  it("trialEligible=false não mostra o CTA de trial", async () => {
+    setBillingMe({ ...eligibleMe, trialEligible: false });
+    render(<PageSubscription />);
+    await waitFor(() => screen.getAllByRole("button", { name: /^Assinar$/i }));
+    expect(screen.queryByText(/15 DIAS POR R\$1/)).not.toBeInTheDocument();
+  });
+});
+
+describe("Subscription — cancelamento agendado + reativar", () => {
+  const cancelingMe = {
+    planId: "pro", effectivePlan: "pro", status: "active",
+    cancelAtPeriodEnd: true, daysUntilPeriodEnd: 12,
+    currentPeriodEnd: "2026-08-04T00:00:00.000Z",
+    hasStripeCustomer: true, stripeEnabled: true, isAdmin: false,
+    limits: { numbers: 3, groups: 5 },
+  };
+
+  it("mostra banner 'Sua assinatura termina em X dias' com botão de reativar", async () => {
+    setBillingMe(cancelingMe);
+    render(<PageSubscription />);
+    await waitFor(() => expect(screen.getByText(/Sua assinatura termina em/i)).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /Reativar assinatura/i })).toBeInTheDocument();
+  });
+
+  it("clicar reativar chama billingReactivate e atualiza o status", async () => {
+    setBillingMe(cancelingMe);
+    billingReactivate.mockResolvedValue({ ...cancelingMe, cancelAtPeriodEnd: false });
+    render(<PageSubscription />);
+    await waitFor(() => screen.getByRole("button", { name: /Reativar assinatura/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Reativar assinatura/i }));
+    await waitFor(() => expect(billingReactivate).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByText(/Sua assinatura termina em/i)).not.toBeInTheDocument());
+  });
+});
+
+describe("Subscription — seu plano em uso + detalhes", () => {
+  const activeMe = {
+    planId: "basic", effectivePlan: "basic", status: "active",
+    currentPeriodEnd: "2026-08-10T00:00:00.000Z",
+    hasStripeCustomer: true, stripeEnabled: true, isAdmin: false,
+    limits: { numbers: 1, groups: 1, whatsappGroupsPerCampaign: 3, categoriesPerGroup: 2, autoScraping: false },
+    usage: { groups: 1, numbers: 0, maxWhatsappGroupsPerCampaign: 2, maxCategoriesPerGroup: 1, autoScrapingInUse: false },
+  };
+
+  it("mostra benefícios com uso (1/1 campanhas, 0/1 números)", async () => {
+    setBillingMe(activeMe);
+    render(<PageSubscription />);
+    await waitFor(() => expect(screen.getByText(/Benefícios e uso/i)).toBeInTheDocument());
+    expect(screen.getByText("1/1")).toBeInTheDocument();
+    expect(screen.getByText("0/1")).toBeInTheDocument();
+  });
+
+  it("mostra próxima cobrança, cartão e histórico de faturas dos details", async () => {
+    setBillingMe(activeMe);
+    setBillingDetails({
+      stripeEnabled: true, hasStripeCustomer: true,
+      upcomingInvoice: { amountBRL: 69.9, currency: "brl", nextPaymentAttempt: "2026-08-10T00:00:00.000Z" },
+      paymentMethod: { brand: "visa", last4: "4242", expMonth: 12, expYear: 2027 },
+      invoices: [{ id: "in_1", date: "2026-07-10T00:00:00.000Z", amountBRL: 69.9, status: "paid", hostedUrl: "https://x/1", pdfUrl: "https://x/1.pdf" }],
+    });
+    render(<PageSubscription />);
+    await waitFor(() => expect(screen.getAllByText(/R\$ 69,90/).length).toBeGreaterThan(0));
+    expect(screen.getByText(/Visa •••• 4242/)).toBeInTheDocument();
+    expect(screen.getByText(/Histórico de faturas/i)).toBeInTheDocument();
+    expect(screen.getByText("Paga")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Abrir/i })).toHaveAttribute("href", "https://x/1");
+  });
+
+  it("não mostra 'Scraping' em lugar nenhum e usa 'Categorias de produtos'", async () => {
+    setBillingMe(activeMe);
+    render(<PageSubscription />);
+    await waitFor(() => expect(screen.getByText(/Benefícios e uso/i)).toBeInTheDocument());
+    expect(screen.queryByText(/Scraping/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/Categorias de produtos por campanha/i)).toBeInTheDocument();
+  });
+
+  it("card do plano atual fica esmaecido na lista de planos", async () => {
+    setBillingMe(activeMe);
+    render(<PageSubscription />);
+    await waitFor(() => expect(screen.getByText("SEU PLANO")).toBeInTheDocument());
+    // O selo "SEU PLANO" é filho direto do card — o container deve estar esmaecido.
+    expect(screen.getByText("SEU PLANO").parentElement).toHaveStyle({ opacity: "0.55" });
+  });
+
+  it("sem faturas mostra 'Nenhuma fatura ainda'", async () => {
+    setBillingMe(activeMe);
+    render(<PageSubscription />);
+    await waitFor(() => expect(screen.getByText(/Nenhuma fatura ainda/i)).toBeInTheDocument());
+  });
+
+  it("effectivePlan=free não mostra seção de uso", async () => {
+    setBillingMe({
+      planId: "free", effectivePlan: "free", status: "inactive",
+      hasStripeCustomer: false, stripeEnabled: true, isAdmin: false,
+      limits: { numbers: 0, groups: 0 },
+    });
+    render(<PageSubscription />);
+    await waitFor(() => screen.getByText(/Nimbus Free/));
+    expect(screen.queryByText(/Benefícios e uso/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("Subscription — preços vindos do backend", () => {
+  it("usa priceBRL de me.plans quando presente", async () => {
+    setBillingMe({
+      planId: "free", effectivePlan: "free", status: "inactive",
+      hasStripeCustomer: false, stripeEnabled: true, isAdmin: false,
+      limits: { numbers: 0, groups: 0 },
+      plans: [
+        { id: "basic", label: "Básico", priceBRL: 79.9, limits: {} },
+        { id: "pro", label: "Pro", priceBRL: 99.9, limits: {} },
+        { id: "business", label: "Business", priceBRL: 149.9, limits: {} },
+      ],
+    });
+    render(<PageSubscription />);
+    // 79,90 vem do backend (PLAN_META hardcoda 69,90)
+    await waitFor(() => expect(screen.getAllByText(/R\$ 79,90/).length).toBeGreaterThan(0));
   });
 });
 

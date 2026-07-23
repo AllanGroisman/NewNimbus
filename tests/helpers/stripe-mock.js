@@ -27,6 +27,10 @@ const calls = {
   createCheckoutSession: [],
   createPortalSession: [],
   getActiveSubscriptionForCustomer: [],
+  getUpcomingInvoice: [],
+  listInvoices: [],
+  getDefaultPaymentMethod: [],
+  reactivateSubscription: [],
 };
 
 let state = {
@@ -36,6 +40,10 @@ let state = {
   // Assinatura ao vivo devolvida por getActiveSubscriptionForCustomer (sync endpoint).
   // null = customer sem assinatura no Stripe.
   activeSubscription: null,
+  // Dados do endpoint /api/billing/details
+  upcomingInvoice: null,   // { amountBRL, currency, nextPaymentAttempt } | null
+  invoices: [],            // [{ id, date, amountBRL, status, hostedUrl, pdfUrl }]
+  paymentMethod: null,     // { brand, last4, expMonth, expYear } | null
 };
 
 const PRICE_IDS = {
@@ -54,7 +62,14 @@ function reset() {
     if (Array.isArray(calls[k])) calls[k].length = 0;
     else calls[k] = 0;
   }
-  state = { enabled: true, shouldFailConstructEvent: false, activeSubscription: null };
+  state = {
+    enabled: true,
+    shouldFailConstructEvent: false,
+    activeSubscription: null,
+    upcomingInvoice: null,
+    invoices: [],
+    paymentMethod: null,
+  };
 }
 
 function setMock(opts = {}) {
@@ -76,11 +91,11 @@ const mock = {
     return { id: existingCustomerId || `cus_test_${userId}`, email, name };
   },
 
-  async createCheckoutSession({ planId, customer, userId }) {
-    calls.createCheckoutSession.push({ planId, customerId: customer.id, userId });
+  async createCheckoutSession({ planId, customer, userId, withTrial = false }) {
+    calls.createCheckoutSession.push({ planId, customerId: customer.id, userId, withTrial });
     return {
       id: `cs_test_${userId}_${planId}`,
-      url: `https://checkout.stripe.test/c/${planId}`,
+      url: `https://checkout.stripe.test/c/${planId}${withTrial ? "?trial=1" : ""}`,
     };
   },
 
@@ -117,6 +132,7 @@ const mock = {
       status: sub.status,
       currentPeriodEnd,
       cancelAtPeriodEnd: !!sub.cancel_at_period_end,
+      trialEnd: sub.trial_end ? new Date(sub.trial_end * 1000) : null,
     };
   },
 
@@ -126,6 +142,35 @@ const mock = {
     calls.getActiveSubscriptionForCustomer.push({ customerId });
     if (!customerId || !state.activeSubscription) return null;
     return this.normalizeSubscription(state.activeSubscription);
+  },
+
+  async getUpcomingInvoice(customerId) {
+    calls.getUpcomingInvoice.push({ customerId });
+    return state.upcomingInvoice;
+  },
+
+  async listInvoices(customerId, limit = 10) {
+    calls.listInvoices.push({ customerId, limit });
+    return state.invoices;
+  },
+
+  async getDefaultPaymentMethod(customerId, subscriptionId) {
+    calls.getDefaultPaymentMethod.push({ customerId, subscriptionId });
+    return state.paymentMethod;
+  },
+
+  // Desfaz cancelamento agendado na assinatura do state (se houver).
+  async reactivateSubscription(subscriptionId) {
+    calls.reactivateSubscription.push({ subscriptionId });
+    if (state.activeSubscription) state.activeSubscription.cancel_at_period_end = false;
+    if (state.activeSubscription) return this.normalizeSubscription(state.activeSubscription);
+    // Sem state — devolve patch mínimo (sem stripeCustomerId pra não sobrescrever o banco).
+    return {
+      stripeSubscriptionId: subscriptionId,
+      status: "active",
+      cancelAtPeriodEnd: false,
+      trialEnd: null,
+    };
   },
 };
 
