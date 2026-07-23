@@ -253,5 +253,6 @@ export const sidebarItems = [
   { id: "admin-users",          icon: "♟", label: "Usuários",       adminOnly: true },
   { id: "admin-backups",        icon: "⊡", label: "Backups",        adminOnly: true },
   { id: "admin-notifications",  icon: "◉", label: "Notificações",   adminOnly: true },
+  { id: "admin-notif-templates", icon: "✎", label: "Modelos Notificações", adminOnly: true },
   { id: "admin-whatsnimbus",    icon: "❂", label: "WhatsNimbus",    adminOnly: true },
 ];

@@ -329,6 +329,9 @@ export async function adminNotifConfig()          { return http("GET",  "/api/ad
 export async function adminNotifSave(cfg)         { return http("PUT",  "/api/admin/notifications/config", cfg); }
 export async function adminNotifTest()            { return http("POST", "/api/admin/notifications/test"); }
 export async function adminNotifGroups()          { return http("GET",  "/api/admin/whatsnimbus/groups"); }
+export async function adminNotifTemplates()               { return http("GET",  "/api/admin/notifications/templates"); }
+export async function adminNotifTemplatesSave(t)         { return http("PUT",  "/api/admin/notifications/templates", { templates: t }); }
+export async function adminNotifTemplatePreview(key, text) { return http("POST", "/api/admin/notifications/templates/preview", { key, text }); }
 
 // ─── Admin / WhatsNimbus (remetente do sistema) ────────────────────────────
 export async function whatsNimbusStatus()         { return http("GET",  "/api/admin/whatsnimbus"); }

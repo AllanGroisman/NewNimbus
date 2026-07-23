@@ -1603,6 +1603,28 @@ app.post("/api/admin/notifications/test", auth.requireAuth, auth.requireAdmin, a
   }
 });
 
+// Modelos editáveis das notificações ("Modelos Notificações" no Admin)
+app.get("/api/admin/notifications/templates", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json(adminNotifier.getTemplates());
+});
+
+app.put("/api/admin/notifications/templates", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  try {
+    res.json(adminNotifier.saveTemplates(req.body || {}));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/notifications/templates/preview", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  try {
+    const { key, text } = req.body || {};
+    res.json({ text: adminNotifier.renderPreview(key, text) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 
 // ────────────────────────────────────────────────────────────────────────
 // Admin — WhatsNimbus (o WhatsApp dedicado do sistema, remetente das

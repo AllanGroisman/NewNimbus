@@ -30,6 +30,7 @@ import PageAdminShopee from "./pages/AdminShopee";
 import PageAdminUsers from "./pages/AdminUsers";
 import PageAdminBackups from "./pages/AdminBackups";
 import PageAdminNotifications from "./pages/AdminNotifications";
+import PageAdminNotifTemplates from "./pages/AdminNotifTemplates";
 import PageAdminWhatsNimbus from "./pages/AdminWhatsNimbus";
 import PageAdminRepasse from "./pages/AdminRepasse";
 import PageTutoriais from "./pages/Tutoriais";
@@ -613,6 +614,7 @@ export default function App() {
     "admin-users":          user?.role === "admin" ? <PageAdminUsers currentUser={user} /> : fallbackPage,
     "admin-backups":        user?.role === "admin" ? <PageAdminBackups /> : fallbackPage,
     "admin-notifications":  user?.role === "admin" ? <PageAdminNotifications onGoToWhatsNimbus={() => requestNavigation(() => setPage("admin-whatsnimbus"))} /> : fallbackPage,
+    "admin-notif-templates": user?.role === "admin" ? <PageAdminNotifTemplates /> : fallbackPage,
     "admin-whatsnimbus":    user?.role === "admin" ? <PageAdminWhatsNimbus /> : fallbackPage,
     "tutorials":     <PageTutoriais targetTutorialId={tutorialTarget} />,
   };
