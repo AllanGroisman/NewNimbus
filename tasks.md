@@ -13,7 +13,7 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 
 [x] As notificações de Admin estão sendo enviadas pelo whats da conta do usuario, quero que seja enviado pelo WhatsNimbus em um grupo específico informado pelo ADMIN a partir dos grupos que o WhatsNimbus faz parte. Inclusive adicione aqui pesquisa do grupo pelo nome.
 
-[] Quero poder editar as mensagens de notificações que são enviadas através de um menu Modelos Notificações no painel de Admin. Inicialmente elas podem estar escritas como estão, ai faço as alterações por cima.
+[x] Quero poder editar as mensagens de notificações que são enviadas através de um menu Modelos Notificações no painel de Admin. Inicialmente elas podem estar escritas como estão, ai faço as alterações por cima.
 
 [x] Criar extensão no chrome para pegar as credenciais e cookie do ML automaticamente.
 
@@ -31,3 +31,17 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 
 [x] Repasse -> as vezes o link do produto vem como afiliado, em uma página diferente, como em https://www.mercadolivre.com.br/social/oreidapromobr?matt_word=orpcami&matt_tool=37515304&forceInApp=true&ref=BMzx%2BB%2BJzXYiDBLAlICsACrMd3anZ%2B1VMHKghql01swINfTi6PEffWt4EMfbJoNSx1oZhOaPpSaqKCDJ6shB5b8rPFSRFvoRarzrlDxIUvHGDPyy9VkBIm1uKfmvR1aA8saDF5BPM82is0k4tds%2B2IBDXCKN%2BWwadJFE1Um5zgkijOE5J%2FLIR1EWUY3wJfhs8OrSoA%3D%3D, ver as possibilidades
     
+
+[x] Quero alterar os campos das lojas especificas no menu admin para editar manualmente, esta bugado.
+
+[x] Quero separar a qtd maxima de produtos por loja no scraper
+
+[] Trocar nome para senha na tag shopee e /openapi no link
+
+[] Scraping mercado livre buscar todas as infos
+
+[] adicionar link manual direto na fila e tb buscar avaliacao, num vendas
+
+[] verificador scraper de x em x tempo
+
+[] desconto minimo no filtro scraping ML

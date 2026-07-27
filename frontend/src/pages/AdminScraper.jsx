@@ -341,8 +341,8 @@ export default function PageAdminScraper() {
         <Field label="Limpar produtos não vistos há mais de (dias)">
           <input
             type="number" min={1} max={365}
-            value={config.pruneAfterDays}
-            onChange={e => updateConfig({ pruneAfterDays: parseInt(e.target.value) || 30 })}
+            value={config.pruneAfterDays ?? ""}
+            onChange={e => updateConfig({ pruneAfterDays: e.target.value === "" ? "" : parseInt(e.target.value) })}
             style={{ ...inputStyle, maxWidth: 120 }}
           />
         </Field>

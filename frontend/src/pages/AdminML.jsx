@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../data/constants";
 import { adminScraperMLFilters, adminScraperMLFiltersSave } from "../data/api";
 
@@ -101,6 +101,29 @@ function MLFiltersSection() {
 }
 
 function NumField({ label, hint, value, onChange, step = "1", max }) {
+  // Buffer de texto local: o campo pode ficar vazio/parcial ("", "3.") enquanto o usuário digita,
+  // sem que Number("") = 0 force um 0 no estado do pai. O pai só recebe números válidos.
+  const fmt = (v) => (v === "" || v == null || Number.isNaN(Number(v))) ? "" : String(Math.round(Number(v) * 1e6) / 1e6);
+  const [text, setText] = useState(() => fmt(value));
+  const lastNum = useRef(value);
+  useEffect(() => {
+    // Ressincroniza só quando `value` muda por fora da digitação (reset/carregamento). A comparação
+    // aproximada evita o "eco" do próprio onChange e o ruído de float (ex: comissão 0.03 * 100).
+    if (Math.abs(Number(value) - Number(lastNum.current)) >= 1e-9) {
+      lastNum.current = value;
+      setText(fmt(value));
+    }
+  }, [value]);
+  const handleChange = (e) => {
+    const t = e.target.value;
+    setText(t);
+    if (t === "") return;
+    const n = Number(t);
+    if (!Number.isNaN(n)) { lastNum.current = n; onChange(n); }
+  };
+  const handleBlur = () => {
+    if (text === "" || Number.isNaN(Number(text))) setText(fmt(value));
+  };
   return (
     <div>
       <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>{label}</label>
@@ -109,8 +132,9 @@ function NumField({ label, hint, value, onChange, step = "1", max }) {
         min={0}
         max={max}
         step={step}
-        value={value}
-        onChange={e => onChange(Number(e.target.value))}
+        value={text}
+        onChange={handleChange}
+        onBlur={handleBlur}
         style={{ width: "100%", padding: "7px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", fontFamily: "monospace" }}
       />
       {hint && <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 3 }}>{hint}</div>}

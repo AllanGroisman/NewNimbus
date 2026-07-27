@@ -49,8 +49,8 @@
         - App Secret -> Pega em affiliate.shopee.com.br → painel do programa de afiliados → API Open. ( )
     
 * ASSINATURA
-    - Testar Front ( )
-    - Testar Real com cartão de crédito fake so Stripe ( )
+    - Testar Front (x)
+    - Testar Real com cartão de crédito fake so Stripe (x)
 
 * SCRAPING
 
@@ -91,7 +91,7 @@
             * Núm de Vendas ( )
         
 
-* REPASSE WHATS ( ) REPASSE
+* REPASSE WHATS (x) 
     * Criar Campanha de Repasse? Criando vários Grupos e etc, mas tendo o líder que é simplesmente replicado nos outros?
     * Repassar de mais de um grupo? SÓ UM GRUPO
     * Capturar links de produtos -> transformar de afiliado para normal -> transformar pro nosso afiliado
@@ -129,3 +129,4 @@
 * SEGURANÇA
     * Dados -> Stripe? Supabase
     * Análise de Segurança como um todo
+    
