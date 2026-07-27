@@ -188,7 +188,7 @@ function writeShopeeConfig(userId, { appId, appSecret }) {
     throw new Error("App ID inválido — use letras, números, hífen ou sublinhado.");
   }
   if (cleanSecret && cleanSecret.length < 16) {
-    throw new Error("App Secret muito curto — confira o valor copiado do painel.");
+    throw new Error("Senha muito curta — confira o valor copiado do painel.");
   }
   const raw = { ...(store.getRaw(userId) || {}) };
   const cur = readShopeeConfig(userId);
@@ -480,7 +480,7 @@ async function gerarLinkAfiliadoShopee(userId, linkOriginal) {
 
     if (!res.ok) {
       s.lastFailureAt = new Date().toISOString();
-      s.lastFailureReason = `HTTP ${res.status} — confira App ID/Secret no painel da Shopee`;
+      s.lastFailureReason = `HTTP ${res.status} — confira App ID/senha no painel da Shopee`;
       console.error(`[afiliados Shopee] ${s.lastFailureReason}`);
       return null;
     }
@@ -533,7 +533,7 @@ function writeScraperShopeeAdminCreds({ appId, appSecret }) {
     throw new Error("App ID inválido — use letras, números, hífen ou sublinhado.");
   }
   if (cleanSecret && cleanSecret.length < 16) {
-    throw new Error("App Secret muito curto — confira o valor copiado do painel.");
+    throw new Error("Senha muito curta — confira o valor copiado do painel.");
   }
   const cur = readScraperShopeeAdminCreds();
   const next = {

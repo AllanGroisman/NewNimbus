@@ -123,7 +123,7 @@ export default function PageAdminShopee() {
 
         <div>
           <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
-            App Secret
+            Senha
             {data.admin?.appSecretPreview && (
               <span style={{ marginLeft: 8, color: "var(--color-text-secondary)" }}>
                 (atual: <code>{data.admin.appSecretPreview}</code>)
@@ -135,7 +135,7 @@ export default function PageAdminShopee() {
               type={showSecret ? "text" : "password"}
               value={appSecret}
               onChange={e => setAppSecret(e.target.value)}
-              placeholder={data.admin?.configured ? "Deixe vazio pra manter o atual" : "cole o App Secret"}
+              placeholder={data.admin?.configured ? "Deixe vazio pra manter o atual" : "cole a senha"}
               style={{ width: "100%", padding: "8px 38px 8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", fontFamily: "monospace" }}
             />
             <button
@@ -147,7 +147,7 @@ export default function PageAdminShopee() {
             </button>
           </div>
           <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4 }}>
-            Pega em <a href="https://affiliate.shopee.com.br" target="_blank" rel="noreferrer" style={{ color: PRIMARY }}>affiliate.shopee.com.br</a> → painel → API Open.
+            Pega o App ID e a senha em <a href="https://affiliate.shopee.com.br/openapi" target="_blank" rel="noreferrer" style={{ color: PRIMARY }}>affiliate.shopee.com.br/openapi</a>.
           </div>
         </div>
 

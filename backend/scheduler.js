@@ -135,7 +135,7 @@ function affiliateGate(userId, group) {
     return { paused: true, reason: "configure o afiliado do Mercado Livre (tag + cookie) em Configurações" };
   }
   if (sources.includes("shopee") && !s.shopee.configured) {
-    return { paused: true, reason: "configure o afiliado da Shopee (App ID + App Secret) em Configurações" };
+    return { paused: true, reason: "configure o afiliado da Shopee (App ID + senha) em Configurações" };
   }
   return { paused: false, reason: null };
 }

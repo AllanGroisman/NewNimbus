@@ -46,7 +46,7 @@ test.describe("Afiliados", () => {
     const appId = real?.shopee?.appId || "12345678";
     const appSecret = real?.shopee?.appSecret || "0123456789abcdef0123";
     await page.getByPlaceholder("ex: 12345678").fill(appId);
-    await page.getByPlaceholder(/cole o App Secret/i).fill(appSecret);
+    await page.getByPlaceholder(/cole a senha/i).fill(appSecret);
     await page.getByRole("button", { name: "Salvar" }).click();
     await expect(page.getByRole("button", { name: "Apagar" })).toBeVisible({ timeout: 10000 });
     await page.getByRole("button", { name: "Apagar" }).click();

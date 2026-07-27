@@ -846,7 +846,7 @@ app.post("/api/affiliate/shopee/test", auth.requireAuth, async (req, res) => {
     if (!short) {
       const s = affiliate.status(req.user.id);
       const reason = s.shopee.lastFailureReason
-        || (!s.shopee.configured ? "Configure App ID e App Secret da Shopee primeiro." : "Falha ao gerar link");
+        || (!s.shopee.configured ? "Configure App ID e senha da Shopee primeiro." : "Falha ao gerar link");
       return res.status(400).json({ error: reason });
     }
     res.json({ ok: true, shortUrl: short });
@@ -1454,7 +1454,7 @@ app.post("/api/admin/scraper/shopee/test", auth.requireAuth, auth.requireAdmin, 
     }
     const admin = affiliate.readScraperShopeeAdminCreds();
     if (!admin.appId || !admin.appSecret) {
-      return res.status(400).json({ error: "Configure App ID e App Secret antes de testar." });
+      return res.status(400).json({ error: "Configure App ID e senha antes de testar." });
     }
     // Usa o fetcher de oferta com creds explícitas, ou gera um shortlink direto.
     // Reaproveita gerarLinkAfiliadoShopee criando um userId-token de teste isolado.
@@ -1472,7 +1472,7 @@ app.post("/api/admin/scraper/shopee/test", auth.requireAuth, auth.requireAdmin, 
       headers: { "Content-Type": "application/json", "Authorization": authHeader },
       body: payload,
     });
-    if (!r.ok) return res.status(502).json({ error: `Shopee HTTP ${r.status} — confira App ID/Secret` });
+    if (!r.ok) return res.status(502).json({ error: `Shopee HTTP ${r.status} — confira App ID/senha` });
     const data = await r.json();
     if (data?.errors?.length) {
       return res.status(502).json({ error: `Shopee API: ${data.errors[0]?.message || "erro"}` });

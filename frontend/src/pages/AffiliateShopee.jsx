@@ -101,7 +101,7 @@ export default function PageAffiliateShopee({ onAffiliateChange }) {
         <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14, lineHeight: 1.5 }}>
           Quando configurado, todo link da Shopee enviado vira um link curto via a API oficial de afiliados (formato
           {" "}<code style={{ background: "var(--color-background-secondary)", padding: "1px 4px", borderRadius: 4 }}>s.shopee.com.br/...</code>).
-          A Shopee usa <strong>App ID</strong> + <strong>App Secret</strong> — sem cookie, sem expirar.
+          A Shopee usa <strong>App ID</strong> + <strong>Senha</strong> — sem cookie, sem expirar.
         </div>
 
         <div style={{ marginBottom: 10 }}>
@@ -116,7 +116,7 @@ export default function PageAffiliateShopee({ onAffiliateChange }) {
 
         <div>
           <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
-            App Secret
+            Senha
             {affStatus?.shopee?.appSecretPreview && (
               <span style={{ marginLeft: 8, color: "var(--color-text-secondary)" }}>
                 (atual: <code>{affStatus.shopee.appSecretPreview}</code>)
@@ -128,7 +128,7 @@ export default function PageAffiliateShopee({ onAffiliateChange }) {
               type={showSecret ? "text" : "password"}
               value={appSecret}
               onChange={e => setAppSecret(e.target.value)}
-              placeholder={affStatus?.shopee?.configured ? "Deixe vazio pra manter o atual" : "cole o App Secret"}
+              placeholder={affStatus?.shopee?.configured ? "Deixe vazio pra manter o atual" : "cole a senha"}
               style={{ width: "100%", padding: "8px 38px 8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", fontFamily: "monospace" }}
             />
             <button
@@ -140,7 +140,7 @@ export default function PageAffiliateShopee({ onAffiliateChange }) {
             </button>
           </div>
           <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4 }}>
-            Pega em <a href="https://affiliate.shopee.com.br" target="_blank" rel="noreferrer" style={{ color: PRIMARY }}>affiliate.shopee.com.br</a> → painel do programa de afiliados → API Open.
+            Pega o App ID e a senha em <a href="https://affiliate.shopee.com.br/openapi" target="_blank" rel="noreferrer" style={{ color: PRIMARY }}>affiliate.shopee.com.br/openapi</a>.
           </div>
         </div>
 
@@ -191,7 +191,7 @@ export default function PageAffiliateShopee({ onAffiliateChange }) {
           <button
             onClick={handleTest}
             disabled={testing || !affStatus?.shopee?.configured || !testUrl.trim()}
-            title={!affStatus?.shopee?.configured ? "Salve App ID e Secret primeiro" : !testUrl.trim() ? "Cole uma URL de produto pra testar" : "Gera um link de teste"}
+            title={!affStatus?.shopee?.configured ? "Salve App ID e senha primeiro" : !testUrl.trim() ? "Cole uma URL de produto pra testar" : "Gera um link de teste"}
             style={{ padding: "7px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: (!affStatus?.shopee?.configured || !testUrl.trim()) ? "not-allowed" : "pointer", opacity: (!affStatus?.shopee?.configured || !testUrl.trim() || testing) ? 0.5 : 1 }}
           >
             {testing ? "Testando..." : "Testar transformação"}
