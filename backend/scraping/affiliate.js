@@ -397,7 +397,7 @@ function signShopeeRequest({ appId, appSecret, timestamp, payload }) {
 // líder, sem busca por keyword/categoria). Mesmo endpoint/schema do scraping em
 // massa (productOfferV2), só filtrando por ID em vez de keyword/productCatId.
 function buildShopeeItemLookupPayload(itemId, shopId) {
-  const query = `query{productOfferV2(itemId:${Number(itemId)},shopId:${Number(shopId)}){nodes{itemId shopId productName productLink offerLink imageUrl price priceMin priceDiscountRate sales commissionRate ratingStar}pageInfo{page limit hasNextPage}}}`;
+  const query = `query{productOfferV2(itemId:${Number(itemId)},shopId:${Number(shopId)}){nodes{itemId shopId productName productLink offerLink imageUrl price priceMin priceDiscountRate sales commissionRate ratingStar shopName}pageInfo{page limit hasNextPage}}}`;
   return JSON.stringify({ query });
 }
 
@@ -449,7 +449,7 @@ function buildShopeeProductOfferPayload({ keyword, productCatId, page = 1, limit
   }
   if (productCatId) parts.push(`productCatId:${Number(productCatId)}`);
   parts.push(`listType:${Number(listType)}`, `sortType:${Number(sortType)}`, `page:${Number(page)}`, `limit:${Number(limit)}`);
-  const query = `query{productOfferV2(${parts.join(",")}){nodes{itemId shopId productName productLink offerLink imageUrl price priceMin priceMax priceDiscountRate sales commissionRate ratingStar productCatIds} pageInfo{page limit hasNextPage}}}`;
+  const query = `query{productOfferV2(${parts.join(",")}){nodes{itemId shopId productName productLink offerLink imageUrl price priceMin priceMax priceDiscountRate sales commissionRate ratingStar shopName productCatIds} pageInfo{page limit hasNextPage}}}`;
   return JSON.stringify({ query });
 }
 
@@ -595,6 +595,11 @@ const AMAZON_FILTERS_DEFAULTS = {
   minPrice:    0,  // BRL
   maxPrice:    0,  // 0 = sem teto
   maxDiscount: 0,  // % máximo; 0 = sem filtro
+  // Quantos produtos por rodada ganham nota/avaliações/vendas/vendedor/frete —
+  // cada um exige abrir a página do produto (~5s e risco de CAPTCHA), por isso é
+  // limitado. Só vale pras rodadas SEM filtro de nota/avaliações; com filtro o
+  // scraper usa o teto maior (AMZ_ENRICH_MAX), senão o filtro cortaria tudo.
+  enrichLimit: 40,
 };
 
 function readAmazonScraperFilters() {
@@ -612,9 +617,11 @@ function writeAmazonScraperFilters(patch) {
     minPrice:    num(patch?.minPrice,    cur.minPrice),
     maxPrice:    num(patch?.maxPrice,    cur.maxPrice),
     maxDiscount: num(patch?.maxDiscount, cur.maxDiscount),
+    enrichLimit: Math.round(num(patch?.enrichLimit, cur.enrichLimit)),
   };
   if (next.minRating > 5)   next.minRating = 5;
   if (next.maxDiscount > 100) next.maxDiscount = 100;
+  if (next.enrichLimit > 300) next.enrichLimit = 300;
   appConfig.set(AMAZON_FILTERS_KEY, next);
   return next;
 }

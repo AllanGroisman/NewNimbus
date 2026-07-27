@@ -41,6 +41,13 @@ describe("shopeeNodeToProduct", () => {
     expect(p.commissionRate).toBe(5);
   });
 
+  it("usa shopName como vendedor (campo novo da query GraphQL)", () => {
+    const base = { productName: "x", productLink: "/x", price: 50 };
+    expect(scraper.shopeeNodeToProduct({ ...base, shopName: "Loja Oficial XPTO" }).seller).toBe("Loja Oficial XPTO");
+    expect(scraper.shopeeNodeToProduct({ ...base, shopName: "  " }).seller).toBeNull();
+    expect(scraper.shopeeNodeToProduct(base).seller).toBeNull();
+  });
+
   it("calcula originalPrice a partir do desconto", () => {
     const p = scraper.shopeeNodeToProduct({
       productName: "x", productLink: "https://shopee.com.br/x", price: 70, priceDiscountRate: 30,

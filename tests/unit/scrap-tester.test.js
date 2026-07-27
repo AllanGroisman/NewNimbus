@@ -41,7 +41,7 @@ const shopeeProduct = (over = {}) => ({
   discount: 30,
   rating: 4.5,
   reviewsCount: 42,
-  seller: null,
+  seller: "Loja Oficial XPTO",   // vem do shopName da Affiliate API
   freeShipping: false,
   soldCount: 1234,
   store: "Shopee",
@@ -110,12 +110,27 @@ describe("evaluateSample", () => {
     expect(r.status).toBe("fail");
   });
 
-  it("ignora campos que não se aplicam à loja (Shopee não tem vendedor)", () => {
+  it("ignora campos que não se aplicam à loja", () => {
     const r = evaluateSample("shopee", [shopeeProduct(), shopeeProduct()], noThresholds);
-    expect(r.fields.seller).toBeUndefined();
+    // A Affiliate API da Shopee não expõe frete nem nº de avaliações.
     expect(r.fields.freeShipping).toBeUndefined();
-    expect(r.fields.sold.pct).toBe(100);   // via soldCount
+    expect(r.fields.reviewsCount).toBeUndefined();
+    expect(r.fields.seller.pct).toBe(100);   // via shopName
+    expect(r.fields.sold.pct).toBe(100);     // via soldCount
     expect(r.status).toBe("ok");
+  });
+
+  it("o ML não é cobrado por nº de avaliações (o card não traz mais)", () => {
+    const r = evaluateSample("ml", [mlProduct({ reviewsCount: null })], noThresholds);
+    expect(r.fields.reviewsCount).toBeUndefined();
+    expect(r.status).toBe("ok");
+  });
+
+  it("limiar padrão pode variar por loja (minPctBy)", () => {
+    // 50% de cobertura de nota: reprova no ML (80%) e passa na Amazon (40%).
+    const half = (make) => [make(), make({ rating: null })];
+    expect(evaluateSample("ml", half(mlProduct), noThresholds).missing).toContain("rating");
+    expect(evaluateSample("amazon", half(mlProduct), noThresholds).missing).not.toContain("rating");
   });
 
   it("respeita limiar personalizado por loja+campo", () => {

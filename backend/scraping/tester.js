@@ -20,10 +20,18 @@ const HISTORY_MAX = 20;
 // falso (ex: Shopee nunca traz `seller`, Amazon não traz `sold`).
 //
 //   minPct      cobertura mínima esperada na amostra; abaixo disso vira alerta.
+//   minPctBy    limiar diferente para uma loja específica (sobrepõe minPct).
 //   critical    sem esse campo o produto é inutilizável → falha grave.
 //   altKey      nome alternativo do campo em outra loja (sold ↔ soldCount).
 //   zeroIsValid 0 é um valor legítimo (desconto zero, zero vendas), não ausência.
 //   boolField   booleano: "presente" = campo definido, não `=== true`.
+//
+// Notas de aplicabilidade (verificadas no código dos extratores):
+// - `reviewsCount`: o ML tirou o nº de avaliações dos cards de ofertas (só sobrou
+//   nota + vendas), e a Affiliate API da Shopee não expõe — só a Amazon tem.
+// - Amazon: nota, vendas, vendedor e frete só existem nos produtos ENRIQUECIDOS
+//   (limite configurável em Admin → Amazon), por isso limiares baixos.
+// - `freeShipping` da Shopee não existe na Affiliate API.
 const FIELD_SPECS = [
   { key: "name",          label: "Nome",             applies: ["ml", "amazon", "shopee"], minPct: 100, critical: true },
   { key: "link",          label: "Link",             applies: ["ml", "amazon", "shopee"], minPct: 100, critical: true },
@@ -31,11 +39,11 @@ const FIELD_SPECS = [
   { key: "price",         label: "Preço",            applies: ["ml", "amazon", "shopee"], minPct: 100, critical: true },
   { key: "originalPrice", label: "Preço original",   applies: ["ml", "amazon", "shopee"], minPct: 50 },
   { key: "discount",      label: "Desconto",         applies: ["ml", "amazon", "shopee"], minPct: 50, zeroIsValid: true },
-  { key: "rating",        label: "Avaliação",        applies: ["ml", "amazon", "shopee"], minPct: 60 },
-  { key: "reviewsCount",  label: "Nº de avaliações", applies: ["ml", "amazon", "shopee"], minPct: 60 },
-  { key: "sold",          label: "Nº de vendas",     applies: ["ml", "shopee"],           minPct: 50, altKey: "soldCount", zeroIsValid: true },
-  { key: "seller",        label: "Vendedor",         applies: ["ml"],                     minPct: 70 },
-  { key: "freeShipping",  label: "Frete grátis",     applies: ["ml"],                     minPct: 0, boolField: true },
+  { key: "rating",        label: "Avaliação",        applies: ["ml", "amazon", "shopee"], minPct: 80, minPctBy: { amazon: 40 } },
+  { key: "reviewsCount",  label: "Nº de avaliações", applies: ["amazon"],                 minPct: 40 },
+  { key: "sold",          label: "Nº de vendas",     applies: ["ml", "amazon", "shopee"], minPct: 70, minPctBy: { amazon: 30 }, altKey: "soldCount", zeroIsValid: true },
+  { key: "seller",        label: "Vendedor",         applies: ["ml", "amazon", "shopee"], minPct: 50, minPctBy: { amazon: 30 } },
+  { key: "freeShipping",  label: "Frete grátis",     applies: ["ml", "amazon"],           minPct: 0, boolField: true },
 ];
 
 const SPEC_BY_KEY = Object.fromEntries(FIELD_SPECS.map(s => [s.key, s]));
@@ -152,9 +160,13 @@ function specsForSource(source) {
   return FIELD_SPECS.filter(s => s.applies.includes(source));
 }
 
+// Limiar efetivo: o que o admin editou na tela > o padrão da loja (minPctBy) >
+// o padrão do campo.
 function thresholdFor(cfg, source, spec) {
   const custom = cfg.thresholds && cfg.thresholds[`${source}.${spec.key}`];
-  return Number.isFinite(custom) ? custom : spec.minPct;
+  if (Number.isFinite(custom)) return custom;
+  const byStore = spec.minPctBy && spec.minPctBy[source];
+  return Number.isFinite(byStore) ? byStore : spec.minPct;
 }
 
 // Um campo está "presente" se o scraper conseguiu extrair algo utilizável dele.

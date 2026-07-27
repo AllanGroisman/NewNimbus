@@ -106,67 +106,138 @@ function normalizeSource(s) {
 // Teto de segurança de páginas do ML (cada página de ofertas tem ~48 cards).
 const ML_MAX_PAGES = 25;
 
+// Nota + nº de vendas do card do ML. Desde 2026 o ML juntou os dois num único
+// bloco compacto (`.poly-component__review-compacted`) e removeu o nº de avaliações
+// — antes eram `.poly-reviews__rating` / `.poly-reviews__total` / `.poly-component__sold`,
+// que não existem mais. Duas fontes, nesta ordem:
+//   alt     = <span class="andes-visually-hidden"> irmão, texto de acessibilidade:
+//             "Classificação 4.9 de 5 estrelas. Mais de 10mil produtos vendidos."
+//   visible = texto do próprio bloco compacto: "4.9 | +10mil vendidos"
+// O `sold` sai como string ("+10mil vendidos"), formato que formatVendas
+// (scheduler.js) e parseSold (abaixo) já sabem ler. Pura → testável.
+function parseMLReviewCompacted(alt, visible) {
+  const out = { rating: null, sold: null };
+  const altTxt = String(alt || "");
+  const visTxt = String(visible || "");
+
+  const ratingAlt = altTxt.match(/classifica[çc][ãa]o\s+([\d.,]+)\s+de\s+5/i);
+  if (ratingAlt) out.rating = parseFloat(ratingAlt[1].replace(",", "."));
+  if (out.rating == null) {
+    // No texto visível a nota é o primeiro número solto, antes do "|".
+    const ratingVis = visTxt.split("|")[0].match(/([\d]+[.,][\d]+|[\d]+)/);
+    if (ratingVis) out.rating = parseFloat(ratingVis[1].replace(",", "."));
+  }
+  if (out.rating != null && !(out.rating > 0 && out.rating <= 5)) out.rating = null;
+
+  const soldAlt = altTxt.match(/(mais de\s+)?([\d.,]+\s*(?:mil|mi)?)\s*produtos?\s+vendid/i);
+  if (soldAlt) out.sold = `${soldAlt[1] ? "+" : ""}${soldAlt[2].trim()} vendidos`;
+  if (!out.sold && /vendid/i.test(visTxt)) {
+    // "| +10mil vendidos" → tira o pipe da frente e normaliza os espaços.
+    const s = visTxt.split("|").pop().replace(/\s+/g, " ").trim();
+    if (s) out.sold = s;
+  }
+  return out;
+}
+
 // Colhe os .poly-card da página de ofertas já carregada/rolada → array de produtos.
+// O page.evaluate só extrai TEXTO CRU do DOM; a interpretação fica em funções puras
+// aqui no Node (parseMLReviewCompacted), que dá pra testar sem navegador.
 async function harvestMLCards(page, category) {
-  return await page.evaluate((cat) => {
+  const raw = await page.evaluate(() => {
+    const txt = (el) => (el ? el.textContent.replace(/\s+/g, " ").trim() : null);
     const cards = document.querySelectorAll(".poly-card");
     const results = [];
     for (const card of cards) {
       const titleEl = card.querySelector(".poly-component__title");
       const imgEl = card.querySelector(".poly-component__picture");
-      const discountEl = card.querySelector(".poly-price__disc--pill, .poly-price__disc_label");
       const originalPriceEl = card.querySelector(".andes-money-amount--previous .andes-money-amount__fraction");
       const originalPriceCents = card.querySelector(".andes-money-amount--previous .andes-money-amount__cents");
       const fractionEl = card.querySelector(".poly-price__current .andes-money-amount__fraction");
       const centsEl = card.querySelector(".poly-price__current .andes-money-amount__cents");
-      const ratingEl = card.querySelector(".poly-reviews__rating");
-      const reviewsCountEl = card.querySelector(".poly-reviews__total");
       const sellerEl = card.querySelector(".poly-component__seller");
-      const shippingEl = card.querySelector(".poly-component__shipping");
-      const soldEl = card.querySelector(".poly-component__sold");
 
       if (!titleEl || !fractionEl) continue;
 
-      const fraction = fractionEl.textContent.trim().replace(/\./g, "");
-      const cents = centsEl ? centsEl.textContent.trim() : "00";
-      const price = parseFloat(`${fraction}.${cents}`);
+      // Bloco compacto de nota/vendas + o span de acessibilidade que vem logo depois.
+      const reviewEl = card.querySelector(".poly-component__review-compacted");
+      const altEl = reviewEl?.nextElementSibling?.classList?.contains("andes-visually-hidden")
+        ? reviewEl.nextElementSibling
+        : card.querySelector(".andes-visually-hidden");
 
-      let originalPrice = null;
-      if (originalPriceEl) {
-        const origFrac = originalPriceEl.textContent.trim().replace(/\./g, "");
-        const origCents = originalPriceCents ? originalPriceCents.textContent.trim() : "00";
-        originalPrice = parseFloat(`${origFrac}.${origCents}`);
-      }
+      // Layout antigo (mantido como alternativa caso o ML sirva a versão anterior).
+      const legacyRatingEl = card.querySelector(".poly-reviews__rating");
+      const legacyReviewsEl = card.querySelector(".poly-reviews__total");
+      const legacySoldEl = card.querySelector(".poly-component__sold");
 
-      let discountPct = null;
-      if (discountEl) {
-        const match = discountEl.textContent.match(/(\d+)%/);
-        if (match) discountPct = parseInt(match[1]);
-      }
-      // Fallback: sem o rótulo de desconto, mas com preço atual e original, calcula.
-      if (discountPct == null && originalPrice && price && originalPrice > price) {
-        discountPct = Math.round((1 - price / originalPrice) * 100);
-      }
+      // Desconto: pill "42% OFF" nos rótulos de preço (novo) ou os seletores antigos.
+      const discountEl = card.querySelector(".poly-price__disc--pill, .poly-price__disc_label");
+      const priceLabelsEl = card.querySelector(".poly-price__labels");
+
+      // Frete: o container virou shipping-v2; aceitamos os dois.
+      const shippingEl = card.querySelector(".poly-component__shipping-v2, .poly-component__shipping");
 
       results.push({
         name: titleEl.textContent.trim(),
         link: titleEl.href,
         img: imgEl?.src || null,
-        price,
-        originalPrice,
-        discount: discountPct,
-        category: cat || null,
-        rating: ratingEl ? parseFloat(ratingEl.textContent.trim()) : null,
-        reviewsCount: reviewsCountEl ? reviewsCountEl.textContent.trim().replace(/[()]/g, "") : null,
-        seller: sellerEl ? sellerEl.textContent.trim().replace(/^Por\s+/, "") : null,
-        freeShipping: shippingEl ? shippingEl.textContent.toLowerCase().includes("grátis") : false,
-        sold: soldEl ? soldEl.textContent.trim() : null,
-        store: "Mercado Livre",
-        scrapedAt: new Date().toISOString(),
+        priceFraction: fractionEl.textContent.trim(),
+        priceCents: centsEl ? centsEl.textContent.trim() : null,
+        originalFraction: originalPriceEl ? originalPriceEl.textContent.trim() : null,
+        originalCents: originalPriceCents ? originalPriceCents.textContent.trim() : null,
+        discountText: txt(discountEl),
+        priceLabelsText: txt(priceLabelsEl),
+        reviewVisible: txt(reviewEl),
+        reviewAlt: txt(altEl),
+        legacyRating: txt(legacyRatingEl),
+        legacyReviews: txt(legacyReviewsEl),
+        legacySold: txt(legacySoldEl),
+        sellerText: txt(sellerEl),
+        shippingText: txt(shippingEl),
       });
     }
     return results;
-  }, category || null);
+  });
+
+  return raw.map((c) => {
+    const price = parseFloat(`${c.priceFraction.replace(/\./g, "")}.${c.priceCents || "00"}`);
+    const originalPrice = c.originalFraction
+      ? parseFloat(`${c.originalFraction.replace(/\./g, "")}.${c.originalCents || "00"}`)
+      : null;
+
+    // Desconto: rótulo antigo → pill "42% OFF" → cálculo a partir do preço anterior.
+    let discount = null;
+    const fromLabel = (c.discountText || "").match(/(\d+)\s*%/);
+    if (fromLabel) discount = parseInt(fromLabel[1], 10);
+    if (discount == null) {
+      const fromPill = (c.priceLabelsText || "").match(/(\d+)\s*%\s*OFF/i);
+      if (fromPill) discount = parseInt(fromPill[1], 10);
+    }
+    if (discount == null && originalPrice && price && originalPrice > price) {
+      discount = Math.round((1 - price / originalPrice) * 100);
+    }
+
+    const compact = parseMLReviewCompacted(c.reviewAlt, c.reviewVisible);
+    const rating = compact.rating ?? (c.legacyRating ? parseFloat(c.legacyRating) : null);
+    const sold = compact.sold ?? (c.legacySold || null);
+
+    return {
+      name: c.name,
+      link: c.link,
+      img: c.img,
+      price,
+      originalPrice,
+      discount,
+      category: category || null,
+      rating: Number.isFinite(rating) ? rating : null,
+      // O ML tirou o nº de avaliações do card de ofertas — só o layout antigo tinha.
+      reviewsCount: c.legacyReviews ? c.legacyReviews.replace(/[()]/g, "") : null,
+      seller: c.sellerText ? c.sellerText.replace(/^Por\s+/i, "") : null,
+      freeShipping: c.shippingText ? c.shippingText.toLowerCase().includes("grátis") : false,
+      sold,
+      store: "Mercado Livre",
+      scrapedAt: new Date().toISOString(),
+    };
+  });
 }
 
 async function scrapeML({ category, limit = 200 } = {}) {
@@ -358,8 +429,10 @@ async function scrapeAmazon({ category, limit = 100 } = {}) {
   for (const p of raw) {
     p.img = upgradeAmazonImageUrl(p.img);
     p.category = category || null;
-    p.rating = null;        // preenchido no enriquecimento (página de oferta não expõe)
-    p.reviewsCount = null;  // idem
+    // Todos preenchidos no enriquecimento (a página de ofertas não expõe nenhum) —
+    // ficam nestes defaults nos produtos que não forem enriquecidos.
+    p.rating = null;
+    p.reviewsCount = null;
     p.seller = null;
     p.freeShipping = false;
     p.sold = null;
@@ -381,7 +454,8 @@ async function scrapeAmazon({ category, limit = 100 } = {}) {
   //    enriquece poucos só pra exibição. pool já vem ordenado por desconto, então
   //    os enriquecidos são os mais relevantes (os que de fato vão pra fila).
   const needsRatingData = cfg.minRating > 0 || cfg.minReviews > 0;
-  const enrichCap = needsRatingData ? AMZ_ENRICH_MAX : AMZ_ENRICH_DISPLAY;
+  const configured = Number.isFinite(Number(cfg.enrichLimit)) ? Number(cfg.enrichLimit) : AMZ_ENRICH_DISPLAY;
+  const enrichCap = needsRatingData ? Math.max(configured, AMZ_ENRICH_MAX) : configured;
   const toEnrich = pool.slice(0, Math.min(pool.length, enrichCap));
   if (toEnrich.length) {
     const eBrowser = await launchAmazonBrowser();
@@ -400,6 +474,22 @@ async function scrapeAmazon({ category, limit = 100 } = {}) {
 
   kept.sort((a, b) => (b.discount || 0) - (a.discount || 0));
   return kept.slice(0, limit);
+}
+
+// A Amazon não mostra "vendidos" — mostra prova social de compras recentes, tipo
+// "Mais de 2 mil compras no mês passado" ou "500+ compras no mês passado".
+// Normalizamos pro MESMO formato de string do ML ("+2 mil vendidos"), pra
+// formatVendas (scheduler.js) e parseSold (abaixo) funcionarem sem mudança.
+// Pura → testável.
+function parseAmazonSold(text) {
+  const s = String(text || "").replace(/\s+/g, " ").trim();
+  if (!s || !/compra|comprad|bought/i.test(s)) return null;
+  const m = s.match(/([\d.,]+)\s*(mil|mi|k)?\s*\+?\s*(?:compras|compradas?|bought)/i);
+  if (!m) return null;
+  const plus = /mais de/i.test(s) || /\+/.test(s);
+  const unit = (m[2] || "").toLowerCase();
+  const suffix = unit === "k" ? " mil" : unit ? ` ${unit}` : "";
+  return `${plus ? "+" : ""}${m[1]}${suffix} vendidos`;
 }
 
 // Enriquece produtos da Amazon com rating + reviewsCount abrindo a página de cada um
@@ -428,7 +518,7 @@ async function enrichAmazonRatings(products, browser, category, { concurrency = 
         await page.goto(p.link, { waitUntil: "domcontentloaded", timeout: 20000 });
         await new Promise(r => setTimeout(r, 800));
         const data = await page.evaluate(() => {
-          const txt = (s) => document.querySelector(s)?.textContent?.trim() || null;
+          const txt = (s) => document.querySelector(s)?.textContent?.replace(/\s+/g, " ").trim() || null;
           const attr = (s, a) => document.querySelector(s)?.getAttribute(a) || null;
           const captcha = /digite os caracteres|enter the characters|automated access|tipo de tr[áa]fego/i.test(document.body?.innerText || "");
           const ratingTxt = attr("#acrPopover", "title")
@@ -436,7 +526,18 @@ async function enrichAmazonRatings(products, browser, category, { concurrency = 
                          || txt("#acrPopover .a-icon-alt")
                          || txt("i.a-icon-star .a-icon-alt");
           const reviewTxt = txt("#acrCustomerReviewText");
-          return { captcha, ratingTxt, reviewTxt };
+          // "Mais de 2 mil compras no mês passado" — prova social logo abaixo do título.
+          const soldTxt = txt("#social-proofing-faceout-title-tk_bought")
+                       || txt("#socialProofingAsinFaceout_feature_div .social-proofing-faceout-title-text")
+                       || txt(".social-proofing-faceout-title-text");
+          // Vendedor: link do lojista no bloco de compra ("Vendido por X").
+          const sellerTxt = txt("#sellerProfileTriggerId")
+                         || txt("#merchant-info a")
+                         || txt('[offer-display-feature-name="desktop-merchant-info"] a');
+          const deliveryTxt = txt("#mir-layout-DELIVERY_BLOCK")
+                           || txt("#deliveryBlockMessage")
+                           || txt("#amazonGlobal_feature_div");
+          return { captcha, ratingTxt, reviewTxt, soldTxt, sellerTxt, deliveryTxt };
         });
 
         if (data.captcha) {
@@ -452,6 +553,10 @@ async function enrichAmazonRatings(products, browser, category, { concurrency = 
           const n = data.reviewTxt.replace(/[^\d]/g, "");
           if (n) p.reviewsCount = n;
         }
+        const sold = parseAmazonSold(data.soldTxt);
+        if (sold) p.sold = sold;
+        if (data.sellerTxt) p.seller = data.sellerTxt.replace(/^vendido por\s+/i, "").trim() || null;
+        if (data.deliveryTxt) p.freeShipping = /gr[áa]tis|free/i.test(data.deliveryTxt);
         if (p.rating != null || p.reviewsCount != null) enriched++;
       } catch {
         if (++consecutiveFails >= maxConsecutiveFails) stopped = true;
@@ -479,8 +584,24 @@ async function enrichAmazonRatings(products, browser, category, { concurrency = 
 const shopeeReviewCache = new Map();
 const SHOPEE_REVIEW_TTL_MS = 6 * 60 * 60 * 1000;
 
+// DISJUNTOR: o v4/item/get devolve 403 (anti-bot, error 90309999) para muitos IPs
+// — confirmado em teste ao vivo, e o mesmo bloqueio já estava documentado em
+// scrapeShopeeSingleViaApi. Quando isso acontece, cada rodada de scraping fazia N
+// requisições que nunca dão em nada. Após SHOPEE_REVIEW_MAX_FAILS falhas seguidas
+// o enriquecimento se desliga sozinho pelo resto do processo (volta no próximo
+// restart, caso o IP saia do bloqueio).
+const SHOPEE_REVIEW_MAX_FAILS = 8;
+let shopeeReviewFails = 0;
+let shopeeReviewDisabled = false;
+
+function noteShopeeReviewFailure(reason) {
+  if (++shopeeReviewFails < SHOPEE_REVIEW_MAX_FAILS) return;
+  shopeeReviewDisabled = true;
+  console.warn(`[scraper Shopee] reviewsCount desligado: ${SHOPEE_REVIEW_MAX_FAILS} falhas seguidas no v4/item/get (${reason}). O endpoint está bloqueando este IP — os produtos seguem sem nº de avaliações.`);
+}
+
 async function fetchShopeeReviewCount(itemId, shopId) {
-  if (!itemId || !shopId) return null;
+  if (!itemId || !shopId || shopeeReviewDisabled) return null;
   const key = `${shopId}:${itemId}`;
   const cached = shopeeReviewCache.get(key);
   if (cached && Date.now() - cached.ts < SHOPEE_REVIEW_TTL_MS) return cached.value;
@@ -499,14 +620,17 @@ async function fetchShopeeReviewCount(itemId, shopId) {
       },
       signal: controller.signal,
     });
-    if (!res.ok) return null;
+    if (!res.ok) { noteShopeeReviewFailure(`HTTP ${res.status}`); return null; }
     const data = await res.json();
     // cmt_count = total de comentários/avaliações; some-times está em data.data.cmt_count
     const cmt = data?.data?.cmt_count ?? data?.item?.cmt_count ?? null;
     const value = Number.isFinite(Number(cmt)) ? Number(cmt) : null;
+    if (value == null) { noteShopeeReviewFailure("resposta sem cmt_count"); return null; }
+    shopeeReviewFails = 0;
     shopeeReviewCache.set(key, { value, ts: Date.now() });
     return value;
-  } catch {
+  } catch (err) {
+    noteShopeeReviewFailure(err.message);
     return null;
   } finally {
     clearTimeout(timer);
@@ -537,7 +661,8 @@ function shopeeNodeToProduct(node, category) {
     discount,
     rating: Number(node.ratingStar) || null,
     reviewsCount: null,
-    seller: null,
+    seller: (typeof node.shopName === "string" && node.shopName.trim()) ? node.shopName.trim() : null,
+    // A Affiliate Open API não expõe frete — não dá pra saber daqui.
     freeShipping: false,
     soldCount: Number(node.sales) || 0,
     commissionRate: Number(node.commissionRate) || null,
@@ -1124,4 +1249,4 @@ async function autoScroll(page) {
   await new Promise(r => setTimeout(r, 1000));
 }
 
-module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, upgradeMLImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, extractShopeeIds, CATEGORIES, STORES };
+module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, upgradeMLImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, extractShopeeIds, parseMLReviewCompacted, parseAmazonSold, CATEGORIES, STORES };
