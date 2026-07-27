@@ -28,6 +28,7 @@ export default function PageAdminScraper() {
   // Catálogo (visualização)
   const [catItems, setCatItems] = useState([]);
   const [catTotal, setCatTotal] = useState(0);
+  const [catStats, setCatStats] = useState(null);
   const [catPage, setCatPage] = useState(1);
   const [catFilter, setCatFilter] = useState({ category: "", source: "", q: "", sortBy: "lastSeen_desc" });
   const [catLoading, setCatLoading] = useState(false);
@@ -58,6 +59,7 @@ export default function PageAdminScraper() {
       const r = await adminCatalog({ page: catPage, pageSize: 50, ...catFilter });
       setCatItems(r.items || []);
       setCatTotal(r.total || 0);
+      if (r.stats) setCatStats(r.stats);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -209,6 +211,40 @@ export default function PageAdminScraper() {
         <StatBox label="Produtos no catálogo" value={lastResult?.total ?? "—"} />
       </div>
 
+      {/* Cards por loja — total + quebra por categoria (lidos de catStats do catálogo) */}
+      {available.sources.length > 0 && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, marginBottom: 18 }}>
+          {available.sources.map(s => {
+            const total = catStats?.byStore?.[s.id] ?? 0;
+            const perCat = catStats?.byStoreCategory?.[s.id] || {};
+            const rows = available.categories
+              .map(c => ({ label: c.label, count: perCat[c.id] || 0 }))
+              .filter(r => r.count > 0)
+              .sort((a, b) => b.count - a.count);
+            return (
+              <div key={s.id} style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+                  <div style={{ fontWeight: 500 }}>{s.label}</div>
+                  <div style={{ fontSize: 20, fontWeight: 600, color: PRIMARY_DARK }}>{total}</div>
+                </div>
+                {rows.length === 0 ? (
+                  <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Nenhum produto ainda</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {rows.map(r => (
+                      <div key={r.label} style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                        <span style={{ color: "var(--color-text-secondary)" }}>{r.label}</span>
+                        <span style={{ fontWeight: 500 }}>{r.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {lastResult && (
         <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 14, marginBottom: 18 }}>
           <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>
@@ -242,27 +278,37 @@ export default function PageAdminScraper() {
           <Toggle value={config.enabled} onChange={v => saveImmediate({ enabled: v })} />
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
+        <div style={{ marginBottom: 14 }}>
           <Field label="Intervalo (minutos)">
             <input
               type="number" min={5} max={10080}
-              value={config.intervalMinutes}
-              onChange={e => updateConfig({ intervalMinutes: parseInt(e.target.value) || 60 })}
+              value={config.intervalMinutes ?? ""}
+              onChange={e => updateConfig({ intervalMinutes: e.target.value === "" ? "" : parseInt(e.target.value) })}
               style={inputStyle}
             />
             <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4 }}>
-              {config.intervalMinutes >= 60 ? `≈ ${Math.round(config.intervalMinutes / 60)}h` : `${config.intervalMinutes}min`}
+              {config.intervalMinutes === "" ? " " : (config.intervalMinutes >= 60 ? `≈ ${Math.round(config.intervalMinutes / 60)}h` : `${config.intervalMinutes}min`)}
             </div>
           </Field>
-          <Field label="Limite por categoria/loja">
-            <input
-              type="number" min={10} max={1000}
-              value={config.limitPerCategory}
-              onChange={e => updateConfig({ limitPerCategory: parseInt(e.target.value) || 200 })}
-              style={inputStyle}
-            />
-          </Field>
         </div>
+
+        <Field label="Limite de produtos por loja (aplicado a cada categoria daquela loja)">
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
+            {available.sources.map(s => (
+              <div key={s.id}>
+                <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 4 }}>{s.label}</div>
+                <input
+                  type="number" min={10} max={1000}
+                  value={config.limitsBySource?.[s.id] ?? ""}
+                  onChange={e => updateConfig({
+                    limitsBySource: { ...config.limitsBySource, [s.id]: e.target.value === "" ? "" : parseInt(e.target.value) },
+                  })}
+                  style={inputStyle}
+                />
+              </div>
+            ))}
+          </div>
+        </Field>
 
         <Field label="Categorias">
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>

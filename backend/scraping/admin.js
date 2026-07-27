@@ -8,7 +8,8 @@ const DEFAULT_CONFIG = {
   intervalMinutes: 360,                                  // 6h
   categories: Object.keys(CATEGORIES),                   // todas
   sources: Object.keys(STORES),                          // ml, amazon
-  limitPerCategory: 200,
+  limitPerCategory: 200,                                 // fallback (compat com configs antigas)
+  limitsBySource: Object.fromEntries(Object.keys(STORES).map(s => [s, 200])),  // limite por loja
   pruneAfterDays: 30,
 };
 
@@ -61,6 +62,12 @@ function writeConfig(cfg) {
   // Validações básicas
   merged.intervalMinutes = Math.max(5, Number(merged.intervalMinutes) || DEFAULT_CONFIG.intervalMinutes);
   merged.limitPerCategory = Math.max(10, Number(merged.limitPerCategory) || DEFAULT_CONFIG.limitPerCategory);
+  // Limite por loja: para cada loja conhecida, garante um número >= 10 (default 200).
+  const srcLimits = (merged.limitsBySource && typeof merged.limitsBySource === "object") ? merged.limitsBySource : {};
+  merged.limitsBySource = {};
+  for (const s of Object.keys(STORES)) {
+    merged.limitsBySource[s] = Math.max(10, Number(srcLimits[s]) || DEFAULT_CONFIG.limitsBySource[s]);
+  }
   merged.categories = Array.isArray(merged.categories)
     ? merged.categories.filter(c => CATEGORIES[c])
     : DEFAULT_CONFIG.categories;
@@ -114,7 +121,7 @@ async function runOnce() {
             const products = await scrapeOfertas({
               category: cat,
               sources: [src],
-              limit: cfg.limitPerCategory,
+              limit: (cfg.limitsBySource && cfg.limitsBySource[src]) || cfg.limitPerCategory,
             });
             // Marca a categoria EXPLICITAMENTE — o scraper às vezes devolve categoria
             // como objeto {label, mlCode, ...}; aqui forçamos string id.

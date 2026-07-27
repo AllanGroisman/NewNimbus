@@ -185,10 +185,11 @@ async function query({
 }
 
 async function getStats() {
-  const [total, byCategoryRaw, byStoreRaw, last] = await Promise.all([
+  const [total, byCategoryRaw, byStoreRaw, byStoreCatRaw, last] = await Promise.all([
     prisma().catalogProduct.count(),
     prisma().catalogProduct.groupBy({ by: ["category"], _count: { _all: true } }),
     prisma().catalogProduct.groupBy({ by: ["store"], _count: { _all: true } }),
+    prisma().catalogProduct.groupBy({ by: ["store", "category"], _count: { _all: true } }),
     prisma().catalogProduct.findFirst({ orderBy: { lastSeenAt: "desc" }, select: { lastSeenAt: true } }),
   ]);
   const byCategory = {};
@@ -198,10 +199,19 @@ async function getStats() {
     const sid = storeToId(r.store) || "_null";
     byStore[sid] = (byStore[sid] || 0) + r._count._all;
   }
+  // Quebra por loja × categoria: { ml: { gamer: 10, casa: 5 }, amazon: {...}, ... }
+  const byStoreCategory = {};
+  for (const r of byStoreCatRaw) {
+    const sid = storeToId(r.store) || "_null";
+    const cat = r.category || "_null";
+    if (!byStoreCategory[sid]) byStoreCategory[sid] = {};
+    byStoreCategory[sid][cat] = (byStoreCategory[sid][cat] || 0) + r._count._all;
+  }
   return {
     total,
     byCategory,
     byStore,
+    byStoreCategory,
     updatedAt: last?.lastSeenAt?.toISOString() || null,
   };
 }
