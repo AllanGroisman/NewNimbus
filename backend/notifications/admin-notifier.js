@@ -25,6 +25,23 @@ const DEFAULT_TEMPLATES = {
     "",
     "Erro: {erro}",
   ].join("\n"),
+  scrapTesterOk: [
+    "*[Nimbus] 🧪 Teste de Scraping — OK*",
+    "📅 {data} · ⏱ {duracao}",
+    "Amostra de {amostra} produtos ({categoria})",
+    "{por_loja}",
+    "",
+    "Todos os campos vieram dentro do esperado.",
+  ].join("\n"),
+  scrapTesterAlert: [
+    "*[Nimbus] 🧪 Teste de Scraping — Problemas*",
+    "📅 {data} · ⏱ {duracao}",
+    "Amostra de {amostra} produtos ({categoria})",
+    "{por_loja}",
+    "",
+    "⚠️ *Campos com falha:*",
+    "{problemas}",
+  ].join("\n"),
   systemOnline: [
     "*[Nimbus] ✅ Sistema Online*",
     "📅 {data}",
@@ -100,6 +117,54 @@ const TEMPLATE_META = [
     },
   },
   {
+    key: "scrapTesterOk",
+    label: "Teste de Scraping — OK",
+    variables: [
+      { name: "data", desc: "Data/hora do teste" },
+      { name: "duracao", desc: "Duração do teste" },
+      { name: "amostra", desc: "Qtd. de produtos amostrados por loja" },
+      { name: "categoria", desc: "Categoria usada na amostra" },
+      { name: "por_loja", desc: "Resumo por loja (cobertura dos campos)" },
+      { name: "problemas", desc: "Lista de campos abaixo do limiar (vazio quando OK)" },
+    ],
+    example: {
+      data: "27/07/2026 09:00", duracao: "1m 40s", amostra: 10, categoria: "Eletrônicos",
+      overall: "ok",
+      perSource: {
+        ml:     { label: "Mercado Livre", ok: true, sampled: 10, status: "ok", missing: [], fields: {} },
+        amazon: { label: "Amazon",        ok: true, sampled: 10, status: "ok", missing: [], fields: {} },
+        shopee: { label: "Shopee",        ok: true, sampled: 10, status: "ok", missing: [], fields: {} },
+      },
+    },
+  },
+  {
+    key: "scrapTesterAlert",
+    label: "Teste de Scraping — Problemas",
+    variables: [
+      { name: "data", desc: "Data/hora do teste" },
+      { name: "duracao", desc: "Duração do teste" },
+      { name: "amostra", desc: "Qtd. de produtos amostrados por loja" },
+      { name: "categoria", desc: "Categoria usada na amostra" },
+      { name: "por_loja", desc: "Resumo por loja (cobertura dos campos)" },
+      { name: "problemas", desc: "Lista de campos abaixo do limiar" },
+    ],
+    example: {
+      data: "27/07/2026 09:00", duracao: "2m 05s", amostra: 10, categoria: "Eletrônicos",
+      overall: "fail",
+      perSource: {
+        ml: { label: "Mercado Livre", ok: true, sampled: 10, status: "ok", missing: [], fields: {} },
+        amazon: {
+          label: "Amazon", ok: true, sampled: 10, status: "warn", missing: ["rating", "reviewsCount"],
+          fields: {
+            rating:       { label: "Avaliação",        pct: 0,  minPct: 60, status: "warn" },
+            reviewsCount: { label: "Nº de avaliações", pct: 10, minPct: 60, status: "warn" },
+          },
+        },
+        shopee: { label: "Shopee", ok: false, sampled: 0, status: "fail", missing: [], fields: {}, error: "Nenhum produto retornado (possível bloqueio)" },
+      },
+    },
+  },
+  {
     key: "systemOnline",
     label: "Sistema Online",
     variables: [{ name: "data", desc: "Data/hora do boot" }],
@@ -121,6 +186,7 @@ const DEFAULT_CONFIG = {
   scrapingDetail: "detailed",
   events: {
     scraping: true,
+    scrapTester: true,
     errors: true,
     systemOnline: true,
   },
@@ -197,6 +263,72 @@ function scrapingVars(status, detailed) {
     por_categoria: buildPerCategoryBlock(r, detailed),
     erro: status.lastError || "",
   };
+}
+
+// ── ScrapTester ────────────────────────────────────────────────────────────
+
+const STATUS_ICON = { ok: "✅", warn: "⚠️", fail: "❌" };
+
+// "• Amazon: 10 produtos · ⚠️ avaliação 0%" — uma linha por loja.
+function buildPerSourceBlock(status) {
+  const perSource = (status && status.perSource) || {};
+  const lines = [];
+  for (const [src, r] of Object.entries(perSource)) {
+    const label = r.label || src;
+    const icon = STATUS_ICON[r.status] || "";
+    if (!r.ok) {
+      lines.push(`• ${label}: ❌ ${r.error || "falhou"}`);
+      continue;
+    }
+    const problems = (r.missing || [])
+      .map(k => `${(r.fields?.[k]?.label || k).toLowerCase()} ${r.fields?.[k]?.pct ?? 0}%`)
+      .join(", ");
+    lines.push(`• ${label}: ${icon} ${r.sampled} produtos${problems ? ` · ${problems}` : " · todos os campos ok"}`);
+  }
+  return lines.join("\n");
+}
+
+// Detalhamento dos campos abaixo do limiar, agrupado por loja.
+function buildProblemsBlock(status) {
+  const perSource = (status && status.perSource) || {};
+  const lines = [];
+  for (const [src, r] of Object.entries(perSource)) {
+    const label = r.label || src;
+    if (!r.ok) {
+      lines.push(`*${label}* — não foi possível amostrar: ${r.error || "erro desconhecido"}`);
+      continue;
+    }
+    if (!r.missing || r.missing.length === 0) continue;
+    lines.push(`*${label}*`);
+    for (const k of r.missing) {
+      const f = r.fields?.[k] || {};
+      const icon = STATUS_ICON[f.status] || "⚠️";
+      lines.push(`  ${icon} ${f.label || k}: ${f.pct ?? 0}% dos produtos (esperado ≥ ${f.minPct ?? 0}%)`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function scrapTesterVars(status) {
+  return {
+    data: formatDate(status.lastRun),
+    duracao: formatDuration(status.lastDuration),
+    amostra: status.sampleSize ?? 0,
+    categoria: status.categoryLabel || status.category || "—",
+    por_loja: buildPerSourceBlock(status),
+    problemas: buildProblemsBlock(status),
+  };
+}
+
+async function notifyScrapTesterResult(status) {
+  const cfg = readConfig();
+  if (!cfg.events.scrapTester) return;
+
+  // Enviado a cada rodada — o template muda conforme o resultado.
+  const key = status.overall === "ok" ? "scrapTesterOk" : "scrapTesterAlert";
+  const template = cfg.templates[key] || DEFAULT_TEMPLATES[key];
+
+  await send(renderTemplate(template, scrapTesterVars(status)));
 }
 
 // Lazy-require pra não criar dependência circular no boot (wa precisa de auth, etc)
@@ -334,6 +466,14 @@ function renderPreview(key, text) {
     // Datas de exemplo vêm prontas (não passam pelo formatDate real).
     vars.data = ex.data;
     vars.duracao = ex.duracao;
+  } else if (key === "scrapTesterOk" || key === "scrapTesterAlert") {
+    vars = scrapTesterVars({
+      lastRun: null, lastDuration: null,
+      sampleSize: ex.amostra, categoryLabel: ex.categoria,
+      overall: ex.overall, perSource: ex.perSource,
+    });
+    vars.data = ex.data;
+    vars.duracao = ex.duracao;
   } else {
     vars = { data: ex.data };
   }
@@ -341,6 +481,6 @@ function renderPreview(key, text) {
 }
 
 module.exports = {
-  readConfig, writeConfig, notifyScrapingResult, notifyError, notifySystemOnline, sendTest,
+  readConfig, writeConfig, notifyScrapingResult, notifyScrapTesterResult, notifyError, notifySystemOnline, sendTest,
   getTemplates, saveTemplates, renderPreview,
 };

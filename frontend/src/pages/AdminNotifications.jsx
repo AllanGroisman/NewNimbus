@@ -17,6 +17,7 @@ const inputStyle = { width: "100%", padding: "8px 10px", border: "1px solid var(
 
 const EVENT_LABELS = {
   scraping:     { label: "Resumo do scraping", desc: "Envia um resumo ao final de cada execução do scraper global." },
+  scrapTester:  { label: "Teste de scraping",  desc: "Envia o relatório do ScrapTester a cada rodada, dizendo quais campos dos produtos estão faltando." },
   errors:       { label: "Erros críticos",     desc: "Notifica quando ocorre um erro inesperado no sistema." },
   systemOnline: { label: "Sistema online",     desc: "Avisa quando o backend é (re)iniciado." },
 };

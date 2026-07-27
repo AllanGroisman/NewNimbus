@@ -28,7 +28,7 @@ function del(key) {
 }
 
 // Pré-carrega keys conhecidas. Chamar no boot do server.
-async function warmup(keys = ["scraper-config", "scraper-status", "scraper-shopee-admin", "shopee-scraper-filters", "admin-notifications-config", "whatsnimbus-config", "registration-blocked"]) {
+async function warmup(keys = ["scraper-config", "scraper-status", "scrap-tester-config", "scrap-tester-status", "scrap-tester-history", "scraper-shopee-admin", "shopee-scraper-filters", "admin-notifications-config", "whatsnimbus-config", "registration-blocked"]) {
   const rows = await prisma().appConfig.findMany({ where: { key: { in: keys } } });
   for (const r of rows) _cache.set(r.key, r.value);
   // Marca keys ausentes como null no cache pra get() ser sempre determinístico

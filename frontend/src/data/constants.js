@@ -246,6 +246,7 @@ export const sidebarItems = [
   { id: "subscription", icon: "★", label: "Assinatura" },
   { id: "products",       icon: "⊟", label: "Produtos",       adminOnly: true },
   { id: "admin-scraper",  icon: "⟳", label: "Scraping",       adminOnly: true },
+  { id: "admin-scrap-tester", icon: "⚗", label: "ScrapTester", adminOnly: true },
   { id: "admin-ml",       icon: "◆", label: "Mercado Livre",  adminOnly: true },
   { id: "admin-amazon",   icon: "◇", label: "Amazon",         adminOnly: true },
   { id: "admin-shopee",   icon: "◈", label: "Shopee",         adminOnly: true },

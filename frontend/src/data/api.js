@@ -300,6 +300,14 @@ export async function adminScraperMLFilters()            { return http("GET", "/
 export async function adminScraperMLFiltersSave(f)       { return http("PUT", "/api/admin/scraper/ml/filters", f); }
 export async function adminScraperAmazonFilters()        { return http("GET", "/api/admin/scraper/amazon/filters"); }
 export async function adminScraperAmazonFiltersSave(f)   { return http("PUT", "/api/admin/scraper/amazon/filters", f); }
+
+// ScrapTester — monitor de saúde do scraping
+export async function adminScrapTesterConfig()       { return http("GET",  "/api/admin/scrap-tester/config"); }
+export async function adminScrapTesterSave(cfg)      { return http("PUT",  "/api/admin/scrap-tester/config", cfg); }
+export async function adminScrapTesterStatus()       { return http("GET",  "/api/admin/scrap-tester/status"); }
+export async function adminScrapTesterRun()          { return http("POST", "/api/admin/scrap-tester/run"); }
+export async function adminScrapTesterCancel()       { return http("POST", "/api/admin/scrap-tester/cancel"); }
+export async function adminScrapTesterHistory()      { return http("GET",  "/api/admin/scrap-tester/history"); }
 export async function adminCatalog({ page = 1, pageSize = 50, category, source, q, sortBy } = {}) {
   const params = new URLSearchParams();
   params.set("page", page);

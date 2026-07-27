@@ -16,6 +16,7 @@ const scheduler = require("./scheduler");
 const affiliate = require("./scraping/affiliate");
 const catalog = require("./catalog");
 const adminScraper = require("./scraping/admin");
+const scrapTester = require("./scraping/tester");
 const appConfig = require("./config");
 const queueMod = require("./infra/queue");
 const logger = require("./infra/logger");
@@ -1307,6 +1308,56 @@ app.get("/api/admin/scraper/status", auth.requireAuth, auth.requireAdmin, (req, 
   res.json(adminScraper.status());
 });
 
+// ────────────────────────────────────────────────────────────────────────
+// Admin — ScrapTester (monitor de saúde do scraping)
+// ────────────────────────────────────────────────────────────────────────
+
+app.get("/api/admin/scrap-tester/config", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json({
+    config: scrapTester.readConfig(),
+    fieldSpecs: scrapTester.FIELD_SPECS,
+    available: {
+      categories: scrapTester.AVAILABLE_CATEGORIES,
+      sources: scrapTester.AVAILABLE_SOURCES,
+    },
+  });
+});
+
+app.put("/api/admin/scrap-tester/config", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  try {
+    res.json({ config: scrapTester.writeConfig(req.body || {}) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/scrap-tester/status", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json(scrapTester.status());
+});
+
+app.post("/api/admin/scrap-tester/run", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  try {
+    if (scrapTester.status().running) {
+      return res.status(409).json({ error: "Teste já em execução" });
+    }
+    // Não bloqueia a resposta — o scrape real leva minutos.
+    scrapTester.runOnce().catch(err => console.error("[scrap-tester.run]", err.message));
+    res.json({ ok: true, message: "Teste iniciado em background" });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/scrap-tester/cancel", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  const r = scrapTester.cancel();
+  if (!r.ok) return res.status(409).json({ error: r.message });
+  res.json(r);
+});
+
+app.get("/api/admin/scrap-tester/history", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json({ history: scrapTester.readHistory() });
+});
+
 // Credenciais Shopee globais (usadas pelo admin-scraper).
 // Override per-user fica intacto; isso aqui sobrescreve só o fallback do scraper.
 app.get("/api/admin/scraper/shopee", auth.requireAuth, auth.requireAdmin, (req, res) => {
@@ -1911,6 +1962,7 @@ async function boot() {
     }
     scheduler.start();
     adminScraper.start();
+    scrapTester.start();
     // Fire-and-forget — falha silenciosa se sessão WA ainda não estiver conectada
     setTimeout(() => {
       adminNotifier.notifySystemOnline().catch(err =>
@@ -1923,6 +1975,7 @@ async function boot() {
   const shutdown = async (signal) => {
     console.log(`[server] ${signal} recebido, encerrando...`);
     scheduler.stop();
+    scrapTester.stop();
     server.close(() => console.log("[server] HTTP fechado"));
     try { await queueMod.close(); console.log("[server] queue fechada"); } catch {}
     setTimeout(() => process.exit(0), 2000);
