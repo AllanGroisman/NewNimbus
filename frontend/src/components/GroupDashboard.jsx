@@ -394,7 +394,9 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   }
   // ── Adicionar link manualmente ──────────────────────────────────────────
   // Modal aberto = objeto com o form; null = fechado.
-  const emptyManualForm = { url: "", name: "", price: "", originalPrice: "", discount: "", img: "", store: "", category: "" };
+  // `sold` não tem campo na tela — é só carregado do "buscar dados" e repassado,
+  // pra mensagem sair com o texto da loja ("+1.000 vendidos") em vez de nada.
+  const emptyManualForm = { url: "", name: "", price: "", originalPrice: "", discount: "", img: "", store: "", category: "", sold: "" };
   const [manualForm, setManualForm] = useState(null);
   const [manualFetching, setManualFetching] = useState(false);
   const [manualSubmitting, setManualSubmitting] = useState(false);
@@ -432,6 +434,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         originalPrice: data.originalPrice != null ? String(data.originalPrice) : f.originalPrice,
         discount: data.discount != null ? String(data.discount) : f.discount,
         store: data.store || f.store,
+        sold: data.sold || f.sold,
       }));
       const missing = [];
       if (!data.name) missing.push("nome");
@@ -464,6 +467,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           img: manualForm.img.trim() || null,
           store: manualForm.store.trim() || null,
           category: manualForm.category || null,
+          sold: manualForm.sold || null,
         },
       };
       const r = await manualAddToQueue(group.id, payload);

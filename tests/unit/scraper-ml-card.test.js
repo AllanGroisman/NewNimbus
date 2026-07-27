@@ -12,7 +12,7 @@ const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 const scraper = require(path.resolve(__dirname, "..", "..", "backend", "scraping", "scraper.js"));
 
-const { parseMLReviewCompacted, parseAmazonSold, applyFilters } = scraper;
+const { parseMLReviewCompacted, parseAmazonSold, normalizeSoldText, applyFilters } = scraper;
 
 describe("parseMLReviewCompacted", () => {
   // Textos reais do card de Eletrônicos (julho/2026).
@@ -54,6 +54,43 @@ describe("parseMLReviewCompacted", () => {
     const produtos = [{ sold, price: 10, discount: 5 }];
     expect(applyFilters(produtos, { minSales: 5000 })).toHaveLength(1);   // 10mil >= 5000
     expect(applyFilters(produtos, { minSales: 50000 })).toHaveLength(0);
+  });
+});
+
+// Caminho do link colado / repasse: antes o texto virava número e a mensagem
+// perdia o "+" ("+1.000 vendidos" → "1000 vendidos").
+describe("normalizeSoldText", () => {
+  it("preserva o + e o formato da loja", () => {
+    expect(normalizeSoldText("+1.000 vendidos")).toBe("+1.000 vendidos");
+    expect(normalizeSoldText("+ 500 vendidos")).toBe("+500 vendidos");
+    expect(normalizeSoldText("+10mil vendidos")).toBe("+10mil vendidos");
+  });
+
+  it("sem 'mais de', não inventa o +", () => {
+    expect(normalizeSoldText("2 mil vendidos")).toBe("2 mil vendidos");
+    expect(normalizeSoldText("37 vendidos")).toBe("37 vendidos");
+  });
+
+  it("descarta o que vier grudado antes do trecho de vendas", () => {
+    expect(normalizeSoldText("Novo | +5mil vendidos")).toBe("+5mil vendidos");
+    expect(normalizeSoldText("  Novo   |   +5 mil vendidos  ")).toBe("+5 mil vendidos");
+  });
+
+  it("aceita número (compatibilidade com o formato antigo)", () => {
+    expect(normalizeSoldText(1000)).toBe("1000 vendidos");
+    expect(normalizeSoldText(0)).toBeNull();
+  });
+
+  it("devolve nulo pra vazio ou texto sem vendas", () => {
+    expect(normalizeSoldText(null)).toBeNull();
+    expect(normalizeSoldText("")).toBeNull();
+    expect(normalizeSoldText("Frete grátis")).toBeNull();
+  });
+
+  it("o texto normalizado continua legível pelos filtros existentes", () => {
+    const produtos = [{ sold: normalizeSoldText("+1.000 vendidos"), price: 10 }];
+    expect(applyFilters(produtos, { minSales: 500 })).toHaveLength(1);
+    expect(applyFilters(produtos, { minSales: 5000 })).toHaveLength(0);
   });
 });
 

@@ -36,7 +36,9 @@ async function logCapture(fields) {
         price: fields.price ?? null,
         originalPrice: fields.originalPrice ?? null,
         discount: fields.discount ?? null,
-        sold: fields.sold ?? null,
+        // A coluna é Int; o produto carrega o TEXTO das vendas ("+1.000 vendidos")
+        // pra mensagem preservar o "+". Converte só aqui, pro log.
+        sold: fields.sold != null ? affiliate.parseSoldText(fields.sold) : null,
         outcome: fields.outcome,
         reason: fields.reason || null,
       },

@@ -1067,13 +1067,10 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
         const imgEl = document.querySelector(".ui-pdp-gallery__figure img, figure.ui-pdp-gallery__figure img, .ui-pdp-image");
         img = imgEl?.getAttribute("data-zoom") || imgEl?.getAttribute("src") || ogImage;
         // Best-effort: não há seletor confirmado pra "vendidos" na PDP — tenta achar
-        // o texto em qualquer lugar da página (ex. "500 vendidos", "2 mil vendidos").
-        const soldMatch = (document.body?.innerText || "").match(/([\d.,]+)\s*(mil\s*)?vendid[oa]s?/i);
-        if (soldMatch) {
-          let n = parseFloat(soldMatch[1].replace(/\./g, "").replace(",", "."));
-          if (soldMatch[2]) n *= 1000;
-          if (!isNaN(n)) sold = Math.round(n);
-        }
+        // o texto em qualquer lugar da página (ex. "+500 vendidos", "2 mil vendidos").
+        // Devolve o TEXTO cru; quem normaliza é o normalizeSoldText lá no Node.
+        const soldMatch = (document.body?.innerText || "").match(/\+?\s*[\d.,]+\s*(?:mil\s*|mi\s*)?vendid[oa]s?/i);
+        if (soldMatch) sold = soldMatch[0];
       } else if (store === "Amazon") {
         const titleEl = document.querySelector("#productTitle, h1#title span, h1#title");
         name = titleEl?.textContent?.trim() || ogTitle;
@@ -1124,7 +1121,7 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
       price: data.price ?? null,
       originalPrice: data.originalPrice ?? null,
       discount: data.discount ?? null,
-      sold: data.sold ?? null,
+      sold: normalizeSoldText(data.sold),
       img: store === "Amazon" ? upgradeAmazonImageUrl(data.img)
          : store === "Mercado Livre" ? upgradeMLImageUrl(data.img)
          : (data.img || null),
@@ -1134,6 +1131,26 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
   } finally {
     await browser.close();
   }
+}
+
+// Normaliza o texto de vendas colhido de UMA página de produto.
+// "+1.000 vendidos" / "2 mil vendidos" / "Novo | +5mil vendidos" → texto limpo,
+// PRESERVANDO o "+" e o "mil": é assim que a loja escreve e é assim que vai pro
+// grupo (formatVendas em scheduler.js repassa a string inteira). Converter pra
+// número aqui era o que fazia o "+1000 vendidos" virar "1000 vendidos" na mensagem.
+// Pura → testável.
+function normalizeSoldText(raw) {
+  if (raw == null) return null;
+  if (typeof raw === "number") {
+    return Number.isFinite(raw) && raw > 0 ? `${raw} vendidos` : null;
+  }
+  const s = String(raw).replace(/\s+/g, " ").trim();
+  if (!s) return null;
+  // Pega só o pedaço "…vendidos", descartando o que vier grudado antes ("Novo | ").
+  const m = s.match(/\+?\s*[\d.,]+\s*(?:mil|mi)?\s*vendid[oa]s?/i);
+  if (!m) return null;
+  const out = m[0].replace(/^\+\s*/, "+").replace(/\s+/g, " ").trim();
+  return /[\d]/.test(out) ? out : null;
 }
 
 // Extrai shopId/itemId do formato padrão de URL de produto Shopee
@@ -1194,7 +1211,9 @@ async function scrapeShopeeSingleViaApi(cleanUrl, userId) {
     price: mapped.price,
     originalPrice: mapped.originalPrice,
     discount: mapped.discount,
-    sold: mapped.soldCount || null,
+    // A Shopee manda contagem exata — vai como soldCount pro formatVendas compactar
+    // ("1,2 mil vendidos"), igual aos produtos de catálogo da loja.
+    soldCount: mapped.soldCount || null,
     img: mapped.img,
     store: "Shopee",
     scrapedAt: new Date().toISOString(),
@@ -1249,4 +1268,4 @@ async function autoScroll(page) {
   await new Promise(r => setTimeout(r, 1000));
 }
 
-module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, upgradeMLImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, extractShopeeIds, parseMLReviewCompacted, parseAmazonSold, CATEGORIES, STORES };
+module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, upgradeMLImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, extractShopeeIds, parseMLReviewCompacted, parseAmazonSold, normalizeSoldText, CATEGORIES, STORES };

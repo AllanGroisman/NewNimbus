@@ -853,6 +853,7 @@ module.exports = {
   passesShopeeFilters,
   SHOPEE_FILTERS_DEFAULTS,
   // Puros — testes
+  parseSoldText,
   signShopeeRequest,
   buildShopeeShortLinkPayload,
   buildShopeeProductOfferPayload,

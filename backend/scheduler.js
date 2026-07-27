@@ -827,7 +827,8 @@ async function manualAdd(userId, groupId, payload = {}) {
     category: overrides.category || (Array.isArray(group.categories) ? group.categories[0] : null) || null,
     rating: null,
     reviewsCount: null,
-    sold: null,
+    // Texto vindo do "buscar dados" do link ("+1.000 vendidos") — o {vendas} usa inteiro.
+    sold: overrides.sold ? String(overrides.sold).trim() : null,
     freeShipping: false,
     seller: null,
     manual: true,
