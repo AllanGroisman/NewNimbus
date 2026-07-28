@@ -6,6 +6,34 @@ export const BRAND_BLUE_LIGHT = "#1a2b48";
 
 export const allSources = ["Mercado Livre", "Amazon", "Shopee"];
 
+// Label da loja (como fica em group.scraping.sources) → id usado no backend e
+// nas travas de loja. Espelha STORES em backend/scraping/scraper.js.
+export const SOURCE_LABEL_TO_ID = {
+  "Mercado Livre": "ml",
+  "Amazon": "amazon",
+  "Shopee": "shopee",
+};
+
+// id da loja → id da aba correspondente no sidebar.
+export const STORE_ID_TO_PAGE = {
+  ml: "mercado-livre",
+  amazon: "amazon",
+  shopee: "shopee",
+};
+
+// Mensagem de trava da loja, ou null se ela está liberada. Aceita tanto o label
+// ("Mercado Livre") quanto o id ("ml"). `locks` é o mapa vindo de /api/stores/locks.
+export function storeLockMessage(locks, store) {
+  const id = SOURCE_LABEL_TO_ID[store] || store;
+  const lock = locks?.[id];
+  return lock?.locked ? (lock.message || "Esta loja está indisponível no momento.") : null;
+}
+
+// Só as lojas liberadas, na ordem de allSources.
+export function unlockedSources(locks) {
+  return allSources.filter(s => !storeLockMessage(locks, s));
+}
+
 // URLs reais de produtos populares pra usar como teste padrão nos
 // "Testar transformação" das telas de afiliado. Trocar aqui propaga
 // pra todas as telas (ML, Amazon, Shopee usuário, Shopee admin).

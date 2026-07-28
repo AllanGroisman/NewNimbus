@@ -1,6 +1,6 @@
-import { PRIMARY_DARK, PRIMARY_LIGHT, sidebarItems, getGroupStats } from "../data/constants";
+import { PRIMARY_DARK, PRIMARY_LIGHT, sidebarItems, getGroupStats, STORE_ID_TO_PAGE, storeLockMessage } from "../data/constants";
 
-export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = [], numbers = [], affiliateConfigured = true, affiliateStatus, user, onNavigate, onSelectGroup, onLogout, mobileOpen, onToggleMobile }) {
+export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = [], numbers = [], affiliateConfigured = true, affiliateStatus, storeLocks = {}, user, onNavigate, onSelectGroup, onLogout, mobileOpen, onToggleMobile }) {
   const nav = (id) => { onNavigate(id); onToggleMobile(false); };
   const selGroup = (g) => { onSelectGroup(g); onToggleMobile(false); };
   const isAdmin = user?.role === "admin";
@@ -17,15 +17,24 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
   const whatsappLevel = numbers.length === 0 || connectedCount === 0 ? "red"
     : connectedCount < numbers.length ? "amber"
     : null;
+  // Aba de loja trancada pelo admin: cadeado no lugar do alerta de afiliado —
+  // não adianta pedir pro usuário configurar algo que ele não pode usar agora.
+  const lockedPages = {};
+  for (const [storeId, pageId] of Object.entries(STORE_ID_TO_PAGE)) {
+    const msg = storeLockMessage(storeLocks, storeId);
+    if (msg) lockedPages[pageId] = msg;
+  }
   const alertLevel = {
     "mercado-livre": affiliateStatus && !affiliateStatus.ml ? "red" : null,
     "amazon":        affiliateStatus && !affiliateStatus.amazon ? "red" : null,
     "shopee":        affiliateStatus && !affiliateStatus.shopee ? "red" : null,
     "whatsapp":      whatsappLevel,
   };
+  for (const pageId of Object.keys(lockedPages)) alertLevel[pageId] = null;
 
   const renderItem = (item) => {
     const isActive = page === item.id && !selectedGroup;
+    const lockMsg = lockedPages[item.id] || null;
     const level = alertLevel[item.id] || null;
     const showAlert = !!level;
     const alertTitle = item.id === "whatsapp"
@@ -37,17 +46,19 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
       <button
         key={item.id}
         onClick={() => nav(item.id)}
-        title={showAlert ? alertTitle : undefined}
+        title={lockMsg || (showAlert ? alertTitle : undefined)}
         style={{
           display: "flex", alignItems: "center", gap: 10, padding: "9px 16px",
           background: isActive ? PRIMARY_LIGHT : "transparent",
           border: "none", cursor: "pointer", textAlign: "left",
           color: isActive ? PRIMARY_DARK : (showAlert ? alertTextColor : "var(--color-text-primary)"),
           fontWeight: isActive ? 600 : 500, fontSize: 13,
+          opacity: lockMsg ? 0.6 : 1,
         }}
       >
         <span style={{ fontSize: 14 }}>{item.icon}</span>
         <span style={{ flex: 1 }}>{item.label}</span>
+        {lockMsg && <span aria-label="Loja indisponível" style={{ fontSize: 11, flexShrink: 0 }}>🔒</span>}
         {showAlert && (
           <span
             aria-label={alertTitle}

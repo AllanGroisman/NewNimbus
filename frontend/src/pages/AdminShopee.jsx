@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, TEST_URLS } from "../data/constants";
 import Badge from "../components/ui/Badge";
+import StoreLockCard from "../components/ui/StoreLockCard";
 import {
   adminScraperShopee,
   adminScraperShopeeSave,
@@ -99,6 +100,8 @@ export default function PageAdminShopee() {
           Credenciais e filtros globais da Shopee usados pelo scraper que alimenta o catálogo central.
         </div>
       </div>
+
+      <StoreLockCard store="shopee" storeLabel="Shopee" />
 
       <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16, marginBottom: 18 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, gap: 8, flexWrap: "wrap" }}>

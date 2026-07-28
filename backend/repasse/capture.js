@@ -354,7 +354,8 @@ async function processMessage(userId, leaders, urls, waJid) {
     let group = (state.groups || []).find(g => g.id === groupId);
     if (!group) continue;
 
-    const allowedSources = scheduler.resolveSources(group.scraping?.sources);
+    // activeSources (e não resolveSources): loja trancada pelo admin não repassa.
+    const allowedSources = scheduler.activeSources(group.scraping?.sources);
 
     let approved = 0, pending = 0;
     for (const base of items) {

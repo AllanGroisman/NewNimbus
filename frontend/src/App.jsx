@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { initialGroups, initialNumbers, initialWhatsappGroups, makeEmptyGroup, DEFAULT_MESSAGE_TEMPLATE } from "./data/mockData";
-import { allSources } from "./data/constants";
+import { allSources, storeLockMessage, unlockedSources } from "./data/constants";
 
 const DEFAULT_SETTINGS = {
   messageTemplate: DEFAULT_MESSAGE_TEMPLATE,
@@ -9,10 +9,11 @@ const DEFAULT_SETTINGS = {
   sources: allSources,
   theme: "auto",
 };
-import { authMe, authLogout, authRefresh, loadAppState, saveAppState, loadAppOps, getToken, clearToken, getLastActivity, setLastActivity, IDLE_TIMEOUT_MS, getAffiliateStatus, billingMe, billingSync, listWASessions } from "./data/api";
+import { authMe, authLogout, authRefresh, loadAppState, saveAppState, loadAppOps, getToken, clearToken, getLastActivity, setLastActivity, IDLE_TIMEOUT_MS, getAffiliateStatus, billingMe, billingSync, listWASessions, storeLocks as fetchStoreLocks } from "./data/api";
 import Sidebar from "./components/Sidebar";
 import GroupDashboard from "./components/GroupDashboard";
 import UnsavedChangesModal from "./components/UnsavedChangesModal";
+import StoreLockedNotice from "./components/ui/StoreLockedNotice";
 import { NavGuardContext } from "./data/navGuard";
 import { mergeGroupOps, mergeGroupsOps } from "./data/opsMerge";
 import PageDashboard from "./pages/Dashboard";
@@ -45,6 +46,7 @@ const NAV_STORAGE_KEY = "nimbus:nav";
 const OPS_POLL_MS = 3 * 1000;
 const SESSION_POLL_MS = 8 * 1000;
 const AFFILIATE_POLL_MS = 30 * 1000;
+const STORE_LOCKS_POLL_MS = 60 * 1000;
 // Teto do backoff em 429 (rate-limit): intervalo nunca passa de POLL_MS × este fator.
 const MAX_BACKOFF_MULT = 8;
 
@@ -95,6 +97,9 @@ export default function App() {
   // Default true pra ML/Amazon evita "flash vermelho" antes do primeiro fetch.
   // Shopee fica sempre como "não configurado" enquanto a integração não existe.
   const [affiliateStatus, setAffiliateStatus] = useState({ ml: true, amazon: true, shopee: false });
+  // Travas de loja definidas pelo admin — { ml: { locked, message }, ... }.
+  // Default vazio = nada trancado, pra não piscar cadeado antes do primeiro fetch.
+  const [storeLocks, setStoreLocks] = useState({});
   // Billing — { planId, effectivePlan, status, daysLeftInTrial, limits, stripeEnabled, isAdmin }
   const [billing, setBilling] = useState(null);
   // Nomes dos polls (ops/session/affiliate) atualmente em backoff por rate-limit (429).
@@ -171,6 +176,8 @@ export default function App() {
         }
         // Billing — não bloqueia o boot se falhar
         billingMe().then(b => !cancelled && setBilling(b)).catch(() => {});
+        // Travas de loja — idem: se falhar, nada fica trancado na UI.
+        fetchStoreLocks().then(r => !cancelled && setStoreLocks(r.locks || {})).catch(() => {});
       } catch {
         // token inválido — segue para tela de login
       } finally {
@@ -437,6 +444,37 @@ export default function App() {
     };
   }, [user]);
 
+  // Polling das travas de loja — quando o admin destranca, o cadeado some sem F5.
+  // Muda raramente, então o intervalo é folgado.
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    let timer = null;
+    let backoffMult = 1;
+    async function pull() {
+      if (cancelled || (typeof document !== "undefined" && document.hidden)) return;
+      try {
+        const r = await fetchStoreLocks();
+        if (cancelled) return;
+        backoffMult = 1;
+        setStoreLocks(r.locks || {});
+      } catch (err) {
+        if (err?.status === 429) backoffMult = Math.min(backoffMult * 2, MAX_BACKOFF_MULT);
+        // demais erros: silencioso — mantém as travas conhecidas
+      }
+      if (!cancelled) timer = setTimeout(pull, STORE_LOCKS_POLL_MS * backoffMult);
+    }
+    const stop = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    const onVisibility = () => { if (document.hidden) stop(); else { stop(); pull(); } };
+    pull();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      stop();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [user]);
+
   async function handleLogin(loggedUser) {
     setLastActivity(Date.now()); // inicia a janela de inatividade
     setUser(loggedUser);
@@ -465,7 +503,7 @@ export default function App() {
   }
 
   const handleCreateGroup = ({ name, categories, type, repasse }) => {
-    const newGroup = makeEmptyGroup({ id: Date.now(), name, categories, template: settings.messageTemplate, type, repasse });
+    const newGroup = makeEmptyGroup({ id: Date.now(), name, categories, template: settings.messageTemplate, type, repasse, sources: unlockedSources(storeLocks) });
     setGroups(gs => [...gs, newGroup]);
     setSelectedGroup(newGroup);
     setPage("group");
@@ -591,6 +629,15 @@ export default function App() {
   }
 
   const fallbackPage = <PageDashboard groups={groups} whatsappGroups={liveWhatsappGroups} onSelectGroup={handleSelectGroup} onCreateGroup={handleCreateGroup} onUpdate={handleUpdate} affiliateConfigured={affiliateConfigured} onGoToSettings={() => setPage("settings")} limits={billing?.limits} />;
+  // Loja trancada pelo admin → mostra só a mensagem no lugar da página de
+  // afiliado. Admin continua vendo a página normal pra poder validar antes de liberar.
+  const lockedStore = (storeId) => {
+    if (user?.role === "admin") return null;
+    const msg = storeLockMessage(storeLocks, storeId);
+    if (!msg) return null;
+    const label = { ml: "Mercado Livre", amazon: "Amazon", shopee: "Shopee" }[storeId];
+    return <StoreLockedNotice storeLabel={label} message={msg} />;
+  };
   const pageMap = {
     dashboard: <PageDashboard groups={groups} whatsappGroups={liveWhatsappGroups} onSelectGroup={handleSelectGroup} onCreateGroup={handleCreateGroup} onUpdate={handleUpdate} affiliateConfigured={affiliateConfigured} onGoToSettings={() => setPage("settings")} limits={billing?.limits} />,
     products: user?.role === "admin" ? <PageProducts /> : fallbackPage,
@@ -604,9 +651,9 @@ export default function App() {
     />,
     settings: <PageSettings user={user} setUser={setUser} onLogout={handleLogout} settings={settings} setSettings={setSettings} numbers={numbers} onAffiliateChange={applyAffiliateStatus} />,
     subscription: <PageSubscription />,
-    "mercado-livre": <PageAffiliateML onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
-    "amazon": <PageAffiliateAmazon onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
-    "shopee": <PageAffiliateShopee onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
+    "mercado-livre": lockedStore("ml") || <PageAffiliateML onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
+    "amazon": lockedStore("amazon") || <PageAffiliateAmazon onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
+    "shopee": lockedStore("shopee") || <PageAffiliateShopee onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
     "admin-scraper":  user?.role === "admin" ? <PageAdminScraper /> : fallbackPage,
     "admin-scrap-tester": user?.role === "admin" ? <PageAdminScrapTester /> : fallbackPage,
     "admin-ml":       user?.role === "admin" ? <PageAdminML /> : fallbackPage,
@@ -635,6 +682,7 @@ export default function App() {
         numbers={liveNumbers}
         affiliateConfigured={affiliateConfigured}
         affiliateStatus={affiliateStatus}
+        storeLocks={user?.role === "admin" ? {} : storeLocks}
         user={user}
         onNavigate={(id) => requestNavigation(() => { setPage(id); setSelectedGroup(null); setTutorialTarget(null); })}
         onSelectGroup={handleSelectGroup}
@@ -671,6 +719,7 @@ export default function App() {
               whatsappGroups={liveWhatsappGroups}
               affiliateConfigured={affiliateConfigured}
               affiliateStatus={affiliateStatus}
+              storeLocks={storeLocks}
               onBack={handleBack}
               onUpdate={handleUpdate}
               onDelete={handleDelete}

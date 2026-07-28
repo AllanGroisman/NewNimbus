@@ -38,7 +38,7 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 
 14. [x] Na aba Shopee, Invés de App Scret escreva Senha. E o site onde pego tanto App ID quanto a Senha é  affiliate.shopee.com.br/openapi, pode colocar como clicavel direto e nao precisa ter o caminho do site home como esta agora.
 
-15. [] Quero Ter um botao em cada aba de loja no ADMIN onde eu altero os filtros do scraping para trancar o acesso à aba daquela loja e esconder trancar a escolha delas dentro das campanhas. Quando o usario tenta acessar ou clica para escolher aparece uma mensagem que vira em breve ou em manutencao (quero poder escolher e editar essa mensagem tambem no menu de cada uma do ADMIN). 
+15. [x] Quero Ter um botao em cada aba de loja no ADMIN onde eu altero os filtros do scraping para trancar o acesso à aba daquela loja e esconder trancar a escolha delas dentro das campanhas. Quando o usario tenta acessar ou clica para escolher aparece uma mensagem que vira em breve ou em manutencao (quero poder escolher e editar essa mensagem tambem no menu de cada uma do ADMIN). 
 
 16. [x] Scraping mercado livre buscar todas as infos
 

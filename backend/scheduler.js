@@ -8,6 +8,7 @@ const { productKey } = require("./catalog/product-key");
 const metrics = require("./infra/metrics");
 const log = require("./infra/logger").child({ module: "scheduler" });
 const billing = require("./billing");
+const storeLocks = require("./scraping/store-locks");
 const auth = require("./auth");
 const userNotifier = require("./notifications/user-notifier");
 
@@ -86,14 +87,23 @@ function resolveSources(sources) {
   return ids.length ? [...new Set(ids)] : ["ml"];
 }
 
+// Fontes que a campanha pode REALMENTE usar agora: tira as lojas trancadas pelo
+// admin. A campanha segue rodando com as lojas restantes; se todas estiverem
+// trancadas, devolve [] e o affiliateGate pausa com a mensagem do admin.
+function activeSources(sources) {
+  const locked = new Set(storeLocks.lockedStoreIds());
+  return resolveSources(sources).filter(id => !locked.has(id));
+}
+
 // Extrai cats/srcs/filters do grupo em formato canônico (Sets) pro itemMatchesCampaign.
 function campaignFilterCtx(group) {
   const catList = Array.isArray(group.categories) && group.categories.length
     ? group.categories
     : (group.category ? [group.category] : []);
   const cats = catList.length ? new Set(catList) : null;
-  const srcIds = resolveSources(group.scraping?.sources);
-  const srcs = srcIds.length ? new Set(srcIds) : null;
+  // Set vazio (todas as lojas trancadas) é intencional: nenhum item casa, então
+  // a fila é limpa em vez de virar "sem filtro de loja".
+  const srcs = new Set(activeSources(group.scraping?.sources));
   const filters = (group.scraping && group.scraping.filters) || {};
   return { cats, srcs, filters };
 }
@@ -129,7 +139,13 @@ function itemMatchesCampaign(item, ctx) {
 // afiliado dela não está configurado. Amazon não pausa — cai pro link cru.
 // Retorna { paused, reason } pra o caller poder mostrar mensagem específica.
 function affiliateGate(userId, group) {
-  const sources = resolveSources(group.scraping?.sources);
+  const sources = activeSources(group.scraping?.sources);
+  // Todas as lojas da campanha estão trancadas pelo admin — pausa com a mensagem
+  // configurada no painel, pra o usuário entender que não é erro dele.
+  if (!sources.length) {
+    const first = resolveSources(group.scraping?.sources)[0];
+    return { paused: true, reason: storeLocks.lockMessage(first) || "as lojas desta campanha estão indisponíveis" };
+  }
   const s = affiliate.status(userId);
   if (sources.includes("ml") && !s.ml.configured) {
     return { paused: true, reason: "configure o afiliado do Mercado Livre (tag + cookie) em Configurações" };
@@ -219,7 +235,7 @@ async function refillQueue(userId, group) {
     ? group.categories
     : (group.category ? [group.category] : []);
   const filters = (group.scraping && group.scraping.filters) || {};
-  const sources = resolveSources(group.scraping?.sources);
+  const sources = activeSources(group.scraping?.sources);
   const cdMin = cooldownMinutes(group.schedule);
   const target = isAutoApprove(group) ? "queue" : "pending";
   const filterCtx = campaignFilterCtx(group);
@@ -263,13 +279,18 @@ async function refillQueue(userId, group) {
   // Exclui da query: tudo que está no queue + pending + cooldown
   const excludeKeys = new Set([...queueSeen, ...pendingSeen, ...sentRecentlyKeys, ...histKeySet]);
 
-  const candidates = await catalog.query({
-    categories: cats.length ? cats : null,
-    sources,
-    excludeKeys,
-    filters,
-    limit: 100,
-  });
+  // sources vazio = todas as lojas da campanha trancadas. Não dá pra chamar
+  // catalog.query assim: lista vazia lá significa "sem filtro de loja" e traria
+  // produtos de lojas que a campanha não escolheu.
+  const candidates = sources.length
+    ? await catalog.query({
+        categories: cats.length ? cats : null,
+        sources,
+        excludeKeys,
+        filters,
+        limit: 100,
+      })
+    : [];
 
   const rawItems = candidates.map(p => ({
     id: p.key,    // a UI de pending busca por `id`
@@ -901,4 +922,4 @@ async function addItemToGroup(userId, group, item, { force = false } = {}) {
   };
 }
 
-module.exports = { start, stop, tick, sendNextNow, refillNow, manualAdd, addItemToGroup, isRepasse, isAutoApprove, resolveSources, status, processSendJob };
+module.exports = { start, stop, tick, sendNextNow, refillNow, manualAdd, addItemToGroup, isRepasse, isAutoApprove, resolveSources, activeSources, status, processSendJob };

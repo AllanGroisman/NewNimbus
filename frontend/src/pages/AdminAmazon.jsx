@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../data/constants";
 import { adminScraperAmazonFilters, adminScraperAmazonFiltersSave } from "../data/api";
+import StoreLockCard from "../components/ui/StoreLockCard";
 
 export default function PageAdminAmazon() {
   return (
@@ -11,6 +12,7 @@ export default function PageAdminAmazon() {
           Filtros globais aplicados ao scraping da Amazon antes de salvar no catálogo central.
         </div>
       </div>
+      <StoreLockCard store="amazon" storeLabel="Amazon" />
       <AmazonFiltersSection />
     </div>
   );

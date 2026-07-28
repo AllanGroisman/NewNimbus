@@ -301,6 +301,11 @@ export async function adminScraperMLFiltersSave(f)       { return http("PUT", "/
 export async function adminScraperAmazonFilters()        { return http("GET", "/api/admin/scraper/amazon/filters"); }
 export async function adminScraperAmazonFiltersSave(f)   { return http("PUT", "/api/admin/scraper/amazon/filters", f); }
 
+// ─── Travas de loja (admin tranca, usuário vê só a mensagem) ───────────
+export async function adminStoreLocks()                  { return http("GET", "/api/admin/stores/locks"); }
+export async function adminStoreLockSave(store, body)    { return http("PUT", `/api/admin/stores/${encodeURIComponent(store)}/lock`, body); }
+export async function storeLocks()                       { return http("GET", "/api/stores/locks"); }
+
 // ScrapTester — monitor de saúde do scraping
 export async function adminScrapTesterConfig()       { return http("GET",  "/api/admin/scrap-tester/config"); }
 export async function adminScrapTesterSave(cfg)      { return http("PUT",  "/api/admin/scrap-tester/config", cfg); }

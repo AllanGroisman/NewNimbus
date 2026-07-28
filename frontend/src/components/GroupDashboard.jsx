@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, soldText, getGroupCategories, getGroupStats, computeQueueETA, formatETA, formatTimeBR, formatDateBR, isSameDayBR } from "../data/constants";
+import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, storeLockMessage, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, soldText, getGroupCategories, getGroupStats, computeQueueETA, formatETA, formatTimeBR, formatDateBR, isSameDayBR } from "../data/constants";
 import { createWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupQueue, saveGroupQueue, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue } from "../data/api";
 import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
 import { useUnsavedGuard, useRequestNavigation } from "../data/navGuard";
@@ -219,7 +219,7 @@ function QueueItemCard({ item, idx, eta, onRemove, onDragStart, onDragOver, onDr
   );
 }
 
-export default function GroupDashboard({ group, numbers, whatsappGroups = [], affiliateConfigured = true, affiliateStatus = null, onBack, onUpdate, onDelete, onCreateWhatsappGroup, onUpdateWhatsappGroup, onGoToSettings, onGoToAffiliate, onGoToWhatsapp, customTemplates = [], onAddCustomTemplate, onDeleteCustomTemplate, onUpdateCustomTemplate, limits }) {
+export default function GroupDashboard({ group, numbers, whatsappGroups = [], affiliateConfigured = true, affiliateStatus = null, storeLocks = {}, onBack, onUpdate, onDelete, onCreateWhatsappGroup, onUpdateWhatsappGroup, onGoToSettings, onGoToAffiliate, onGoToWhatsapp, customTemplates = [], onAddCustomTemplate, onDeleteCustomTemplate, onUpdateCustomTemplate, limits }) {
   const [tab, setTab] = useState(() => readSavedTab(group.id));
   // Guarda a aba atual por campanha pra restaurar no F5.
   useEffect(() => { writeSavedTab(group.id, tab); }, [group.id, tab]);
@@ -269,6 +269,8 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   // Modal de aviso ao adicionar uma fonte cujo afiliado não está configurado.
   // null quando fechado; { src } (ex: "Shopee", "Mercado Livre") quando aberto.
   const [confirmAddSource, setConfirmAddSource] = useState(null);
+  // Loja trancada pelo admin que o usuário tentou selecionar — abre modal com a mensagem.
+  const [lockedSourceMsg, setLockedSourceMsg] = useState(null);
   const [confirmClearQueue, setConfirmClearQueue] = useState(false);
   const [confirmRemoveQueueItem, setConfirmRemoveQueueItem] = useState(null);
   // Aba de modelo selecionada (presets + customs). Inicia tentando casar com o template do grupo.
@@ -744,6 +746,13 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   // pausar silenciosamente). Remoção e fontes sem gating passam direto.
   const handleToggleSource = (src) => {
     const active = scraping.sources.includes(src);
+    // Loja trancada pelo admin: nem adiciona nem remove por clique — só explica.
+    // (Remover continua possível pelo aviso "Remover desta campanha" no modal.)
+    const lockMsg = storeLockMessage(storeLocks, src);
+    if (lockMsg) {
+      setLockedSourceMsg({ src, message: lockMsg, selected: active });
+      return;
+    }
     if (!active) {
       const affKey = SOURCE_TO_AFF_KEY[src];
       if (affKey && !isAffOk(affKey)) {
@@ -1415,9 +1424,17 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {allSources.map(src => {
                 const active = scraping.sources.includes(src);
-                return <div key={src} onClick={() => handleToggleSource(src)} style={{ padding: "6px 14px", borderRadius: 8, border: `0.5px solid ${active ? PRIMARY : "var(--color-border-tertiary)"}`, background: active ? PRIMARY_LIGHT : "transparent", color: active ? PRIMARY_DARK : "var(--color-text-secondary)", fontSize: 13, cursor: "pointer", fontWeight: active ? 500 : 400 }}>{active ? "✓ " : ""}{src}</div>;
+                const lockMsg = storeLockMessage(storeLocks, src);
+                // Loja trancada fica cinza com cadeado, mesmo se a campanha já a
+                // tinha selecionada — o clique só abre a explicação.
+                return <div key={src} onClick={() => handleToggleSource(src)} title={lockMsg || undefined} style={{ padding: "6px 14px", borderRadius: 8, border: `0.5px solid ${lockMsg ? "var(--color-border-tertiary)" : (active ? PRIMARY : "var(--color-border-tertiary)")}`, background: lockMsg ? "var(--color-background-secondary)" : (active ? PRIMARY_LIGHT : "transparent"), color: lockMsg ? "var(--color-text-secondary)" : (active ? PRIMARY_DARK : "var(--color-text-secondary)"), fontSize: 13, cursor: lockMsg ? "not-allowed" : "pointer", fontWeight: active && !lockMsg ? 500 : 400, opacity: lockMsg ? 0.7 : 1 }}>{lockMsg ? "🔒 " : (active ? "✓ " : "")}{src}</div>;
               })}
             </div>
+            {allSources.some(src => scraping.sources.includes(src) && storeLockMessage(storeLocks, src)) && (
+              <div style={{ marginTop: 10, fontSize: 11, color: "#7A5800", background: "#FFF7E0", border: "0.5px solid #F0D58A", borderRadius: 8, padding: "8px 10px" }}>
+                Uma das lojas desta campanha está indisponível no momento — ela é ignorada e a campanha segue buscando nas outras.
+              </div>
+            )}
             {scraping.sources.length === 0 && (
               <div style={{ marginTop: 10, fontSize: 11, color: "#A32D2D" }}>{isRepasse ? "Selecione ao menos uma fonte para o repasse funcionar." : "Selecione ao menos uma fonte para o scraping funcionar."}</div>
             )}
@@ -2745,6 +2762,31 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         </Modal>
       )}
 
+      {lockedSourceMsg && (() => {
+        const { src, message, selected } = lockedSourceMsg;
+        const close = () => setLockedSourceMsg(null);
+        return (
+          <Modal title={`${src} indisponível`} onClose={close}>
+            <p style={{ fontSize: 13, marginBottom: 12, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+              {message}
+            </p>
+            {selected && (
+              <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+                Esta campanha já usa a {src}. Enquanto ela estiver indisponível, os produtos dessa loja são ignorados &mdash; as outras lojas continuam normalmente.
+              </p>
+            )}
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button
+                onClick={close}
+                style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}
+              >
+                Entendi
+              </button>
+            </div>
+          </Modal>
+        );
+      })()}
+
       {confirmAddSource && (() => {
         const { src } = confirmAddSource;
         const close = () => setConfirmAddSource(null);
@@ -2956,7 +2998,11 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13 }}
               >
                 <option value="">— escolher —</option>
-                {allSources.map(s => <option key={s} value={s}>{s}</option>)}
+                {/* Loja trancada não entra na lista — só continua aparecendo se o
+                    formulário já estiver com ela preenchida (metadata do link). */}
+                {allSources
+                  .filter(s => !storeLockMessage(storeLocks, s) || manualForm.store === s)
+                  .map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
             <div style={{ gridColumn: "1 / -1" }}>

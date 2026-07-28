@@ -8,7 +8,7 @@ const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const { rateLimit, ipKeyGenerator } = require("express-rate-limit");
-const { CATEGORIES, STORES, scrapeSingleProduct } = require("./scraping/scraper");
+const { CATEGORIES, STORES, normalizeSource, scrapeSingleProduct } = require("./scraping/scraper");
 const wa = require("./whatsapp");
 const auth = require("./auth");
 const storage = require("./storage");
@@ -16,6 +16,7 @@ const scheduler = require("./scheduler");
 const affiliate = require("./scraping/affiliate");
 const catalog = require("./catalog");
 const adminScraper = require("./scraping/admin");
+const storeLocks = require("./scraping/store-locks");
 const scrapTester = require("./scraping/tester");
 const appConfig = require("./config");
 const queueMod = require("./infra/queue");
@@ -734,11 +735,23 @@ app.post("/api/billing/reactivate", auth.requireAuth, async (req, res) => {
 // Afiliados ML
 // ────────────────────────────────────────────────────────────────────────
 
+// Loja trancada pelo admin: bloqueia escrita/teste de credenciais pro usuário
+// comum — a UI já esconde a aba, isto fecha o caminho pelo devtools. Admin
+// passa direto, senão não daria pra validar a integração antes de destrancar.
+function requireStoreUnlocked(storeId) {
+  return (req, res, next) => {
+    if (req.user?.role === "admin") return next();
+    const msg = storeLocks.lockMessage(storeId);
+    if (msg) return res.status(403).json({ error: msg, storeLocked: true });
+    next();
+  };
+}
+
 app.get("/api/affiliate", auth.requireAuth, (req, res) => {
   res.json(affiliate.status(req.user.id));
 });
 
-app.put("/api/affiliate", auth.requireAuth, (req, res) => {
+app.put("/api/affiliate", auth.requireAuth, requireStoreUnlocked("ml"), (req, res) => {
   try {
     const { tag, cookie } = req.body || {};
     affiliate.writeConfig(req.user.id, { tag, cookie });
@@ -748,7 +761,7 @@ app.put("/api/affiliate", auth.requireAuth, (req, res) => {
   }
 });
 
-app.delete("/api/affiliate", auth.requireAuth, (req, res) => {
+app.delete("/api/affiliate", auth.requireAuth, requireStoreUnlocked("ml"), (req, res) => {
   try {
     affiliate.clearConfig(req.user.id);
     res.json(affiliate.status(req.user.id));
@@ -757,7 +770,7 @@ app.delete("/api/affiliate", auth.requireAuth, (req, res) => {
   }
 });
 
-app.post("/api/affiliate/test", auth.requireAuth, async (req, res) => {
+app.post("/api/affiliate/test", auth.requireAuth, requireStoreUnlocked("ml"), async (req, res) => {
   try {
     const url = req.body?.url;
     if (!url || typeof url !== "string" || !url.trim()) {
@@ -777,7 +790,7 @@ app.post("/api/affiliate/test", auth.requireAuth, async (req, res) => {
 
 // ─── Afiliado Amazon ───────────────────────────────────────────────────
 
-app.put("/api/affiliate/amazon", auth.requireAuth, (req, res) => {
+app.put("/api/affiliate/amazon", auth.requireAuth, requireStoreUnlocked("amazon"), (req, res) => {
   try {
     const { tag } = req.body || {};
     affiliate.writeAmazonConfig(req.user.id, { tag });
@@ -787,7 +800,7 @@ app.put("/api/affiliate/amazon", auth.requireAuth, (req, res) => {
   }
 });
 
-app.delete("/api/affiliate/amazon", auth.requireAuth, (req, res) => {
+app.delete("/api/affiliate/amazon", auth.requireAuth, requireStoreUnlocked("amazon"), (req, res) => {
   try {
     affiliate.clearAmazonConfig(req.user.id);
     res.json(affiliate.status(req.user.id));
@@ -796,7 +809,7 @@ app.delete("/api/affiliate/amazon", auth.requireAuth, (req, res) => {
   }
 });
 
-app.post("/api/affiliate/amazon/test", auth.requireAuth, (req, res) => {
+app.post("/api/affiliate/amazon/test", auth.requireAuth, requireStoreUnlocked("amazon"), (req, res) => {
   try {
     const url = req.body?.url;
     if (!url || typeof url !== "string" || !url.trim()) {
@@ -817,7 +830,7 @@ app.post("/api/affiliate/amazon/test", auth.requireAuth, (req, res) => {
 
 // ─── Afiliado Shopee ───────────────────────────────────────────────────
 
-app.put("/api/affiliate/shopee", auth.requireAuth, (req, res) => {
+app.put("/api/affiliate/shopee", auth.requireAuth, requireStoreUnlocked("shopee"), (req, res) => {
   try {
     const { appId, appSecret } = req.body || {};
     affiliate.writeShopeeConfig(req.user.id, { appId, appSecret });
@@ -827,7 +840,7 @@ app.put("/api/affiliate/shopee", auth.requireAuth, (req, res) => {
   }
 });
 
-app.delete("/api/affiliate/shopee", auth.requireAuth, (req, res) => {
+app.delete("/api/affiliate/shopee", auth.requireAuth, requireStoreUnlocked("shopee"), (req, res) => {
   try {
     affiliate.clearShopeeConfig(req.user.id);
     res.json(affiliate.status(req.user.id));
@@ -836,7 +849,7 @@ app.delete("/api/affiliate/shopee", auth.requireAuth, (req, res) => {
   }
 });
 
-app.post("/api/affiliate/shopee/test", auth.requireAuth, async (req, res) => {
+app.post("/api/affiliate/shopee/test", auth.requireAuth, requireStoreUnlocked("shopee"), async (req, res) => {
   try {
     const url = req.body?.url;
     if (!url || typeof url !== "string" || !url.trim()) {
@@ -1441,6 +1454,51 @@ app.put("/api/admin/scraper/amazon/filters", auth.requireAuth, auth.requireAdmin
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// Trava de loja — admin tranca uma loja e os usuários veem só a mensagem.
+// ────────────────────────────────────────────────────────────────────────
+
+// Estado das travas + quantas campanhas usam cada loja (pro admin medir o
+// impacto antes de trancar). Contagem varre todas as campanhas — rota é
+// admin-only e chamada só ao abrir a aba, então o custo é aceitável.
+app.get("/api/admin/stores/locks", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const locks = storeLocks.readStoreLocks();
+    const { prisma } = require("./db");
+    const rows = await prisma().group.findMany({ select: { scraping: true } });
+    const usage = {};
+    for (const id of Object.keys(STORES)) usage[id] = 0;
+    for (const r of rows) {
+      const sources = Array.isArray(r.scraping?.sources) ? r.scraping.sources : [];
+      const ids = new Set(sources.map(normalizeSource).filter(Boolean));
+      for (const id of ids) if (usage[id] !== undefined) usage[id] += 1;
+    }
+    res.json({ locks, usage });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/api/admin/stores/:store/lock", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  try {
+    const { locked, message } = req.body || {};
+    const saved = storeLocks.writeStoreLock(req.params.store, { locked, message });
+    res.json({ ok: true, store: storeLocks.resolveStoreId(req.params.store), lock: saved });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Versão pro usuário comum: só locked + message, sem contagem de uso.
+app.get("/api/stores/locks", auth.requireAuth, (req, res) => {
+  const all = storeLocks.readStoreLocks();
+  const out = {};
+  for (const [id, lock] of Object.entries(all)) {
+    out[id] = { locked: lock.locked, message: lock.locked ? lock.message : null };
+  }
+  res.json({ locks: out });
 });
 
 // Testa as credenciais admin gerando um shortlink — mesma rota de teste do affiliate,

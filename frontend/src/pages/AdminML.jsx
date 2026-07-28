@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../data/constants";
 import { adminScraperMLFilters, adminScraperMLFiltersSave } from "../data/api";
+import StoreLockCard from "../components/ui/StoreLockCard";
 
 export default function PageAdminML() {
   return (
@@ -11,6 +12,7 @@ export default function PageAdminML() {
           Filtros globais aplicados ao scraping do Mercado Livre antes de salvar no catálogo central.
         </div>
       </div>
+      <StoreLockCard store="ml" storeLabel="Mercado Livre" />
       <MLFiltersSection />
     </div>
   );
