@@ -80,4 +80,4 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 
 32. [] Verificar se o backup ta sendo o ideal em tempo e espaco, ate quanto tempo de armazenamento de um backup esta disponivel, etc... 
 
-33. [] Verificar se a infraestrutura atual consegue atender a demanda.
+33. [x] Verificar se a infraestrutura atual consegue atender a demanda.
