@@ -100,7 +100,7 @@ export default function WhatsappQR({ sessionId, onConnected, onError, autoStart 
             {state.info?.phone && <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>+{state.info.phone}</div>}
           </div>
         ) : state.status === "error" || (state.error && (state.status === "disconnected" || state.status === "logged_out")) ? (
-          <div style={{ padding: "60px 20px", color: "#A32D2D" }}>
+          <div style={{ padding: "60px 20px", color: "var(--danger-text)" }}>
             <div style={{ fontSize: 28, marginBottom: 10 }}>⚠</div>
             <div style={{ fontSize: 13, fontWeight: 500 }}>Erro de conexão</div>
             <div style={{ fontSize: 12, marginTop: 6 }}>{state.error}</div>

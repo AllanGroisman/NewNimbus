@@ -9,6 +9,22 @@
   --color-brand: #ea580c;
   --color-brand-contrast: #ffffff;
 
+  /* Cards de aviso (faixas de alerta, blocos de erro/sucesso). Antes eram hex
+     fixos claros espalhados pelo código — no tema escuro viravam manchas
+     claras no meio da tela. Agora cada tema define seu próprio conjunto. */
+  --warn-bg: #fef3c7;
+  --warn-border: #f4d08a;
+  --warn-text: #854f0b;
+  --danger-bg: #fcebeb;
+  --danger-border: #f7c1c1;
+  --danger-text: #a32d2d;
+  --success-bg: #e8f5ee;
+  --success-border: #b9dec9;
+  --success-text: #1f6a3c;
+  --info-bg: #eff6ff;
+  --info-border: #bfdbfe;
+  --info-text: #1e40af;
+
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   font-size: 14px;
   line-height: 1.5;
@@ -31,6 +47,19 @@
     --color-border-tertiary: #2a2a2a;
     --color-brand: #ea580c;
     --color-brand-contrast: #ffffff;
+
+    --warn-bg: #3a2c0d;
+    --warn-border: #6b5218;
+    --warn-text: #f2c96b;
+    --danger-bg: #3a1c1c;
+    --danger-border: #6d2f2e;
+    --danger-text: #f0a3a2;
+    --success-bg: #16301f;
+    --success-border: #2c5a3b;
+    --success-text: #8fd6a9;
+    --info-bg: #16233a;
+    --info-border: #2c4570;
+    --info-text: #9dc0f5;
   }
 }
 
@@ -45,6 +74,19 @@
   --color-border-tertiary: #e8e8e8;
   --color-brand: #ea580c;
   --color-brand-contrast: #ffffff;
+
+  --warn-bg: #fef3c7;
+  --warn-border: #f4d08a;
+  --warn-text: #854f0b;
+  --danger-bg: #fcebeb;
+  --danger-border: #f7c1c1;
+  --danger-text: #a32d2d;
+  --success-bg: #e8f5ee;
+  --success-border: #b9dec9;
+  --success-text: #1f6a3c;
+  --info-bg: #eff6ff;
+  --info-border: #bfdbfe;
+  --info-text: #1e40af;
   color-scheme: light;
 }
 :root[data-theme="dark"] {
@@ -56,6 +98,19 @@
   --color-border-tertiary: #2a2a2a;
   --color-brand: #ea580c;
   --color-brand-contrast: #ffffff;
+
+  --warn-bg: #3a2c0d;
+  --warn-border: #6b5218;
+  --warn-text: #f2c96b;
+  --danger-bg: #3a1c1c;
+  --danger-border: #6d2f2e;
+  --danger-text: #f0a3a2;
+  --success-bg: #16301f;
+  --success-border: #2c5a3b;
+  --success-text: #8fd6a9;
+  --info-bg: #16233a;
+  --info-border: #2c4570;
+  --info-text: #9dc0f5;
   color-scheme: dark;
 }
 
@@ -78,6 +133,24 @@ h1, h2, h3 {
 input, select, textarea, button {
   font-family: inherit;
   color: var(--color-text-primary);
+}
+
+/* Foco visível pra quem navega por teclado. Antes não havia nenhuma regra de
+   foco: o Tab percorria a tela toda sem nenhum indicador de onde estava. */
+:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Retorno visual no hover. `filter` funciona igual nos botões coloridos e nos
+   transparentes, sem precisar tocar em nenhum dos estilos inline das telas. */
+button:not(:disabled):hover,
+[role="button"]:not([aria-disabled="true"]):hover {
+  filter: brightness(0.95);
+}
+button:disabled {
+  cursor: not-allowed;
 }
 
 /* Placeholder bem mais fraco que o texto digitado — do jeito que estava, o exemplo

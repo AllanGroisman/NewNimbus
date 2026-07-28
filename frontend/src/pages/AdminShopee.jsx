@@ -169,7 +169,7 @@ export default function PageAdminShopee() {
         )}
 
         {msg && (
-          <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: msg.type === "ok" ? PRIMARY_LIGHT : "#FCEBEB", color: msg.type === "ok" ? PRIMARY_DARK : "#A32D2D", wordBreak: "break-all" }}>
+          <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: msg.type === "ok" ? PRIMARY_LIGHT : "var(--danger-bg)", color: msg.type === "ok" ? PRIMARY_DARK : "var(--danger-text)", wordBreak: "break-all" }}>
             {msg.text}
             {msg.link && (
               <>
@@ -198,7 +198,7 @@ export default function PageAdminShopee() {
             {testing ? "Testando..." : "Testar"}
           </button>
           {data.admin?.configured && (
-            <button onClick={handleClear} disabled={saving} style={{ padding: "7px 16px", borderRadius: 8, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 13, cursor: "pointer", marginLeft: "auto" }}>
+            <button onClick={handleClear} disabled={saving} style={{ padding: "7px 16px", borderRadius: 8, border: "0.5px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", fontSize: 13, cursor: "pointer", marginLeft: "auto" }}>
               Apagar
             </button>
           )}
@@ -317,7 +317,7 @@ function ShopeeFiltersSection() {
       </div>
 
       {msg && (
-        <div style={{ marginTop: 14, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: msg.type === "ok" ? PRIMARY_LIGHT : "#FCEBEB", color: msg.type === "ok" ? PRIMARY_DARK : "#A32D2D" }}>
+        <div style={{ marginTop: 14, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: msg.type === "ok" ? PRIMARY_LIGHT : "var(--danger-bg)", color: msg.type === "ok" ? PRIMARY_DARK : "var(--danger-text)" }}>
           {msg.text}
         </div>
       )}

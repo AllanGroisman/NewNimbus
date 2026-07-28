@@ -1,9 +1,12 @@
-import { PRIMARY_DARK, PRIMARY_LIGHT, sidebarItems, getGroupStats, STORE_ID_TO_PAGE, storeLockMessage } from "../data/constants";
+import { PRIMARY_DARK, PRIMARY_LIGHT, sidebarItems, getGroupStats, STORE_ID_TO_PAGE, storeLockMessage, planLabel } from "../data/constants";
 
-export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = [], numbers = [], affiliateConfigured = true, affiliateStatus, storeLocks = {}, user, onNavigate, onSelectGroup, onLogout, mobileOpen, onToggleMobile }) {
+export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = [], numbers = [], affiliateConfigured = true, affiliateStatus, storeLocks = {}, user, billing, onNavigate, onSelectGroup, onLogout, mobileOpen, onToggleMobile }) {
   const nav = (id) => { onNavigate(id); onToggleMobile(false); };
   const selGroup = (g) => { onSelectGroup(g); onToggleMobile(false); };
   const isAdmin = user?.role === "admin";
+  // Rótulo do plano vem do billing. Enquanto não carrega (null), não mostra nada —
+  // antes era o texto fixo "Plano Pro", que mentia pra quem estava em outro plano.
+  const subtitle = isAdmin ? "Painel administrativo" : planLabel(billing?.effectivePlan);
 
   const visibleItems = sidebarItems.filter(it => !it.adminOnly);
   const adminItems = sidebarItems.filter(it => it.adminOnly);
@@ -41,7 +44,7 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
       ? (level === "amber" ? "Alguns números de WhatsApp desconectados" : "Nenhum WhatsApp conectado")
       : "Afiliado não configurado";
     const badgeBg = level === "amber" ? "#EF9F27" : "#E24B4A";
-    const alertTextColor = level === "amber" ? "#8A5A00" : "#A32D2D";
+    const alertTextColor = level === "amber" ? "var(--warn-text)" : "var(--danger-text)";
     return (
       <button
         key={item.id}
@@ -79,9 +82,9 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
             <div style={{ fontSize: 16, fontWeight: 500, color: "var(--color-brand)" }}>Nimbus {isAdmin && <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "var(--color-brand)", color: "var(--color-brand-contrast)", marginLeft: 4, verticalAlign: "middle" }}>ADMIN</span>}</div>
-            <div style={{ fontSize: 11, color: "var(--color-text-primary)", fontWeight: 500, opacity: 0.75 }}>{isAdmin ? "Painel administrativo" : "Plano Pro"}</div>
+            {subtitle && <div style={{ fontSize: 11, color: "var(--color-text-primary)", fontWeight: 500, opacity: 0.75 }}>{subtitle}</div>}
           </div>
-          <button className="mobile-only" onClick={() => onToggleMobile(false)} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 20, color: "var(--color-text-secondary)", padding: "4px" }}>✕</button>
+          <button className="mobile-only" aria-label="Fechar menu" onClick={() => onToggleMobile(false)} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 20, color: "var(--color-text-secondary)", padding: "4px" }}>✕</button>
         </div>
       </div>
       {visibleItems.map(renderItem)}
@@ -139,7 +142,7 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
         background: "var(--color-background-primary)", position: "sticky", top: 0, zIndex: 90,
       }}>
         <div style={{ fontSize: 16, fontWeight: 500, color: "var(--color-brand)" }}>Nimbus</div>
-        <button onClick={() => onToggleMobile(true)} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 22, color: "var(--color-text-primary)", padding: "4px 8px", lineHeight: 1 }}>☰</button>
+        <button onClick={() => onToggleMobile(true)} aria-label="Abrir menu" style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 22, color: "var(--color-text-primary)", padding: "4px 8px", lineHeight: 1 }}>☰</button>
       </div>
 
       {/* Desktop sidebar */}

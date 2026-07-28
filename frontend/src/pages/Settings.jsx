@@ -94,7 +94,7 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
       <div className="settings-layout" style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 20 }}>
         <div className="settings-nav" style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           {sections.map(s => (
-            <button key={s.id} onClick={() => setSection(s.id)} style={{ padding: "8px 12px", borderRadius: 8, border: "none", background: section === s.id ? PRIMARY_LIGHT : "transparent", color: section === s.id ? PRIMARY_DARK : (s.id === "danger" ? "#A32D2D" : "var(--color-text-secondary)"), fontSize: 13, cursor: "pointer", textAlign: "left", fontWeight: section === s.id ? 500 : 400, whiteSpace: "nowrap" }}>{s.label}</button>
+            <button key={s.id} onClick={() => setSection(s.id)} style={{ padding: "8px 12px", borderRadius: 8, border: "none", background: section === s.id ? PRIMARY_LIGHT : "transparent", color: section === s.id ? PRIMARY_DARK : (s.id === "danger" ? "var(--danger-text)" : "var(--color-text-secondary)"), fontSize: 13, cursor: "pointer", textAlign: "left", fontWeight: section === s.id ? 500 : 400, whiteSpace: "nowrap" }}>{s.label}</button>
           ))}
         </div>
 
@@ -118,7 +118,7 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
                   ))}
                 </div>
                 {accountMsg && (
-                  <div style={{ marginTop: 10, fontSize: 12, color: accountMsg.type === "ok" ? PRIMARY_DARK : "#A32D2D" }}>{accountMsg.text}</div>
+                  <div style={{ marginTop: 10, fontSize: 12, color: accountMsg.type === "ok" ? PRIMARY_DARK : "var(--danger-text)" }}>{accountMsg.text}</div>
                 )}
                 <button onClick={handleSaveAccount} disabled={accountSaving} style={{ marginTop: 14, padding: "7px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: accountSaving ? "wait" : "pointer", fontWeight: 500, opacity: accountSaving ? 0.7 : 1 }}>{accountSaving ? "Salvando..." : "Salvar alterações"}</button>
               </div>
@@ -155,7 +155,7 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
                       <div style={{ fontSize: 13, fontWeight: 500 }}>{d.device} {d.current && <Badge color="green">Este dispositivo</Badge>}</div>
                       <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>{d.location} &middot; {d.lastSeen}</div>
                     </div>
-                    {!d.current && <button style={{ padding: "5px 10px", borderRadius: 7, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 12, cursor: "pointer" }}>Encerrar</button>}
+                    {!d.current && <button style={{ padding: "5px 10px", borderRadius: 7, border: "0.5px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", fontSize: 12, cursor: "pointer" }}>Encerrar</button>}
                   </div>
                 ))}
               </div>
@@ -251,8 +251,8 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
           )}
 
           {section === "danger" && (
-            <div style={{ background: "var(--color-background-primary)", border: "0.5px solid #F7C1C1", borderRadius: 12, padding: 16 }}>
-              <div style={{ fontWeight: 500, marginBottom: 4, color: "#A32D2D" }}>Excluir conta</div>
+            <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--danger-border)", borderRadius: 12, padding: 16 }}>
+              <div style={{ fontWeight: 500, marginBottom: 4, color: "var(--danger-text)" }}>Excluir conta</div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>Essa ação é permanente. Todos os seus dados, grupos, agendamentos e histórico serão apagados definitivamente.</div>
               <button onClick={() => setShowDeleteAccount(true)} style={{ padding: "8px 16px", borderRadius: 8, background: "#E24B4A", color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>Excluir minha conta</button>
             </div>
@@ -280,7 +280,7 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
             ))}
           </div>
           {pwdMsg && (
-            <div style={{ marginTop: 10, fontSize: 12, color: pwdMsg.type === "ok" ? PRIMARY_DARK : "#A32D2D" }}>{pwdMsg.text}</div>
+            <div style={{ marginTop: 10, fontSize: 12, color: pwdMsg.type === "ok" ? PRIMARY_DARK : "var(--danger-text)" }}>{pwdMsg.text}</div>
           )}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
             <button onClick={() => { setShowPasswordModal(false); setPwdMsg(null); }} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
@@ -305,7 +305,7 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
             <li>Dados da assinatura (sem reembolso)</li>
             <li>Números do WhatsApp conectados</li>
           </ul>
-          <label style={{ fontSize: 12, color: "var(--color-text-secondary)", display: "block", marginBottom: 6 }}>Digite <strong style={{ color: "#A32D2D" }}>EXCLUIR</strong> para confirmar:</label>
+          <label style={{ fontSize: 12, color: "var(--color-text-secondary)", display: "block", marginBottom: 6 }}>Digite <strong style={{ color: "var(--danger-text)" }}>EXCLUIR</strong> para confirmar:</label>
           <input style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", marginBottom: 16 }} />
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button onClick={() => setShowDeleteAccount(false)} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>

@@ -9,14 +9,14 @@ import {
 
 const cardStyle = { background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: 10, padding: "20px 24px", marginBottom: 16 };
 const btnPrimary = { background: PRIMARY, color: "#fff", border: "none", borderRadius: 6, padding: "9px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer" };
-const btnDanger = { background: "transparent", color: "#A32D2D", border: "1px solid #A32D2D", borderRadius: 6, padding: "9px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer" };
+const btnDanger = { background: "transparent", color: "var(--danger-text)", border: "1px solid var(--danger-text)", borderRadius: 6, padding: "9px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer" };
 
 const STATUS_META = {
   connected:   { color: "#15803D", label: "Conectado" },
   awaiting_qr: { color: "#B45309", label: "Aguardando leitura do QR" },
   connecting:  { color: "#B45309", label: "Conectando..." },
-  disconnected:{ color: "#A32D2D", label: "Desconectado" },
-  logged_out:  { color: "#A32D2D", label: "Desvinculado" },
+  disconnected:{ color: "var(--danger-text)", label: "Desconectado" },
+  logged_out:  { color: "var(--danger-text)", label: "Desvinculado" },
   idle:        { color: "var(--color-text-secondary)", label: "Não configurado" },
 };
 
@@ -135,7 +135,7 @@ export default function PageAdminWhatsNimbus() {
       </div>
 
       {error && (
-        <div style={{ background: "#FEE2E2", color: "#991B1B", borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 13 }}>
+        <div style={{ background: "var(--danger-bg)", color: "var(--danger-text)", borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 13 }}>
           {error}
         </div>
       )}

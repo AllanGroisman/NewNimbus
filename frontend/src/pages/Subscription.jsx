@@ -64,20 +64,20 @@ function cardBrandLabel(brand) {
 // Badge de status de fatura do Stripe (paid/open/void/uncollectible/draft).
 function invoiceBadge(status) {
   if (status === "paid") return { label: "Paga", color: "#3B6D11", bg: "#EAF3DE", border: "#C5DBA7" };
-  if (status === "open") return { label: "Em aberto", color: "#854F0B", bg: "#FFF7E0", border: "#F0D58A" };
+  if (status === "open") return { label: "Em aberto", color: "var(--warn-text)", bg: "var(--warn-bg)", border: "var(--warn-border)" };
   if (status === "void") return { label: "Anulada", color: "var(--color-text-secondary)", bg: "var(--color-background-secondary)", border: "var(--color-border-tertiary)" };
-  if (status === "uncollectible") return { label: "Não paga", color: "#A32D2D", bg: "#FCEBEB", border: "#F7C1C1" };
+  if (status === "uncollectible") return { label: "Não paga", color: "var(--danger-text)", bg: "var(--danger-bg)", border: "var(--danger-border)" };
   return { label: status || "—", color: "var(--color-text-secondary)", bg: "var(--color-background-secondary)", border: "var(--color-border-tertiary)" };
 }
 
 function statusBadge(status, trialDays, cancelAtPeriodEnd) {
-  if (cancelAtPeriodEnd) return { label: "Cancelamento agendado", color: "#854F0B", bg: "#FFF7E0", border: "#F0D58A" };
+  if (cancelAtPeriodEnd) return { label: "Cancelamento agendado", color: "var(--warn-text)", bg: "var(--warn-bg)", border: "var(--warn-border)" };
   if (status === "trialing") return { label: `Trial (${trialDays ?? 0}d restantes)`, color: "#185FA5", bg: "#E6F1FB", border: "#B6D5EF" };
   if (status === "active") return { label: "Ativa", color: "#3B6D11", bg: "#EAF3DE", border: "#C5DBA7" };
-  if (status === "past_due") return { label: "Pagamento atrasado", color: "#A32D2D", bg: "#FCEBEB", border: "#F7C1C1" };
-  if (status === "canceled") return { label: "Cancelada", color: "#A32D2D", bg: "#FCEBEB", border: "#F7C1C1" };
-  if (status === "incomplete") return { label: "Pagamento incompleto", color: "#854F0B", bg: "#FFF7E0", border: "#F0D58A" };
-  if (status === "unpaid") return { label: "Não paga", color: "#A32D2D", bg: "#FCEBEB", border: "#F7C1C1" };
+  if (status === "past_due") return { label: "Pagamento atrasado", color: "var(--danger-text)", bg: "var(--danger-bg)", border: "var(--danger-border)" };
+  if (status === "canceled") return { label: "Cancelada", color: "var(--danger-text)", bg: "var(--danger-bg)", border: "var(--danger-border)" };
+  if (status === "incomplete") return { label: "Pagamento incompleto", color: "var(--warn-text)", bg: "var(--warn-bg)", border: "var(--warn-border)" };
+  if (status === "unpaid") return { label: "Não paga", color: "var(--danger-text)", bg: "var(--danger-bg)", border: "var(--danger-border)" };
   return { label: "Sem assinatura", color: "var(--color-text-secondary)", bg: "var(--color-background-secondary)", border: "var(--color-border-tertiary)" };
 }
 
@@ -191,7 +191,7 @@ export default function PageSubscription() {
     return (
       <div style={{ padding: 20 }}>
         <h2 style={{ fontSize: 18, fontWeight: 500, marginBottom: 16 }}>Assinatura</h2>
-        <div style={{ background: "#FCEBEB", border: "0.5px solid #F7C1C1", color: "#A32D2D", padding: 10, borderRadius: 8, fontSize: 13 }}>
+        <div style={{ background: "var(--danger-bg)", border: "0.5px solid var(--danger-border)", color: "var(--danger-text)", padding: 10, borderRadius: 8, fontSize: 13 }}>
           {error || "Falha ao carregar status de assinatura."}
         </div>
       </div>
@@ -211,13 +211,13 @@ export default function PageSubscription() {
       </div>
 
       {error && (
-        <div style={{ background: "#FCEBEB", border: "0.5px solid #F7C1C1", color: "#A32D2D", padding: 10, borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
+        <div style={{ background: "var(--danger-bg)", border: "0.5px solid var(--danger-border)", color: "var(--danger-text)", padding: 10, borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
           {error}
         </div>
       )}
 
       {!me.stripeEnabled && (
-        <div style={{ background: "#FFF7E0", border: "0.5px solid #F0D58A", color: "#7A5800", padding: 10, borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
+        <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", color: "var(--warn-text)", padding: 10, borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
           Stripe não está configurado no servidor. Pagamentos desabilitados.
         </div>
       )}
@@ -229,7 +229,7 @@ export default function PageSubscription() {
       )}
 
       {me.cancelAtPeriodEnd && (
-        <div style={{ background: "#FFF7E0", border: "0.5px solid #F0D58A", color: "#7A5800", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", color: "var(--warn-text)", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <span>
             Sua assinatura termina em <strong>{me.daysUntilPeriodEnd ?? "—"} {me.daysUntilPeriodEnd === 1 ? "dia" : "dias"}</strong> ({fmtDate(me.currentPeriodEnd)}). Até lá, tudo continua funcionando.
           </span>
@@ -534,7 +534,7 @@ export default function PageSubscription() {
         </div>
 
         <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10, padding: 14 }}>
-          <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4, color: hasActiveSub ? "#A32D2D" : "var(--color-text-primary)" }}>Cancelar assinatura</div>
+          <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4, color: hasActiveSub ? "var(--danger-text)" : "var(--color-text-primary)" }}>Cancelar assinatura</div>
           <div style={{ fontSize: 12, color: "var(--color-text-secondary)", lineHeight: 1.5, marginBottom: 12 }}>
             {me.cancelAtPeriodEnd
               ? `Cancelamento já agendado — acesso até ${fmtDate(me.currentPeriodEnd)}. Pode reverter aqui mesmo.`
@@ -548,9 +548,9 @@ export default function PageSubscription() {
             disabled={!hasActiveSub || !!busy}
             style={{
               padding: "7px 14px", borderRadius: 8,
-              background: hasActiveSub ? "#FCEBEB" : "var(--color-background-secondary)",
-              color: hasActiveSub ? "#A32D2D" : "var(--color-text-secondary)",
-              border: `0.5px solid ${hasActiveSub ? "#F7C1C1" : "var(--color-border-tertiary)"}`,
+              background: hasActiveSub ? "var(--danger-bg)" : "var(--color-background-secondary)",
+              color: hasActiveSub ? "var(--danger-text)" : "var(--color-text-secondary)",
+              border: `0.5px solid ${hasActiveSub ? "var(--danger-border)" : "var(--color-border-tertiary)"}`,
               fontSize: 12,
               cursor: !hasActiveSub || !!busy ? "not-allowed" : "pointer",
               fontWeight: 500,

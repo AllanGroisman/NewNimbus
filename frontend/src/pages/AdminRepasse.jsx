@@ -15,15 +15,15 @@ const selectStyle = {
 const OUTCOME_LABEL = {
   queued: { label: "→ fila", color: "#1B7A43" },
   pending: { label: "→ pendente", color: PRIMARY_DARK },
-  discarded: { label: "descartado", color: "#854F0B" },
+  discarded: { label: "descartado", color: "var(--warn-text)" },
   duplicate: { label: "duplicata", color: "var(--color-text-secondary)" },
   cooldown: { label: "cooldown", color: "var(--color-text-secondary)" },
-  error: { label: "erro", color: "#A32D2D" },
+  error: { label: "erro", color: "var(--danger-text)" },
 };
 
 function Flag({ ok }) {
   if (ok === null || ok === undefined) return <span style={{ color: "var(--color-text-secondary)" }}>—</span>;
-  return <span style={{ color: ok ? "#1B7A43" : "#A32D2D" }}>{ok ? "✓" : "✗"}</span>;
+  return <span style={{ color: ok ? "#1B7A43" : "var(--danger-text)" }}>{ok ? "✓" : "✗"}</span>;
 }
 
 export default function PageAdminRepasse() {
@@ -96,7 +96,7 @@ export default function PageAdminRepasse() {
         <div style={{ marginLeft: "auto", fontSize: 12, color: "var(--color-text-secondary)" }}>{total} registros</div>
       </div>
 
-      {error && <div style={{ color: "#A32D2D", fontSize: 12 }}>{error}</div>}
+      {error && <div style={{ color: "var(--danger-text)", fontSize: 12 }}>{error}</div>}
 
       <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
         {items.length === 0 ? (

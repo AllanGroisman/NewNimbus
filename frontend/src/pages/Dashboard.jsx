@@ -92,13 +92,13 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
       </div>
 
       {!affiliateConfigured && groups.length > 0 && (
-        <div style={{ background: "#FEF3C7", border: "0.5px solid #F4D08A", borderRadius: 10, padding: "10px 14px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ fontSize: 16 }}>⚠️</span>
-          <span style={{ fontSize: 13, color: "#854F0B", flex: 1, minWidth: 200 }}>
+          <span style={{ fontSize: 13, color: "var(--warn-text)", flex: 1, minWidth: 200 }}>
             Campanhas do Mercado Livre estão <strong>pausadas</strong> — configure a TAG e o cookie de afiliado para retomar os envios.
           </span>
           {onGoToSettings && (
-            <button onClick={onGoToSettings} style={{ padding: "6px 12px", borderRadius: 8, background: "#854F0B", color: "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
+            <button onClick={onGoToSettings} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--warn-text)", color: "var(--color-background-primary)", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
               Configurar afiliado
             </button>
           )}
@@ -220,7 +220,7 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                     <div>
                       <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Fila</div>
                       <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-primary)" }}>{g.queue.length}</div>
-                      {g.pending.length > 0 && <div style={{ fontSize: 11, color: "#854F0B", marginTop: 1 }}>+{g.pending.length} p/ revisar</div>}
+                      {g.pending.length > 0 && <div style={{ fontSize: 11, color: "var(--warn-text)", marginTop: 1 }}>+{g.pending.length} p/ revisar</div>}
                     </div>
                     <div>
                       <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Lojas</div>
@@ -273,7 +273,7 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
       )}
 
       {showCreate && (
-        <Modal title="Nova campanha" onClose={closeCreate}>
+        <Modal title="Nova campanha" onClose={closeCreate} confirmOnClickOutside={form.type !== null}>
           {form.type === null ? (
             // Passo 1: escolher o tipo de campanha.
             <>
@@ -306,14 +306,14 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
             </>
           ) : form.type === "repasse" ? (
             // Passo 2b: campanha de repasse.
-            <>
+            <form onSubmit={e => { e.preventDefault(); submit(); }}>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>
                 Dê um nome à campanha. Você vai escolher o <strong>grupo líder</strong> e os grupos que recebem as ofertas depois, dentro da campanha.
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 <div>
                   <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Nome da campanha</label>
-                  <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Ex: Repasse Ofertas Tech" style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }} />
+                  <input autoFocus value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Ex: Repasse Ofertas Tech" style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }} />
                 </div>
                 <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
                   <input type="checkbox" checked={form.autoApprove} onChange={e => setForm(f => ({ ...f, autoApprove: e.target.checked }))} />
@@ -326,13 +326,13 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                 </label>
               </div>
               <div style={{ display: "flex", gap: 8, justifyContent: "space-between", marginTop: 18 }}>
-                <button onClick={() => setForm(f => ({ ...f, type: null }))} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>← Voltar</button>
-                <button onClick={submit} disabled={!form.name.trim()} style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: !form.name.trim() ? 0.5 : 1 }}>Criar campanha</button>
+                <button type="button" onClick={() => setForm(f => ({ ...f, type: null }))} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>← Voltar</button>
+                <button type="submit" disabled={!form.name.trim()} style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: !form.name.trim() ? 0.5 : 1 }}>Criar campanha</button>
               </div>
-            </>
+            </form>
           ) : (
             // Passo 2a: campanha original (scraping).
-            <>
+            <form onSubmit={e => { e.preventDefault(); submit(); }}>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>
                 Defina o nome e as categorias de produtos que esta campanha vai monitorar. Você poderá vincular grupos do WhatsApp depois.
               </div>
@@ -342,7 +342,7 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 <div>
                   <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Nome da campanha</label>
-                  <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Ex: Tech BR" style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }} />
+                  <input autoFocus value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Ex: Tech BR" style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }} />
                 </div>
                 <div>
                   <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 6 }}>Categorias (selecione uma ou mais)</label>
@@ -363,10 +363,10 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8, justifyContent: "space-between", marginTop: 18 }}>
-                <button onClick={() => setForm(f => ({ ...f, type: null }))} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>← Voltar</button>
-                <button onClick={submit} disabled={!form.name.trim() || form.categories.length === 0} style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: (!form.name.trim() || form.categories.length === 0) ? 0.5 : 1 }}>Criar campanha</button>
+                <button type="button" onClick={() => setForm(f => ({ ...f, type: null }))} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>← Voltar</button>
+                <button type="submit" disabled={!form.name.trim() || form.categories.length === 0} style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: (!form.name.trim() || form.categories.length === 0) ? 0.5 : 1 }}>Criar campanha</button>
               </div>
-            </>
+            </form>
           )}
         </Modal>
       )}

@@ -14,14 +14,14 @@ const STATUS_POLL_MS = 5000;
 
 const OVERALL = {
   ok:   { label: "✅ Tudo certo", color: PRIMARY_DARK },
-  warn: { label: "⚠️ Campos faltando", color: "#854F0B" },
-  fail: { label: "❌ Scraping quebrado", color: "#A32D2D" },
+  warn: { label: "⚠️ Campos faltando", color: "var(--warn-text)" },
+  fail: { label: "❌ Scraping quebrado", color: "var(--danger-text)" },
 };
 
 const CELL = {
   ok:   { bg: "var(--color-background-secondary)", fg: "var(--color-text-primary)" },
-  warn: { bg: "#FCF3E4", fg: "#854F0B" },
-  fail: { bg: "#FCEBEB", fg: "#A32D2D" },
+  warn: { bg: "#FCF3E4", fg: "var(--warn-text)" },
+  fail: { bg: "var(--danger-bg)", fg: "var(--danger-text)" },
 };
 
 export default function PageAdminScrapTester() {
@@ -165,7 +165,7 @@ export default function PageAdminScrapTester() {
       </div>
 
       {error && (
-        <div style={{ background: "#FCEBEB", color: "#A32D2D", padding: "10px 12px", borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
+        <div style={{ background: "var(--danger-bg)", color: "var(--danger-text)", padding: "10px 12px", borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
           {error}
         </div>
       )}
@@ -216,7 +216,7 @@ export default function PageAdminScrapTester() {
                   <tr key={spec.key}>
                     <td style={{ ...tdStyle, fontWeight: 500 }}>
                       {spec.label}
-                      {spec.critical && <span title="Campo essencial" style={{ color: "#A32D2D", marginLeft: 4 }}>*</span>}
+                      {spec.critical && <span title="Campo essencial" style={{ color: "var(--danger-text)", marginLeft: 4 }}>*</span>}
                     </td>
                     {testedSources.map(s => {
                       const r = perSource[s.id];
@@ -251,7 +251,7 @@ export default function PageAdminScrapTester() {
 
         {/* Lojas que falharam por completo */}
         {testedSources.filter(s => !perSource[s.id].ok).map(s => (
-          <div key={s.id} style={{ marginTop: 10, background: "#FCEBEB", color: "#A32D2D", padding: "8px 10px", borderRadius: 8, fontSize: 12 }}>
+          <div key={s.id} style={{ marginTop: 10, background: "var(--danger-bg)", color: "var(--danger-text)", padding: "8px 10px", borderRadius: 8, fontSize: 12 }}>
             <strong>{s.label}:</strong> {perSource[s.id].error}
           </div>
         ))}
@@ -337,7 +337,7 @@ export default function PageAdminScrapTester() {
           {running && (() => {
             const isCanceling = canceling || status?.canceling;
             return (
-              <button onClick={cancelRun} disabled={isCanceling} style={{ padding: "8px 16px", borderRadius: 8, background: "#fff", color: isCanceling ? "var(--color-text-secondary)" : "#A32D2D", border: `0.5px solid ${isCanceling ? "var(--color-border-secondary)" : "#A32D2D"}`, fontSize: 13, cursor: isCanceling ? "not-allowed" : "pointer", fontWeight: 500 }}>
+              <button onClick={cancelRun} disabled={isCanceling} style={{ padding: "8px 16px", borderRadius: 8, background: "#fff", color: isCanceling ? "var(--color-text-secondary)" : "var(--danger-text)", border: `0.5px solid ${isCanceling ? "var(--color-border-secondary)" : "var(--danger-text)"}`, fontSize: 13, cursor: isCanceling ? "not-allowed" : "pointer", fontWeight: 500 }}>
                 {isCanceling ? "Cancelando..." : "✕ Cancelar"}
               </button>
             );

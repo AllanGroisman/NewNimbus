@@ -173,7 +173,7 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
         )}
 
         {msg && (
-          <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: msg.type === "ok" ? PRIMARY_LIGHT : "#FCEBEB", color: msg.type === "ok" ? PRIMARY_DARK : "#A32D2D", wordBreak: "break-all" }}>
+          <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: msg.type === "ok" ? PRIMARY_LIGHT : "var(--danger-bg)", color: msg.type === "ok" ? PRIMARY_DARK : "var(--danger-text)", wordBreak: "break-all" }}>
             {msg.text}
             {msg.link && (
               <>
@@ -208,7 +208,7 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
             {testing ? "Testando..." : "Testar transformação"}
           </button>
           {affStatus?.shopee?.configured && (
-            <button onClick={handleClear} disabled={saving} style={{ padding: "7px 16px", borderRadius: 8, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 13, cursor: "pointer", marginLeft: "auto" }}>
+            <button onClick={handleClear} disabled={saving} style={{ padding: "7px 16px", borderRadius: 8, border: "0.5px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", fontSize: 13, cursor: "pointer", marginLeft: "auto" }}>
               Apagar
             </button>
           )}
@@ -217,7 +217,7 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
         {affStatus?.shopee && (affStatus.shopee.lastSuccessAt || affStatus.shopee.lastFailureAt) && (
           <div style={{ marginTop: 14, paddingTop: 12, borderTop: "0.5px solid var(--color-border-tertiary)", fontSize: 11, color: "var(--color-text-secondary)", lineHeight: 1.6 }}>
             {affStatus.shopee.lastSuccessAt && <div>✓ Último sucesso: {new Date(affStatus.shopee.lastSuccessAt).toLocaleString("pt-BR")}</div>}
-            {affStatus.shopee.lastFailureAt && <div style={{ color: "#A32D2D" }}>✗ Última falha: {new Date(affStatus.shopee.lastFailureAt).toLocaleString("pt-BR")} — {affStatus.shopee.lastFailureReason}</div>}
+            {affStatus.shopee.lastFailureAt && <div style={{ color: "var(--danger-text)" }}>✗ Última falha: {new Date(affStatus.shopee.lastFailureAt).toLocaleString("pt-BR")} — {affStatus.shopee.lastFailureReason}</div>}
             {affStatus.shopee.updatedAt && <div>Atualizado em: {new Date(affStatus.shopee.updatedAt).toLocaleString("pt-BR")}</div>}
           </div>
         )}

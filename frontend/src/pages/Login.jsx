@@ -265,15 +265,15 @@ export default function Login({ onLogin }) {
   } else if (mode === "registered") {
     body = (
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <div style={{ background: "#E8F5EE", border: "0.5px solid #B9DEC9", color: "#1F6A3C", borderRadius: 8, padding: "10px 12px", fontSize: 12 }}>
+        <div style={{ background: "var(--success-bg)", border: "0.5px solid var(--success-border)", color: "var(--success-text)", borderRadius: 8, padding: "10px 12px", fontSize: 12 }}>
           Enviamos um link de confirmação para <strong>{info}</strong>.
           <br />Clique no link para ativar sua conta.
         </div>
         {infoMessage && (
-          <div style={{ background: "#E8F5EE", border: "0.5px solid #B9DEC9", color: "#1F6A3C", borderRadius: 8, padding: "8px 10px", fontSize: 12 }}>{infoMessage}</div>
+          <div style={{ background: "var(--success-bg)", border: "0.5px solid var(--success-border)", color: "var(--success-text)", borderRadius: 8, padding: "8px 10px", fontSize: 12 }}>{infoMessage}</div>
         )}
         {error && (
-          <div style={{ background: "#FCEBEB", border: "0.5px solid #F7C1C1", color: "#A32D2D", borderRadius: 8, padding: "8px 10px", fontSize: 12 }}>{error}</div>
+          <div style={{ background: "var(--danger-bg)", border: "0.5px solid var(--danger-border)", color: "var(--danger-text)", borderRadius: 8, padding: "8px 10px", fontSize: 12 }}>{error}</div>
         )}
         <button type="button" onClick={handleResend} disabled={loading || resendCooldown > 0} style={{ width: "100%", padding: 10, borderRadius: 10, background: "transparent", color: resendCooldown > 0 ? "var(--color-text-secondary)" : PRIMARY, border: `0.5px solid ${resendCooldown > 0 ? "var(--color-border-tertiary)" : PRIMARY}`, fontSize: 13, cursor: (loading || resendCooldown > 0) ? "default" : "pointer", fontWeight: 500 }}>
           {loading ? "Reenviando…" : resendCooldown > 0 ? `Reenviar em ${resendCooldown}s` : "Reenviar email de verificação"}
@@ -360,10 +360,10 @@ export default function Login({ onLogin }) {
         )}
 
         {error && (
-          <div style={{ background: "#FCEBEB", border: "0.5px solid #F7C1C1", color: "#A32D2D", borderRadius: 8, padding: "8px 10px", fontSize: 12, marginBottom: 12 }}>{error}</div>
+          <div style={{ background: "var(--danger-bg)", border: "0.5px solid var(--danger-border)", color: "var(--danger-text)", borderRadius: 8, padding: "8px 10px", fontSize: 12, marginBottom: 12 }}>{error}</div>
         )}
         {info && mode === "forgot" && (
-          <div style={{ background: "#E8F5EE", border: "0.5px solid #B9DEC9", color: "#1F6A3C", borderRadius: 8, padding: "8px 10px", fontSize: 12, marginBottom: 12 }}>{info}</div>
+          <div style={{ background: "var(--success-bg)", border: "0.5px solid var(--success-border)", color: "var(--success-text)", borderRadius: 8, padding: "8px 10px", fontSize: 12, marginBottom: 12 }}>{info}</div>
         )}
 
         <button type="submit" disabled={loading} style={{ width: "100%", padding: 10, borderRadius: 10, background: PRIMARY, color: "#fff", border: "none", fontSize: 14, cursor: loading ? "wait" : "pointer", fontWeight: 500, opacity: loading ? 0.7 : 1 }}>

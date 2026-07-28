@@ -121,7 +121,7 @@ export default function PageAdminNotifications({ onGoToWhatsNimbus }) {
       </div>
 
       {error && (
-        <div style={{ background: "#FEE2E2", color: "#991B1B", borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 13 }}>
+        <div style={{ background: "var(--danger-bg)", color: "var(--danger-text)", borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 13 }}>
           {error}
         </div>
       )}

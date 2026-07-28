@@ -60,4 +60,18 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 
 25. [x] Adicione um atalho para ir ate o tutorial nas abas das lojas onde se configura os afiliados ML, amazon e shopee.
 
-26.[x] Exemplos de preenchimento dos afiliados todos fakes. Conferir para nao ter nada real.
+26. [x] Exemplos de preenchimento dos afiliados todos fakes. Conferir para nao ter nada real.
+
+27. [x] O menu lateral escreve "Plano Pro" fixo pra todo usuario, mesmo quem esta no Basico ou sem plano nenhum. Puxar o plano de verdade da assinatura. E quando eu salvo alguma coisa na campanha aparece "✓ Salvo!" na hora, mas se der erro no servidor nao avisa nada e eu perco a alteracao achando que salvei - quero um aviso na tela com botao de tentar de novo. Tirar tambem os alertas feios do navegador (window.alert/confirm) que sobraram no WhatsApp e no Limpar catalogo do admin, trocar por aviso e popup do proprio sistema.
+
+28. [x] Melhorias de teclado e nos popups:
+    28.1. [x] ESC fecha o popup, e travar o scroll da pagina de tras enquanto o popup esta aberto.
+    28.2. [x] Ao abrir o popup o cursor ja tem que ir pro primeiro campo.
+    28.3. [x] Se eu clicar fora sem querer num popup de formulario (nova campanha, adicionar numero, salvar modelo) ele nao pode fechar e jogar fora o que eu digitei. Nos popups so de confirmar pode continuar fechando.
+    28.4. [x] Enter no formulario de nova campanha tem que criar a campanha, hoje nao faz nada.
+    28.5. [x] Navegando de Tab nao da pra ver onde eu estou, nao tem nenhuma marcacao de foco. E os botoes nao dao nenhum retorno quando passo o mouse. Arrumar os dois.
+    28.6. [x] Botoes que so tem icone (lapis de editar apelido, X de fechar, menu ☰) nao tem nome nenhum pra leitor de tela.
+
+29. [x] Tema escuro: os avisos amarelos e vermelhos foram feitos com cor fixa clara e viram manchas claras no meio da tela escura. Trocar por cores que mudam junto com o tema. Os badges pequenos podem ficar como estao.
+
+30. [x] O sistema inteiro fica no mesmo endereco, entao nao da pra usar o botao voltar do navegador nem mandar link de uma campanha pra alguem. Quero cada pagina com seu proprio endereco e /campanha/id pras campanhas. O voltar do navegador tem que continuar perguntando se tem alteracao nao salva. Conferir que dar F5 numa campanha nao da 404 no servidor.

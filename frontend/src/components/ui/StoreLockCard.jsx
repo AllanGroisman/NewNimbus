@@ -56,7 +56,7 @@ export default function StoreLockCard({ store, storeLabel }) {
   const dirty = draft.trim() !== (lock.message || "").trim();
 
   return (
-    <div style={{ background: "var(--color-background-primary)", border: `0.5px solid ${lock.locked ? "#F0D58A" : "var(--color-border-tertiary)"}`, borderRadius: 12, padding: 16, marginBottom: 18 }}>
+    <div style={{ background: "var(--color-background-primary)", border: `0.5px solid ${lock.locked ? "var(--warn-border)" : "var(--color-border-tertiary)"}`, borderRadius: 12, padding: 16, marginBottom: 18 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 4 }}>
         <div>
           <div style={{ fontWeight: 500 }}>Disponibilidade para os clientes</div>
@@ -69,7 +69,7 @@ export default function StoreLockCard({ store, storeLabel }) {
       </div>
 
       {lock.locked && (
-        <div style={{ marginTop: 12, padding: "8px 10px", borderRadius: 8, background: "#FFF7E0", border: "0.5px solid #F0D58A", color: "#7A5800", fontSize: 12 }}>
+        <div style={{ marginTop: 12, padding: "8px 10px", borderRadius: 8, background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", color: "var(--warn-text)", fontSize: 12 }}>
           🔒 Loja trancada. {usage > 0
             ? `${usage} campanha${usage > 1 ? "s" : ""} usa${usage > 1 ? "m" : ""} esta loja — ela é ignorada até você liberar (campanha que só tinha ela fica pausada).`
             : "Nenhuma campanha usa esta loja no momento."}
@@ -106,7 +106,7 @@ export default function StoreLockCard({ store, storeLabel }) {
       </div>
 
       {msg && (
-        <div style={{ marginTop: 14, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: msg.type === "ok" ? PRIMARY_LIGHT : "#FCEBEB", color: msg.type === "ok" ? PRIMARY_DARK : "#A32D2D" }}>
+        <div style={{ marginTop: 14, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: msg.type === "ok" ? PRIMARY_LIGHT : "var(--danger-bg)", color: msg.type === "ok" ? PRIMARY_DARK : "var(--danger-text)" }}>
           {msg.text}
         </div>
       )}

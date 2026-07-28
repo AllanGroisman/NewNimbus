@@ -188,7 +188,7 @@ ${cards}
       </div>
 
       {(runError || (scraperStatus?.lastError && !isRunning)) && (
-        <div style={{ background: "#FCEBEB", border: "0.5px solid #F7C1C1", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "#A32D2D" }}>
+        <div style={{ background: "var(--danger-bg)", border: "0.5px solid var(--danger-border)", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "var(--danger-text)" }}>
           {runError || scraperStatus?.lastError}
         </div>
       )}
@@ -292,10 +292,10 @@ ${cards}
       )}
 
       {error && (
-        <div style={{ background: "#FCEBEB", border: "0.5px solid #F7C1C1", borderRadius: 12, padding: 16, marginBottom: 14, textAlign: "center" }}>
-          <div style={{ fontSize: 13, color: "#A32D2D", fontWeight: 500, marginBottom: 4 }}>Erro ao carregar catálogo</div>
-          <div style={{ fontSize: 12, color: "#A32D2D" }}>{error}</div>
-          <button onClick={loadCatalog} style={{ marginTop: 10, padding: "6px 14px", borderRadius: 8, border: "0.5px solid #F7C1C1", background: "#fff", color: "#A32D2D", fontSize: 12, cursor: "pointer" }}>Tentar novamente</button>
+        <div style={{ background: "var(--danger-bg)", border: "0.5px solid var(--danger-border)", borderRadius: 12, padding: 16, marginBottom: 14, textAlign: "center" }}>
+          <div style={{ fontSize: 13, color: "var(--danger-text)", fontWeight: 500, marginBottom: 4 }}>Erro ao carregar catálogo</div>
+          <div style={{ fontSize: 12, color: "var(--danger-text)" }}>{error}</div>
+          <button onClick={loadCatalog} style={{ marginTop: 10, padding: "6px 14px", borderRadius: 8, border: "0.5px solid var(--danger-border)", background: "#fff", color: "var(--danger-text)", fontSize: 12, cursor: "pointer" }}>Tentar novamente</button>
         </div>
       )}
 

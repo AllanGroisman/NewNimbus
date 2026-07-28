@@ -185,7 +185,7 @@ function QueueItemCard({ item, idx, eta, onRemove, onMoveToTop, onDragStart, onD
               ⬆ Enviar primeiro
             </button>
           )}
-          <button onClick={onRemove} style={{ padding: "5px 10px", borderRadius: 7, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 12, cursor: "pointer" }}>Remover</button>
+          <button onClick={onRemove} style={{ padding: "5px 10px", borderRadius: 7, border: "0.5px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", fontSize: 12, cursor: "pointer" }}>Remover</button>
         </div>
       </div>
 
@@ -1272,9 +1272,9 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       </div>
 
       {stats.pausedManual && (
-        <div style={{ background: "#FEF3C7", border: "0.5px solid #F4D08A", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ fontSize: 16 }}>⏸</span>
-          <span style={{ fontSize: 13, color: "#854F0B", flex: 1, minWidth: 200 }}>
+          <span style={{ fontSize: 13, color: "var(--warn-text)", flex: 1, minWidth: 200 }}>
             Esta campanha está <strong>pausada manualmente</strong> — não vai buscar produtos nem enviar mensagens até ser retomada.
           </span>
           <button onClick={() => onUpdate(group.id, { paused: false })} style={{ padding: "6px 12px", borderRadius: 8, background: "#22C55E", color: "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
@@ -1284,13 +1284,13 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       )}
 
       {stats.pausedByAffiliateML && (
-        <div style={{ background: "#FEF3C7", border: "0.5px solid #F4D08A", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ fontSize: 16 }}>⚠️</span>
-          <span style={{ fontSize: 13, color: "#854F0B", flex: 1, minWidth: 200 }}>
+          <span style={{ fontSize: 13, color: "var(--warn-text)", flex: 1, minWidth: 200 }}>
             Esta campanha está <strong>pausada</strong> — o afiliado do <strong>Mercado Livre</strong> não está configurado. Sem TAG e cookie, os links sairiam sem comissão.
           </span>
           {(onGoToAffiliate || onGoToSettings) && (
-            <button onClick={() => (onGoToAffiliate ? onGoToAffiliate("ml") : onGoToSettings())} style={{ padding: "6px 12px", borderRadius: 8, background: "#854F0B", color: "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
+            <button onClick={() => (onGoToAffiliate ? onGoToAffiliate("ml") : onGoToSettings())} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--warn-text)", color: "var(--color-background-primary)", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
               Configurar Mercado Livre
             </button>
           )}
@@ -1298,13 +1298,13 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       )}
 
       {stats.pausedByAffiliateShopee && (
-        <div style={{ background: "#FEF3C7", border: "0.5px solid #F4D08A", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ fontSize: 16 }}>⚠️</span>
-          <span style={{ fontSize: 13, color: "#854F0B", flex: 1, minWidth: 200 }}>
+          <span style={{ fontSize: 13, color: "var(--warn-text)", flex: 1, minWidth: 200 }}>
             Esta campanha está <strong>pausada</strong> — o afiliado da <strong>Shopee</strong> não está configurado. Sem App ID e senha, os links sairiam sem comissão.
           </span>
           {(onGoToAffiliate || onGoToSettings) && (
-            <button onClick={() => (onGoToAffiliate ? onGoToAffiliate("shopee") : onGoToSettings())} style={{ padding: "6px 12px", borderRadius: 8, background: "#854F0B", color: "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
+            <button onClick={() => (onGoToAffiliate ? onGoToAffiliate("shopee") : onGoToSettings())} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--warn-text)", color: "var(--color-background-primary)", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
               Configurar Shopee
             </button>
           )}
@@ -1312,18 +1312,18 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       )}
 
       {stats.status === "disconnected" && (
-        <div style={{ background: "#FCEBEB", border: "0.5px solid #EBB9B8", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ background: "var(--danger-bg)", border: "0.5px solid var(--danger-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ fontSize: 16 }}>🔴</span>
-          <span style={{ fontSize: 13, color: "#A32D2D", flex: 1, minWidth: 200 }}>
+          <span style={{ fontSize: 13, color: "var(--danger-text)", flex: 1, minWidth: 200 }}>
             Campanha <strong>parada</strong> — nenhum WhatsApp vinculado está conectado. Reconecte um número na página WhatsApp; os envios retomam sozinhos.
           </span>
         </div>
       )}
 
       {stats.status === "degraded" && (
-        <div style={{ background: "#FEF3C7", border: "0.5px solid #F4D08A", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ fontSize: 16 }}>⚠️</span>
-          <span style={{ fontSize: 13, color: "#854F0B", flex: 1, minWidth: 200 }}>
+          <span style={{ fontSize: 13, color: "var(--warn-text)", flex: 1, minWidth: 200 }}>
             <strong>{stats.connected}/{stats.count}</strong> grupos conectados — um ou mais WhatsApp estão desconectados. A campanha segue enviando nos que estão de pé.
           </span>
         </div>
@@ -1336,7 +1336,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
             <StatCard label="Envios hoje" value={group.sentToday} color={PRIMARY_DARK} />
             <StatCard label="Envios semana" value={group.sentWeek} />
-            <StatCard label="Na fila" value={queue.length} sub={pending.length > 0 ? `${pending.length} aguardando revisão` : undefined} color={pending.length > 0 ? "#854F0B" : undefined} />
+            <StatCard label="Na fila" value={queue.length} sub={pending.length > 0 ? `${pending.length} aguardando revisão` : undefined} color={pending.length > 0 ? "var(--warn-text)" : undefined} />
             {(() => {
               const valid = !!group.lastSend && group.lastSend !== "—" && !isNaN(new Date(group.lastSend).getTime());
               const today = valid && isSameDayBR(group.lastSend);
@@ -1469,12 +1469,12 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               })}
             </div>
             {allSources.some(src => scraping.sources.includes(src) && storeLockMessage(storeLocks, src)) && (
-              <div style={{ marginTop: 10, fontSize: 11, color: "#7A5800", background: "#FFF7E0", border: "0.5px solid #F0D58A", borderRadius: 8, padding: "8px 10px" }}>
+              <div style={{ marginTop: 10, fontSize: 11, color: "var(--warn-text)", background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 8, padding: "8px 10px" }}>
                 Uma das lojas desta campanha está indisponível no momento — ela é ignorada e a campanha segue buscando nas outras.
               </div>
             )}
             {scraping.sources.length === 0 && (
-              <div style={{ marginTop: 10, fontSize: 11, color: "#A32D2D" }}>{isRepasse ? "Selecione ao menos uma fonte para o repasse funcionar." : "Selecione ao menos uma fonte para o scraping funcionar."}</div>
+              <div style={{ marginTop: 10, fontSize: 11, color: "var(--danger-text)" }}>{isRepasse ? "Selecione ao menos uma fonte para o repasse funcionar." : "Selecione ao menos uma fonte para o scraping funcionar."}</div>
             )}
           </div>
 
@@ -1508,7 +1508,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             >
               {saved ? "✓ Salvo!" : "Salvar alterações"}
             </button>
-            <button onClick={() => setShowDelete(true)} style={{ padding: "9px 18px", borderRadius: 8, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 13, cursor: "pointer", fontWeight: 500, marginLeft: "auto" }}>Excluir campanha</button>
+            <button onClick={() => setShowDelete(true)} style={{ padding: "9px 18px", borderRadius: 8, border: "0.5px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", fontSize: 13, cursor: "pointer", fontWeight: 500, marginLeft: "auto" }}>Excluir campanha</button>
           </div>
 
           {showDelete && (
@@ -1725,7 +1725,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           </div>
 
           {saveTplDialog && (
-            <Modal title="Salvar alterações" onClose={closeSaveTplDialog}>
+            <Modal title="Salvar alterações" onClose={closeSaveTplDialog} confirmOnClickOutside>
               <p style={{ fontSize: 13, marginBottom: 14, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
                 {saveTplDialog.mode === "preset"
                   ? <>O modelo <strong style={{ color: "var(--color-text-primary)" }}>{activeTab?.name}</strong> é o padrão e não pode ser sobrescrito. Suas edições serão salvas como um <strong style={{ color: "var(--color-text-primary)" }}>novo modelo</strong>.</>
@@ -1848,7 +1848,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                           <div>
                             <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>Número WhatsApp</div>
                             <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={number ? `${number.label} · ${number.phone || ""}` : "número removido"}>
-                              {number ? number.label : <span style={{ color: "#A32D2D", fontStyle: "italic" }}>removido</span>}
+                              {number ? number.label : <span style={{ color: "var(--danger-text)", fontStyle: "italic" }}>removido</span>}
                             </div>
                             {number?.phone && <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 1 }}>{number.phone}</div>}
                           </div>
@@ -1979,7 +1979,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 </button>
               </div>
               {numbers.length === 0 && (
-                <div style={{ fontSize: 11, color: "#854F0B", marginTop: 12, padding: "8px 10px", background: "#FEF3C7", borderRadius: 8 }}>
+                <div style={{ fontSize: 11, color: "var(--warn-text)", marginTop: 12, padding: "8px 10px", background: "var(--warn-bg)", borderRadius: 8 }}>
                   Conecte um número de WhatsApp na aba <strong>WhatsApp</strong> antes de adicionar grupos.
                 </div>
               )}
@@ -2012,7 +2012,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                       Selecione o número de WhatsApp pra listar os grupos dele.
                     </div>
                     {connectedNumbers.length === 0 ? (
-                      <div style={{ fontSize: 12, color: "#854F0B", padding: "10px 12px", background: "#FEF3C7", borderRadius: 8 }}>
+                      <div style={{ fontSize: 12, color: "var(--warn-text)", padding: "10px 12px", background: "var(--warn-bg)", borderRadius: 8 }}>
                         Nenhum número conectado. Conecte um número primeiro.
                       </div>
                     ) : (
@@ -2050,7 +2050,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                     {loadingWAGroups ? (
                       <div style={{ fontSize: 12, color: "var(--color-text-secondary)", padding: "20px 0", textAlign: "center" }}>⟳ Carregando grupos do WhatsApp...</div>
                     ) : waGroupsError ? (
-                      <div style={{ fontSize: 12, color: "#A32D2D", padding: "10px 12px", background: "#FCEBEB", borderRadius: 8 }}>{waGroupsError}</div>
+                      <div style={{ fontSize: 12, color: "var(--danger-text)", padding: "10px 12px", background: "var(--danger-bg)", borderRadius: 8 }}>{waGroupsError}</div>
                     ) : rawList.length === 0 ? (
                       <div style={{ fontSize: 12, color: "var(--color-text-secondary)", padding: "20px 0", textAlign: "center", fontStyle: "italic" }}>Nenhum grupo encontrado neste número.</div>
                     ) : filtered.length === 0 ? (
@@ -2137,7 +2137,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                           <span style={{ width: 7, height: 7, borderRadius: "50%", background: connected ? PRIMARY : "#E24B4A", flexShrink: 0 }} />
                           <span style={{ fontSize: 13, fontWeight: checked ? 500 : 400 }}>{n.label}</span>
                           <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{n.phone}</span>
-                          {!connected && <span style={{ fontSize: 11, color: "#A32D2D", marginLeft: "auto" }}>desconectado</span>}
+                          {!connected && <span style={{ fontSize: 11, color: "var(--danger-text)", marginLeft: "auto" }}>desconectado</span>}
                         </label>
                       );
                     })}
@@ -2187,7 +2187,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                   </div>
                 </div>
                 {createWGError && (
-                  <div style={{ background: "#FCEBEB", color: "#A32D2D", padding: "8px 10px", borderRadius: 8, fontSize: 12 }}>{createWGError}</div>
+                  <div style={{ background: "var(--danger-bg)", color: "var(--danger-text)", padding: "8px 10px", borderRadius: 8, fontSize: 12 }}>{createWGError}</div>
                 )}
               </div>
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 18 }}>
@@ -2250,7 +2250,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 <button onClick={() => setScraping(s => ({ ...s, repasse: { leaderNumberId: null, leaderJid: null, leaderName: null } }))} style={{ padding: "5px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 12, cursor: "pointer" }}>Trocar</button>
               </div>
             ) : numbers.length === 0 ? (
-              <div style={{ fontSize: 12, color: "#854F0B", background: "#FEF3C7", border: "0.5px solid #F4D08A", padding: "10px 12px", borderRadius: 8 }}>
+              <div style={{ fontSize: 12, color: "var(--warn-text)", background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", padding: "10px 12px", borderRadius: 8 }}>
                 Nenhum número de WhatsApp conectado. Conecte um número na página WhatsApp para escolher o grupo líder.
               </div>
             ) : (
@@ -2267,7 +2267,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                   ))}
                 </div>
                 {loadingWAGroups && <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Carregando grupos…</div>}
-                {waGroupsError && <div style={{ fontSize: 12, color: "#A32D2D" }}>{waGroupsError}</div>}
+                {waGroupsError && <div style={{ fontSize: 12, color: "var(--danger-text)" }}>{waGroupsError}</div>}
                 {addExistingNumberId && !loadingWAGroups && (waGroupsByNumber[addExistingNumberId] || []).length > 0 && (
                   <input
                     autoFocus
@@ -2360,7 +2360,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
                   <button onClick={approveAllProducts} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY_LIGHT, color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Adicionar todos à fila</button>
-                  <button onClick={rejectAllProducts} style={{ padding: "5px 12px", borderRadius: 7, background: "#FCEBEB", color: "#A32D2D", border: "0.5px solid #F7C1C1", fontSize: 12, cursor: "pointer" }}>Rejeitar todos</button>
+                  <button onClick={rejectAllProducts} style={{ padding: "5px 12px", borderRadius: 7, background: "var(--danger-bg)", color: "var(--danger-text)", border: "0.5px solid var(--danger-border)", fontSize: 12, cursor: "pointer" }}>Rejeitar todos</button>
                 </div>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -2372,7 +2372,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                       product={p}
                       actions={<>
                         <button onClick={() => approveProduct(pid)} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY_LIGHT, color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Adicionar na fila</button>
-                        <button onClick={() => rejectProduct(pid)} style={{ padding: "5px 10px", borderRadius: 7, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 12, cursor: "pointer" }}>Rejeitar</button>
+                        <button onClick={() => rejectProduct(pid)} style={{ padding: "5px 10px", borderRadius: 7, border: "0.5px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", fontSize: 12, cursor: "pointer" }}>Rejeitar</button>
                       </>}
                     />
                   );
@@ -2531,7 +2531,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 {saved ? "✓ Salvo!" : "Salvar configurações"}
               </button>
               {refillMsg && (
-                <span style={{ fontSize: 12, color: refillMsg.type === "err" ? "#A32D2D" : refillMsg.type === "warn" ? "#854F0B" : PRIMARY_DARK }}>
+                <span style={{ fontSize: 12, color: refillMsg.type === "err" ? "var(--danger-text)" : refillMsg.type === "warn" ? "var(--warn-text)" : PRIMARY_DARK }}>
                   {refillMsg.text}
                 </span>
               )}
@@ -2550,7 +2550,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
                   <button onClick={approveAllProducts} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY_LIGHT, color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Adicionar todos à fila</button>
-                  <button onClick={rejectAllProducts} style={{ padding: "5px 12px", borderRadius: 7, background: "#FCEBEB", color: "#A32D2D", border: "0.5px solid #F7C1C1", fontSize: 12, cursor: "pointer" }}>Rejeitar todos</button>
+                  <button onClick={rejectAllProducts} style={{ padding: "5px 12px", borderRadius: 7, background: "var(--danger-bg)", color: "var(--danger-text)", border: "0.5px solid var(--danger-border)", fontSize: 12, cursor: "pointer" }}>Rejeitar todos</button>
                 </div>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -2562,7 +2562,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                       product={p}
                       actions={<>
                         <button onClick={() => approveProduct(pid)} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY_LIGHT, color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Adicionar na fila</button>
-                        <button onClick={() => rejectProduct(pid)} style={{ padding: "5px 10px", borderRadius: 7, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 12, cursor: "pointer" }}>Rejeitar</button>
+                        <button onClick={() => rejectProduct(pid)} style={{ padding: "5px 10px", borderRadius: 7, border: "0.5px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", fontSize: 12, cursor: "pointer" }}>Rejeitar</button>
                       </>}
                     />
                   );
@@ -2600,16 +2600,16 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 </button>
               )}
               {queue.length > 0 && (
-                <button onClick={() => setConfirmClearQueue(true)} style={{ padding: "5px 12px", borderRadius: 7, background: "#FCEBEB", color: "#A32D2D", border: "0.5px solid #F7C1C1", fontSize: 12, cursor: "pointer" }}>Limpar fila</button>
+                <button onClick={() => setConfirmClearQueue(true)} style={{ padding: "5px 12px", borderRadius: 7, background: "var(--danger-bg)", color: "var(--danger-text)", border: "0.5px solid var(--danger-border)", fontSize: 12, cursor: "pointer" }}>Limpar fila</button>
               )}
             </div>
           </div>
           {sendNowMsg && (
-            <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: sendNowMsg.type === "ok" ? PRIMARY_LIGHT : "#FCEBEB", color: sendNowMsg.type === "ok" ? PRIMARY_DARK : "#A32D2D" }}>{sendNowMsg.text}</div>
+            <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: sendNowMsg.type === "ok" ? PRIMARY_LIGHT : "var(--danger-bg)", color: sendNowMsg.type === "ok" ? PRIMARY_DARK : "var(--danger-text)" }}>{sendNowMsg.text}</div>
           )}
           {/* Retorno do "adicionar link manualmente" — o botão agora vive aqui. */}
           {refillMsg && (
-            <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: refillMsg.type === "err" ? "#FCEBEB" : refillMsg.type === "warn" ? "#FDF3E2" : PRIMARY_LIGHT, color: refillMsg.type === "err" ? "#A32D2D" : refillMsg.type === "warn" ? "#854F0B" : PRIMARY_DARK }}>{refillMsg.text}</div>
+            <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: refillMsg.type === "err" ? "var(--danger-bg)" : refillMsg.type === "warn" ? "#FDF3E2" : PRIMARY_LIGHT, color: refillMsg.type === "err" ? "var(--danger-text)" : refillMsg.type === "warn" ? "var(--warn-text)" : PRIMARY_DARK }}>{refillMsg.text}</div>
           )}
           {queue.length === 0 ? (
             <div style={{ textAlign: "center", padding: "30px 20px", background: "var(--color-background-secondary)", borderRadius: 12 }}>
@@ -2677,7 +2677,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             <div key={w.id} style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
                 <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-secondary)" }}>Janela {idx + 1}</div>
-                {sched.windows.length > 1 && <button onClick={() => removeWindow(w.id)} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 12, color: "#A32D2D" }}>Remover</button>}
+                {sched.windows.length > 1 && <button onClick={() => removeWindow(w.id)} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 12, color: "var(--danger-text)" }}>Remover</button>}
               </div>
               <div className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
                 {[["Início", "from", "time"], ["Fim", "to", "time"], ["Intervalo entre produtos", "interval", "select"]].map(([label, field, type]) => (
@@ -2713,7 +2713,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               </div>
             </div>
             {(group.history || []).length > 0 && (
-              <button onClick={() => setConfirmClearHistory(true)} style={{ padding: "6px 12px", borderRadius: 7, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 12, cursor: "pointer" }}>
+              <button onClick={() => setConfirmClearHistory(true)} style={{ padding: "6px 12px", borderRadius: 7, border: "0.5px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", fontSize: 12, cursor: "pointer" }}>
                 🗑 Limpar histórico
               </button>
             )}
@@ -2777,7 +2777,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           <p style={{ fontSize: 13, marginBottom: 12, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
             Todo o histórico desta campanha será apagado, incluindo as métricas de envios (hoje/semana).
           </p>
-          <p style={{ fontSize: 13, marginBottom: 16, color: "#854F0B", lineHeight: 1.5, background: "#FEF3C7", padding: "8px 10px", borderRadius: 8 }}>
+          <p style={{ fontSize: 13, marginBottom: 16, color: "var(--warn-text)", lineHeight: 1.5, background: "var(--warn-bg)", padding: "8px 10px", borderRadius: 8 }}>
             ⚠️ Atenção: produtos que estavam em <strong>cooldown</strong> voltam a ser elegíveis pra envio imediatamente.
           </p>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
@@ -2989,7 +2989,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           </div>
 
           {manualMsg && (
-            <div style={{ marginBottom: 12, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: manualMsg.type === "ok" ? PRIMARY_LIGHT : manualMsg.type === "warn" ? "#FEF3C7" : "#FCEBEB", color: manualMsg.type === "ok" ? PRIMARY_DARK : manualMsg.type === "warn" ? "#854F0B" : "#A32D2D" }}>
+            <div style={{ marginBottom: 12, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: manualMsg.type === "ok" ? PRIMARY_LIGHT : manualMsg.type === "warn" ? "var(--warn-bg)" : "var(--danger-bg)", color: manualMsg.type === "ok" ? PRIMARY_DARK : manualMsg.type === "warn" ? "var(--warn-text)" : "var(--danger-text)" }}>
               {manualMsg.text}
             </div>
           )}
@@ -3108,7 +3108,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           </div>
 
           {manualCooldown && (
-            <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 8, background: "#FEF3C7", border: "0.5px solid #F4D08A", fontSize: 12, color: "#854F0B", lineHeight: 1.5 }}>
+            <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 8, background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", fontSize: 12, color: "var(--warn-text)", lineHeight: 1.5 }}>
               ⚠️ Este produto já foi enviado em <strong>{new Date(manualCooldown.lastSentAt).toLocaleString("pt-BR")}</strong> e ainda está dentro do tempo de espera para reenvio
               {manualCooldown.cooldownLabel ? <> ({manualCooldown.cooldownLabel})</> : null}.
               Tem certeza que quer adicionar mesmo assim?

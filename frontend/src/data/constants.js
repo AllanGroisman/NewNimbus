@@ -285,3 +285,63 @@ export const sidebarItems = [
   { id: "admin-notif-templates", icon: "✎", label: "Modelos Notificações", adminOnly: true },
   { id: "admin-whatsnimbus",    icon: "❂", label: "WhatsNimbus",    adminOnly: true },
 ];
+
+// Rótulo do plano exibido na sidebar. Espelha PLANS em backend/billing/limits.js
+// e PLAN_META em pages/Subscription.jsx — fonte única para o texto curto.
+export const PLAN_LABELS = {
+  free: "Sem plano ativo",
+  basic: "Plano Básico",
+  pro: "Plano Pro",
+  business: "Plano Business",
+};
+
+// Rótulo do plano em uso, ou null quando o billing ainda não carregou (aí a UI
+// não mostra nada em vez de chutar um plano que o usuário talvez não tenha).
+export function planLabel(effectivePlan) {
+  if (!effectivePlan) return null;
+  return PLAN_LABELS[effectivePlan] || null;
+}
+
+// ─── Rotas ──────────────────────────────────────────────────────────────────
+// Cada página do sidebar tem um endereço próprio, pro botão voltar do navegador
+// funcionar e pra dar pra compartilhar link. Campanhas usam /campanha/:id.
+export const PAGE_TO_PATH = {
+  dashboard: "/",
+  whatsapp: "/whatsapp",
+  "mercado-livre": "/mercado-livre",
+  amazon: "/amazon",
+  shopee: "/shopee",
+  tutorials: "/tutoriais",
+  settings: "/configuracoes",
+  subscription: "/assinatura",
+  products: "/admin/produtos",
+  "admin-scraper": "/admin/scraping",
+  "admin-scrap-tester": "/admin/scrap-tester",
+  "admin-ml": "/admin/mercado-livre",
+  "admin-amazon": "/admin/amazon",
+  "admin-shopee": "/admin/shopee",
+  "admin-repasse": "/admin/repasse",
+  "admin-users": "/admin/usuarios",
+  "admin-backups": "/admin/backups",
+  "admin-notifications": "/admin/notificacoes",
+  "admin-notif-templates": "/admin/modelos-notificacoes",
+  "admin-whatsnimbus": "/admin/whatsnimbus",
+};
+
+const PATH_TO_PAGE = Object.fromEntries(
+  Object.entries(PAGE_TO_PATH).map(([page, path]) => [path, page])
+);
+
+// Caminho da navegação atual. `groupId` (campanha aberta) tem precedência.
+export function navToPath({ page, groupId } = {}) {
+  if (groupId != null) return `/campanha/${encodeURIComponent(groupId)}`;
+  return PAGE_TO_PATH[page] || "/";
+}
+
+// Inverso de navToPath: { page, groupId }. Caminho desconhecido cai no dashboard.
+export function pathToNav(pathname) {
+  const clean = (pathname || "/").replace(/\/+$/, "") || "/";
+  const campanha = clean.match(/^\/campanha\/(.+)$/);
+  if (campanha) return { page: "group", groupId: decodeURIComponent(campanha[1]) };
+  return { page: PATH_TO_PAGE[clean] || "dashboard", groupId: null };
+}

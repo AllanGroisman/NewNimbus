@@ -33,8 +33,8 @@ const s = {
     fontWeight: 500, opacity: disabled ? 0.45 : 1, transition: "opacity .15s",
     ...(variant === "default" && { border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)" }),
     ...(variant === "primary" && { border: `0.5px solid ${PRIMARY}`, background: PRIMARY_LIGHT, color: PRIMARY_DARK }),
-    ...(variant === "danger"  && { border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D" }),
-    ...(variant === "success" && { border: "0.5px solid #BBF7D0", background: "#F0FDF4", color: "#166534" }),
+    ...(variant === "danger"  && { border: "0.5px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)" }),
+    ...(variant === "success" && { border: "0.5px solid var(--success-border)", background: "var(--success-bg)", color: "var(--success-text)" }),
     ...(variant === "solid"   && { border: "none", background: PRIMARY, color: "#fff" }),
   }),
 };
@@ -222,7 +222,7 @@ export default function PageAdminBackups() {
           <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 4, display: "flex", gap: 12, flexWrap: "wrap" }}>
             <span>{local.length} local{local.length !== 1 ? "is" : ""}</span>
             {b2ok ? <span>{remote.length} no Backblaze</span> : <span style={{ color: "#B45309" }}>Backblaze não configurado</span>}
-            {inSync    && <span style={{ color: "#166534" }}>✓ Sincronizado</span>}
+            {inSync    && <span style={{ color: "var(--success-text)" }}>✓ Sincronizado</span>}
             {localNewer  && <span style={{ color: "#B45309" }}>▲ Local mais novo</span>}
             {remoteNewer && <span style={{ color: "#B45309" }}>▼ Remoto mais novo</span>}
           </div>
@@ -239,26 +239,26 @@ export default function PageAdminBackups() {
 
       {/* Restart countdown */}
       {restartCountdown > 0 && (
-        <div style={{ background: "#FEF9C3", border: "0.5px solid #FDE68A", color: "#854D0E", padding: "12px 14px", borderRadius: 10, marginBottom: 14, fontSize: 13, fontWeight: 500 }}>
+        <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", color: "var(--warn-text)", padding: "12px 14px", borderRadius: 10, marginBottom: 14, fontSize: 13, fontWeight: 500 }}>
           ⏳ Backend reiniciando... página será atualizada em {restartCountdown}s
         </div>
       )}
 
       {/* Toast */}
       {toast && (
-        <div style={{ background: toast.isError ? "#FCEBEB" : "#F0FDF4", color: toast.isError ? "#A32D2D" : "#166534", border: `0.5px solid ${toast.isError ? "#F7C1C1" : "#BBF7D0"}`, padding: "10px 14px", borderRadius: 10, marginBottom: 14, fontSize: 13 }}>
+        <div style={{ background: toast.isError ? "var(--danger-bg)" : "var(--success-bg)", color: toast.isError ? "var(--danger-text)" : "var(--success-text)", border: `0.5px solid ${toast.isError ? "var(--danger-border)" : "var(--success-border)"}`, padding: "10px 14px", borderRadius: 10, marginBottom: 14, fontSize: 13 }}>
           {toast.msg}
         </div>
       )}
 
       {error && (
-        <div style={{ background: "#FCEBEB", color: "#A32D2D", padding: "10px 12px", borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
+        <div style={{ background: "var(--danger-bg)", color: "var(--danger-text)", padding: "10px 12px", borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
           {error}
         </div>
       )}
 
       {creating && (
-        <div style={{ background: "#EFF6FF", border: "0.5px solid #BFDBFE", color: "#1E40AF", padding: "10px 14px", borderRadius: 10, marginBottom: 14, fontSize: 13 }}>
+        <div style={{ background: "var(--info-bg)", border: "0.5px solid var(--info-border)", color: "var(--info-text)", padding: "10px 14px", borderRadius: 10, marginBottom: 14, fontSize: 13 }}>
           ⏳ Gerando dump do banco... isso pode levar alguns segundos.
         </div>
       )}
@@ -303,7 +303,7 @@ export default function PageAdminBackups() {
               <div style={{ fontSize: 13, fontWeight: 600 }}>
                 Backblaze
                 {b2ok && !remoteWritable && (
-                  <span style={{ fontSize: 10, fontWeight: 500, color: "#B45309", marginLeft: 8, padding: "1px 6px", borderRadius: 5, background: "#FEF3C7", border: "0.5px solid #FDE68A" }}>
+                  <span style={{ fontSize: 10, fontWeight: 500, color: "#B45309", marginLeft: 8, padding: "1px 6px", borderRadius: 5, background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)" }}>
                     somente leitura
                   </span>
                 )}

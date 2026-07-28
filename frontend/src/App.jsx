@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { initialGroups, initialNumbers, initialWhatsappGroups, makeEmptyGroup, DEFAULT_MESSAGE_TEMPLATE } from "./data/mockData";
-import { allSources, storeLockMessage, unlockedSources } from "./data/constants";
+import { allSources, storeLockMessage, unlockedSources, navToPath, pathToNav } from "./data/constants";
 
 const DEFAULT_SETTINGS = {
   messageTemplate: DEFAULT_MESSAGE_TEMPLATE,
@@ -40,8 +40,24 @@ import PageTutoriais from "./pages/Tutoriais";
 import Login from "./pages/Login";
 
 const SAVE_DEBOUNCE_MS = 800;
-// Onde guardamos a navegação atual (página ou campanha aberta) pra sobreviver ao F5.
+// Onde guardamos a navegação atual (página ou campanha aberta). A URL é a fonte
+// principal; isto é só a memória de "onde eu estava" pra quando o usuário entra
+// pela raiz (ex.: digitou só o domínio ou clicou num favorito antigo).
 const NAV_STORAGE_KEY = "nimbus:nav";
+
+// Navegação inicial: prioriza o endereço da URL; se veio pela raiz, cai na
+// última posição guardada. Devolve { page, groupId }.
+function readInitialNav() {
+  const path = typeof window !== "undefined" ? window.location.pathname : "/";
+  if (path && path !== "/") return pathToNav(path);
+  try {
+    const saved = JSON.parse(localStorage.getItem(NAV_STORAGE_KEY) || "{}");
+    if (saved.groupId != null) return { page: "group", groupId: saved.groupId };
+    return { page: saved.page || "dashboard", groupId: null };
+  } catch {
+    return { page: "dashboard", groupId: null };
+  }
+}
 // Polling de OPS: agressivo enquanto a aba está em foco, pausa quando oculta.
 // 3 s mantém UI quase live sem encher o servidor; afiliado fica em 30 s pq muda raro.
 const OPS_POLL_MS = 3 * 1000;
@@ -59,10 +75,10 @@ export default function App() {
   // Alimentado por poll; usado pra derivar o status real das campanhas (ver liveWhatsappGroups).
   const [sessionStatus, setSessionStatus] = useState({});
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
-  const [page, setPage] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(NAV_STORAGE_KEY) || "{}").page || "dashboard"; }
-    catch { return "dashboard"; }
-  });
+  // Navegação inicial (URL ou última posição guardada), lida uma única vez.
+  const initialNavRef = useRef(null);
+  if (initialNavRef.current === null) initialNavRef.current = readInitialNav();
+  const [page, setPage] = useState(() => initialNavRef.current.page);
   const [selectedGroup, setSelectedGroup] = useState(null);
   // Deep-link pra um tutorial específico — setado quando outra página chama
   // openTutorial(id). Limpado depois que a página Tutoriais consome.
@@ -83,7 +99,10 @@ export default function App() {
     else navFn();
   };
   const navGuard = { register, requestNavigation };
-  const closeGuard = () => setPendingNav(null);
+  // Cancelar o diálogo de alterações não salvas: a tela fica onde estava. Se a
+  // navegação veio do botão voltar do navegador, a URL já mudou — devolve ela
+  // pro endereço da tela atual, senão a barra passa a mentir.
+  const closeGuard = () => { setPendingNav(null); syncUrl("replace"); };
   const guardSave = async () => {
     const g = guardRef.current;
     if (g?.save) await g.save();
@@ -104,6 +123,12 @@ export default function App() {
   const [storeLocks, setStoreLocks] = useState({});
   // Billing — { planId, effectivePlan, status, daysLeftInTrial, limits, stripeEnabled, isAdmin }
   const [billing, setBilling] = useState(null);
+  // Falha ao gravar o estado no servidor — { message, retryable } ou null.
+  // As telas mostram "✓ Salvo!" assim que o estado local muda; sem este aviso o
+  // usuário acreditaria que salvou mesmo quando o PUT falhou.
+  const [saveError, setSaveError] = useState(null);
+  // Último payload que falhou, pra o botão "Tentar agora" reenviar.
+  const lastFailedSaveRef = useRef(null);
   // Nomes dos polls (ops/session/affiliate) atualmente em backoff por rate-limit (429).
   // Não-vazio => mostra aviso discreto: sem isso, um 429 silencioso faz a tela parar
   // de atualizar sem nenhum sinal, e só o F5 "resolve" (recarrega tudo de uma vez).
@@ -143,11 +168,10 @@ export default function App() {
   // Boot: se há token salvo, valida com o servidor e carrega o estado
   useEffect(() => {
     let cancelled = false;
-    // Lê a navegação salva ANTES de qualquer setState — o efeito de persistência
-    // (mais abaixo) reescreve essa chave assim que `user` é setado, então
-    // precisamos capturar o groupId aqui pra restaurar a campanha aberta.
-    let savedNav = {};
-    try { savedNav = JSON.parse(localStorage.getItem(NAV_STORAGE_KEY) || "{}"); } catch { /* ignora */ }
+    // Navegação de entrada (URL ou última posição), capturada antes de qualquer
+    // setState — o efeito de sincronização reescreve a URL assim que `user` é
+    // setado, então precisamos do groupId aqui pra reabrir a campanha certa.
+    const savedNav = initialNavRef.current;
     async function bootstrap() {
       if (!getToken()) { setBootstrapping(false); return; }
       // Inatividade: se a última atividade foi há mais que o timeout, a sessão
@@ -171,10 +195,12 @@ export default function App() {
         setSettings({ ...DEFAULT_SETTINGS, ...(state.settings || {}) });
         stateUpdatedAtRef.current = state.updatedAt || null;
         stateLoadedRef.current = true;
-        // Reabre a campanha que estava aberta antes do F5, se ainda existir.
+        // Reabre a campanha do endereço (ou a que estava aberta antes do F5).
+        // Comparação por string: o id da URL vem sempre como texto.
         if (savedNav.groupId != null) {
-          const g = (state.groups || []).find(x => x.id === savedNav.groupId);
+          const g = (state.groups || []).find(x => String(x.id) === String(savedNav.groupId));
           if (g) { setSelectedGroup(g); setPage("group"); }
+          else setPage("dashboard"); // campanha do link não existe mais
         }
         // Billing — não bloqueia o boot se falhar
         billingMe().then(b => !cancelled && setBilling(b)).catch(() => {});
@@ -249,6 +275,8 @@ export default function App() {
     try {
       const res = await saveAppState({ ...payload, baseUpdatedAt: stateUpdatedAtRef.current });
       if (res?.updatedAt) stateUpdatedAtRef.current = res.updatedAt;
+      lastFailedSaveRef.current = null;
+      setSaveError(null);
     } catch (err) {
       if (err.status === 409) {
         // Servidor rejeitou por estar baseado em versão antiga (concorrência
@@ -261,13 +289,23 @@ export default function App() {
           setNumbers(fresh.numbers || []);
           setWhatsappGroups(fresh.whatsappGroups || []);
           setSettings(s => ({ ...s, ...(fresh.settings || {}) }));
+          lastFailedSaveRef.current = null;
+          setSaveError(null);
         } catch { /* próxima tentativa de save cuida disso */ }
       } else if (err.status === 402) {
-        // Limite do plano excedido — backend recusou o save. Sem isso o
-        // usuário não teria nenhum feedback (só um console.warn silencioso).
-        window.alert(err.message || "Limite do plano excedido.");
+        // Limite do plano excedido — backend recusou o save. Insistir não
+        // resolve (o limite continua estourado), então nada de "Tentar agora".
+        lastFailedSaveRef.current = null;
+        setSaveError({ message: err.message || "Limite do plano excedido.", retryable: false });
       } else {
+        // Falha de rede/servidor: o usuário já viu "✓ Salvo!" na tela da campanha,
+        // mas nada foi gravado. Guarda o payload e avisa, com opção de tentar de novo.
         console.warn("[nimbus] falha ao salvar estado:", err.message);
+        lastFailedSaveRef.current = payload;
+        setSaveError({
+          message: "Não conseguimos salvar suas últimas alterações. Verifique sua conexão.",
+          retryable: true,
+        });
       }
     } finally {
       savingStateRef.current = false;
@@ -277,6 +315,15 @@ export default function App() {
         flushSave(next);
       }
     }
+  };
+
+  // "Tentar agora" do aviso de falha de gravação. Reenvia o payload que falhou
+  // (ou o estado atual, se por algum motivo não temos o antigo).
+  const retrySave = () => {
+    const payload = lastFailedSaveRef.current || { groups, numbers, whatsappGroups, settings };
+    setSaveError(null);
+    if (savingStateRef.current) pendingSaveRef.current = payload;
+    else flushSave(payload);
   };
 
   // Persistência com debounce — dispara sempre que algo no estado muda,
@@ -298,14 +345,54 @@ export default function App() {
     document.documentElement.dataset.theme = t;
   }, [settings.theme]);
 
-  // Lembra onde o usuário está (página atual ou campanha aberta) pra restaurar no F5.
+  // Escreve a navegação atual na barra de endereços. `mode`:
+  //   "push"    — entrada nova no histórico (o botão voltar desfaz)
+  //   "replace" — corrige a URL sem criar entrada (1ª sincronização e cancelamento
+  //               do diálogo de alterações não salvas, quando o voltar do
+  //               navegador já mudou a URL mas a tela ficou onde estava)
+  const syncUrl = useCallback((mode = "push") => {
+    const path = navToPath({ page, groupId: selectedGroup?.id });
+    const full = path + window.location.search;
+    if (window.location.pathname === path && mode === "push") return;
+    const state = { page, groupId: selectedGroup?.id ?? null };
+    if (mode === "replace") window.history.replaceState(state, "", full);
+    else window.history.pushState(state, "", full);
+  }, [page, selectedGroup]);
+
+  // Mantém URL e localStorage em dia com a tela atual. A primeira sincronização
+  // depois do login é "replace" pra não deixar uma entrada morta no histórico.
+  const urlSyncedRef = useRef(false);
   useEffect(() => {
     if (!user) return;
+    syncUrl(urlSyncedRef.current ? "push" : "replace");
+    urlSyncedRef.current = true;
     try {
       const nav = selectedGroup ? { groupId: selectedGroup.id } : { page };
       localStorage.setItem(NAV_STORAGE_KEY, JSON.stringify(nav));
     } catch { /* ignora (modo privado/quota) */ }
-  }, [user, page, selectedGroup]);
+  }, [user, page, selectedGroup, syncUrl]);
+
+  // Botão voltar/avançar do navegador. Passa pelo guard, então alterações não
+  // salvas continuam pedindo confirmação — inclusive no voltar.
+  useEffect(() => {
+    if (!user) return;
+    const onPop = () => {
+      const nav = pathToNav(window.location.pathname);
+      requestNavigation(() => {
+        setTutorialTarget(null);
+        if (nav.groupId != null) {
+          const g = groupsRef.current.find(x => String(x.id) === String(nav.groupId));
+          if (g) { setSelectedGroup(g); setPage("group"); return; }
+          // Campanha apagada nesse meio tempo — cai na lista em vez de tela vazia.
+          setSelectedGroup(null); setPage("dashboard"); return;
+        }
+        setSelectedGroup(null);
+        setPage(nav.page);
+      });
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [user]);
 
   // Polling: pega dados operacionais (queue/history/métricas) que o scheduler
   // atualiza no servidor. Faz merge sem sobrescrever campos editáveis localmente.
@@ -486,6 +573,15 @@ export default function App() {
       setNumbers(state.numbers || []);
       setWhatsappGroups(state.whatsappGroups || []);
       setSettings({ ...DEFAULT_SETTINGS, ...(state.settings || {}) });
+      // Quem chegou por um link de campanha e passou pelo login vai direto pra
+      // ela, em vez de cair no painel e ter que procurar.
+      const wanted = initialNavRef.current;
+      if (wanted?.groupId != null) {
+        const g = (state.groups || []).find(x => String(x.id) === String(wanted.groupId));
+        if (g) { setSelectedGroup(g); setPage("group"); }
+      } else if (wanted?.page) {
+        setPage(wanted.page);
+      }
     } catch {
       setGroups([]); setNumbers([]); setWhatsappGroups([]); setSettings(DEFAULT_SETTINGS);
     } finally {
@@ -496,6 +592,11 @@ export default function App() {
   function handleLogout() {
     authLogout();
     try { localStorage.removeItem(NAV_STORAGE_KEY); } catch { /* ignora */ }
+    // Volta a barra de endereços pra raiz — deixar /campanha/123 na URL depois
+    // do logout faria o próximo login tentar abrir a campanha de outra conta.
+    try { window.history.replaceState({}, "", "/"); } catch { /* ignora */ }
+    initialNavRef.current = { page: "dashboard", groupId: null };
+    urlSyncedRef.current = false;
     stateLoadedRef.current = false;
     setUser(null);
     setGroups([]); setNumbers([]); setWhatsappGroups([]);
@@ -692,6 +793,7 @@ export default function App() {
         affiliateStatus={affiliateStatus}
         storeLocks={user?.role === "admin" ? {} : storeLocks}
         user={user}
+        billing={billing}
         onNavigate={(id) => requestNavigation(() => { setPage(id); setSelectedGroup(null); setTutorialTarget(null); })}
         onSelectGroup={handleSelectGroup}
         onLogout={() => { setMobileMenu(false); setConfirmLogout(true); }}
@@ -699,22 +801,32 @@ export default function App() {
         onToggleMobile={setMobileMenu}
       />
       <div className="main-content" style={{ flex: 1, padding: "20px 24px", minWidth: 0, overflowY: "auto" }}>
+        {saveError && (
+          <div role="alert" style={{ background: "var(--danger-bg)", border: "0.5px solid var(--danger-border)", color: "var(--danger-text)", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ flex: 1, minWidth: 200 }}>{saveError.message}</span>
+            {saveError.retryable && (
+              <button onClick={retrySave} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--danger-text)", color: "var(--color-background-primary)", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
+                Tentar agora
+              </button>
+            )}
+          </div>
+        )}
         {degradedPolls.size > 0 && (
-          <div style={{ background: "#FFF7E0", border: "0.5px solid #F0D58A", color: "#7A5800", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
+          <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", color: "var(--warn-text)", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
             Atualização automática mais lenta no momento (muitas requisições) — tentando novamente. Se algo parecer desatualizado, recarregue a página.
           </div>
         )}
         {billing && !billing.isAdmin && (
           (billing.status === "past_due" || billing.status === "unpaid") ? (
-            <div onClick={() => requestNavigation(() => setPage("subscription"))} style={{ cursor: "pointer", background: "#FCEBEB", border: "0.5px solid #F7C1C1", color: "#A32D2D", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
+            <div onClick={() => requestNavigation(() => setPage("subscription"))} style={{ cursor: "pointer", background: "var(--danger-bg)", border: "0.5px solid var(--danger-border)", color: "var(--danger-text)", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
               Pagamento pendente — clique para regularizar e manter envios ativos.
             </div>
           ) : billing.status === "trialing" && billing.daysLeftInTrial !== null && billing.daysLeftInTrial <= 2 ? (
-            <div onClick={() => requestNavigation(() => setPage("subscription"))} style={{ cursor: "pointer", background: "#FFF7E0", border: "0.5px solid #F0D58A", color: "#7A5800", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
+            <div onClick={() => requestNavigation(() => setPage("subscription"))} style={{ cursor: "pointer", background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", color: "var(--warn-text)", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
               Seu trial expira em {billing.daysLeftInTrial}d. Assine para continuar usando.
             </div>
           ) : billing.effectivePlan === "free" ? (
-            <div onClick={() => requestNavigation(() => setPage("subscription"))} style={{ cursor: "pointer", background: "#FFF7E0", border: "0.5px solid #F0D58A", color: "#7A5800", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
+            <div onClick={() => requestNavigation(() => setPage("subscription"))} style={{ cursor: "pointer", background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", color: "var(--warn-text)", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
               Sem plano ativo — envios pausados. Escolha um plano para reativar.
             </div>
           ) : null

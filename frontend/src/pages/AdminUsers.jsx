@@ -162,19 +162,19 @@ export default function PageAdminUsers({ currentUser }) {
       color: PRIMARY_DARK,
     }),
     ...(variant === "danger" && {
-      border: "0.5px solid #F7C1C1",
-      background: "#FCEBEB",
-      color: "#A32D2D",
+      border: "0.5px solid var(--danger-border)",
+      background: "var(--danger-bg)",
+      color: "var(--danger-text)",
     }),
     ...(variant === "warning" && {
-      border: "0.5px solid #FDE68A",
-      background: "#FEF9C3",
-      color: "#854D0E",
+      border: "0.5px solid var(--warn-border)",
+      background: "var(--warn-bg)",
+      color: "var(--warn-text)",
     }),
     ...(variant === "success" && {
-      border: "0.5px solid #BBF7D0",
-      background: "#F0FDF4",
-      color: "#166534",
+      border: "0.5px solid var(--success-border)",
+      background: "var(--success-bg)",
+      color: "var(--success-text)",
     }),
   });
 
@@ -206,7 +206,7 @@ export default function PageAdminUsers({ currentUser }) {
             <span>{users.length} cadastrado{users.length !== 1 ? "s" : ""}</span>
             <span>{adminCount} admin{adminCount !== 1 ? "s" : ""}</span>
             {unverifiedCount > 0 && <span style={{ color: "#B45309" }}>{unverifiedCount} pendente{unverifiedCount !== 1 ? "s" : ""} de verificação</span>}
-            {suspendedCount > 0 && <span style={{ color: "#A32D2D" }}>{suspendedCount} suspenso{suspendedCount !== 1 ? "s" : ""}</span>}
+            {suspendedCount > 0 && <span style={{ color: "var(--danger-text)" }}>{suspendedCount} suspenso{suspendedCount !== 1 ? "s" : ""}</span>}
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -222,7 +222,7 @@ export default function PageAdminUsers({ currentUser }) {
       </div>
 
       {error && (
-        <div style={{ background: "#FCEBEB", color: "#A32D2D", padding: "10px 12px", borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
+        <div style={{ background: "var(--danger-bg)", color: "var(--danger-text)", padding: "10px 12px", borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
           {error}
         </div>
       )}
@@ -284,7 +284,7 @@ export default function PageAdminUsers({ currentUser }) {
                         </>
                       )}
                       {u.suspended && u.suspendedAt && (
-                        <span style={{ color: "#A32D2D" }}>Suspenso em {new Date(u.suspendedAt).toLocaleDateString("pt-BR")}</span>
+                        <span style={{ color: "var(--danger-text)" }}>Suspenso em {new Date(u.suspendedAt).toLocaleDateString("pt-BR")}</span>
                       )}
                     </div>
 
@@ -371,7 +371,7 @@ export default function PageAdminUsers({ currentUser }) {
             style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", marginBottom: 10 }}
           />
           {pwdError && (
-            <div style={{ background: "#FCEBEB", color: "#A32D2D", padding: "8px 10px", borderRadius: 8, fontSize: 12, marginBottom: 10 }}>{pwdError}</div>
+            <div style={{ background: "var(--danger-bg)", color: "var(--danger-text)", padding: "8px 10px", borderRadius: 8, fontSize: 12, marginBottom: 10 }}>{pwdError}</div>
           )}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button onClick={() => { setPwdUser(null); setNewPwd(""); setPwdError(null); }} disabled={savingPwd} style={btnStyle("default")}>Cancelar</button>

@@ -34,6 +34,10 @@ export default function PageWhatsApp({
   const [confirmRemove, setConfirmRemove] = useState(null);
   const [pendingNumberId, setPendingNumberId] = useState(null);
   const [pendingLabel, setPendingLabel] = useState("");
+  // Erro da última ação (desconectar/remover/reconectar). Mostrado numa faixa na
+  // própria página — antes era um window.alert do navegador, que trava a tela e
+  // destoa do resto do sistema.
+  const [actionError, setActionError] = useState(null);
 
   // Status ao vivo das sessões (numberId -> status real do Baileys), via polling.
   // O `numbers` do estado tem um status que só muda em ações locais; este reflete
@@ -96,10 +100,11 @@ export default function PageWhatsApp({
   // na lista (status "desconectado"). Assim o numberId é preservado e, ao reconectar
   // via QR, os grupos vinculados continuam apontando pro mesmo número.
   const disconnect = async (id) => {
+    setActionError(null);
     try {
       await deleteWASession(id);
     } catch (err) {
-      window.alert(err.message || "Não foi possível desconectar no servidor. Tente novamente.");
+      setActionError(err.message || "Não foi possível desconectar no servidor. Tente novamente.");
       return;
     }
     setNumbers(ns => ns.map(n => n.id === id ? { ...n, status: "disconnected", lastActivity: "—" } : n));
@@ -109,10 +114,11 @@ export default function PageWhatsApp({
   // Remove o número por completo: limpa sessão no backend e apaga o número + seus
   // grupos vinculados (via App). Use quando não quiser mais esse número.
   const removeNumber = async (id) => {
+    setActionError(null);
     try {
       await deleteWASession(id);
     } catch (err) {
-      window.alert(err.message || "Não foi possível remover a sessão no servidor. Tente novamente.");
+      setActionError(err.message || "Não foi possível remover a sessão no servidor. Tente novamente.");
       return;
     }
     onRemoveNumber?.(id);
@@ -126,10 +132,11 @@ export default function PageWhatsApp({
   // novo. O numberId (= telefone) é preservado, então os grupos vinculados
   // continuam apontando pro mesmo número. O WhatsappQR (autoStart) reabre a sessão.
   const reconnect = async (id) => {
+    setActionError(null);
     try {
       await deleteWASession(id);
     } catch (err) {
-      window.alert(err.message || "Não foi possível limpar a sessão anterior no servidor. Tente novamente.");
+      setActionError(err.message || "Não foi possível limpar a sessão anterior no servidor. Tente novamente.");
       return;
     }
     setPendingNumberId(id);
@@ -181,11 +188,12 @@ export default function PageWhatsApp({
   // reciclando em loop — que apareceria como "Conectando..." eterno na lista.
   // No sucesso, quem fecha o modal é o handleConnected (não passa por aqui).
   const cancelQR = async () => {
+    setActionError(null);
     if (pendingNumberId) {
       try {
         await deleteWASession(pendingNumberId);
       } catch (err) {
-        window.alert((err.message || "Não foi possível limpar a sessão pendente no servidor.") + " Pode ter sobrado uma sessão pendente — verifique antes de tentar de novo.");
+        setActionError((err.message || "Não foi possível limpar a sessão pendente no servidor.") + " Pode ter sobrado uma sessão pendente — verifique antes de tentar de novo.");
       }
     }
     setShowQR(null);
@@ -220,6 +228,13 @@ export default function PageWhatsApp({
           <button onClick={startAddNumber} style={{ padding: "7px 14px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>+ Adicionar número</button>
         </div>
       </div>
+
+      {actionError && (
+        <div role="alert" style={{ background: "var(--danger-bg)", border: "0.5px solid var(--danger-border)", color: "var(--danger-text)", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 14, display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ flex: 1 }}>{actionError}</span>
+          <button onClick={() => setActionError(null)} aria-label="Fechar aviso" style={{ background: "transparent", border: "none", cursor: "pointer", color: "inherit", fontSize: 18, lineHeight: 1, padding: 0 }}>&times;</button>
+        </div>
+      )}
 
       {/* Números */}
       <h3 style={{ fontSize: 14, fontWeight: 500, marginBottom: 10 }}>Números conectados</h3>
@@ -273,6 +288,7 @@ export default function PageWhatsApp({
                         <button
                           onClick={() => setEditingLabel({ id: n.id, value: n.label })}
                           title="Editar apelido"
+                          aria-label={`Editar apelido de ${n.label}`}
                           style={{ background: "transparent", border: "none", cursor: "pointer", padding: "2px 4px", color: "var(--color-text-secondary)", fontSize: 12, borderRadius: 4 }}
                         >✎</button>
                       </>
@@ -287,7 +303,7 @@ export default function PageWhatsApp({
                 </div>
                 <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                   {connected ? (
-                    <button onClick={() => setConfirmDisconnect(n.id)} style={{ padding: "6px 14px", borderRadius: 8, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 12, cursor: "pointer" }}>Desconectar</button>
+                    <button onClick={() => setConfirmDisconnect(n.id)} style={{ padding: "6px 14px", borderRadius: 8, border: "0.5px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", fontSize: 12, cursor: "pointer" }}>Desconectar</button>
                   ) : connecting ? (
                     <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--color-text-secondary)" }}>
                       <Spinner size={14} />
@@ -317,7 +333,7 @@ export default function PageWhatsApp({
 
       {/* Modal QR (adicionar/reconectar número) — usa Baileys real */}
       {showQR && pendingNumberId && (
-        <Modal title={showQR === "new" ? "Adicionar novo número" : "Reconectar número"} onClose={cancelQR}>
+        <Modal title={showQR === "new" ? "Adicionar novo número" : "Reconectar número"} onClose={cancelQR} confirmOnClickOutside>
           {showQR === "new" && (
             <div style={{ marginBottom: 14 }}>
               <label style={{ fontSize: 12, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Apelido</label>

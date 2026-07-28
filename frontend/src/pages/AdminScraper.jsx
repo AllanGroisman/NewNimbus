@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, formatPrice } from "../data/constants";
 import Badge from "../components/ui/Badge";
 import Toggle from "../components/ui/Toggle";
+import Modal from "../components/ui/Modal";
 import {
   adminScraperConfig,
   adminSaveScraperConfig,
@@ -33,6 +34,8 @@ export default function PageAdminScraper() {
   const [catFilter, setCatFilter] = useState({ category: "", source: "", q: "", sortBy: "lastSeen_desc" });
   const [catLoading, setCatLoading] = useState(false);
   const [clearing, setClearing] = useState(false);
+  // Confirmação de "Limpar catálogo" — antes era um window.confirm do navegador.
+  const [confirmClear, setConfirmClear] = useState(false);
 
   const refreshConfig = useCallback(async () => {
     try {
@@ -166,7 +169,7 @@ export default function PageAdminScraper() {
   }
 
   async function clearCatalog() {
-    if (!window.confirm("Apagar TODOS os produtos do catálogo? Esta ação não pode ser desfeita.")) return;
+    setConfirmClear(false);
     setError(null);
     setClearing(true);
     try {
@@ -197,7 +200,7 @@ export default function PageAdminScraper() {
       </div>
 
       {error && (
-        <div style={{ background: "#FCEBEB", color: "#A32D2D", padding: "10px 12px", borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
+        <div style={{ background: "var(--danger-bg)", color: "var(--danger-text)", padding: "10px 12px", borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
           {error}
         </div>
       )}
@@ -205,7 +208,7 @@ export default function PageAdminScraper() {
       {/* Status / stats — TODOS os campos lidos de `status` (snapshot do backend),
           nunca de `config` local. Senão dessincroniza durante toggle. */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 18 }}>
-        <StatBox label="Status" value={status?.canceling ? "✕ Cancelando..." : (status?.running ? "⟳ Rodando" : (status?.config?.enabled ? "Agendado" : "Pausado"))} color={status?.canceling ? "#A32D2D" : (status?.running ? PRIMARY : (status?.config?.enabled ? PRIMARY_DARK : "#854F0B"))} />
+        <StatBox label="Status" value={status?.canceling ? "✕ Cancelando..." : (status?.running ? "⟳ Rodando" : (status?.config?.enabled ? "Agendado" : "Pausado"))} color={status?.canceling ? "var(--danger-text)" : (status?.running ? PRIMARY : (status?.config?.enabled ? PRIMARY_DARK : "var(--warn-text)"))} />
         <StatBox label="Último run" value={fmtDate(status?.lastRun)} sub={status?.lastDuration ? `${(status.lastDuration / 1000).toFixed(1)}s` : null} />
         <StatBox label="Próximo run" value={status?.config?.enabled ? fmtDate(status?.nextRunAt) : "—"} />
         <StatBox label="Produtos no catálogo" value={lastResult?.total ?? "—"} />
@@ -249,7 +252,7 @@ export default function PageAdminScraper() {
         <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 14, marginBottom: 18 }}>
           <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>
             Resultado do último scraping
-            {lastResult.cancelled && <span style={{ fontSize: 11, fontWeight: 400, color: "#A32D2D", marginLeft: 8 }}>(cancelado — incompleto)</span>}
+            {lastResult.cancelled && <span style={{ fontSize: 11, fontWeight: 400, color: "var(--danger-text)", marginLeft: 8 }}>(cancelado — incompleto)</span>}
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
             <Badge color="green">+{lastResult.inserted} novos</Badge>
@@ -259,7 +262,7 @@ export default function PageAdminScraper() {
           {lastResult.perCategory && (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 6 }}>
               {Object.entries(lastResult.perCategory).map(([tag, r]) => (
-                <div key={tag} style={{ fontSize: 11, padding: "6px 10px", borderRadius: 6, background: r.ok ? "var(--color-background-secondary)" : "#FCEBEB", color: r.ok ? "var(--color-text-primary)" : "#A32D2D" }}>
+                <div key={tag} style={{ fontSize: 11, padding: "6px 10px", borderRadius: 6, background: r.ok ? "var(--color-background-secondary)" : "var(--danger-bg)", color: r.ok ? "var(--color-text-primary)" : "var(--danger-text)" }}>
                   {r.ok ? `${tag}: ${r.inserted}+ ${r.updated}~` : `${tag}: ${r.error}`}
                 </div>
               ))}
@@ -357,7 +360,7 @@ export default function PageAdminScraper() {
           {status?.running && (() => {
             const isCanceling = canceling || status?.canceling;
             return (
-              <button onClick={cancelRun} disabled={isCanceling} style={{ padding: "8px 16px", borderRadius: 8, background: "#fff", color: isCanceling ? "var(--color-text-secondary)" : "#A32D2D", border: `0.5px solid ${isCanceling ? "var(--color-border-secondary)" : "#A32D2D"}`, fontSize: 13, cursor: isCanceling ? "not-allowed" : "pointer", fontWeight: 500 }}>
+              <button onClick={cancelRun} disabled={isCanceling} style={{ padding: "8px 16px", borderRadius: 8, background: "#fff", color: isCanceling ? "var(--color-text-secondary)" : "var(--danger-text)", border: `0.5px solid ${isCanceling ? "var(--color-border-secondary)" : "var(--danger-text)"}`, fontSize: 13, cursor: isCanceling ? "not-allowed" : "pointer", fontWeight: 500 }}>
                 {isCanceling ? "Cancelando..." : "✕ Cancelar scraping"}
               </button>
             );
@@ -377,7 +380,7 @@ export default function PageAdminScraper() {
             <button onClick={refreshCatalog} disabled={catLoading} style={{ padding: "6px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: "pointer" }}>
               {catLoading ? "⟳" : "⟳ Atualizar"}
             </button>
-            <button onClick={clearCatalog} disabled={clearing || catTotal === 0} style={{ padding: "6px 12px", borderRadius: 7, border: "0.5px solid #A32D2D", background: "transparent", color: "#A32D2D", fontSize: 12, cursor: clearing || catTotal === 0 ? "not-allowed" : "pointer", opacity: clearing || catTotal === 0 ? 0.5 : 1 }}>
+            <button onClick={() => setConfirmClear(true)} disabled={clearing || catTotal === 0} style={{ padding: "6px 12px", borderRadius: 7, border: "0.5px solid var(--danger-text)", background: "transparent", color: "var(--danger-text)", fontSize: 12, cursor: clearing || catTotal === 0 ? "not-allowed" : "pointer", opacity: clearing || catTotal === 0 ? 0.5 : 1 }}>
               {clearing ? "Apagando..." : "🗑 Apagar todos"}
             </button>
           </div>
@@ -444,11 +447,23 @@ export default function PageAdminScraper() {
           </div>
         )}
       </div>
+
+      {confirmClear && (
+        <Modal title="Apagar todo o catálogo?" onClose={() => setConfirmClear(false)} danger>
+          <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+            Todos os <strong style={{ color: "var(--color-text-primary)" }}>{catTotal}</strong> produtos do catálogo central serão apagados. As campanhas ficam sem produtos até o próximo scraping. Esta ação não pode ser desfeita.
+          </p>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button onClick={() => setConfirmClear(false)} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+            <button onClick={clearCatalog} style={{ padding: "8px 16px", borderRadius: 8, background: "#E24B4A", color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>Apagar tudo</button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
 
-const inputStyle = { width: "100%", padding: "7px 10px", borderRadius: 7, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" };
+const inputStyle ={ width: "100%", padding: "7px 10px", borderRadius: 7, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" };
 const selectStyle = { padding: "7px 10px", borderRadius: 7, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13 };
 
 function Field({ label, children }) {
