@@ -141,7 +141,7 @@ function writeAmazonConfig(userId, { tag }) {
   }
   const cleanTag = String(tag || "").trim();
   if (cleanTag && !/^[a-zA-Z0-9_-]{2,30}$/.test(cleanTag)) {
-    throw new Error("Tag inválida — use letras, números, hífen ou sublinhado (ex: pedroguterres-20)");
+    throw new Error("Tag inválida — use letras, números, hífen ou sublinhado (ex: sualoja-20)");
   }
   const raw = { ...(store.getRaw(userId) || {}) };
   raw.amazon = { tag: cleanTag || null, updatedAt: new Date().toISOString() };

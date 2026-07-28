@@ -23,8 +23,8 @@ test.describe("Afiliados", () => {
     await gotoPage(page, "Mercado Livre"); // primeira ocorrência = página do usuário
     const tag = real?.ml?.tag || "e2e-ml-tag";
     const cookie = real?.ml?.cookie || "_d2id=e2e-cookie-teste-1234567890";
-    await page.getByPlaceholder(/^ex: pb/).fill(tag);
-    await page.getByPlaceholder(/Cole aqui o conteúdo de document.cookie/).fill(cookie);
+    await page.getByPlaceholder(/^ex: ab/).fill(tag);
+    await page.getByPlaceholder(/Cole aqui o cookie/).fill(cookie);
     await page.getByRole("button", { name: "Salvar" }).click();
     await expect(page.getByRole("button", { name: "Apagar" })).toBeVisible({ timeout: 10000 });
     await page.getByRole("button", { name: "Apagar" }).click();
@@ -34,7 +34,7 @@ test.describe("Afiliados", () => {
   test("Amazon: salvar → configurado → Apagar", async ({ page }) => {
     await gotoPage(page, "Amazon");
     const tag = real?.amazon?.tag || "e2eteste-20";
-    await page.getByPlaceholder(/^ex: pedroguterres/).fill(tag);
+    await page.getByPlaceholder(/^ex: sualoja/).fill(tag);
     await page.getByRole("button", { name: "Salvar" }).click();
     await expect(page.getByRole("button", { name: "Apagar" })).toBeVisible({ timeout: 10000 });
     await page.getByRole("button", { name: "Apagar" }).click();

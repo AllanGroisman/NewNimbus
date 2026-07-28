@@ -2,8 +2,9 @@ import { useState, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, TEST_URLS } from "../data/constants";
 import Badge from "../components/ui/Badge";
 import { getAffiliateStatus, saveAffiliate, clearAffiliate, testAffiliate } from "../data/api";
+import { TUTORIAL_IDS } from "./Tutoriais";
 
-export default function PageAffiliateML({ onAffiliateChange }) {
+export default function PageAffiliateML({ onAffiliateChange, onOpenTutorial }) {
   const [affStatus, setAffStatus] = useState(null);
   const [affTag, setAffTag] = useState("");
   const [affCookie, setAffCookie] = useState("");
@@ -84,7 +85,17 @@ export default function PageAffiliateML({ onAffiliateChange }) {
 
   return (
     <div>
-      <h2 style={{ fontSize: 18, fontWeight: 500, marginBottom: 6 }}>Mercado Livre</h2>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 500, margin: 0 }}>Mercado Livre</h2>
+        {onOpenTutorial && (
+          <button
+            onClick={() => onOpenTutorial(TUTORIAL_IDS.AFILIADO_ML)}
+            style={{ background: "transparent", border: "none", padding: 0, color: PRIMARY, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}
+          >
+            ▶ Ver tutorial
+          </button>
+        )}
+      </div>
       <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 20 }}>
         Configure o programa de afiliados para gerar links curtos com sua TAG nos envios.
       </div>
@@ -100,7 +111,6 @@ export default function PageAffiliateML({ onAffiliateChange }) {
         </div>
         <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14, lineHeight: 1.5 }}>
           Quando configurado, todo link do Mercado Livre enviado vira link curto de afiliado (com a sua TAG).
-          O <strong>cookie expira</strong> de tempos em tempos — quando os envios pararem de gerar comissão, atualize aqui.
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -109,7 +119,7 @@ export default function PageAffiliateML({ onAffiliateChange }) {
             <input
               value={affTag}
               onChange={e => setAffTag(e.target.value)}
-              placeholder="ex: pb20260221170529"
+              placeholder="ex: ab12345678901234"
               style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", fontFamily: "monospace" }}
             />
             <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4 }}>
@@ -125,14 +135,13 @@ export default function PageAffiliateML({ onAffiliateChange }) {
               value={affCookie}
               onChange={e => setAffCookie(e.target.value)}
               rows={5}
-              placeholder="Cole aqui o conteúdo de document.cookie do mercadolivre.com.br/afiliados"
+              placeholder="Cole aqui o cookie copiado pela extensão Extrator Nimbus"
               style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 12, resize: "vertical", boxSizing: "border-box", fontFamily: "monospace" }}
             />
             <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 6, lineHeight: 1.5 }}>
-              <strong>Como pegar:</strong> entre logado em mercadolivre.com.br/afiliados → abra o DevTools (F12) →
-              Console → digite <code style={{ background: "var(--color-background-secondary)", padding: "1px 4px", borderRadius: 4 }}>document.cookie</code>
-              → copie a saída inteira e cole aqui.
-              <br/>O cookie nunca sai do servidor e não é commitado.
+              <strong>Como pegar:</strong> instale a extensão <a href="https://chromewebstore.google.com/detail/extrator-nimbus/jppbabekibjgclmbacibonalflchgdlh" target="_blank" rel="noreferrer" style={{ color: PRIMARY }}>Extrator Nimbus</a> no
+              Chrome → entre logado em mercadolivre.com.br/afiliados → clique no ícone da extensão → ela copia o cookie
+              pra você → cole aqui.
             </div>
           </div>
         </div>

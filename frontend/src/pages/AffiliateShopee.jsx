@@ -2,8 +2,9 @@ import { useState, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, TEST_URLS } from "../data/constants";
 import Badge from "../components/ui/Badge";
 import { getAffiliateStatus, saveShopeeAffiliate, clearShopeeAffiliate, testShopeeAffiliate } from "../data/api";
+import { TUTORIAL_IDS } from "./Tutoriais";
 
-export default function PageAffiliateShopee({ onAffiliateChange }) {
+export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial }) {
   const [affStatus, setAffStatus] = useState(null);
   const [appId, setAppId] = useState("");
   const [appSecret, setAppSecret] = useState("");
@@ -84,7 +85,17 @@ export default function PageAffiliateShopee({ onAffiliateChange }) {
 
   return (
     <div>
-      <h2 style={{ fontSize: 18, fontWeight: 500, marginBottom: 6 }}>Shopee</h2>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 500, margin: 0 }}>Shopee</h2>
+        {onOpenTutorial && (
+          <button
+            onClick={() => onOpenTutorial(TUTORIAL_IDS.AFILIADO_SHOPEE)}
+            style={{ background: "transparent", border: "none", padding: 0, color: PRIMARY, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}
+          >
+            ▶ Ver tutorial
+          </button>
+        )}
+      </div>
       <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 20 }}>
         Configure o programa de afiliados para gerar links curtos com sua tag nos envios.
       </div>

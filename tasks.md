@@ -56,6 +56,8 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 
 23. [x] Ao clicar em sair para fazer logout quero que apareca um popup perguntando se tem certeza
 
-24. [] Na aba do Mercado Livre, Para pegar o cookie é necessario utilizar uma extensao do chrome disponivel em https://chromewebstore.google.com/detail/extrator-nimbus/jppbabekibjgclmbacibonalflchgdlh?authuser=0&hl=pt-BR . Substitui ali no escrito do Como Pegar uma breve explicacao com emcaminhamento para a baixar a extensao. 
+24. [x] Na aba do Mercado Livre, Para pegar o cookie é necessario utilizar uma extensao do chrome disponivel em https://chromewebstore.google.com/detail/extrator-nimbus/jppbabekibjgclmbacibonalflchgdlh?authuser=0&hl=pt-BR . Substitui ali no escrito do Como Pegar uma breve explicacao com emcaminhamento para a baixar a extensao. 
 
-25. [] Adicione um atalho para ir ate o tutorial nas abas das lojas onde se configura os afiliados ML, amazon e shopee.
+25. [x] Adicione um atalho para ir ate o tutorial nas abas das lojas onde se configura os afiliados ML, amazon e shopee.
+
+26.[x] Exemplos de preenchimento dos afiliados todos fakes. Conferir para nao ter nada real.
