@@ -12,7 +12,7 @@ const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 const scraper = require(path.resolve(__dirname, "..", "..", "backend", "scraping", "scraper.js"));
 
-const { parseMLReviewCompacted, parseAmazonSold, normalizeSoldText, applyFilters } = scraper;
+const { parseMLReviewCompacted, parseAmazonSold, parseRatingText, parseReviewsCount, reconcilePricing, normalizeSoldText, applyFilters } = scraper;
 
 describe("parseMLReviewCompacted", () => {
   // Textos reais do card de Eletrônicos (julho/2026).
@@ -116,5 +116,84 @@ describe("parseAmazonSold", () => {
     const produtos = [{ sold: parseAmazonSold("Mais de 2 mil compras no mês passado"), price: 10 }];
     expect(applyFilters(produtos, { minSales: 1500 })).toHaveLength(1);
     expect(applyFilters(produtos, { minSales: 5000 })).toHaveLength(0);
+  });
+});
+
+describe("parseRatingText", () => {
+  it("lê a nota nos formatos das três lojas", () => {
+    expect(parseRatingText("4,8 de 5 estrelas")).toBe(4.8);           // Amazon
+    expect(parseRatingText("Classificação 4.9 de 5 estrelas")).toBe(4.9); // ML
+    expect(parseRatingText("4.6 out of 5 stars")).toBe(4.6);
+    expect(parseRatingText("4.7")).toBe(4.7);
+    expect(parseRatingText("5")).toBe(5);
+  });
+
+  it("descarta número que não pode ser nota", () => {
+    expect(parseRatingText("1.234 avaliações")).toBeNull();
+    expect(parseRatingText("0 de 5 estrelas")).toBeNull();
+  });
+
+  it("devolve nulo pra vazio ou texto sem número", () => {
+    expect(parseRatingText(null)).toBeNull();
+    expect(parseRatingText("")).toBeNull();
+    expect(parseRatingText("sem avaliações")).toBeNull();
+  });
+});
+
+describe("reconcilePricing", () => {
+  it("produto sem promoção sai sem original e sem desconto", () => {
+    expect(reconcilePricing({ price: 194.20, originalPrice: null, discount: null }))
+      .toEqual({ price: 194.20, originalPrice: null, discount: null });
+  });
+
+  it("original brigando com o rótulo: o rótulo vence e o original é recalculado", () => {
+    // Caso real: 194,20 com "19% OFF", mas o riscado (499,99) veio de outro produto.
+    const r = reconcilePricing({ price: 194.20, originalPrice: 499.99, discount: 19 });
+    expect(r.price).toBe(194.20);
+    expect(r.discount).toBe(19);
+    expect(r.originalPrice).toBeCloseTo(239.75, 2);
+  });
+
+  it("par coerente passa intacto", () => {
+    expect(reconcilePricing({ price: 100, originalPrice: 200, discount: 50 }))
+      .toEqual({ price: 100, originalPrice: 200, discount: 50 });
+  });
+
+  it("riscado absurdo (mais de 20x o preço) é descartado", () => {
+    expect(reconcilePricing({ price: 10, originalPrice: 5000, discount: null }))
+      .toEqual({ price: 10, originalPrice: null, discount: null });
+  });
+
+  it("só o riscado → calcula o desconto; só o rótulo → calcula o original", () => {
+    expect(reconcilePricing({ price: 150, originalPrice: 200, discount: null }))
+      .toEqual({ price: 150, originalPrice: 200, discount: 25 });
+    const r = reconcilePricing({ price: 81, originalPrice: null, discount: 19 });
+    expect(r.discount).toBe(19);
+    expect(r.originalPrice).toBeCloseTo(100, 2);
+  });
+
+  it("desconto fora da faixa vira nulo e riscado quase igual ao preço não vira promoção", () => {
+    expect(reconcilePricing({ price: 100, originalPrice: null, discount: 0 }).discount).toBeNull();
+    expect(reconcilePricing({ price: 100, originalPrice: null, discount: 100 }).discount).toBeNull();
+    expect(reconcilePricing({ price: 100, originalPrice: 100.4, discount: null }))
+      .toEqual({ price: 100, originalPrice: null, discount: null });
+  });
+
+  it("sem preço não há promoção", () => {
+    expect(reconcilePricing({ price: null, originalPrice: 200, discount: 30 }))
+      .toEqual({ price: null, originalPrice: null, discount: null });
+  });
+});
+
+describe("parseReviewsCount", () => {
+  it("extrai só os dígitos da contagem", () => {
+    expect(parseReviewsCount("1.234 avaliações")).toBe("1234");
+    expect(parseReviewsCount("(89)")).toBe("89");
+  });
+
+  it("devolve nulo pra vazio ou texto sem número", () => {
+    expect(parseReviewsCount(null)).toBeNull();
+    expect(parseReviewsCount("  ")).toBeNull();
+    expect(parseReviewsCount("sem avaliações")).toBeNull();
   });
 });

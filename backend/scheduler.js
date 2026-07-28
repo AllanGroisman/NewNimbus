@@ -846,10 +846,12 @@ async function manualAdd(userId, groupId, payload = {}) {
     discount: overrides.discount != null && overrides.discount !== "" ? Number(overrides.discount) : null,
     store: overrides.store ? String(overrides.store).trim() : null,
     category: overrides.category || (Array.isArray(group.categories) ? group.categories[0] : null) || null,
-    rating: null,
-    reviewsCount: null,
-    // Texto vindo do "buscar dados" do link ("+1.000 vendidos") — o {vendas} usa inteiro.
+    rating: overrides.rating != null && overrides.rating !== "" ? Number(overrides.rating) : null,
+    reviewsCount: overrides.reviewsCount != null && overrides.reviewsCount !== "" ? String(overrides.reviewsCount) : null,
+    // Texto vindo do "buscar dados" do link ("+1.000 vendidos"); a Shopee manda a
+    // contagem exata em soldCount, que o formatVendas prefere quando existe.
     sold: overrides.sold ? String(overrides.sold).trim() : null,
+    soldCount: overrides.soldCount != null && overrides.soldCount !== "" ? Number(overrides.soldCount) : null,
     freeShipping: false,
     seller: null,
     manual: true,

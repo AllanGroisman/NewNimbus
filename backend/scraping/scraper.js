@@ -492,6 +492,64 @@ function parseAmazonSold(text) {
   return `${plus ? "+" : ""}${m[1]}${suffix} vendidos`;
 }
 
+// Deixa preço / preço original / desconto coerentes entre si. Rede de segurança pra
+// quando um seletor pega valor de outro bloco da página (recomendações, "outras
+// opções de compra"): melhor sair sem promoção do que anunciar um "de R$" falso.
+//   - original só vale se for maior que o preço e menor que 20x ele; desconto, de 1 a 95
+//   - sobrou só um dos dois → calcula o outro
+//   - os dois brigando (mais de 3 pontos de diferença) → o rótulo vence, porque fica
+//     colado no preço; o riscado é o que costuma vir de fora
+//   - não sobrou nenhum → produto sem promoção (os dois nulos)
+// Pura → testável.
+function reconcilePricing({ price, originalPrice, discount } = {}) {
+  const p = Number.isFinite(price) ? price : null;
+  let orig = Number.isFinite(originalPrice) ? originalPrice : null;
+  let disc = Number.isFinite(discount) ? Math.round(discount) : null;
+
+  if (p == null || p <= 0) return { price: p, originalPrice: null, discount: null };
+  if (orig == null || !(orig > p && orig < p * 20)) orig = null;
+  if (disc == null || !(disc >= 1 && disc <= 95)) disc = null;
+
+  const fromPair = orig != null ? Math.round((1 - p / orig) * 100) : null;
+  const origFromDisc = (d) => Math.round((p / (1 - d / 100)) * 100) / 100;
+
+  if (orig != null && disc != null) {
+    if (Math.abs(fromPair - disc) > 3) orig = origFromDisc(disc);
+  } else if (orig != null) {
+    disc = fromPair >= 1 ? fromPair : null;
+    if (disc == null) orig = null;
+  } else if (disc != null) {
+    orig = origFromDisc(disc);
+  }
+
+  return { price: p, originalPrice: orig, discount: disc };
+}
+
+// Nota de uma página de produto, a partir do texto cru colhido no DOM. Aceita os
+// formatos das três lojas: "4,8 de 5 estrelas" (Amazon), "Classificação 4.8 de 5
+// estrelas" (ML acessível) e "4.8" solto. Fora de 0-5 → null (pegou outro número).
+// Pura → testável.
+function parseRatingText(text) {
+  const s = String(text || "").replace(/\s+/g, " ").trim();
+  if (!s) return null;
+  // Sem o "de 5" só aceita a string que é SÓ o número — senão pegaria o "1.234"
+  // de "1.234 avaliações" como se fosse nota.
+  const m = s.match(/([\d]+[.,][\d]+|[\d]+)\s*(?:de|out of|\/)\s*5/i) || s.match(/^([\d]+[.,][\d]+|[\d]+)$/);
+  if (!m) return null;
+  const v = parseFloat(m[1].replace(",", "."));
+  if (isNaN(v) || !(v > 0 && v <= 5)) return null;
+  return v;
+}
+
+// Nº de avaliações: "1.234 avaliações" / "(89)" → "1234". String, igual ao que o
+// enriquecimento da Amazon já grava. Pura → testável.
+function parseReviewsCount(text) {
+  const s = String(text || "");
+  if (!s.trim()) return null;
+  const digits = s.replace(/[^\d]/g, "");
+  return digits || null;
+}
+
 // Enriquece produtos da Amazon com rating + reviewsCount abrindo a página de cada um
 // (/dp/ASIN) num browser dedicado (passado pelo chamador). A página de ofertas não
 // traz esses dados; um fetch sem browser é bloqueado por CAPTCHA, então precisa do
@@ -895,6 +953,11 @@ async function detectBlockPage(page, store) {
   if (store === "Mercado Livre" && /\/gz\/account-verification/i.test(page.url())) {
     return { blocked: true, reason: "Mercado Livre pediu login — verifique o cookie de afiliado nas Configurações." };
   }
+  // Muro de CAPTCHA: a URL vira /captcha/wall e a página não tem nada do produto —
+  // sem isso o retorno saía como sucesso, com nome "Seguridad — Mercado Libre".
+  if (store === "Mercado Livre" && /\/captcha\/wall/i.test(page.url())) {
+    return { blocked: true, captcha: true, reason: "Mercado Livre pediu verificação (CAPTCHA) — tente daqui a alguns minutos ou revise o cookie de afiliado." };
+  }
   return page.evaluate((store) => {
     const body = document.body?.innerText || "";
     // O texto do muro às vezes vem no <title>/og:title (não no body) — junta tudo.
@@ -915,6 +978,10 @@ async function detectBlockPage(page, store) {
     if (store === "Mercado Livre") {
       if (/acesse sua conta|para continuar, acesse/i.test(body) && !document.querySelector(".ui-pdp-title")) {
         return { blocked: true, reason: "Mercado Livre pediu login — verifique o cookie de afiliado nas Configurações." };
+      }
+      // O muro de CAPTCHA às vezes vem sem trocar a URL — o título é "Seguridad".
+      if (/seguridad|captcha|n[ãa]o sou um rob[ôo]|no soy un robot/i.test(hay) && !document.querySelector(".ui-pdp-title")) {
+        return { blocked: true, captcha: true, reason: "Mercado Livre pediu verificação (CAPTCHA) — tente daqui a alguns minutos ou revise o cookie de afiliado." };
       }
     }
     return { blocked: false };
@@ -1034,35 +1101,65 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
         return isNaN(v) ? null : v;
       };
 
+      // txt/attr: mesmos helpers do enriquecimento da Amazon — só TEXTO CRU daqui;
+      // quem interpreta (nota, nº de avaliações, vendidos) são as funções puras no Node.
+      const txt = (s) => document.querySelector(s)?.textContent?.replace(/\s+/g, " ").trim() || null;
+      const attr = (s, a) => document.querySelector(s)?.getAttribute(a) || null;
+
       let name = null, price = null, originalPrice = null, discount = null, img = null, sold = null;
+      let ratingTxt = null, reviewTxt = null;
 
       if (store === "Mercado Livre") {
         const titleEl = document.querySelector("h1.ui-pdp-title, .ui-pdp-title");
         name = titleEl?.textContent?.trim() || ogTitle;
-        // Preço atual: primeiro andes-money-amount NÃO marcado como previous
-        const curWrap = document.querySelector(".ui-pdp-price__main-container") || document;
-        const curFrac = curWrap.querySelector(".andes-money-amount:not(.andes-money-amount--previous) .andes-money-amount__fraction");
-        const curCents = curWrap.querySelector(".andes-money-amount:not(.andes-money-amount--previous) .andes-money-amount__cents");
-        if (curFrac) {
-          const f = curFrac.textContent.trim().replace(/\./g, "");
-          const c = curCents ? curCents.textContent.trim() : "00";
-          price = parseFloat(`${f}.${c}`);
+        // A PDP tem carrossel de recomendações e "outras opções de compra", cada um
+        // com SEU preço riscado e SEU "% OFF". Tudo aqui é lido só dentro da caixa de
+        // preço do produto principal — buscar no documento inteiro fazia o preço
+        // original vir de outro produto (ex: 194,20 "de" 499,99 com rótulo de 19%).
+        const priceBox = document.querySelector(".ui-pdp-price__main-container")
+                      || document.querySelector("#price_container")
+                      || document.querySelector(".ui-pdp-container__row--price")
+                      || document.querySelector(".ui-pdp-price");
+
+        const moneyIn = (root, sel) => {
+          if (!root) return null;
+          const frac = root.querySelector(`${sel} .andes-money-amount__fraction`);
+          if (!frac) return null;
+          const cents = root.querySelector(`${sel} .andes-money-amount__cents`);
+          const f = frac.textContent.trim().replace(/\./g, "");
+          const c = cents ? cents.textContent.trim() : "00";
+          const v = parseFloat(`${f}.${c}`);
+          return isNaN(v) ? null : v;
+        };
+
+        // Preço atual: primeiro andes-money-amount NÃO marcado como previous.
+        price = moneyIn(priceBox, ".andes-money-amount:not(.andes-money-amount--previous)");
+        // Sem caixa de preço, os dados estruturados são mais confiáveis que varrer a página.
+        if (price == null) {
+          const metaPrice = meta('meta[itemprop="price"]');
+          if (metaPrice) {
+            const v = parseFloat(String(metaPrice).replace(",", "."));
+            if (!isNaN(v)) price = v;
+          }
         }
-        const prevFrac = document.querySelector(".andes-money-amount--previous .andes-money-amount__fraction");
-        const prevCents = document.querySelector(".andes-money-amount--previous .andes-money-amount__cents");
-        if (prevFrac) {
-          const f = prevFrac.textContent.trim().replace(/\./g, "");
-          const c = prevCents ? prevCents.textContent.trim() : "00";
-          originalPrice = parseFloat(`${f}.${c}`);
+        if (price == null) {
+          for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
+            try {
+              const json = JSON.parse(s.textContent);
+              const offers = [].concat(json.offers || json["@graph"]?.flatMap(g => g.offers || []) || []);
+              const v = parseFloat(offers.find(o => o && o.price != null)?.price);
+              if (!isNaN(v)) { price = v; break; }
+            } catch { /* JSON-LD malformado — segue pro próximo */ }
+          }
         }
-        const discEl = document.querySelector(".andes-money-amount__discount, .ui-pdp-price__second-line .andes-money-amount__discount");
+        if (price == null) price = moneyIn(document, ".andes-money-amount:not(.andes-money-amount--previous)");
+
+        // Promoção só existe se o preço riscado / o "% OFF" estiverem DENTRO da caixa.
+        originalPrice = moneyIn(priceBox, ".andes-money-amount--previous");
+        const discEl = priceBox?.querySelector(".andes-money-amount__discount");
         if (discEl) {
           const m = discEl.textContent.match(/(\d+)%/);
           if (m) discount = parseInt(m[1], 10);
-        }
-        // Fallback: sem o rótulo de desconto, mas com preço atual e original, calcula.
-        if (discount == null && originalPrice && price && originalPrice > price && originalPrice < price * 20) {
-          discount = Math.round((1 - price / originalPrice) * 100);
         }
         const imgEl = document.querySelector(".ui-pdp-gallery__figure img, figure.ui-pdp-gallery__figure img, .ui-pdp-image");
         img = imgEl?.getAttribute("data-zoom") || imgEl?.getAttribute("src") || ogImage;
@@ -1071,6 +1168,15 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
         // Devolve o TEXTO cru; quem normaliza é o normalizeSoldText lá no Node.
         const soldMatch = (document.body?.innerText || "").match(/\+?\s*[\d.,]+\s*(?:mil\s*|mi\s*)?vendid[oa]s?/i);
         if (soldMatch) sold = soldMatch[0];
+        // Nota + nº de avaliações: o bloco de reviews fica logo abaixo do título.
+        // O texto de acessibilidade ("Classificação 4.8 de 5 estrelas") é o mais estável.
+        ratingTxt = txt(".ui-pdp-header__info .andes-visually-hidden")
+                 || txt(".ui-pdp-review__rating")
+                 || txt('[data-testid="rating"]')
+                 || txt(".ui-pdp-reviews__rating__summary__average");
+        reviewTxt = txt(".ui-pdp-review__amount")
+                 || txt(".ui-pdp-review__label")
+                 || txt(".ui-pdp-reviews__rating__summary__label");
       } else if (store === "Amazon") {
         const titleEl = document.querySelector("#productTitle, h1#title span, h1#title");
         name = titleEl?.textContent?.trim() || ogTitle;
@@ -1087,6 +1193,16 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
         }
         const imgEl = document.querySelector("#landingImage, #imgBlkFront, #main-image");
         img = imgEl?.getAttribute("src") || imgEl?.getAttribute("data-old-hires") || ogImage;
+        // Mesmos seletores do enriquecimento em massa (enrichAmazonRatings).
+        ratingTxt = attr("#acrPopover", "title")
+                 || txt('span[data-hook="rating-out-of-text"]')
+                 || txt("#acrPopover .a-icon-alt")
+                 || txt("i.a-icon-star .a-icon-alt");
+        reviewTxt = txt("#acrCustomerReviewText");
+        // A Amazon não tem "vendidos" — usa prova social de compras recentes.
+        sold = txt("#social-proofing-faceout-title-tk_bought")
+            || txt("#socialProofingAsinFaceout_feature_div .social-proofing-faceout-title-text")
+            || txt(".social-proofing-faceout-title-text");
       } else {
         // Genérico (Shopee/Americanas/etc) — só OG + busca por R$ no texto
         name = ogTitle;
@@ -1107,21 +1223,32 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
         }
       }
 
-      return { name, price, originalPrice, discount, img, sold };
+      return { name, price, originalPrice, discount, img, sold, ratingTxt, reviewTxt };
     }, store);
 
     // Shopee: a PDP é SPA vazia pra bot — sem nome via DOM/OG, usa o slug da URL.
     let name = data.name || null;
     if (!name && store === "Shopee") name = slugNameFromUrl(finalUrl);
 
+    // Amazon fala em "compras no mês passado" — parseAmazonSold traduz pro formato
+    // do ML ("+2 mil vendidos"); nas outras lojas o texto já vem nesse formato.
+    const sold = store === "Amazon" ? parseAmazonSold(data.sold) : normalizeSoldText(data.sold);
+
+    // Preço/original/desconto só saem daqui se fecharem entre si; produto fora de
+    // promoção sai com original e desconto nulos (hasPromo=false), sem inventar nada.
+    const pricing = reconcilePricing({ price: data.price, originalPrice: data.originalPrice, discount: data.discount });
+
     return {
       name: name || null,
       link: cleanUrl,
       finalUrl,
-      price: data.price ?? null,
-      originalPrice: data.originalPrice ?? null,
-      discount: data.discount ?? null,
-      sold: normalizeSoldText(data.sold),
+      price: pricing.price,
+      originalPrice: pricing.originalPrice,
+      discount: pricing.discount,
+      hasPromo: pricing.originalPrice != null || pricing.discount != null,
+      sold,
+      rating: parseRatingText(data.ratingTxt),
+      reviewsCount: parseReviewsCount(data.reviewTxt),
       img: store === "Amazon" ? upgradeAmazonImageUrl(data.img)
          : store === "Mercado Livre" ? upgradeMLImageUrl(data.img)
          : (data.img || null),
@@ -1211,9 +1338,12 @@ async function scrapeShopeeSingleViaApi(cleanUrl, userId) {
     price: mapped.price,
     originalPrice: mapped.originalPrice,
     discount: mapped.discount,
+    hasPromo: mapped.originalPrice != null || mapped.discount != null,
     // A Shopee manda contagem exata — vai como soldCount pro formatVendas compactar
     // ("1,2 mil vendidos"), igual aos produtos de catálogo da loja.
     soldCount: mapped.soldCount || null,
+    rating: mapped.rating ?? null,
+    reviewsCount: null, // a API de afiliados não expõe a contagem de avaliações
     img: mapped.img,
     store: "Shopee",
     scrapedAt: new Date().toISOString(),
@@ -1268,4 +1398,4 @@ async function autoScroll(page) {
   await new Promise(r => setTimeout(r, 1000));
 }
 
-module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, upgradeMLImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, extractShopeeIds, parseMLReviewCompacted, parseAmazonSold, normalizeSoldText, CATEGORIES, STORES };
+module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, upgradeMLImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, extractShopeeIds, parseMLReviewCompacted, parseAmazonSold, parseRatingText, parseReviewsCount, reconcilePricing, normalizeSoldText, CATEGORIES, STORES };

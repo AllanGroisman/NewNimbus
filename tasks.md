@@ -42,10 +42,14 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 
 16. [x] Scraping mercado livre buscar todas as infos
 
-17. [] nas camapanhas adicionar link manual deve ser movido da aba de busca de produtos direto para a aba de fila e tb quero que ele busque avaliacao e numero de vendidos.
+17. [x] nas camapanhas adicionar link manual deve ser movido da aba de busca de produtos direto para a aba de fila e tb quero que ele busque avaliacao e numero de vendidos.
 
 18. [x] verificador scraper de x em x tempo
 
 19. [] Adicione filtro de desconto minimo no filtro scraping ML na aba de ADMIN, hoje so tem desconto maximo.
 
-20. [] Filtro de scraping das lojas é mantido com queda e volta do sistema? Tem persistencia? Arrumar se nao tiver.
+20. [x] Filtro de scraping das lojas é mantido com queda e volta do sistema? Tem persistencia? Arrumar se nao tiver.
+
+21. [] Faz um restart.sh na pasta deploy para rodar o stop.sh e depois o start.sh em seguida, respondendo sempre N para a requisicao de atualizar o blackbaze que tem no start.
+
+22. [] Na fila adiciona um botao em todos os produtos que nao sao o primeiro, para mover ele direto para o primeiro a ser enviado, tipo um trazer para frente, trazer para primeiro, ou algo do tipo.

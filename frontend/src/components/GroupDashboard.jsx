@@ -396,9 +396,9 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   }
   // ── Adicionar link manualmente ──────────────────────────────────────────
   // Modal aberto = objeto com o form; null = fechado.
-  // `sold` não tem campo na tela — é só carregado do "buscar dados" e repassado,
-  // pra mensagem sair com o texto da loja ("+1.000 vendidos") em vez de nada.
-  const emptyManualForm = { url: "", name: "", price: "", originalPrice: "", discount: "", img: "", store: "", category: "", sold: "" };
+  // `soldCount` (contagem exata da Shopee) não tem campo na tela — é só carregado do
+  // "buscar dados" e repassado; o {vendas} prefere ele quando existe.
+  const emptyManualForm = { url: "", name: "", price: "", originalPrice: "", discount: "", img: "", store: "", category: "", sold: "", soldCount: "", rating: "", reviewsCount: "" };
   const [manualForm, setManualForm] = useState(null);
   const [manualFetching, setManualFetching] = useState(false);
   const [manualSubmitting, setManualSubmitting] = useState(false);
@@ -423,10 +423,16 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
   const fetchManualMetadata = async () => {
     if (!manualForm?.url?.trim() || manualFetching) return;
+    const url = manualForm.url.trim();
     setManualFetching(true);
     setManualMsg(null);
+    // Zera o que sobrou de um link anterior antes de buscar — senão os campos que a
+    // loja nova não preenche (ex: sem promoção) ficariam com os valores do produto
+    // antigo. Só a categoria fica, que é escolha do usuário, não dado da loja.
+    setManualForm(f => ({ ...emptyManualForm, url, category: f.category }));
+    setManualCooldown(null);
     try {
-      const data = await fetchUrlMetadata(manualForm.url.trim());
+      const data = await fetchUrlMetadata(url);
       setManualForm(f => ({
         ...f,
         url: data.link || f.url,
@@ -436,13 +442,23 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         originalPrice: data.originalPrice != null ? String(data.originalPrice) : f.originalPrice,
         discount: data.discount != null ? String(data.discount) : f.discount,
         store: data.store || f.store,
-        sold: data.sold || f.sold,
+        // A Shopee devolve contagem exata (soldCount) em vez do texto — mostra no
+        // campo pra não ficar vazio; no envio o soldCount continua tendo prioridade.
+        sold: data.sold || (data.soldCount != null ? `${data.soldCount} vendidos` : "") || f.sold,
+        soldCount: data.soldCount != null ? String(data.soldCount) : f.soldCount,
+        rating: data.rating != null ? String(data.rating) : f.rating,
+        reviewsCount: data.reviewsCount != null ? String(data.reviewsCount) : f.reviewsCount,
       }));
       const missing = [];
       if (!data.name) missing.push("nome");
       if (data.price == null) missing.push("preço");
+      // hasPromo=false não é falha do scraping: a loja não está com o produto em
+      // promoção, então preço original e desconto ficam vazios de propósito.
+      const semPromo = data.hasPromo === false && data.price != null;
       setManualMsg(missing.length
         ? { type: "warn", text: `Dados parciais. Preencha manualmente: ${missing.join(", ")}.` }
+        : semPromo
+        ? { type: "ok", text: "Dados carregados. Produto sem promoção — preço original e desconto ficaram vazios." }
         : { type: "ok", text: "Dados carregados. Revise antes de adicionar." });
     } catch (err) {
       setManualMsg({ type: "err", text: `Falha ao buscar dados: ${err.message}. Preencha manualmente.` });
@@ -469,7 +485,10 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           img: manualForm.img.trim() || null,
           store: manualForm.store.trim() || null,
           category: manualForm.category || null,
-          sold: manualForm.sold || null,
+          sold: manualForm.sold.trim() || null,
+          soldCount: manualForm.soldCount !== "" ? Number(manualForm.soldCount) : null,
+          rating: manualForm.rating !== "" ? Number(manualForm.rating) : null,
+          reviewsCount: manualForm.reviewsCount !== "" ? String(manualForm.reviewsCount).replace(/[^\d]/g, "") || null : null,
         },
       };
       const r = await manualAddToQueue(group.id, payload);
@@ -2311,9 +2330,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             >
               {saved ? "✓ Salvo!" : "Salvar configurações"}
             </button>
-            <button onClick={openManualAdd} style={{ padding: "9px 18px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>
-              + Adicionar link manualmente
-            </button>
           </div>
 
           {pending.length > 0 && (
@@ -2495,9 +2511,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               >
                 {saved ? "✓ Salvo!" : "Salvar configurações"}
               </button>
-              <button onClick={openManualAdd} style={{ padding: "9px 18px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>
-                + Adicionar link manualmente
-              </button>
               {refillMsg && (
                 <span style={{ fontSize: 12, color: refillMsg.type === "err" ? "#A32D2D" : refillMsg.type === "warn" ? "#854F0B" : PRIMARY_DARK }}>
                   {refillMsg.text}
@@ -2553,7 +2566,10 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                   : null}
               </div>
             </div>
-            <div style={{ display: "flex", gap: 6 }}>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <button onClick={openManualAdd} style={{ padding: "5px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
+                + Adicionar link manualmente
+              </button>
               {queue.length > 0 && (
                 <button
                   onClick={triggerSendNow}
@@ -2572,6 +2588,10 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           {sendNowMsg && (
             <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: sendNowMsg.type === "ok" ? PRIMARY_LIGHT : "#FCEBEB", color: sendNowMsg.type === "ok" ? PRIMARY_DARK : "#A32D2D" }}>{sendNowMsg.text}</div>
           )}
+          {/* Retorno do "adicionar link manualmente" — o botão agora vive aqui. */}
+          {refillMsg && (
+            <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: refillMsg.type === "err" ? "#FCEBEB" : refillMsg.type === "warn" ? "#FDF3E2" : PRIMARY_LIGHT, color: refillMsg.type === "err" ? "#A32D2D" : refillMsg.type === "warn" ? "#854F0B" : PRIMARY_DARK }}>{refillMsg.text}</div>
+          )}
           {queue.length === 0 ? (
             <div style={{ textAlign: "center", padding: "30px 20px", background: "var(--color-background-secondary)", borderRadius: 12 }}>
               <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Fila vazia</div>
@@ -2580,13 +2600,17 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                   <>A fila é reabastecida com os links capturados do grupo líder. Confira a configuração de captura na aba <strong>Repasse</strong>.</>
                 ) : (
                   <>A fila é reabastecida automaticamente do catálogo nos horários de envio.
-                  Para adicionar produtos agora — buscar do catálogo ou colar um link —
-                  use a aba <strong>Busca de Produtos</strong>.</>
+                  Para buscar produtos do catálogo agora, use a aba <strong>Busca de Produtos</strong>.</>
                 )}
               </div>
-              <button onClick={() => setTab("products")} style={{ padding: "8px 18px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>
-                {isRepasse ? "Ir para Repasse" : "Ir para Busca de Produtos"}
-              </button>
+              <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+                <button onClick={openManualAdd} style={{ padding: "8px 18px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>
+                  + Adicionar link manualmente
+                </button>
+                <button onClick={() => setTab("products")} style={{ padding: "8px 18px", borderRadius: 8, background: "transparent", color: "var(--color-text-primary)", border: "0.5px solid var(--color-border-secondary)", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>
+                  {isRepasse ? "Ir para Repasse" : "Ir para Busca de Produtos"}
+                </button>
+              </div>
             </div>
           ) : (() => {
             const etas = computeQueueETA(group);
@@ -2930,7 +2954,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 value={manualForm.url}
                 onChange={e => updateManualField("url", e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter") fetchManualMetadata(); }}
-                placeholder="https://..."
+                placeholder="ex: https://www.mercadolivre.com.br/..."
                 style={{ flex: 1, padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", fontFamily: "monospace" }}
               />
               <button
@@ -2956,7 +2980,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               <input
                 value={manualForm.name}
                 onChange={e => updateManualField("name", e.target.value)}
-                placeholder="Ex: Smartphone Samsung Galaxy A55 256GB"
+                placeholder="ex: Smartphone Samsung Galaxy A55 256GB"
                 style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }}
               />
             </div>
@@ -2966,7 +2990,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 type="number" min={0} step="0.01"
                 value={manualForm.price}
                 onChange={e => updateManualField("price", e.target.value)}
-                placeholder="1899.00"
+                placeholder="ex: 1899.00"
                 style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }}
               />
             </div>
@@ -2976,7 +3000,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 type="number" min={0} step="0.01"
                 value={manualForm.originalPrice}
                 onChange={e => updateManualField("originalPrice", e.target.value)}
-                placeholder="2499.00"
+                placeholder="ex: 2499.00"
                 style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }}
               />
             </div>
@@ -2986,7 +3010,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 type="number" min={0} max={99}
                 value={manualForm.discount}
                 onChange={e => updateManualField("discount", e.target.value)}
-                placeholder="24"
+                placeholder="ex: 24"
                 style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }}
               />
             </div>
@@ -3005,12 +3029,42 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                   .map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
+            <div>
+              <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Avaliação (0 a 5)</label>
+              <input
+                type="number" min={0} max={5} step="0.1"
+                value={manualForm.rating}
+                onChange={e => updateManualField("rating", e.target.value)}
+                placeholder="ex: 4.8"
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Nº de avaliações</label>
+              <input
+                type="number" min={0} step="1"
+                value={manualForm.reviewsCount}
+                onChange={e => updateManualField("reviewsCount", e.target.value)}
+                placeholder="ex: 1234"
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }}
+              />
+            </div>
+            <div style={{ gridColumn: "1 / -1" }}>
+              {/* Texto livre: é assim que a loja escreve e é assim que vai pro grupo no {vendas}. */}
+              <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Vendidos</label>
+              <input
+                value={manualForm.sold}
+                onChange={e => updateManualField("sold", e.target.value)}
+                placeholder="ex: +500 vendidos"
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }}
+              />
+            </div>
             <div style={{ gridColumn: "1 / -1" }}>
               <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>URL da imagem</label>
               <input
                 value={manualForm.img}
                 onChange={e => updateManualField("img", e.target.value)}
-                placeholder="https://..."
+                placeholder="ex: https://http2.mlstatic.com/foto.jpg"
                 style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 12, boxSizing: "border-box", fontFamily: "monospace" }}
               />
               {manualForm.img && (

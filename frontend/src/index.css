@@ -80,6 +80,14 @@ input, select, textarea, button {
   color: var(--color-text-primary);
 }
 
+/* Placeholder bem mais fraco que o texto digitado — do jeito que estava, o exemplo
+   parecia valor já preenchido no formulário. */
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-text-secondary);
+  opacity: 0.5;
+}
+
 /* Bolha de prévia da mensagem (estilo WhatsApp) — adapta ao tema */
 .wa-preview {
   background: #dcf8c6;

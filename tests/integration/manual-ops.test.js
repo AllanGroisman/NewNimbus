@@ -129,6 +129,18 @@ describe("POST /manual-add — endpoint HTTP", () => {
     expect(forced.body.inCooldown).toBeUndefined();
   });
 
+  it("guarda avaliação e vendidos vindos do 'buscar dados'", async () => {
+    const { auth } = await userWithGroup({ id: 506 });
+    const r = await auth("post", "/api/state/groups/506/manual-add").send({
+      url: "https://www.amazon.com.br/dp/B0CRATING99",
+      overrides: { ...baseBody.overrides, rating: 4.8, reviewsCount: "1234", sold: "+2 mil vendidos" },
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.item.rating).toBe(4.8);
+    expect(r.body.item.reviewsCount).toBe("1234");
+    expect(r.body.item.sold).toBe("+2 mil vendidos");
+  });
+
   it("rejeita url e name vazios", async () => {
     const { auth } = await userWithGroup({ id: 505 });
     const r1 = await auth("post", "/api/state/groups/505/manual-add").send({ url: "", overrides: { name: "x" } });
