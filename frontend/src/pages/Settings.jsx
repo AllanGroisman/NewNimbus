@@ -3,6 +3,7 @@ import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../data/constants";
 import Badge from "../components/ui/Badge";
 import Toggle from "../components/ui/Toggle";
 import Modal from "../components/ui/Modal";
+import LogoutConfirmModal from "../components/LogoutConfirmModal";
 import { authUpdate, authChangePassword } from "../data/api";
 import { useUnsavedGuard } from "../data/navGuard";
 
@@ -289,13 +290,10 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
       )}
 
       {showLogout && (
-        <Modal title="Sair da conta?" onClose={() => setShowLogout(false)}>
-          <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)" }}>Você será desconectado neste dispositivo. Os envios automáticos continuam funcionando normalmente.</p>
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <button onClick={() => setShowLogout(false)} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
-            <button onClick={() => { onLogout(); setShowLogout(false); }} style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>Sair</button>
-          </div>
-        </Modal>
+        <LogoutConfirmModal
+          onCancel={() => setShowLogout(false)}
+          onConfirm={() => { setShowLogout(false); onLogout(); }}
+        />
       )}
 
       {showDeleteAccount && (

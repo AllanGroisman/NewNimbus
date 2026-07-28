@@ -13,6 +13,7 @@ import { authMe, authLogout, authRefresh, loadAppState, saveAppState, loadAppOps
 import Sidebar from "./components/Sidebar";
 import GroupDashboard from "./components/GroupDashboard";
 import UnsavedChangesModal from "./components/UnsavedChangesModal";
+import LogoutConfirmModal from "./components/LogoutConfirmModal";
 import StoreLockedNotice from "./components/ui/StoreLockedNotice";
 import { NavGuardContext } from "./data/navGuard";
 import { mergeGroupOps, mergeGroupsOps } from "./data/opsMerge";
@@ -70,6 +71,7 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [bootstrapping, setBootstrapping] = useState(true);
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
   // Guard de navegação: a tela ativa registra { dirty, save, discard } em guardRef;
   // requestNavigation intercepta trocas de tela/aba e abre o diálogo quando há
   // alterações não salvas. pendingNav guarda a navegação aguardando decisão.
@@ -674,6 +676,12 @@ export default function App() {
       {pendingNav && (
         <UnsavedChangesModal onSave={guardSave} onDiscard={guardDiscard} onCancel={closeGuard} />
       )}
+      {confirmLogout && (
+        <LogoutConfirmModal
+          onCancel={() => setConfirmLogout(false)}
+          onConfirm={() => { setConfirmLogout(false); handleLogout(); }}
+        />
+      )}
       <Sidebar
         page={page}
         selectedGroup={selectedGroup}
@@ -686,7 +694,7 @@ export default function App() {
         user={user}
         onNavigate={(id) => requestNavigation(() => { setPage(id); setSelectedGroup(null); setTutorialTarget(null); })}
         onSelectGroup={handleSelectGroup}
-        onLogout={handleLogout}
+        onLogout={() => { setMobileMenu(false); setConfirmLogout(true); }}
         mobileOpen={mobileMenu}
         onToggleMobile={setMobileMenu}
       />
