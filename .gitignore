@@ -1,5 +1,7 @@
 # Segredos extraídos manualmente (cookie de sessão ML etc.)
 cookie.md
+# Cópia de todas as senhas, para levar ao gerenciador de senhas. NUNCA versionar.
+SENHAS.md
 
 # Dependencies
 node_modules/

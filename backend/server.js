@@ -26,6 +26,7 @@ const sentry = require("./infra/sentry");
 const billing = require("./billing");
 const stripeMod = require("./billing/stripe");
 const backupApi = require("./backup/api");
+const backupMonitor = require("./backup/monitor");
 const adminNotifier = require("./notifications/admin-notifier");
 const whatsnimbus = require("./notifications/whatsnimbus");
 
@@ -322,6 +323,10 @@ app.get("/healthz", async (req, res) => {
       checks.worker = { alive: false, error: err.message };
     }
   }
+
+  // Backup: idade do último dump local/remoto (informativo, não afeta health —
+  // o alerta ativo é do backup/monitor.js via WhatsApp de admin)
+  checks.backup = backupMonitor.status();
 
   // Admin scraper: status (informativo, não afeta health)
   checks.adminScraper = {
@@ -2082,6 +2087,7 @@ async function boot() {
     scheduler.start();
     adminScraper.start();
     scrapTester.start();
+    backupMonitor.start();
     // Fire-and-forget — falha silenciosa se sessão WA ainda não estiver conectada
     setTimeout(() => {
       adminNotifier.notifySystemOnline().catch(err =>
@@ -2095,6 +2101,7 @@ async function boot() {
     console.log(`[server] ${signal} recebido, encerrando...`);
     scheduler.stop();
     scrapTester.stop();
+    backupMonitor.stop();
     appConfig.stopAutoRefresh();
     server.close(() => console.log("[server] HTTP fechado"));
     try { await appConfig.flush(); } catch {}

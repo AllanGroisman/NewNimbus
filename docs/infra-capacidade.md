@@ -13,7 +13,7 @@
 | CPU | 1 núcleo (vCPU) |
 | Memória RAM | 2 GB (≈ 1 GB já em uso no dia a dia, e o sistema já recorre a 1 GB de swap*) |
 | Disco | 19 GB — estava **92% cheio**; após limpeza de 28/07/2026 ficou em **66%** (6 GB livres) |
-| Processos | `nimbus-backend` (~70 MB), `nimbus-worker` (~145 MB com 3 sessões de WhatsApp), `nimbus-backup-remote` (~26 MB), Postgres (~50 MB), Redis (~5 MB) |
+| Processos | `nimbus-backend` (~70 MB), `nimbus-worker` (~145 MB com 3 sessões de WhatsApp), Postgres (~50 MB), Redis (~5 MB) — o `nimbus-backup-remote` (~26 MB) foi aposentado em 28/07/2026: o backup passou a rodar por cron horário |
 
 *Swap = "memória de emergência" no disco, muito mais lenta. Uso constante de swap é sinal de que a RAM está no limite.*
 

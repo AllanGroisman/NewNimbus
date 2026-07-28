@@ -31,16 +31,18 @@ Plataforma de automação de ofertas no WhatsApp. Faz scraping de produtos (Merc
 | **`deploy/stop.sh`** | Para tudo (mantém instalado). |
 | **`deploy/update.sh`** | `git pull` + reinstala deps que mudaram + roda migrations + rebuild do frontend + `pm2 reload`. |
 | **`deploy/test.sh`** | 30+ checks de saúde (containers, PM2, nginx, endpoints `/healthz`, UFW). Exit 1 se algo falhar. |
-| **`deploy/setup-backups.sh`** | Setup do **backup em nuvem 3 camadas**: instala rclone, registra cron a cada 6h, guia configuração de Backblaze B2 + Google Drive. |
+| **`deploy/setup-backups.sh`** | Setup do **backup em nuvem**: registra o cron horário e guia a configuração do Backblaze B2. |
 
 ### Backup (`backend/scripts/*`)
 
 | Script | O que faz |
 |---|---|
-| **`backup-all.sh`** | Orquestrador chamado pelo cron a cada 6h. Roda as 3 camadas em sequência e loga em `backend/logs/backup.log`. |
+| **`backup-all.sh`** | Orquestrador chamado pelo cron **de hora em hora**. Faz o dump local e o upload pro B2, logando em `backend/logs/backup.log`. |
 | **`backup-db.sh`** | `pg_dump` do container `nimbus-postgres` → `backend/backups/db-TS.sql.gz`. Rotaciona mantendo 48 snapshots locais. |
-| **`backup-remote.js`** | Sobe os `db-*.sql.gz` pro **Backblaze B2** (ou outro S3-compatível). Rotaciona remoto. Sem envs `BACKUP_S3_*`, sai sem fazer nada. |
-| **`backup-gdrive.sh`** | `rclone sync` da pasta `backups/` pro **Google Drive** (remote `gdrive:`, pasta `NimbusBackups/`). |
+| **`backup-remote.js`** | Sobe os `db-*.sql.gz` cifrados pro **Backblaze B2** (ou outro S3-compatível). Sem envs `BACKUP_S3_*`, sai sem fazer nada. |
+| **`backup-retention.js`** | Regra de retenção remota: tudo das últimas 48h + 1 por dia até 30 dias. |
+| **`restore-remote.js`** | Baixa do B2, decifra e restaura (`--latest`, `--list`, `--file`). |
+| **`backup-gdrive.sh`** | ⛔ INATIVO — espelho sem cifra no Google Drive (fora do fluxo). |
 
 ## Instalação em ambiente novo (Windows)
 
@@ -153,9 +155,11 @@ pm2 logs nimbus-backend # logs do backend
 pm2 logs nimbus-worker  # logs do worker (Baileys + filas)
 ```
 
-## Backup em nuvem (3 camadas)
+## Backup em nuvem
 
-Backup automático do Postgres a cada 6h em **3 destinos**: pasta local → Backblaze B2 → Google Drive. Doc completa em [`backend/scripts/README.md`](backend/scripts/README.md).
+Backup automático do Postgres **de hora em hora** em 2 destinos: pasta local → Backblaze B2 (cifrado). Uma linha de cron chama `backend/scripts/backup-all.sh`, que faz o dump e o upload. Doc completa em [`backend/scripts/README.md`](backend/scripts/README.md).
+
+> A antiga 3ª camada (Google Drive via rclone) está **desativada** — enviava os dumps sem cifra. Ver header de `backend/scripts/backup-gdrive.sh`.
 
 ### Setup (1 comando na VPS)
 
@@ -163,21 +167,18 @@ Backup automático do Postgres a cada 6h em **3 destinos**: pasta local → Back
 bash deploy/setup-backups.sh
 ```
 
-Esse script:
-1. Instala `rclone`.
-2. Te guia pela configuração do **Backblaze B2** (criar conta → bucket → app key → colar 5 envs em `backend/.env`).
-3. Te guia pela configuração do **Google Drive** (`rclone config` → autenticar com sua conta Google).
-4. Registra o cron a cada 6h chamando `backend/scripts/backup-all.sh`.
+Esse script te guia pela configuração do **Backblaze B2** (criar conta → bucket → app key → colar as envs em `backend/.env`) e registra o cron horário. Idempotente — roda de novo a qualquer momento e remove agendamentos antigos.
 
-Idempotente — roda de novo a qualquer momento (ex: pra registrar o cron depois de configurar as credenciais).
-
-### Camadas
+### Camadas e retenção
 
 | Destino | Quem cuida | Retenção | Por quê |
 |---|---|---|---|
-| **Local** (`backend/backups/db-*.sql.gz`) | `backup-db.sh` | 48 snapshots (~12 dias) | Restauração instantânea, sem depender de rede |
-| **Backblaze B2** | `backup-remote.js` | 30 snapshots (~7.5 dias) | Storage profissional, 11-noves de durabilidade, $0 até 10GB |
-| **Google Drive** | `backup-gdrive.sh` (rclone) | Sem rotação | Cópia-da-cópia barata, aproveita o 1TB já contratado |
+| **Local** (`backend/backups/db-*.sql.gz`) | `backup-db.sh` | 48 snapshots horários (48h) | Restauração instantânea, sem depender de rede |
+| **Backblaze B2** (cifrado `.enc`) | `backup-remote.js` | Todas as últimas 48h **+ 1 por dia até 30 dias** | Storage profissional, 11-noves de durabilidade, $0 até 10GB |
+
+### Monitoramento
+
+O backend vigia o backup sozinho (`backend/backup/monitor.js`): a cada hora checa a idade do último dump local e do último snapshot no B2. Se o local passar de 3h ou o remoto de 6h sem backup novo, **manda alerta no grupo de WhatsApp do admin** (mesmo canal dos erros críticos). O estado aparece também em `GET /healthz` → `checks.backup`.
 
 ### Variáveis no `backend/.env`
 
@@ -188,31 +189,41 @@ BACKUP_S3_REGION=us-west-002
 BACKUP_S3_BUCKET=nimbus-backups
 BACKUP_S3_KEY_ID=...
 BACKUP_S3_SECRET=...
+BACKUP_ENC_KEY=...                 # 64 chars hex — cifra os dumps antes de subir
+# Opcionais (defaults mostrados):
+# BACKUP_RETAIN_LOCAL=48           # dumps locais mantidos
+# BACKUP_RETAIN_REMOTE_HOURS=48    # janela em que todos os snapshots ficam no B2
+# BACKUP_RETAIN_REMOTE_DAYS=30     # depois, 1 por dia até N dias
+# BACKUP_ALERT_LOCAL_MAX_H=3      # alerta se o dump local passar dessa idade
+# BACKUP_ALERT_REMOTE_MAX_H=6     # alerta se o snapshot remoto passar dessa idade
 ```
 
-O Google Drive não usa env — é configurado via OAuth do `rclone config`.
+### ⚠️ Ação manual do dono (obrigatória)
+
+**Guarde uma cópia da `BACKUP_ENC_KEY` fora do servidor** (gerenciador de senhas, anotação segura). Os backups na nuvem são cifrados com essa chave — se o servidor for perdido e a chave estiver só nele, os backups do B2 ficam **irrecuperáveis**.
+
+Opcional, mas recomendado: no console web do Backblaze, ative em `nimbus-backups` → Lifecycle Settings a opção "Keep only the last version" e considere Object Lock — protege os backups caso a app key vaze.
 
 ### Restaurar um backup
 
 ```bash
+# Do B2 (baixa, decifra e restaura o mais recente)
+node backend/scripts/restore-remote.js --latest
+
 # Local
 gunzip -c backend/backups/db-AAAAMMDD-HHMMSS.sql.gz \
   | docker exec -i nimbus-postgres psql -U nimbus -d nimbus
 pm2 restart nimbus-backend nimbus-worker
-
-# Do Google Drive primeiro?
-rclone copy gdrive:NimbusBackups/db-AAAAMMDD-HHMMSS.sql.gz /tmp/
-gunzip -c /tmp/db-AAAAMMDD-HHMMSS.sql.gz \
-  | docker exec -i nimbus-postgres psql -U nimbus -d nimbus
 ```
 
 ### Operação
 
 ```bash
-bash backend/scripts/backup-all.sh   # roda manualmente as 3 camadas
-tail -f backend/logs/backup.log      # ver log do cron
-crontab -l                           # ver agendamentos ativos
-rclone ls gdrive:NimbusBackups/      # listar o que está no Drive
+bash backend/scripts/backup-all.sh                 # roda o backup completo agora
+node backend/scripts/backup-remote.js --dry-run    # prevê uploads e rotação sem executar
+node backend/scripts/check-remote.js               # último snapshot no B2
+tail -f backend/logs/backup.log                    # ver log do cron
+crontab -l                                         # ver agendamentos ativos
 ```
 
 ## Por onde começar

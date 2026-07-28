@@ -173,7 +173,7 @@ Todos os achados da auditoria foram corrigidos, com três exceções, que ficam 
 Fora da segurança, notei duas coisas que valem atenção quando sobrar tempo:
 
 - **Há 48 testes automatizados quebrados**, e isso **já era assim antes** deste trabalho — confirmei rodando a suíte no código anterior, em cópia separada. Parecem todos ligados à mesma causa: os usuários de teste não estão recebendo assinatura ativa, então caem em erro de pagamento. Não mexi neles.
-- **O disco está com 92% de uso** (1,5 GB livres). Os backups locais ocupam 132 MB e há três agendadores de backup diferentes configurados ao mesmo tempo (um por hora no cron, mais um diário no PM2).
+- **O disco está com 92% de uso** (1,5 GB livres). Os backups locais ocupam 132 MB e há três agendadores de backup diferentes configurados ao mesmo tempo (um por hora no cron, mais um diário no PM2). *Atualização 28/07/2026 (task 32): os agendadores foram unificados numa única linha de cron horária chamando `backup-all.sh`, o job do PM2 foi removido, e o backend agora alerta o admin pelo WhatsApp se o backup parar de rodar — ver `backend/scripts/README.md`.*
 
 ---
 

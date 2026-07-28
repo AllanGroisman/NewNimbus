@@ -117,7 +117,7 @@ Vem versionado no clone. As principais chaves:
 | `ADMIN_EMAILS` | Lista de e-mails com papel admin. |
 | `SMTP_*` / `MAIL_FROM` | Envio de e-mail (verificação de conta, etc.). |
 | `STRIPE_*` | Pagamentos (opcional — sem isso o checkout fica desabilitado). |
-| `BACKUP_S3_*` / `BACKUP_RETAIN_REMOTE` | Backup remoto no Backblaze B2. |
+| `BACKUP_S3_*` / `BACKUP_RETAIN_REMOTE_HOURS` / `BACKUP_RETAIN_REMOTE_DAYS` | Backup remoto no Backblaze B2. |
 | `PUBLIC_BASE_URL` | URL pública (usada em links/e-mails). |
 | `ML_AFFILIATE_TAG` / `AMAZON_AFFILIATE_TAG` / `SHOPEE_AFFILIATE_APP_ID` / `SHOPEE_AFFILIATE_APP_SECRET` | Override **global** das credenciais de afiliado (opcional — normalmente ficam no banco por usuário/admin). |
 

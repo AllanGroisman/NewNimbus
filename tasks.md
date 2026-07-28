@@ -76,8 +76,11 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 
 30. [x] O sistema inteiro fica no mesmo endereco, entao nao da pra usar o botao voltar do navegador nem mandar link de uma campanha pra alguem. Quero cada pagina com seu proprio endereco e /campanha/id pras campanhas. O voltar do navegador tem que continuar perguntando se tem alteracao nao salva. Conferir que dar F5 numa campanha nao da 404 no servidor.
 
-31. [] Quero que os valores dos planos de assinatura sejam atualizados automaticamente com o que vem so stripe. Verifique se precisa e adicione um teste pra isso.
+31. [x] Quero que os valores dos planos de assinatura sejam atualizados automaticamente com o que vem so stripe. Verifique se precisa e adicione um teste pra isso.
+    ATENCAO: os precos no Stripe HOJE sao 49,00 / 99,00 / 199,00 — diferentes dos 69,90 / 99,90 / 149,90 que o site mostrava. Depois do restart do backend o site passa a mostrar os do Stripe. Se os valores certos sao os antigos, corrija no painel do Stripe.
 
-32. [] Verificar se o backup ta sendo o ideal em tempo e espaco, ate quanto tempo de armazenamento de um backup esta disponivel, etc... 
+32. [x] Verificar se o backup ta sendo o ideal em tempo e espaco, ate quanto tempo de armazenamento de um backup esta disponivel, etc...
+    Achado principal: o envio horario pra nuvem estava quebrado (cron usava node v12) — so o job diario das 3h funcionava. Consolidado num cron horario unico, retencao remota de 30 dias e alerta no WhatsApp se o backup parar.
+    PENDENTE (manual): guardar a BACKUP_ENC_KEY fora do servidor; `pm2 delete nimbus-backup-remote && pm2 save`.
 
 33. [x] Verificar se a infraestrutura atual consegue atender a demanda.

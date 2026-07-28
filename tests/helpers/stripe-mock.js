@@ -30,6 +30,7 @@ const calls = {
   getUpcomingInvoice: [],
   listInvoices: [],
   getDefaultPaymentMethod: [],
+  fetchPlanPrices: [],
   reactivateSubscription: [],
 };
 
@@ -44,6 +45,10 @@ let state = {
   upcomingInvoice: null,   // { amountBRL, currency, nextPaymentAttempt } | null
   invoices: [],            // [{ id, date, amountBRL, status, hostedUrl, pdfUrl }]
   paymentMethod: null,     // { brand, last4, expMonth, expYear } | null
+  // Catálogo devolvido por fetchPlanPrices. Default espelha limits.js pra não
+  // quebrar testes que fixam 69.90 no /api/billing/me.
+  planPrices: { basic: 69.90, pro: 99.90, business: 149.90 },
+  shouldFailFetchPrices: false,
 };
 
 const PRICE_IDS = {
@@ -69,6 +74,8 @@ function reset() {
     upcomingInvoice: null,
     invoices: [],
     paymentMethod: null,
+    planPrices: { basic: 69.90, pro: 99.90, business: 149.90 },
+    shouldFailFetchPrices: false,
   };
 }
 
@@ -157,6 +164,12 @@ const mock = {
   async getDefaultPaymentMethod(customerId, subscriptionId) {
     calls.getDefaultPaymentMethod.push({ customerId, subscriptionId });
     return state.paymentMethod;
+  },
+
+  async fetchPlanPrices() {
+    calls.fetchPlanPrices.push({});
+    if (state.shouldFailFetchPrices) throw new Error("stripe indisponível (mock)");
+    return { ...state.planPrices };
   },
 
   // Desfaz cancelamento agendado na assinatura do state (se houver).

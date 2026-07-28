@@ -13,7 +13,8 @@
 //   BACKUP_S3_PREFIX     — prefixo dentro do bucket (default: "nimbus/")
 //   BACKUP_S3_KEY_ID     — access key id
 //   BACKUP_S3_SECRET     — secret access key
-//   BACKUP_RETAIN_REMOTE — quantos snapshots remotos manter (default: 30)
+//   BACKUP_RETAIN_REMOTE_HOURS — janela em que TODOS os snapshots ficam (default: 48h)
+//   BACKUP_RETAIN_REMOTE_DAYS  — depois da janela, 1 por dia até N dias (default: 30)
 //
 // Uso:
 //   node scripts/backup-remote.js               # sobe os que ainda não estão em remoto
@@ -26,6 +27,7 @@ const fs = require("fs");
 const fsp = require("fs/promises");
 const path = require("path");
 const backupCrypto = require("./backup-crypto");
+const { computeRemoteKeep } = require("./backup-retention");
 
 const BACKUPS_DIR = path.join(__dirname, "..", "backups");
 
@@ -36,7 +38,8 @@ const config = {
   prefix: process.env.BACKUP_S3_PREFIX || "nimbus/",
   accessKeyId: process.env.BACKUP_S3_KEY_ID,
   secretAccessKey: process.env.BACKUP_S3_SECRET,
-  retain: Number(process.env.BACKUP_RETAIN_REMOTE) || 30,
+  retainHours: Number(process.env.BACKUP_RETAIN_REMOTE_HOURS) || 48,
+  retainDays: Number(process.env.BACKUP_RETAIN_REMOTE_DAYS) || 30,
 };
 
 const args = new Set(process.argv.slice(2));
@@ -141,14 +144,19 @@ async function listRemoteDumps(client) {
 }
 
 async function rotateRemote(client, all) {
-  if (all.length <= config.retain) return;
-  const { DeleteObjectsCommand } = require("@aws-sdk/client-s3");
-  const toDelete = all.slice(config.retain);
+  const { drop } = computeRemoteKeep(all.map(d => d.name), Date.now(), {
+    hourlyWindowH: config.retainHours,
+    retainDays: config.retainDays,
+  });
+  if (!drop.length) return;
+  const keyByName = new Map(all.map(d => [d.name, d.key]));
+  const toDelete = drop.map(name => ({ name, key: keyByName.get(name) })).filter(d => d.key);
   if (!toDelete.length) return;
   if (DRY) {
-    for (const name of toDelete) console.log(`[dry] removeria remoto ${name}`);
+    for (const d of toDelete) console.log(`[dry] removeria remoto ${d.name}`);
     return;
   }
+  const { DeleteObjectsCommand } = require("@aws-sdk/client-s3");
   const keys = toDelete.map(d => ({ Key: `${config.prefix}${d.key}` }));
   for (let i = 0; i < keys.length; i += 1000) {
     await client.send(new DeleteObjectsCommand({

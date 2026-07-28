@@ -53,20 +53,7 @@ module.exports = {
       time: true,
       merge_logs: true,
     },
-    // Backup REMOTO (S3-compatível) — sobe último snapshot 1x/dia às 03h.
-    // Sem env BACKUP_S3_* setadas, sai exit 0 sem fazer nada (não polui logs).
-    {
-      name: "nimbus-backup-remote",
-      script: "./scripts/backup-remote.js",
-      cwd: __dirname,
-      instances: 1,
-      autorestart: false,
-      cron_restart: "0 3 * * *",
-      watch: false,
-      env: { NODE_ENV: "production", NIMBUS_MODE: process.env.NIMBUS_MODE || "prod" },
-      out_file: "./logs/backup-remote-out.log",
-      error_file: "./logs/backup-remote-error.log",
-      time: true,
-    },
+    // Backup NÃO roda mais pelo PM2 — o cron horário chama backup-all.sh
+    // (dump local + upload B2). Ver deploy/setup-backups.sh e scripts/README.md.
   ],
 };

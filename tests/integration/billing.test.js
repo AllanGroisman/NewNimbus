@@ -9,13 +9,18 @@
 // O módulo Stripe é mockado via tests/helpers/stripe-mock.js — `enabled()` retorna true
 // e `constructEvent` apenas JSON.parse-eia o body (HMAC ignorado).
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { createRequire } from "module";
 import {
   app, request, createTestUser,
   auth as authMod, billing,
   stripeCalls, setStripeMock,
 } from "../helpers/app.js";
 import { makeGroup } from "../helpers/fixtures.js";
+
+// Cache de preços é singleton do backend — os testes de preço precisam limpá-lo.
+const requireCjs = createRequire(import.meta.url);
+const pricesCache = requireCjs("../../backend/billing/prices.js");
 
 // Helper: postar evento bruto pro webhook. O mock ignora a signature.
 // IMPORTANTE: supertest serializa Buffer pra { type:"Buffer", data:[...] } quando
@@ -594,6 +599,50 @@ describe("Billing — reactivate", () => {
     const { auth } = await createTestUser();
     const res = await auth("post", "/api/billing/reactivate").send({});
     expect(res.status).toBe(501);
+  });
+});
+
+describe("Billing — preços vindos do Stripe", () => {
+  beforeEach(() => pricesCache.__resetForTests());
+  afterEach(() => pricesCache.__resetForTests());
+
+  it("plans reflete o preço ao vivo do Stripe", async () => {
+    setStripeMock({ planPrices: { basic: 79.90, pro: 109.90, business: 149.90 } });
+    const { auth } = await createTestUser();
+    const res = await auth("get", "/api/billing/me");
+    expect(res.status).toBe(200);
+    const basic = res.body.plans.find(p => p.id === "basic");
+    const pro = res.body.plans.find(p => p.id === "pro");
+    expect(basic.priceBRL).toBe(79.90);
+    expect(pro.priceBRL).toBe(109.90);
+    // Só o preço vem do Stripe — os limites continuam do limits.js.
+    expect(basic.limits.groups).toBe(1);
+  });
+
+  it("Stripe desabilitado → fallback pros preços do limits.js", async () => {
+    setStripeMock({ enabled: false });
+    const { auth } = await createTestUser();
+    const res = await auth("get", "/api/billing/me");
+    expect(res.status).toBe(200);
+    const basic = res.body.plans.find(p => p.id === "basic");
+    expect(basic.priceBRL).toBe(69.90);
+    expect(stripeCalls.fetchPlanPrices).toHaveLength(0);
+  });
+
+  it("erro no Stripe → 200 com fallback, nunca 500", async () => {
+    setStripeMock({ shouldFailFetchPrices: true });
+    const { auth } = await createTestUser();
+    const res = await auth("get", "/api/billing/me");
+    expect(res.status).toBe(200);
+    const basic = res.body.plans.find(p => p.id === "basic");
+    expect(basic.priceBRL).toBe(69.90);
+  });
+
+  it("cache: leituras seguidas fazem uma busca só no Stripe", async () => {
+    const { auth } = await createTestUser();
+    await auth("get", "/api/billing/me");
+    await auth("get", "/api/billing/me");
+    expect(stripeCalls.fetchPlanPrices).toHaveLength(1);
   });
 });
 

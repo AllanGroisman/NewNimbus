@@ -229,6 +229,23 @@ async function getDefaultPaymentMethod(customerId, subscriptionId) {
   };
 }
 
+// Busca no Stripe o valor atual dos prices configurados (STRIPE_PRICE_*).
+// Retorna { basic: 69.9, ... } só com os planos válidos (BRL, unit_amount
+// presente) — plano ausente aqui cai no fallback de limits.js no chamador.
+async function fetchPlanPrices() {
+  const out = {};
+  for (const [planId, priceId] of Object.entries(PRICE_IDS)) {
+    if (!priceId) continue;
+    const price = await client().prices.retrieve(priceId);
+    if (price.currency !== "brl" || price.unit_amount == null) {
+      logger.warn({ planId, priceId, currency: price.currency }, "[stripe] price sem unit_amount em BRL — ignorando");
+      continue;
+    }
+    out[planId] = price.unit_amount / 100;
+  }
+  return out;
+}
+
 // Desfaz cancelamento agendado (cancel_at_period_end=true → false).
 async function reactivateSubscription(subscriptionId) {
   const updated = await client().subscriptions.update(subscriptionId, {
@@ -251,5 +268,6 @@ module.exports = {
   getUpcomingInvoice,
   listInvoices,
   getDefaultPaymentMethod,
+  fetchPlanPrices,
   reactivateSubscription,
 };

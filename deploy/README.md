@@ -120,23 +120,26 @@ pm2 restart all
 sudo docker compose restart
 ```
 
-## Backup do Postgres (3 camadas)
+## Backup do Postgres
 
-Backup automático a cada 6h em **3 destinos**: local → Backblaze B2 → Google Drive. Setup em 1 comando:
+Backup automático **de hora em hora** em 2 destinos: local → Backblaze B2 (cifrado). Setup em 1 comando:
 
 ```bash
 bash deploy/setup-backups.sh
 ```
 
-Esse script instala `rclone`, registra o cron e te guia pela configuração do B2 (envs no `.env`) e do Google Drive (`rclone config`). Depois, o cron roda `backend/scripts/backup-all.sh` a cada 6h.
+Esse script te guia pela configuração do B2 (envs no `.env`) e registra **uma** linha de cron horária chamando `backend/scripts/backup-all.sh` (removendo agendamentos antigos). O job antigo do PM2 (`nimbus-backup-remote`) foi aposentado — se ainda existir na VPS: `pm2 delete nimbus-backup-remote && pm2 save`.
 
 Doc completa em [`../backend/scripts/README.md`](../backend/scripts/README.md). Resumo:
 
 | Camada | Quem cuida | Retenção |
 |---|---|---|
-| 1. Dump local em `backend/backups/db-*.sql.gz` | `backup-db.sh` (pg_dump) | 48 snapshots (12 dias) |
-| 2. Upload pro Backblaze B2 (S3-compatível) | `backup-remote.js` | 30 snapshots (7.5 dias) |
-| 3. Espelho no Google Drive | `backup-gdrive.sh` (rclone) | sem rotação (1TB cabe muito) |
+| 1. Dump local em `backend/backups/db-*.sql.gz` | `backup-db.sh` (pg_dump) | 48 snapshots horários (48h) |
+| 2. Upload cifrado pro Backblaze B2 (S3-compatível) | `backup-remote.js` | últimas 48h + 1/dia até 30 dias |
+
+(A 3ª camada Google Drive/rclone está desativada — enviava dumps sem cifra.)
+
+O backend alerta o admin pelo WhatsApp se o backup parar de rodar (`backend/backup/monitor.js`; estado em `GET /healthz` → `checks.backup`). **Guarde a `BACKUP_ENC_KEY` fora do servidor** — sem ela os backups cifrados do B2 são irrecuperáveis.
 
 Restaurar:
 

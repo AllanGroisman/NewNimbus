@@ -1,5 +1,6 @@
 const store = require("./pg");
 const limits = require("./limits");
+const prices = require("./prices");
 
 // Hidrata sub do usuário pra responder /api/billing/me e gating.
 // Sem row = free/inactive (sem acesso até assinar). Não há mais trial automático.
@@ -44,16 +45,18 @@ async function getStatus(userId, userRole) {
     // não têm trialUsedAt, mas têm stripeSubscriptionId).
     trialEligible: !sub.trialUsedAt && !sub.stripeSubscriptionId,
     // Catálogo público — frontend lê preços daqui em vez de hardcodar.
-    plans: publicPlans(),
+    plans: await publicPlans(),
   };
 }
 
 // Catálogo de planos assináveis exposto ao frontend (sem "free").
-function publicPlans() {
+// Preço vem do Stripe quando disponível; limits.js é o fallback.
+async function publicPlans() {
+  const live = await prices.getPublicPrices();
   return ["basic", "pro", "business"].map((id) => ({
     id,
     label: limits.PLANS[id].label,
-    priceBRL: limits.PLANS[id].priceBRL,
+    priceBRL: live?.[id] ?? limits.PLANS[id].priceBRL,
     limits: limits.PLANS[id].limits,
   }));
 }

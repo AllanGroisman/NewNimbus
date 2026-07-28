@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# ⛔ INATIVO — fora do fluxo de backup desde 07/2026. O backup-all.sh não chama
+# mais este script: o rclone não está instalado na VPS e este caminho enviaria
+# os dumps SEM CIFRA (ver aviso abaixo). O esquema em uso é local + Backblaze B2
+# cifrado — ver backend/scripts/README.md. Só reative depois de configurar um
+# remote "crypt" no rclone.
+#
 # Espelha os dumps de backend/backups/ pro Google Drive via rclone.
 #
 # Pré-requisito: rclone instalado e configurado com um remote chamado "gdrive"
