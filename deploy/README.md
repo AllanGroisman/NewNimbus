@@ -76,9 +76,13 @@ Depois do `install.sh` ter rodado uma vez, pra ligar/desligar tudo:
 ```bash
 bash deploy/start.sh   # sobe Postgres+Redis+backend+worker+nginx
 bash deploy/stop.sh    # para tudo (mantém instalado)
+bash deploy/restart.sh # stop.sh + start.sh em seguida (sem perguntar nada)
 ```
 
 `start.sh` é idempotente — pode rodar mesmo se já estiver tudo no ar.
+
+`restart.sh` roda o `stop.sh` e depois o `start.sh`. Ele nunca restaura o banco
+do Backblaze (responde "N" automaticamente), então o banco local é mantido.
 
 ## Verificar se está tudo OK
 

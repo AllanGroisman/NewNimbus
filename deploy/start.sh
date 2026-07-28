@@ -39,10 +39,11 @@ done
 # Banco remoto: verifica se tem backup mais novo no Backblaze.
 # No modo reinício (sistema já no ar) pulamos — não faz sentido restaurar o banco
 # só pra reiniciar o código, e o prompt interativo travaria o fluxo.
-# Modo ngrok (NIMBUS_SKIP_RESTORE=1): usa o banco LOCAL, nunca restaura da nuvem.
+# NIMBUS_SKIP_RESTORE=1 (modo ngrok, restart.sh): usa o banco LOCAL, nunca
+# restaura da nuvem — equivale a responder "N" no prompt abaixo.
 echo
 if [[ "${NIMBUS_SKIP_RESTORE:-0}" == "1" ]]; then
-  echo "[2/6] Restore remoto: pulado (modo ngrok — banco local)."
+  echo "[2/6] Restore remoto: pulado (NIMBUS_SKIP_RESTORE=1 — mantendo banco local)."
 elif [[ "$ALREADY_RUNNING" == "1" ]]; then
   echo "[2/5] Backup remoto: pulado (reinício de sistema já rodando)."
 else
