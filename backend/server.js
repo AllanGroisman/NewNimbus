@@ -1255,6 +1255,19 @@ app.delete("/api/admin/backups/remote/:filename", auth.requireAuth, auth.require
 // Admin — scraper global e catálogo
 // ────────────────────────────────────────────────────────────────────────
 
+// appConfig.set() é síncrono e grava no Postgres em background. Nas rotas de
+// admin esperamos a confirmação antes de responder: sem isso o painel mostrava
+// "salvo" mesmo com o banco fora, e a config sumia no próximo restart.
+// Retorna false (e já respondeu 500) quando alguma gravação falhou.
+async function confirmConfigSaved(res) {
+  const { ok, errors } = await appConfig.flush();
+  if (!ok) {
+    res.status(500).json({ error: `Falha ao gravar no banco: ${errors[0].message}` });
+    return false;
+  }
+  return true;
+}
+
 app.get("/api/admin/scraper/config", auth.requireAuth, auth.requireAdmin, (req, res) => {
   res.json({
     config: adminScraper.readConfig(),
@@ -1265,9 +1278,10 @@ app.get("/api/admin/scraper/config", auth.requireAuth, auth.requireAdmin, (req, 
   });
 });
 
-app.put("/api/admin/scraper/config", auth.requireAuth, auth.requireAdmin, (req, res) => {
+app.put("/api/admin/scraper/config", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
     const cfg = adminScraper.writeConfig(req.body || {});
+    if (!await confirmConfigSaved(res)) return;
     res.json({ config: cfg });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -1279,9 +1293,10 @@ app.get("/api/admin/registration", auth.requireAuth, auth.requireAdmin, (req, re
   res.json({ blocked: auth.isRegistrationBlocked() });
 });
 
-app.put("/api/admin/registration", auth.requireAuth, auth.requireAdmin, (req, res) => {
+app.put("/api/admin/registration", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   const blocked = !!(req.body && req.body.blocked);
   appConfig.set("registration-blocked", { blocked });
+  if (!await confirmConfigSaved(res)) return;
   res.json({ blocked });
 });
 
@@ -1323,9 +1338,11 @@ app.get("/api/admin/scrap-tester/config", auth.requireAuth, auth.requireAdmin, (
   });
 });
 
-app.put("/api/admin/scrap-tester/config", auth.requireAuth, auth.requireAdmin, (req, res) => {
+app.put("/api/admin/scrap-tester/config", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
-    res.json({ config: scrapTester.writeConfig(req.body || {}) });
+    const config = scrapTester.writeConfig(req.body || {});
+    if (!await confirmConfigSaved(res)) return;
+    res.json({ config });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -1378,10 +1395,11 @@ app.get("/api/admin/scraper/shopee", auth.requireAuth, auth.requireAdmin, (req, 
   });
 });
 
-app.put("/api/admin/scraper/shopee", auth.requireAuth, auth.requireAdmin, (req, res) => {
+app.put("/api/admin/scraper/shopee", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
     const { appId, appSecret } = req.body || {};
     const saved = affiliate.writeScraperShopeeAdminCreds({ appId, appSecret });
+    if (!await confirmConfigSaved(res)) return;
     res.json({
       ok: true,
       admin: {
@@ -1396,8 +1414,9 @@ app.put("/api/admin/scraper/shopee", auth.requireAuth, auth.requireAdmin, (req, 
   }
 });
 
-app.delete("/api/admin/scraper/shopee", auth.requireAuth, auth.requireAdmin, (req, res) => {
+app.delete("/api/admin/scraper/shopee", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   affiliate.clearScraperShopeeAdminCreds();
+  if (!await confirmConfigSaved(res)) return;
   res.json({ ok: true });
 });
 
@@ -1406,9 +1425,10 @@ app.get("/api/admin/scraper/shopee/filters", auth.requireAuth, auth.requireAdmin
   res.json({ filters: affiliate.readShopeeScraperFilters(), defaults: affiliate.SHOPEE_FILTERS_DEFAULTS });
 });
 
-app.put("/api/admin/scraper/shopee/filters", auth.requireAuth, auth.requireAdmin, (req, res) => {
+app.put("/api/admin/scraper/shopee/filters", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
     const saved = affiliate.writeShopeeScraperFilters(req.body || {});
+    if (!await confirmConfigSaved(res)) return;
     res.json({ ok: true, filters: saved });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -1420,9 +1440,10 @@ app.get("/api/admin/scraper/ml/filters", auth.requireAuth, auth.requireAdmin, (r
   res.json({ filters: affiliate.readMLScraperFilters(), defaults: affiliate.ML_FILTERS_DEFAULTS });
 });
 
-app.put("/api/admin/scraper/ml/filters", auth.requireAuth, auth.requireAdmin, (req, res) => {
+app.put("/api/admin/scraper/ml/filters", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
     const saved = affiliate.writeMLScraperFilters(req.body || {});
+    if (!await confirmConfigSaved(res)) return;
     res.json({ ok: true, filters: saved });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -1434,9 +1455,10 @@ app.get("/api/admin/scraper/amazon/filters", auth.requireAuth, auth.requireAdmin
   res.json({ filters: affiliate.readAmazonScraperFilters(), defaults: affiliate.AMAZON_FILTERS_DEFAULTS });
 });
 
-app.put("/api/admin/scraper/amazon/filters", auth.requireAuth, auth.requireAdmin, (req, res) => {
+app.put("/api/admin/scraper/amazon/filters", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
     const saved = affiliate.writeAmazonScraperFilters(req.body || {});
+    if (!await confirmConfigSaved(res)) return;
     res.json({ ok: true, filters: saved });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -1468,10 +1490,11 @@ app.get("/api/admin/stores/locks", auth.requireAuth, auth.requireAdmin, async (r
   }
 });
 
-app.put("/api/admin/stores/:store/lock", auth.requireAuth, auth.requireAdmin, (req, res) => {
+app.put("/api/admin/stores/:store/lock", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
     const { locked, message } = req.body || {};
     const saved = storeLocks.writeStoreLock(req.params.store, { locked, message });
+    if (!await confirmConfigSaved(res)) return;
     res.json({ ok: true, store: storeLocks.resolveStoreId(req.params.store), lock: saved });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -1680,10 +1703,11 @@ app.get("/api/admin/notifications/config", auth.requireAuth, auth.requireAdmin, 
   res.json(adminNotifier.readConfig());
 });
 
-app.put("/api/admin/notifications/config", auth.requireAuth, auth.requireAdmin, (req, res) => {
+app.put("/api/admin/notifications/config", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
     const body = req.body || {};
     const saved = adminNotifier.writeConfig(body);
+    if (!await confirmConfigSaved(res)) return;
     res.json({ ok: true, config: saved });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -1983,6 +2007,10 @@ async function boot() {
   await auth.warmup();
   await auth.bootSeed();
   await appConfig.warmup();
+  // Recarrega config do Postgres periodicamente: em modo redis o worker é outro
+  // processo com outro cache, e sem isso ele só via mudanças do admin (ex: trava
+  // de loja) depois de reiniciar.
+  appConfig.startAutoRefresh();
   await affiliate.warmup();
 
   // Inicializa fila de envios (Fase 2). Server é só PRODUCER — quem registra
@@ -2021,7 +2049,9 @@ async function boot() {
     console.log(`[server] ${signal} recebido, encerrando...`);
     scheduler.stop();
     scrapTester.stop();
+    appConfig.stopAutoRefresh();
     server.close(() => console.log("[server] HTTP fechado"));
+    try { await appConfig.flush(); } catch {}
     try { await queueMod.close(); console.log("[server] queue fechada"); } catch {}
     setTimeout(() => process.exit(0), 2000);
   };

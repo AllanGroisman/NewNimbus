@@ -83,6 +83,9 @@ async function main() {
   }
 
   await appConfig.warmup();
+  // Cache de config é por processo: sem esse refresh o worker só veria uma trava
+  // de loja (ou filtro) alterada pelo admin depois de ser reiniciado.
+  appConfig.startAutoRefresh();
   await auth.warmup();
   // Cache de afiliados (tag/cookie por usuário) — sem isso a captura de repasse
   // vê todo mundo como "não configurado" e descarta os links silenciosamente.
@@ -108,6 +111,7 @@ async function main() {
     // Fecha os sockets WhatsApp antes de sair: evita que o WhatsApp veja o device
     // antigo "ainda conectado" quando o próximo worker reconectar (conflito 401).
     try { await wa.closeAll(); console.log("[worker] sessões WhatsApp encerradas"); } catch {}
+    try { appConfig.stopAutoRefresh(); await appConfig.flush(); } catch {}
     try { await heartbeat.stop(); } catch {}
     try { await queue.close(); console.log("[worker] queue fechada"); } catch {}
     try { await sentry.flush(2000); } catch {}
