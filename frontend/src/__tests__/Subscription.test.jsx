@@ -290,8 +290,8 @@ describe("Subscription — seu plano em uso + detalhes", () => {
     planId: "basic", effectivePlan: "basic", status: "active",
     currentPeriodEnd: "2026-08-10T00:00:00.000Z",
     hasStripeCustomer: true, stripeEnabled: true, isAdmin: false,
-    limits: { numbers: 1, groups: 1, whatsappGroupsPerCampaign: 3, categoriesPerGroup: 2, autoScraping: false },
-    usage: { groups: 1, numbers: 0, maxWhatsappGroupsPerCampaign: 2, maxCategoriesPerGroup: 1, autoScrapingInUse: false },
+    limits: { numbers: 1, groups: 1, whatsappGroupsPerCampaign: 3, categoriesPerGroup: 2 },
+    usage: { groups: 1, numbers: 0, maxWhatsappGroupsPerCampaign: 2, maxCategoriesPerGroup: 1 },
   };
 
   it("mostra benefícios com uso (1/1 campanhas, 0/1 números)", async () => {

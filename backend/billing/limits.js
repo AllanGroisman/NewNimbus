@@ -19,7 +19,6 @@ const PLANS = {
       groups: 0,
       whatsappGroupsPerCampaign: 0,
       categoriesPerGroup: 0,
-      autoScraping: false,
     },
   },
   basic: {
@@ -30,7 +29,6 @@ const PLANS = {
       groups: 1,
       whatsappGroupsPerCampaign: 3,
       categoriesPerGroup: 2,
-      autoScraping: false,
     },
   },
   pro: {
@@ -41,7 +39,6 @@ const PLANS = {
       groups: 5,
       whatsappGroupsPerCampaign: 15,
       categoriesPerGroup: 99,
-      autoScraping: true,
     },
   },
   business: {
@@ -52,7 +49,6 @@ const PLANS = {
       groups: 999,
       whatsappGroupsPerCampaign: 999,
       categoriesPerGroup: 99,
-      autoScraping: true,
     },
   },
 };
@@ -84,6 +80,7 @@ function checkLimit(sub, key, current, userRole) {
   const limits = getLimits(sub, userRole);
   const limit = limits[key];
   if (limit === undefined) return { ok: true };
+  // Feature booleana (nenhuma hoje) — "pro" é só o default de sugestão.
   if (typeof limit === "boolean") {
     return limit ? { ok: true } : {
       ok: false,

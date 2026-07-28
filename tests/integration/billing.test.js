@@ -39,7 +39,6 @@ describe("Billing — conta nova sem trial", () => {
     expect(res.body.daysLeftInTrial).toBeNull();
     expect(res.body.limits.groups).toBe(0);           // free = 0 campanhas
     expect(res.body.limits.numbers).toBe(0);
-    expect(res.body.limits.autoScraping).toBe(false);
   });
 
   it("/billing/me não cria row nem trial em leituras repetidas", async () => {
@@ -387,9 +386,8 @@ describe("Billing — plan-gating no PUT /api/state", () => {
   it("user free (canceled) é bloqueado em 1 grupo (groups limit)", async () => {
     const { user, auth } = await createTestUser();
     await billing.update(user.id, { planId: "free", status: "canceled" });
-    // auto:false pra não disparar o gating de autoScraping (que retornaria planRequired=pro);
-    // categoria única pra não disparar gating de categoriesPerGroup. Aqui testamos só `groups`.
-    const g = makeGroup({ id: 1, auto: false, categories: [] });
+    // Categoria única pra não disparar gating de categoriesPerGroup. Aqui testamos só `groups`.
+    const g = makeGroup({ id: 1, categories: [] });
     const res = await auth("put", "/api/state").send({ groups: [g], numbers: [], whatsappGroups: [] });
     expect(res.status).toBe(402);
     expect(res.body.planRequired).toBe("basic");

@@ -72,12 +72,6 @@ describe("billing/limits — checkLimit", () => {
     expect(limits.checkLimit({ planId: "business", status: "active" }, "whatsappGroupsPerCampaign", 100).ok).toBe(true);
   });
 
-  it("autoScraping: bloqueado no basic, liberado no pro", () => {
-    const r = limits.checkLimit(basicSub, "autoScraping", true);
-    expect(r.ok).toBe(false);
-    expect(limits.checkLimit(proSub, "autoScraping", true).ok).toBe(true);
-  });
-
   it("admin sempre passa, mesmo extrapolando", () => {
     const r = limits.checkLimit(null, "groups", 9999, "admin");
     expect(r.ok).toBe(true);

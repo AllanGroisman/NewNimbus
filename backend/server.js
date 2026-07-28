@@ -465,7 +465,6 @@ app.put("/api/state", auth.requireAuth, async (req, res) => {
     const incoming = req.body || {};
     if (req.user.role !== "admin") {
       const sub = await billing.getByUserId(req.user.id);
-      const planLimits = billing.limits.getLimits(sub, req.user.role);
 
       const incomingGroups = Array.isArray(incoming.groups) ? incoming.groups : [];
       const incomingNumbers = Array.isArray(incoming.numbers) ? incoming.numbers : [];
@@ -490,17 +489,6 @@ app.put("/api/state", auth.requireAuth, async (req, res) => {
       if (worstWaGroups > 0) {
         checks.push(billing.limits.checkLimit(sub, "whatsappGroupsPerCampaign", worstWaGroups, req.user.role));
       }
-      // autoScraping — bloqueia se algum grupo tem scraping.auto=true e plano não permite.
-      if (!planLimits.autoScraping) {
-        const usesAuto = incomingGroups.some(g => g?.scraping?.auto === true);
-        if (usesAuto) {
-          return res.status(402).json({
-            error: "Scraping automático não disponível no plano atual",
-            planRequired: "pro",
-          });
-        }
-      }
-
       const failed = checks.find(c => !c.ok);
       if (failed) return res.status(402).json(failed);
     }
@@ -562,7 +550,6 @@ async function computeUsage(userId) {
       const n = Array.isArray(g?.categories) ? g.categories.length : 0;
       return n > max ? n : max;
     }, 0),
-    autoScrapingInUse: groups.some((g) => g?.scraping?.auto === true),
   };
 }
 
