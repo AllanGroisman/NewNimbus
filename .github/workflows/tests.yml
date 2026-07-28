@@ -1,0 +1,145 @@
+# CI do Nimbus — roda a cada push/PR:
+#   - backend: unit + integration + journey (Vitest + Postgres real)
+#   - frontend: componentes/lógica (Vitest + jsdom)
+# O E2E (Playwright, navegador real) é pesado — roda no agendamento noturno ou
+# disparado manualmente pela aba Actions (workflow_dispatch).
+
+name: Testes
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * *" # 03:00 no horário de Brasília
+
+jobs:
+  backend:
+    name: Backend (unit + integration + journey)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: nimbus
+          POSTGRES_PASSWORD: nimbus_dev
+          POSTGRES_DB: nimbus_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nimbus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # A suíte usa mocks — não baixa o Chromium do Puppeteer (~150 MB) à toa.
+      PUPPETEER_SKIP_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            tests/package-lock.json
+      - name: Instalar dependências do backend
+        run: npm ci
+        working-directory: backend
+      - name: Instalar dependências dos testes
+        run: npm ci
+        working-directory: tests
+      - name: Rodar testes (as migrations rodam no globalSetup)
+        run: npm test
+        working-directory: tests
+
+  frontend:
+    name: Frontend (Vitest + RTL)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Instalar dependências
+        run: npm ci
+        working-directory: frontend
+      - name: Rodar testes
+        run: npm test
+        working-directory: frontend
+
+  e2e:
+    name: E2E (Playwright)
+    # Pesado (sobe backend + Vite + Chromium) — só no noturno ou manual.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: nimbus
+          POSTGRES_PASSWORD: nimbus_dev
+          POSTGRES_DB: nimbus_test_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nimbus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            tests/package-lock.json
+            frontend/package-lock.json
+      # backend/.env e .env.e2e são gitignored — o CI cria os dois com valores
+      # de teste (sem segredos). O backend semeia o admin a partir do DEFAULT_ADMIN_*.
+      - name: Criar env files de E2E
+        run: |
+          cat > backend/.env <<'EOF'
+          NODE_ENV=test
+          JWT_SECRET=ci-e2e-secret
+          DEFAULT_ADMIN_EMAIL=admin@test.local
+          DEFAULT_ADMIN_PASSWORD=admin12345
+          DEFAULT_ADMIN_NAME=Admin
+          EOF
+          cat > backend/.env.e2e <<'EOF'
+          NODE_ENV=test
+          PORT=3101
+          QUEUE_BACKEND=memory
+          DATABASE_URL=postgresql://nimbus:nimbus_dev@localhost:5432/nimbus_test_e2e?schema=public
+          ADMIN_EMAILS=
+          LOG_LEVEL=warn
+          STRIPE_SECRET_KEY=
+          STRIPE_PUBLISHABLE_KEY=
+          STRIPE_WEBHOOK_SECRET=
+          PUBLIC_BASE_URL=
+          NIMBUS_CORS_ORIGINS=
+          EOF
+      - name: Instalar dependências (backend, tests, frontend)
+        run: |
+          npm ci --prefix backend
+          npm ci --prefix tests
+          npm ci --prefix frontend
+      - name: Instalar Chromium do Playwright
+        run: npx playwright install --with-deps chromium
+        working-directory: tests
+      - name: Rodar E2E
+        run: npm run test:e2e
+        working-directory: tests
+      - name: Guardar artefatos de falha (screenshots/traces)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: tests/test-results/
+          retention-days: 7

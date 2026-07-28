@@ -15,31 +15,32 @@ const backendDir = path.resolve(__dirname, "..", "..", "backend");
 const DB_NAME = "nimbus_test_e2e";
 const DATABASE_URL = `postgresql://nimbus:nimbus_dev@localhost:5432/${DB_NAME}?schema=public`;
 
+// Local: o Postgres roda no container nimbus-postgres (docker compose) e o psql
+// vive lá dentro. No CI (GitHub Actions), o Postgres é um service container com
+// a porta 5432 publicada e o psql do runner conecta direto por TCP.
+function psql(sql, db = "postgres") {
+  const cmd = process.env.CI
+    ? `psql "postgresql://nimbus:nimbus_dev@localhost:5432/${db}" -tAc "${sql}"`
+    : `docker exec nimbus-postgres psql -U nimbus -d ${db} -tAc "${sql}"`;
+  return execSync(cmd, { stdio: ["pipe", "pipe", "pipe"] }).toString().trim();
+}
+
 export default async function globalSetup() {
-  // 1. Garante que o DB existe — usa `psql -lqt` pra listar, cria via CREATE DATABASE.
-  //    Idempotente: ignora se já existe.
-  const checkDb = `docker exec nimbus-postgres psql -U nimbus -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'"`;
+  // 1. Garante que o DB existe. Idempotente: ignora se já existe.
   let exists = false;
   try {
-    const out = execSync(checkDb, { stdio: ["pipe", "pipe", "pipe"] }).toString().trim();
-    exists = out === "1";
+    exists = psql(`SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'`) === "1";
   } catch (err) {
     console.error("[e2e:setup] erro consultando DB:", err.stderr?.toString() || err.message);
     throw err;
   }
   if (!exists) {
-    execSync(
-      `docker exec nimbus-postgres psql -U nimbus -c "CREATE DATABASE ${DB_NAME} OWNER nimbus"`,
-      { stdio: "pipe" },
-    );
+    psql(`CREATE DATABASE ${DB_NAME} OWNER nimbus`);
   }
 
   // 2. Limpa schema (DROP + CREATE public). Cada run começa zerado.
   try {
-    execSync(
-      `docker exec nimbus-postgres psql -U nimbus -d ${DB_NAME} -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO nimbus"`,
-      { stdio: "pipe" },
-    );
+    psql("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO nimbus", DB_NAME);
   } catch (err) {
     console.warn("[e2e:setup] reset schema falhou (continuando):", err.stderr?.toString() || err.message);
   }

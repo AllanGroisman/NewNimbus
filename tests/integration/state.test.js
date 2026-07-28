@@ -8,7 +8,7 @@ import { makeGroup } from "../helpers/fixtures.js";
 
 describe("GET /api/state — vazio", () => {
   it("devolve state default pro user novo", async () => {
-    const { auth } = await createTestUser();
+    const { auth } = await createTestUser({ plan: "pro" });
     const res = await auth("get", "/api/state");
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
@@ -22,7 +22,7 @@ describe("GET /api/state — vazio", () => {
 
 describe("PUT /api/state — save basico", () => {
   it("persiste groups, numbers, settings", async () => {
-    const { auth } = await createTestUser();
+    const { auth } = await createTestUser({ plan: "pro" });
     const payload = {
       groups: [makeGroup({ id: 1, name: "G1" })],
       numbers: [{ id: "num-1", phone: "5511..." }],
@@ -39,7 +39,7 @@ describe("PUT /api/state — save basico", () => {
 
 describe("OPS_FIELDS — preservacao da escrita do scheduler", () => {
   it("frontend save NAO apaga queue/history/sentToday/lastSend do disco", async () => {
-    const { user, auth } = await createTestUser();
+    const { user, auth } = await createTestUser({ plan: "pro" });
 
     const grupo = makeGroup({ id: 42, name: "Campanha X" });
     await auth("put", "/api/state").send({ groups: [grupo] });
@@ -76,7 +76,7 @@ describe("OPS_FIELDS — preservacao da escrita do scheduler", () => {
   });
 
   it("frontend save tambem NAO sobrescreve quando o payload contem campos ops", async () => {
-    const { user, auth } = await createTestUser();
+    const { user, auth } = await createTestUser({ plan: "pro" });
     await auth("put", "/api/state").send({ groups: [makeGroup({ id: 7 })] });
     await storage.updateGroupOps(user.id, 7, {
       queue: [{ key: "scheduler-item", name: "Item do scheduler" }],
@@ -93,7 +93,7 @@ describe("OPS_FIELDS — preservacao da escrita do scheduler", () => {
 
 describe("PUT /api/state — concorrência otimista (baseUpdatedAt)", () => {
   it("save sem baseUpdatedAt passa direto (primeiro save / retrocompat)", async () => {
-    const { auth } = await createTestUser();
+    const { auth } = await createTestUser({ plan: "pro" });
     const r = await auth("put", "/api/state").send({ groups: [makeGroup({ id: 1, name: "A" })] });
     expect(r.status).toBe(200);
     expect(r.body.ok).toBe(true);
@@ -101,7 +101,7 @@ describe("PUT /api/state — concorrência otimista (baseUpdatedAt)", () => {
   });
 
   it("save com baseUpdatedAt IGUAL à versão atual → 200 e avança a versão", async () => {
-    const { auth } = await createTestUser();
+    const { auth } = await createTestUser({ plan: "pro" });
     const first = await auth("put", "/api/state").send({ groups: [makeGroup({ id: 1, name: "A" })] });
     const v1 = first.body.updatedAt;
 
@@ -119,7 +119,7 @@ describe("PUT /api/state — concorrência otimista (baseUpdatedAt)", () => {
   });
 
   it("save com baseUpdatedAt DEFASADO → 409 STALE_STATE e NÃO sobrescreve", async () => {
-    const { auth } = await createTestUser();
+    const { auth } = await createTestUser({ plan: "pro" });
     const first = await auth("put", "/api/state").send({ groups: [makeGroup({ id: 1, name: "atual" })] });
     expect(first.status).toBe(200);
 
@@ -137,7 +137,7 @@ describe("PUT /api/state — concorrência otimista (baseUpdatedAt)", () => {
   });
 
   it("depois de um 409, recarregar a versão e reenviar → 200 (fluxo de recuperação)", async () => {
-    const { auth } = await createTestUser();
+    const { auth } = await createTestUser({ plan: "pro" });
     await auth("put", "/api/state").send({ groups: [makeGroup({ id: 1, name: "atual" })] });
 
     const stale = await auth("put", "/api/state").send({
@@ -162,7 +162,7 @@ describe("PUT /api/state — concorrência otimista (baseUpdatedAt)", () => {
 
 describe("GET /api/state/ops — polling do frontend", () => {
   it("devolve so os campos operacionais por grupo", async () => {
-    const { user, auth } = await createTestUser();
+    const { user, auth } = await createTestUser({ plan: "pro" });
     await auth("put", "/api/state").send({ groups: [makeGroup({ id: 9 })] });
     await storage.updateGroupOps(user.id, 9, {
       queue: [{ key: "k", name: "X" }],
@@ -180,7 +180,7 @@ describe("GET /api/state/ops — polling do frontend", () => {
 
 describe("POST/DELETE pending — fluxo de revisao", () => {
   it("aprova pending → move pra queue", async () => {
-    const { user, auth } = await createTestUser();
+    const { user, auth } = await createTestUser({ plan: "pro" });
     await auth("put", "/api/state").send({ groups: [makeGroup({ id: 10 })] });
     await storage.updateGroupOps(user.id, 10, {
       pending: [{ id: "p1", key: "p1", name: "Pendente" }],
@@ -193,7 +193,7 @@ describe("POST/DELETE pending — fluxo de revisao", () => {
   });
 
   it("rejeita pending → remove", async () => {
-    const { user, auth } = await createTestUser();
+    const { user, auth } = await createTestUser({ plan: "pro" });
     await auth("put", "/api/state").send({ groups: [makeGroup({ id: 11 })] });
     await storage.updateGroupOps(user.id, 11, {
       pending: [{ id: "p1", key: "p1", name: "X" }, { id: "p2", key: "p2", name: "Y" }],
@@ -204,7 +204,7 @@ describe("POST/DELETE pending — fluxo de revisao", () => {
   });
 
   it("404 quando pid nao existe", async () => {
-    const { auth } = await createTestUser();
+    const { auth } = await createTestUser({ plan: "pro" });
     await auth("put", "/api/state").send({ groups: [makeGroup({ id: 12 })] });
     const r = await auth("delete", "/api/state/groups/12/pending/inexistente");
     expect(r.status).toBe(404);
@@ -213,7 +213,7 @@ describe("POST/DELETE pending — fluxo de revisao", () => {
 
 describe("DELETE /api/state/groups/:gid/history — reset", () => {
   it("limpa history, sentToday, sentWeek, lastSend", async () => {
-    const { user, auth } = await createTestUser();
+    const { user, auth } = await createTestUser({ plan: "pro" });
     await auth("put", "/api/state").send({ groups: [makeGroup({ id: 13 })] });
     await storage.updateGroupOps(user.id, 13, {
       history: [{ key: "h", name: "Antigo", sentAt: new Date().toISOString() }],

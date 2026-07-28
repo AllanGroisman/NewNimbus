@@ -432,4 +432,6 @@ module.exports = {
   textFromMessage,
   unwrapMessage,
   rebuildLeaderIndex,
+  alreadySeen,
+  runSerial,
 };

@@ -26,7 +26,7 @@ describe("Jornada completa — primeira sessao do usuario", () => {
   });
 
   it("etapa 1: usuario registra conta", async () => {
-    user = await createTestUser({ name: "Carlos" });
+    user = await createTestUser({ name: "Carlos", plan: "pro" });
     expect(user.user.id).toBeTruthy();
     expect(user.token).toBeTruthy();
   });
@@ -134,8 +134,8 @@ describe("Jornada completa — primeira sessao do usuario", () => {
 
 describe("Jornada — multiplos usuarios isolados", () => {
   it("user A nao ve estado de user B", async () => {
-    const userA = await createTestUser({ name: "A" });
-    const userB = await createTestUser({ name: "B" });
+    const userA = await createTestUser({ name: "A", plan: "pro" });
+    const userB = await createTestUser({ name: "B", plan: "pro" });
 
     await userA.auth("put", "/api/state").send({
       groups: [makeGroup({ id: 1, name: "Apenas de A" })],

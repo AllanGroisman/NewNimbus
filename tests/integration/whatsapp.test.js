@@ -4,7 +4,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { request, app, createTestUser, waCalls, resetWa, auth as authMod, billing } from "../helpers/app.js";
 
-// Helper pra forçar plano específico no usuário recém-criado (que nasce em trial pro).
+// Helper pra forçar plano específico no usuário recém-criado (que nasce sem assinatura = free).
 async function userOnPlan(planId) {
   const u = await createTestUser();
   await billing.update(u.user.id, {
@@ -38,9 +38,8 @@ describe("WhatsApp — sessões (gating + auth)", () => {
     expect(r.body).toEqual([]);
   });
 
-  it("user em trial (pro) consegue criar 1 sessão", async () => {
-    // Register cria trial automático = pro, status=trialing
-    const { auth } = await createTestUser();
+  it("user com plano pro consegue criar 1 sessão", async () => {
+    const { auth } = await createTestUser({ plan: "pro" });
     const r = await auth("post", "/api/whatsapp/sessions/num-1");
     expect(r.status).toBe(200);
     expect(r.body.ok).toBe(true);
@@ -96,7 +95,7 @@ describe("WhatsApp — sessão (GET/DELETE)", () => {
   });
 
   it("GET retorna shape esperado depois de start", async () => {
-    const { auth } = await createTestUser();
+    const { auth } = await createTestUser({ plan: "pro" });
     await auth("post", "/api/whatsapp/sessions/num-1");
     const r = await auth("get", "/api/whatsapp/sessions/num-1");
     expect(r.status).toBe(200);

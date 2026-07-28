@@ -59,6 +59,12 @@ Thumbs.db
 coverage/
 **/coverage/
 
+# Artefatos de execução de teste (Vitest/Playwright)
+test-results/
+**/test-results/
+playwright-report/
+**/playwright-report/
+
 # Backups de merge / arquivos temporários do git
 *.bak
 *.orig

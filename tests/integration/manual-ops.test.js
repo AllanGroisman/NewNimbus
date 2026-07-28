@@ -12,7 +12,7 @@ vi.spyOn(affiliate, "gerarLinkAfiliadoML").mockImplementation(async (_userId, ur
 import { mlProduct, amazonProduct, makeGroup, makeWhatsAppGroup } from "../helpers/fixtures.js";
 
 async function userWithGroup(opts = {}) {
-  const { user, auth, email } = await createTestUser();
+  const { user, auth, email } = await createTestUser({ plan: "pro" });
   // Cada usuário tem afiliado próprio — configura aqui pra desbloquear gating ML.
   affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
   const group = makeGroup({
@@ -62,7 +62,7 @@ describe("POST /refill — endpoint HTTP", () => {
   });
 
   it("404 quando o grupo não existe", async () => {
-    const { auth } = await createTestUser();
+    const { auth } = await createTestUser({ plan: "pro" });
     const r = await auth("post", "/api/state/groups/999/refill").send({});
     expect(r.status).toBe(400);
     expect(r.body.error).toMatch(/encontrad/i);
@@ -194,7 +194,7 @@ describe("POST/DELETE /pending — aprovar/rejeitar", () => {
   });
 
   it("404 quando grupo não existe", async () => {
-    const { auth } = await createTestUser();
+    const { auth } = await createTestUser({ plan: "pro" });
     const r = await auth("post", "/api/state/groups/9999/pending/p1/approve");
     expect(r.status).toBe(404);
   });
@@ -224,7 +224,7 @@ describe("DELETE /history — limpa cooldown", () => {
   });
 
   it("404 em grupo inexistente", async () => {
-    const { auth } = await createTestUser();
+    const { auth } = await createTestUser({ plan: "pro" });
     const r = await auth("delete", "/api/state/groups/9999/history");
     expect(r.status).toBe(404);
   });
@@ -233,7 +233,7 @@ describe("DELETE /history — limpa cooldown", () => {
 describe("Isolamento entre usuários", () => {
   it("user A não consegue mexer no grupo de user B", async () => {
     const A = await userWithGroup({ id: 801 });
-    const B = await createTestUser();
+    const B = await createTestUser({ plan: "pro" });
 
     // B tenta refillar grupo de A
     const r = await B.auth("post", "/api/state/groups/801/refill").send({});

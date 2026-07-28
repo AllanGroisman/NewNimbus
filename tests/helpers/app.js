@@ -8,6 +8,7 @@ import "./env.js";
 import { installMock, calls as waCalls, reset as resetWa, connect as waConnect } from "./wa-mock.js";
 import { installMock as installStripeMock, calls as stripeCalls, reset as resetStripe, setMock as setStripeMock } from "./stripe-mock.js";
 import { installMock as installMailerMock, calls as mailerCalls, reset as resetMailer } from "./mailer-mock.js";
+import { seedSubscription } from "./pg-helpers.js";
 const waMock = installMock();
 const stripeMock = installStripeMock();
 const mailerMock = installMailerMock();
@@ -54,6 +55,12 @@ async function createTestUser(overrides = {}) {
   if (verifyRes.status !== 200) throw new Error(`verify-email falhou: ${verifyRes.status} ${JSON.stringify(verifyRes.body)}`);
   const { token } = verifyRes.body;
 
+  // 3. Opcional: assinatura ativa ("basic" | "pro" | "business"). Sem isso o
+  // usuário fica no plano free (0 campanhas/números) e leva 402 ao salvar estado.
+  if (overrides.plan && overrides.plan !== "free") {
+    await seedSubscription(user.id, overrides.plan);
+  }
+
   return {
     user,
     token,
@@ -67,6 +74,7 @@ export {
   app,
   request,
   createTestUser,
+  seedSubscription,
   uniqueEmail,
   auth,
   storage,

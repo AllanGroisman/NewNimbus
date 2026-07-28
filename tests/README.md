@@ -1,10 +1,14 @@
 # tests/
 
-Bateria automatizada de testes do Nimbus — três camadas, **~287 testes** no total.
+Bateria automatizada de testes do Nimbus — três camadas, **~594 testes** no total.
 
-- **Backend** (este diretório): unit + integration + journey, Vitest 2.x + supertest, ~222 testes, ~100s. Sobe o backend em memória (sem bindar porta) com WhatsApp e Stripe mockados.
-- **Frontend** (`frontend/`): Vitest + React Testing Library + jsdom, 59 testes, ~4s. Roda no diretório `frontend/`.
-- **E2E** (`tests/e2e/`): Playwright + Chromium, 5 testes, ~12s. Sobe backend (3101) + frontend (5273) dedicados contra um Postgres isolado (`nimbus_test_e2e`).
+- **Backend** (este diretório): unit + integration + journey, Vitest 2.x + supertest, ~408 testes, ~2min. Sobe o backend em memória (sem bindar porta) com WhatsApp, Stripe e mailer mockados.
+- **Frontend** (`frontend/`): Vitest + React Testing Library + jsdom, ~160 testes, ~20s. Roda no diretório `frontend/`.
+- **E2E** (`tests/e2e/`): Playwright + Chromium, ~26 testes. Sobe backend (3101) + frontend (5273) dedicados contra um Postgres isolado (`nimbus_test_e2e`).
+
+**CI**: `.github/workflows/tests.yml` roda backend + frontend a cada push/PR no GitHub; o E2E roda no agendamento noturno ou manualmente pela aba Actions.
+
+**Assinatura nos testes**: conta nova nasce no plano **free (0 campanhas / 0 números)** — salvar campanha sem assinatura leva **402**. Use `createTestUser({ plan: "pro" })` (ou `"basic"`/`"business"`) pra criar o usuário já com assinatura ativa; sem a opção, o usuário fica free (útil pros testes de gating).
 
 ## Como rodar
 
@@ -39,12 +43,22 @@ npm test                          # ~4s
 
 ## Estrutura
 
-### `unit/` — funções puras (sem IO)
+### `unit/` — funções puras (sem IO de rede)
 - `affiliate-asin.test.js` — extração de ASIN da Amazon a partir de URLs variadas.
-- `affiliate-shopee.test.js` — parsing de links da Shopee + montagem do link de afiliado.
-- `billing-limits.test.js` — limites de cada plano (free/basic/pro/business): números, grupos, categorias por grupo, auto-scraping.
+- `affiliate-ml.test.js` — `gerarLinkAfiliadoML` com fetch mockado: headers/body, cache de 7 dias, modos de falha (cookie expirado, link inválido, rede).
+- `affiliate-shopee.test.js` — assinatura HMAC da Shopee + montagem dos payloads GraphQL + link de afiliado.
+- `billing-limits.test.js` — limites de cada plano (free/basic/pro/business): números, grupos, categorias por grupo; `effectivePlanId` e admin bypass.
+- `notify-state-alert.test.js` — `stateAlert` (grace period, aviso de queda/volta, anti-spam).
 - `product-key.test.js` — geração da chave única de produto (hash MLB ou fallback por URL).
+- `repasse-extract.test.js` — extração de URLs das mensagens (wrappers do Baileys, dedupe) e serialização por usuário.
+- `scheduler-core.test.js` — janelas de horário (`inWindow`/`activeWindow`), `cooldownMinutes`, `itemMatchesCampaign` (todos os filtros), `renderTemplate`, `isAutoApprove`/`isRepasse`.
+- `scraper-filters.test.js` — filtros ML/Amazon/Shopee (read/write, clamps), `buildAmazonDealsUrl`, backoff da Amazon.
+- `scraper-live.test.js` — **opt-in** (`RUN_LIVE_SCRAPE=1`): scrape real de ML/Amazon com Puppeteer.
+- `scraper-ml-card.test.js` — parsers de card do ML (reviews, vendidos, rating, reconciliação de preço).
 - `scraper-shopee.test.js` — parser de produtos da Shopee, extração de preço/desconto/imagem.
+- `scrap-tester.test.js` — verificador periódico de saúde do scraper (cobertura por campo, thresholds).
+- `store-locks.test.js` — trava de loja pelo admin + efeito no `scheduler.activeSources`.
+- `whatsapp-close.test.js` — `classifyClose` (motivos de desconexão do Baileys) e `isStuckReconnecting`.
 
 ### `integration/` — backend rodando, batendo nas rotas via supertest
 - `auth.test.js` — register/login/me/PATCH/password/admin gating via ADMIN_EMAILS.
@@ -55,17 +69,26 @@ npm test                          # ~4s
 - `manual-ops.test.js` — refill/manual-add (force/409/202 cooldown)/pending approve+reject/history clear, isolamento entre users.
 - `admin.test.js` — CRUD de usuários + role, scraper config/run/status, catalog admin, DLQ.
 - `whatsapp.test.js` — sessões, listagem de grupos, envio, broadcast, invite; plan-gating de número novo (402).
-- `billing.test.js` — trial automático, `/me`, checkout, portal, webhooks Stripe (todos os eventos relevantes), idempotência, sub órfã, plan-gating com admin bypass.
+- `billing.test.js` — conta nova sem trial, `/me`, checkout, portal, trial de R$1, webhooks Stripe (todos os eventos relevantes), idempotência, sub órfã, plan-gating com admin bypass.
 - `health-metrics.test.js` — `/healthz` (status dos componentes) e `/metrics` (formato Prometheus, incremento de counters).
+- `store-locks.test.js` — gating admin da trava de loja, bloqueio de credenciais, campanha pulando loja trancada.
+- `repasse-capture.test.js` — captura de link do grupo líder → pending/fila, dedupe, lojas sem afiliado/não suportadas.
+- `scraper-shopee-flow.test.js` — fluxo `scrapeShopee` com fetch mockado (paginação, categorias, minDiscount).
 - `redis-queue.test.js` — fila BullMQ real (**opt-in**: só roda com `RUN_REDIS_TESTS=1`): enqueue, retry exponencial, RPC de control, status counts, DLQ. É opt-in porque bate num broker real e é sensível a timing (race de cold-start do marker do BullMQ + backoff de 5s no retry) → flaky de forma não-determinística, **não por bug de produto**. Fora do gate padrão pra manter `npm test` determinístico.
 
 ### `journey/` — fluxo end-to-end de um usuário
 - `full-journey.test.js` — registro → afiliado → catálogo → campanha → refill → envio → reset. Persiste estado entre testes (`globalThis.__NIMBUS_SKIP_TRUNCATE_BETWEEN_TESTS`).
 
 ### `e2e/` — browser real (Playwright)
-- `auth-flow.spec.js` — registro novo, login inválido, logout, navegação pra Assinatura.
-- `billing-page.spec.js` — tela de billing vista do navegador (trial Pro, Stripe desabilitado mostra banner).
-- `global-setup.js` — sobe backend (3101) + frontend (5273) com DB `nimbus_test_e2e`.
+- `auth.spec.js` — cadastro (confirmação de email), login inválido, login admin, logout, recuperar senha.
+- `dashboard.spec.js` — visão geral, navegação pelo sidebar, persistência da página no F5.
+- `campaign.spec.js` — criar/abrir/excluir campanha, navegar abas.
+- `affiliate.spec.js` — salvar/apagar credenciais ML/Amazon/Shopee.
+- `settings.spec.js` — tema, nome da conta, seção Segurança.
+- `billing.spec.js` — planos renderizam, Stripe desabilitado.
+- `whatsapp.spec.js` — modal de adicionar número inicia o QR.
+- `admin-scraper.spec.js`, `admin-shopee-filters.spec.js`, `admin-misc.spec.js` — telas de admin.
+- `global-setup.js` — cria/migra o DB `nimbus_test_e2e` (docker exec local; psql direto no CI).
 
 ### `helpers/` — utilitários
 - `env.js` — seta `NODE_ENV=test`, aponta `DATABASE_URL` pra `nimbus_test`, define `JWT_SECRET`. **Importar primeiro** em qualquer teste.
@@ -75,7 +98,7 @@ npm test                          # ~4s
 - `wa-mock.js` — mock no lugar de `backend/whatsapp/index.js`. Toda chamada de envio fica em `calls[]` pra os testes inspecionarem. `listSessions` espelha o contrato real (`{ numberId, status, info, lastError }`). Exporta `connect(userId, numberId)` (re-exportado como `waConnect` em `app.js`): marca uma sessão como `status:"connected"` — **necessário** pra qualquer teste de envio, porque o `whatsappGate` (`scheduler.js:152`) só deixa enviar quando algum número vinculado está conectado. `startSession` deixa a sessão em `"open"` (iniciada mas não conectada).
 - `stripe-mock.js` — mock no lugar de `backend/billing/stripe.js`. URL fake, eventos sintéticos.
 - `mailer-mock.js` — mock no lugar de `backend/auth/mailer.js`. Sem ele o register/reset dispara o SMTP **real** e bate na cota horária. O token de verificação continua sendo gravado no DB, então `createTestUser` (que lê o token direto do banco) segue funcionando.
-- `pg-helpers.js` — `truncateAll()` antes de cada teste, helpers de seed.
+- `pg-helpers.js` — `truncateAll()` antes de cada teste, `seedSubscription(userId, planId)` (assinatura ativa direto no DB — é o que `createTestUser({ plan })` usa) e helpers de seed.
 - `setup-each.js` — `beforeEach` global (reset de mocks, truncate).
 - `global-setup.js` — `beforeAll` global (warmup do appConfig).
 - `fixtures.js` — geradores de objetos de teste (produto, grupo, etc).

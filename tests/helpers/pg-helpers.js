@@ -56,4 +56,16 @@ async function disconnectDb() {
   await disconnect();
 }
 
-export { truncateAll, disconnectDb, TABLES };
+// Dá assinatura ativa a um usuário de teste — sem ela o plano efetivo é "free"
+// (0 campanhas/números) e qualquer PUT /api/state com campanhas leva 402.
+async function seedSubscription(userId, planId = "pro", status = "active") {
+  const db = prisma();
+  const currentPeriodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  return db.subscription.upsert({
+    where: { userId },
+    create: { userId, planId, status, currentPeriodEnd },
+    update: { planId, status, currentPeriodEnd },
+  });
+}
+
+export { truncateAll, disconnectDb, seedSubscription, TABLES };

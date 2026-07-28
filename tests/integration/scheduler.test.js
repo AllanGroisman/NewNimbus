@@ -13,7 +13,7 @@ vi.spyOn(affiliate, "gerarLinkAfiliadoML").mockImplementation(async (_userId, ur
 
 // Helper: cria usuário e já configura afiliado ML pra ele (desbloqueia gating).
 async function createUserWithMLAffiliate() {
-  const u = await createTestUser();
+  const u = await createTestUser({ plan: "pro" });
   affiliate.writeConfig(u.user.id, { tag: "test-tag", cookie: "test-cookie-sessid" });
   return u;
 }
@@ -222,7 +222,7 @@ describe("scheduler.sendNextNow — envia primeiro item da queue", () => {
   });
 
   it("falha quando ML afiliado nao configurado e grupo usa ML", async () => {
-    const { user, auth } = await createTestUser();
+    const { user, auth } = await createTestUser({ plan: "pro" });
     // SEM afiliado configurado pra esse user
     affiliate.clearConfig(user.id);
     const group = makeGroup({ id: 303, sources: ["ml"] });

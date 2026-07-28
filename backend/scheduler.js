@@ -924,4 +924,9 @@ async function addItemToGroup(userId, group, item, { force = false } = {}) {
   };
 }
 
-module.exports = { start, stop, tick, sendNextNow, refillNow, manualAdd, addItemToGroup, isRepasse, isAutoApprove, resolveSources, activeSources, status, processSendJob };
+module.exports = {
+  start, stop, tick, sendNextNow, refillNow, manualAdd, addItemToGroup,
+  isRepasse, isAutoApprove, resolveSources, activeSources, status, processSendJob,
+  // Funções puras exportadas só pra teste unitário (tests/unit/scheduler-core.test.js).
+  inWindow, activeWindow, cooldownMinutes, renderTemplate, itemMatchesCampaign, campaignFilterCtx,
+};
