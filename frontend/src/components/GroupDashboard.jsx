@@ -143,7 +143,7 @@ function QueueField({ label, value, mono, link }) {
   );
 }
 
-function QueueItemCard({ item, idx, eta, onRemove, onDragStart, onDragOver, onDragEnd, onDrop, isDragOver, isDragging }) {
+function QueueItemCard({ item, idx, eta, onRemove, onMoveToTop, onDragStart, onDragOver, onDragEnd, onDrop, isDragOver, isDragging }) {
   const addedAt = item.addedAt ? new Date(item.addedAt) : null;
   const addedAtStr = addedAt && !isNaN(addedAt.getTime()) ? addedAt.toLocaleString("pt-BR") : null;
   const discountStr = !isEmpty(item.discount) ? (typeof item.discount === "number" ? `${item.discount}%` : String(item.discount)) : null;
@@ -175,7 +175,18 @@ function QueueItemCard({ item, idx, eta, onRemove, onDragStart, onDragOver, onDr
           <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 18, padding: "0 6px", borderRadius: 9, background: idx === 0 ? PRIMARY_LIGHT : "var(--color-background-secondary)", color: idx === 0 ? PRIMARY_DARK : "var(--color-text-secondary)", fontWeight: 500, fontSize: 11 }}>#{idx + 1}</span>
           <span>⏱ {idx === 0 ? "Próximo às" : "Previsto"} <strong style={{ color: idx === 0 ? PRIMARY_DARK : "var(--color-text-primary)" }}>{formatETA(eta)}</strong></span>
         </div>
-        <button onClick={onRemove} style={{ padding: "5px 10px", borderRadius: 7, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 12, cursor: "pointer" }}>Remover</button>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          {idx > 0 && (
+            <button
+              onClick={onMoveToTop}
+              title="Coloca este produto na primeira posição da fila"
+              style={{ padding: "5px 10px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 12, cursor: "pointer" }}
+            >
+              ⬆ Enviar primeiro
+            </button>
+          )}
+          <button onClick={onRemove} style={{ padding: "5px 10px", borderRadius: 7, border: "0.5px solid #F7C1C1", background: "#FCEBEB", color: "#A32D2D", fontSize: 12, cursor: "pointer" }}>Remover</button>
+        </div>
       </div>
 
       <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
@@ -1063,8 +1074,22 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     persistQueue(withTimes);
   };
 
-  // Reordenar a fila por drag-and-drop. Persiste via saveGroupQueue pra sobreviver
-  // ao próximo polling de ops (que carrega o estado fresco do servidor).
+  // Move um item da fila de uma posição pra outra. Persiste via saveGroupQueue pra
+  // sobreviver ao próximo polling de ops (que carrega o estado fresco do servidor).
+  // Usada tanto pelo drag-and-drop quanto pelo botão "Enviar primeiro".
+  const moveQueueItem = (fromIdx, toIdx) => {
+    if (fromIdx == null || fromIdx === toIdx) return;
+    const next = [...queue];
+    const [moved] = next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, moved);
+    setQueue(next);
+    onUpdate(group.id, { queue: next });
+    persistQueue(next);
+  };
+
+  const handleQueueMoveToTop = (idx) => () => moveQueueItem(idx, 0);
+
+  // Reordenar a fila por drag-and-drop.
   // Usa ref pro índice de origem porque setState pode não ter propagado entre
   // dragstart e drop em alguns navegadores.
   const handleQueueDragStart = (idx) => (e) => {
@@ -1084,13 +1109,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     dragIdxRef.current = null;
     setDragIdx(null);
     setDragOverIdx(null);
-    if (fromIdx == null || fromIdx === dropIdx) return;
-    const next = [...queue];
-    const [moved] = next.splice(fromIdx, 1);
-    next.splice(dropIdx, 0, moved);
-    setQueue(next);
-    onUpdate(group.id, { queue: next });
-    persistQueue(next);
+    moveQueueItem(fromIdx, dropIdx);
   };
 
   const save = () => { onUpdate(group.id, { schedule: sched, scraping, queue, pending, ...groupInfo }); setSaved(true); setTimeout(() => setSaved(false), 2000); };
@@ -2618,7 +2637,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {queue.length > 1 && (
                   <div style={{ fontSize: 11, color: "var(--color-text-secondary)", padding: "0 4px" }}>
-                    💡 Arraste os cards para reordenar a fila.
+                    💡 Arraste os cards para reordenar a fila, ou use "Enviar primeiro" para furar a fila com um produto.
                   </div>
                 )}
                 {queue.map((item, idx) => (
@@ -2628,6 +2647,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                     idx={idx}
                     eta={etas[idx]}
                     onRemove={() => setConfirmRemoveQueueItem(item)}
+                    onMoveToTop={handleQueueMoveToTop(idx)}
                     onDragStart={handleQueueDragStart(idx)}
                     onDragOver={handleQueueDragOver(idx)}
                     onDragEnd={handleQueueDragEnd}

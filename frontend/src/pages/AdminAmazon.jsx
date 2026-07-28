@@ -26,7 +26,7 @@ function AmazonFiltersSection() {
   useEffect(() => {
     adminScraperAmazonFilters()
       .then(r => setFilters(r.filters))
-      .catch(() => setFilters({ minRating: 4.0, minReviews: 20, minPrice: 20, maxPrice: 0, maxDiscount: 90, enrichLimit: 40 }));
+      .catch(() => setFilters({ minRating: 4.0, minReviews: 20, minPrice: 20, maxPrice: 0, maxDiscount: 90, minDiscount: 0, enrichLimit: 40 }));
   }, []);
 
   if (!filters) {
@@ -74,6 +74,9 @@ function AmazonFiltersSection() {
         <NumField label="Desconto máximo (%)"        step="5" max="100"
           value={filters.maxDiscount}   onChange={v => set("maxDiscount", v)}
           hint="Ex: 90 — corta descontos inflados" />
+        <NumField label="Desconto mínimo (%)"        step="5" max="100"
+          value={filters.minDiscount}   onChange={v => set("minDiscount", v)}
+          hint="Ex: 1 — só itens em promoção. 0 = qualquer um" />
         <NumField label="Produtos enriquecidos"      step="10" max="300"
           value={filters.enrichLimit}   onChange={v => set("enrichLimit", v)}
           hint="Quantos produtos por rodada ganham nota, vendas, vendedor e frete. Cada um abre a página do produto (~5s). Mais = dado mais completo, rodada mais lenta e mais risco de bloqueio. Padrão: 40" />
@@ -94,7 +97,7 @@ function AmazonFiltersSection() {
           {saving ? "Salvando..." : "Salvar filtros"}
         </button>
         <button
-          onClick={() => setFilters({ minRating: 4.0, minReviews: 20, minPrice: 20, maxPrice: 0, maxDiscount: 90, enrichLimit: 40 })}
+          onClick={() => setFilters({ minRating: 4.0, minReviews: 20, minPrice: 20, maxPrice: 0, maxDiscount: 90, minDiscount: 0, enrichLimit: 40 })}
           disabled={saving}
           style={{ padding: "8px 16px", borderRadius: 8, background: "transparent", border: "0.5px solid var(--color-border-secondary)", fontSize: 13, cursor: "pointer" }}
         >

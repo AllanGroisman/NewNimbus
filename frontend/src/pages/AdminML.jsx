@@ -26,7 +26,7 @@ function MLFiltersSection() {
   useEffect(() => {
     adminScraperMLFilters()
       .then(r => setFilters(r.filters))
-      .catch(() => setFilters({ minRating: 4.0, minSales: 50, minPrice: 20, maxPrice: 0, maxDiscount: 95 }));
+      .catch(() => setFilters({ minRating: 4.0, minSales: 50, minPrice: 20, maxPrice: 0, maxDiscount: 95, minDiscount: 0 }));
   }, []);
 
   if (!filters) {
@@ -74,6 +74,9 @@ function MLFiltersSection() {
         <NumField label="Desconto máximo (%)"    step="5" max="100"
           value={filters.maxDiscount}  onChange={v => set("maxDiscount", v)}
           hint="Ex: 95 — corta '99% off' fake" />
+        <NumField label="Desconto mínimo (%)"    step="5" max="100"
+          value={filters.minDiscount}  onChange={v => set("minDiscount", v)}
+          hint="Ex: 1 — só itens em promoção. 0 = qualquer um" />
       </div>
 
       {msg && (
@@ -91,7 +94,7 @@ function MLFiltersSection() {
           {saving ? "Salvando..." : "Salvar filtros"}
         </button>
         <button
-          onClick={() => setFilters({ minRating: 4.0, minSales: 50, minPrice: 20, maxPrice: 0, maxDiscount: 95 })}
+          onClick={() => setFilters({ minRating: 4.0, minSales: 50, minPrice: 20, maxPrice: 0, maxDiscount: 95, minDiscount: 0 })}
           disabled={saving}
           style={{ padding: "8px 16px", borderRadius: 8, background: "transparent", border: "0.5px solid var(--color-border-secondary)", fontSize: 13, cursor: "pointer" }}
         >

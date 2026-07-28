@@ -88,10 +88,36 @@ describe("passesMLFilters", () => {
     expect(affiliate.passesMLFilters(mlProduct({ discount: null }), { ...ML_DEFAULTS, maxDiscount: 95 })).toBe(true);
   });
 
+  it("minDiscount: só deixa passar itens em promoção (corta desconto 0/ausente)", () => {
+    const f = { ...ML_DEFAULTS, minDiscount: 10 };
+    expect(affiliate.passesMLFilters(mlProduct({ discount: 68 }), f)).toBe(true);
+    expect(affiliate.passesMLFilters(mlProduct({ discount: 10 }), f)).toBe(true);
+    expect(affiliate.passesMLFilters(mlProduct({ discount: 5 }), f)).toBe(false);
+    // O caso de uso principal: minDiscount > 0 derruba item sem desconto.
+    expect(affiliate.passesMLFilters(mlProduct({ discount: null }), { ...ML_DEFAULTS, minDiscount: 1 })).toBe(false);
+  });
+
   it("combina filtros: precisa passar em todos", () => {
-    const f = { minRating: 4, minSales: 50, minPrice: 10, maxPrice: 500, maxDiscount: 90 };
+    const f = { minRating: 4, minSales: 50, minPrice: 10, maxPrice: 500, maxDiscount: 90, minDiscount: 10 };
     expect(affiliate.passesMLFilters(mlProduct(), f)).toBe(true);
     expect(affiliate.passesMLFilters(mlProduct({ discount: 95 }), f)).toBe(false);
+    expect(affiliate.passesMLFilters(mlProduct({ discount: 5 }), f)).toBe(false);
+  });
+});
+
+describe("writeMLScraperFilters / readMLScraperFilters", () => {
+  it("persiste minDiscount e volta no read", () => {
+    affiliate.writeMLScraperFilters({ minDiscount: 15 });
+    expect(affiliate.readMLScraperFilters().minDiscount).toBe(15);
+  });
+
+  it("clampa minDiscount em 100", () => {
+    expect(affiliate.writeMLScraperFilters({ minDiscount: 150 }).minDiscount).toBe(100);
+  });
+
+  it("read mescla defaults: config antiga sem o campo volta com minDiscount:0", () => {
+    expect(affiliate.readMLScraperFilters()).toHaveProperty("minDiscount");
+    expect(ML_DEFAULTS.minDiscount).toBe(0);
   });
 });
 
@@ -130,6 +156,32 @@ describe("passesAmazonFilters", () => {
     expect(affiliate.passesAmazonFilters(amzProduct({ price: 199 }), { ...AMZ_DEFAULTS, maxPrice: 150 })).toBe(false);
     expect(affiliate.passesAmazonFilters(amzProduct({ discount: 43 }), { ...AMZ_DEFAULTS, maxDiscount: 90 })).toBe(true);
     expect(affiliate.passesAmazonFilters(amzProduct({ discount: 95 }), { ...AMZ_DEFAULTS, maxDiscount: 90 })).toBe(false);
+  });
+
+  it("minDiscount: só deixa passar itens em promoção (corta desconto 0/ausente)", () => {
+    const f = { ...AMZ_DEFAULTS, minDiscount: 10 };
+    expect(affiliate.passesAmazonFilters(amzProduct({ discount: 43 }), f)).toBe(true);
+    expect(affiliate.passesAmazonFilters(amzProduct({ discount: 10 }), f)).toBe(true);
+    expect(affiliate.passesAmazonFilters(amzProduct({ discount: 5 }), f)).toBe(false);
+    expect(affiliate.passesAmazonFilters(amzProduct({ discount: null }), { ...AMZ_DEFAULTS, minDiscount: 1 })).toBe(false);
+  });
+});
+
+describe("writeAmazonScraperFilters / readAmazonScraperFilters", () => {
+  it("persiste minDiscount e volta no read", () => {
+    affiliate.writeAmazonScraperFilters({ minDiscount: 20 });
+    expect(affiliate.readAmazonScraperFilters().minDiscount).toBe(20);
+  });
+
+  it("clampa minDiscount em 100 sem mexer no enrichLimit", () => {
+    const saved = affiliate.writeAmazonScraperFilters({ minDiscount: 150 });
+    expect(saved.minDiscount).toBe(100);
+    expect(saved.enrichLimit).toBe(AMZ_DEFAULTS.enrichLimit);
+  });
+
+  it("read mescla defaults: config antiga sem o campo volta com minDiscount:0", () => {
+    expect(affiliate.readAmazonScraperFilters()).toHaveProperty("minDiscount");
+    expect(AMZ_DEFAULTS.minDiscount).toBe(0);
   });
 });
 

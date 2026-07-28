@@ -560,6 +560,7 @@ const ML_FILTERS_DEFAULTS = {
   minPrice:    0,  // BRL
   maxPrice:    0,  // 0 = sem teto
   maxDiscount: 0,  // % máximo; 0 = sem filtro
+  minDiscount: 0,  // % mínimo. >0 = só itens em promoção. 0 = sem filtro
 };
 
 function readMLScraperFilters() {
@@ -577,9 +578,11 @@ function writeMLScraperFilters(patch) {
     minPrice:    num(patch?.minPrice,    cur.minPrice),
     maxPrice:    num(patch?.maxPrice,    cur.maxPrice),
     maxDiscount: num(patch?.maxDiscount, cur.maxDiscount),
+    minDiscount: num(patch?.minDiscount, cur.minDiscount),
   };
   if (next.minRating > 5)   next.minRating = 5;
   if (next.maxDiscount > 100) next.maxDiscount = 100;
+  if (next.minDiscount > 100) next.minDiscount = 100;
   appConfig.set(ML_FILTERS_KEY, next);
   return next;
 }
@@ -595,6 +598,7 @@ const AMAZON_FILTERS_DEFAULTS = {
   minPrice:    0,  // BRL
   maxPrice:    0,  // 0 = sem teto
   maxDiscount: 0,  // % máximo; 0 = sem filtro
+  minDiscount: 0,  // % mínimo. >0 = só itens em promoção. 0 = sem filtro
   // Quantos produtos por rodada ganham nota/avaliações/vendas/vendedor/frete —
   // cada um exige abrir a página do produto (~5s e risco de CAPTCHA), por isso é
   // limitado. Só vale pras rodadas SEM filtro de nota/avaliações; com filtro o
@@ -617,10 +621,12 @@ function writeAmazonScraperFilters(patch) {
     minPrice:    num(patch?.minPrice,    cur.minPrice),
     maxPrice:    num(patch?.maxPrice,    cur.maxPrice),
     maxDiscount: num(patch?.maxDiscount, cur.maxDiscount),
+    minDiscount: num(patch?.minDiscount, cur.minDiscount),
     enrichLimit: Math.round(num(patch?.enrichLimit, cur.enrichLimit)),
   };
   if (next.minRating > 5)   next.minRating = 5;
   if (next.maxDiscount > 100) next.maxDiscount = 100;
+  if (next.minDiscount > 100) next.minDiscount = 100;
   if (next.enrichLimit > 300) next.enrichLimit = 300;
   appConfig.set(AMAZON_FILTERS_KEY, next);
   return next;
@@ -714,6 +720,7 @@ function passesMLFilters(product, filters = null) {
   if (f.minPrice > 0 && price > 0 && price < f.minPrice) return false;
   if (f.maxPrice > 0 && price > f.maxPrice) return false;
   if (f.maxDiscount > 0 && discount > f.maxDiscount) return false;
+  if (f.minDiscount > 0 && discount < f.minDiscount) return false;
   return true;
 }
 
@@ -737,6 +744,7 @@ function passesAmazonFilters(product, filters = null) {
   if (f.minPrice > 0 && price > 0 && price < f.minPrice) return false;
   if (f.maxPrice > 0 && price > f.maxPrice) return false;
   if (f.maxDiscount > 0 && discount > f.maxDiscount) return false;
+  if (f.minDiscount > 0 && discount < f.minDiscount) return false;
   return true;
 }
 
