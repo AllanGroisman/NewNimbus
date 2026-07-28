@@ -11,6 +11,16 @@
 # Env (opcional):
 #   GDRIVE_REMOTE   — nome do remote rclone (default: gdrive)
 #   GDRIVE_FOLDER   — pasta no Drive (default: NimbusBackups)
+#
+# ⚠️  ESTE CAMINHO ENVIA OS DUMPS SEM CIFRA.
+# Diferente do backup-remote.js (Backblaze), que cifra com BACKUP_ENC_KEY, aqui
+# o rclone espelha os .sql.gz como estão. Cada dump contém hashes de senha,
+# e-mails, credenciais de afiliado e as sessões de WhatsApp de todos os clientes
+# — e o destino costuma ser uma conta pessoal do Drive.
+#
+# Antes de ligar isto, configure um remote do tipo "crypt" no rclone envolvendo o
+# gdrive (`rclone config` → crypt) e aponte GDRIVE_REMOTE pra ele. Sem isso, você
+# está publicando o banco inteiro em claro numa conta pessoal.
 
 set -euo pipefail
 

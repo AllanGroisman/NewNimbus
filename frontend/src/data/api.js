@@ -97,7 +97,11 @@ export async function authUpdate(updates) {
   return http("PATCH", "/api/auth/me", updates);
 }
 export async function authChangePassword({ currentPassword, newPassword }) {
-  return http("POST", "/api/auth/password", { currentPassword, newPassword });
+  const r = await http("POST", "/api/auth/password", { currentPassword, newPassword });
+  // Trocar a senha derruba os tokens antigos no servidor — guardamos o novo pra
+  // esta aba continuar logada (as outras sessões caem, que é a intenção).
+  if (r.token) setToken(r.token);
+  return r;
 }
 export function authLogout() { clearToken(); }
 

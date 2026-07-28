@@ -16,6 +16,11 @@ const MAX_EMAIL_LEN = 254;
 const MIN_PASSWORD_LEN = 8;
 const MAX_PASSWORD_LEN = 128;
 
+// Custo do bcrypt. Hash guarda o próprio custo, então subir aqui não invalida as
+// senhas já gravadas — elas continuam conferindo, e são regravadas com o custo
+// novo na próxima troca.
+const BCRYPT_ROUNDS = 12;
+
 const EMAIL_VERIFY_TTL_MS    = 24 * 60 * 60 * 1000; // 24h
 const PASSWORD_RESET_TTL_MS  = 60 * 60 * 1000;     // 1h
 const RESEND_COOLDOWN_MS     = 2 * 60 * 1000;       // 2 min entre reenvios
@@ -66,33 +71,42 @@ function assertRegistrationAllowed(email) {
   }
 }
 
-// Conta admin garantida no boot: força email + senha + role=admin.
+// Conta admin garantida no boot: cria se não existir, e mantém role=admin.
 // Configurada via env DEFAULT_ADMIN_EMAIL / DEFAULT_ADMIN_PASSWORD.
+//
+// A senha é usada SÓ na criação. Antes, ela era re-aplicada a cada boot, o que
+// tornava impossível trocar a senha do admin pela interface — a troca voltava no
+// próximo restart, e a senha efetiva era sempre a que estava no .env.
 const DEFAULT_ADMIN_EMAIL = String(process.env.DEFAULT_ADMIN_EMAIL || "").trim().toLowerCase();
 const DEFAULT_ADMIN_PASSWORD = process.env.DEFAULT_ADMIN_PASSWORD || "";
 const DEFAULT_ADMIN_NAME = process.env.DEFAULT_ADMIN_NAME || "Admin";
 
 async function seedDefaultAdmin() {
-  if (!DEFAULT_ADMIN_EMAIL || !DEFAULT_ADMIN_PASSWORD) return;
-  if (DEFAULT_ADMIN_PASSWORD.length < 6) {
-    console.warn("[auth] DEFAULT_ADMIN_PASSWORD < 6 chars — seed pulado");
-    return;
-  }
+  if (!DEFAULT_ADMIN_EMAIL) return;
 
   const existing = await findByEmail(DEFAULT_ADMIN_EMAIL);
 
   if (existing) {
-    const samePassword = await bcrypt.compare(DEFAULT_ADMIN_PASSWORD, existing.passwordHash);
-    if (samePassword && existing.role === "admin") return;
+    // Só garante o role — a senha em uso é a que o admin definiu, não a do .env.
+    if (existing.role === "admin") return;
     await prisma().user.update({
       where: { id: existing.id },
-      data: {
-        passwordHash: samePassword ? existing.passwordHash : await bcrypt.hash(DEFAULT_ADMIN_PASSWORD, 10),
-        role: "admin",
-      },
+      data: { role: "admin" },
     });
     invalidateUser(existing.id);
-    console.log(`[auth] seed: admin ${DEFAULT_ADMIN_EMAIL} sincronizado`);
+    console.log(`[auth] seed: admin ${DEFAULT_ADMIN_EMAIL} — role restaurado`);
+    return;
+  }
+
+  // Daqui pra baixo é só o bootstrap da primeira instalação (admin não existe).
+  if (!DEFAULT_ADMIN_PASSWORD) {
+    console.warn(`[auth] seed: admin ${DEFAULT_ADMIN_EMAIL} não existe e DEFAULT_ADMIN_PASSWORD está vazia — pulando`);
+    return;
+  }
+  try {
+    validatePassword(DEFAULT_ADMIN_PASSWORD);
+  } catch (err) {
+    console.warn(`[auth] seed pulado: DEFAULT_ADMIN_PASSWORD fraca — ${err.message}`);
     return;
   }
 
@@ -102,7 +116,7 @@ async function seedDefaultAdmin() {
       name: DEFAULT_ADMIN_NAME,
       email: DEFAULT_ADMIN_EMAIL,
       phone: "",
-      passwordHash: await bcrypt.hash(DEFAULT_ADMIN_PASSWORD, 10),
+      passwordHash: await bcrypt.hash(DEFAULT_ADMIN_PASSWORD, BCRYPT_ROUNDS),
       role: "admin",
       emailVerified: true,
     },
@@ -211,7 +225,7 @@ async function register({ name, email, password }) {
   const existing = await findByEmail(email);
   if (existing) throw new Error("Já existe uma conta com este email");
 
-  const passwordHash = await bcrypt.hash(password, 10);
+  const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
   const verifyToken = newToken();
   const user = await prisma().user.create({
     data: {
@@ -254,7 +268,7 @@ async function login({ email, password }) {
   }
   await syncRole(user);
   cacheUser(user);
-  const token = jwt.sign({ sub: user.id, email: user.email }, getJwtSecret(), { expiresIn: TOKEN_TTL });
+  const token = signToken(user);
   return { token, user: publicUser(user) };
 }
 
@@ -278,7 +292,7 @@ async function verifyEmail({ token }) {
   invalidateUser(user.id);
   await syncRole(updated);
   cacheUser(updated);
-  const jwtToken = jwt.sign({ sub: updated.id, email: updated.email }, getJwtSecret(), { expiresIn: TOKEN_TTL });
+  const jwtToken = signToken(updated);
   return { token: jwtToken, user: publicUser(updated) };
 }
 
@@ -349,19 +363,22 @@ async function resetPassword({ token, newPassword }) {
   const updated = await prisma().user.update({
     where: { id: user.id },
     data: {
-      passwordHash: await bcrypt.hash(String(newPassword), 10),
+      passwordHash: await bcrypt.hash(String(newPassword), BCRYPT_ROUNDS),
       passwordResetToken: null,
       passwordResetExpires: null,
       // Reset implica que a pessoa controla o email — verifica também.
       emailVerified: true,
       emailVerifyToken: null,
       emailVerifyExpires: null,
+      // Derruba as sessões abertas: quem tiver roubado um token perde o acesso
+      // no reset, em vez de continuar renovando indefinidamente.
+      tokenVersion: { increment: 1 },
     },
   });
   invalidateUser(user.id);
   await syncRole(updated);
   cacheUser(updated);
-  const jwtToken = jwt.sign({ sub: updated.id, email: updated.email }, getJwtSecret(), { expiresIn: TOKEN_TTL });
+  const jwtToken = signToken(updated);
   return { token: jwtToken, user: publicUser(updated) };
 }
 
@@ -419,7 +436,7 @@ async function loginWithGoogle({ idToken }) {
         name,
         email,
         phone: "",
-        passwordHash: await bcrypt.hash(randomPass, 10),
+        passwordHash: await bcrypt.hash(randomPass, BCRYPT_ROUNDS),
         role: isAdminEmail(email) ? "admin" : "user",
         // Google já validou o email — pula verificação.
         emailVerified: true,
@@ -440,12 +457,25 @@ async function loginWithGoogle({ idToken }) {
   }
   await syncRole(user);
   cacheUser(user);
-  const token = jwt.sign({ sub: user.id, email: user.email }, getJwtSecret(), { expiresIn: TOKEN_TTL });
+  const token = signToken(user);
   return { token, user: publicUser(user), created: !user.createdAt || (Date.now() - new Date(user.createdAt).getTime() < 5000) };
 }
 
+// Fonte única do formato do token. `tv` carrega a versão de sessão do usuário —
+// requireAuth compara com a do banco e recusa se não bater, que é o mecanismo de
+// expulsar sessões antigas em troca de senha, reset e suspensão.
+function signToken(user) {
+  return jwt.sign(
+    { sub: user.id, email: user.email, tv: user.tokenVersion ?? 0 },
+    getJwtSecret(),
+    { expiresIn: TOKEN_TTL, algorithm: "HS256" }
+  );
+}
+
 function verifyToken(token) {
-  try { return jwt.verify(token, getJwtSecret()); }
+  // algorithms fixo: sem isso a lib aceita qualquer algoritmo que o próprio
+  // token declarar, o que abre confusão de algoritmo se o segredo mudar de tipo.
+  try { return jwt.verify(token, getJwtSecret(), { algorithms: ["HS256"] }); }
   catch { return null; }
 }
 
@@ -453,7 +483,18 @@ function verifyToken(token) {
 // deslizar a janela de sessão enquanto o usuário está ativo (mesma assinatura
 // de token usada em login()).
 function reissueToken(user) {
-  return jwt.sign({ sub: user.id, email: user.email }, getJwtSecret(), { expiresIn: TOKEN_TTL });
+  return signToken(user);
+}
+
+// Sobe a versão de sessão: todos os tokens já emitidos pro usuário param de
+// valer na próxima request. Devolve o usuário atualizado.
+async function bumpTokenVersion(userId) {
+  const updated = await prisma().user.update({
+    where: { id: userId },
+    data: { tokenVersion: { increment: 1 } },
+  });
+  invalidateUser(userId);
+  return updated;
 }
 
 // requireAuth precisa ser sync na assinatura externa — express middleware.
@@ -468,6 +509,10 @@ function requireAuth(req, res, next) {
   const handle = (user) => {
     if (!user) return res.status(401).json({ error: "Usuário não encontrado" });
     if (user.suspended) return res.status(403).json({ error: "Conta suspensa.", code: "account_suspended" });
+    // Token emitido antes da última troca de senha / reset / suspensão.
+    if ((payload.tv ?? 0) !== (user.tokenVersion ?? 0)) {
+      return res.status(401).json({ error: "Sessão encerrada. Entre novamente.", code: "session_revoked" });
+    }
     syncRole(user)
       .then(() => {
         req.user = publicUser(user);
@@ -517,12 +562,18 @@ async function changePassword(userId, { currentPassword, newPassword }) {
   if (!user) throw new Error("Usuário não encontrado");
   const ok = await bcrypt.compare(String(currentPassword || ""), user.passwordHash);
   if (!ok) throw new Error("Senha atual incorreta");
-  await prisma().user.update({
+  const updated = await prisma().user.update({
     where: { id: userId },
-    data: { passwordHash: await bcrypt.hash(String(newPassword), 10) },
+    // tokenVersion sobe junto: trocar a senha encerra as outras sessões abertas.
+    data: {
+      passwordHash: await bcrypt.hash(String(newPassword), BCRYPT_ROUNDS),
+      tokenVersion: { increment: 1 },
+    },
   });
   invalidateUser(userId);
-  return true;
+  cacheUser(updated);
+  // Token novo pra quem trocou continuar logado — só as OUTRAS sessões caem.
+  return { token: signToken(updated) };
 }
 
 // Versão async — server.js precisará adaptar pra await em algumas rotas admin.
@@ -556,7 +607,12 @@ async function adminSetPassword(userId, newPassword) {
   validatePassword(newPassword);
   await prisma().user.update({
     where: { id: userId },
-    data: { passwordHash: await bcrypt.hash(String(newPassword), 10) },
+    // Admin resetando a senha de alguém encerra as sessões daquela pessoa —
+    // é o caminho usado quando se suspeita que a conta foi comprometida.
+    data: {
+      passwordHash: await bcrypt.hash(String(newPassword), BCRYPT_ROUNDS),
+      tokenVersion: { increment: 1 },
+    },
   }).catch(err => {
     if (err.code === "P2025") throw new Error("Usuário não encontrado");
     throw err;
@@ -590,7 +646,14 @@ async function adminVerifyEmail(userId) {
 async function adminSetSuspended(userId, suspended) {
   const user = await prisma().user.update({
     where: { id: userId },
-    data: { suspended, suspendedAt: suspended ? new Date() : null },
+    // Ao suspender, sobe a versão de sessão: o cache de usuário do requireAuth
+    // tem 30s de validade e é por processo, então sem isso a conta suspensa
+    // continuaria passando por até meio minuto.
+    data: {
+      suspended,
+      suspendedAt: suspended ? new Date() : null,
+      ...(suspended ? { tokenVersion: { increment: 1 } } : {}),
+    },
   }).catch(err => {
     if (err.code === "P2025") throw new Error("Usuário não encontrado");
     throw err;

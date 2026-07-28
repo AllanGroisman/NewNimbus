@@ -1,4 +1,5 @@
 const puppeteer = require("puppeteer");
+const urlGuard = require("./urlGuard");
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -904,20 +905,10 @@ function parseSold(s) {
 // Tenta seletores conhecidos por loja; cai pra OG tags em casos genéricos.
 // ────────────────────────────────────────────────────────────────────────
 
-function detectStore(url) {
-  try {
-    const u = new URL(url);
-    const host = u.hostname.toLowerCase();
-    if (/mercadolivre|mercadolibre/.test(host) || /merc\.li|mlb\.li|meli\.la/.test(host)) return "Mercado Livre";
-    if (/amazon|amzn/.test(host)) return "Amazon";
-    if (/shopee/.test(host)) return "Shopee";
-    if (/americanas/.test(host)) return "Americanas";
-    if (/magazineluiza|magalu/.test(host)) return "Magazine Luiza";
-    return null;
-  } catch {
-    return null;
-  }
-}
+// Delega pro urlGuard, que casa por sufixo de domínio. O critério antigo era
+// `/amazon/.test(host)`, que aceitava qualquer host contendo o nome da loja —
+// "amazon.evil.com" passava como Amazon.
+const detectStore = urlGuard.detectStore;
 
 // Deriva um nome aproximado do slug da URL (fallback p/ Shopee, cuja PDP é uma
 // SPA que não renderiza pra bot). Ex.: ".../Fone-Bluetooth-i12-i.123.456" →
@@ -1354,8 +1345,10 @@ async function scrapeSingleProduct(url, { userId } = {}) {
   if (!url || typeof url !== "string" || !url.trim()) {
     throw new Error("URL inválida");
   }
-  const cleanUrl = url.trim();
-  const store = detectStore(cleanUrl);
+  // Valida ANTES de abrir o navegador: só http(s), só domínio de loja conhecida,
+  // e o host tem que resolver pra IP público. Sem isso o Puppeteer navegaria pra
+  // qualquer endereço passado pelo usuário, inclusive interno (ver urlGuard.js).
+  const { url: cleanUrl, store } = await urlGuard.assertStoreUrl(url);
 
   if (store === "Shopee") {
     const viaApi = await scrapeShopeeSingleViaApi(cleanUrl, userId).catch(() => null);

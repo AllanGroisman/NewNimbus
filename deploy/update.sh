@@ -34,7 +34,9 @@ chmod -R o+rX "$REPO_DIR/frontend/dist"
 echo
 echo "[4/4] PM2 reload..."
 cd "$REPO_DIR/backend"
-pm2 reload nimbus-backend nimbus-worker
+# --update-env: sem isso o PM2 reusa as variáveis capturadas no primeiro start,
+# e mudanças no .env (senha do Redis, DATABASE_URL) não chegam aos processos.
+pm2 reload nimbus-backend nimbus-worker --update-env
 
 echo
 echo "=== Update done. ==="

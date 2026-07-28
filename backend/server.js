@@ -48,6 +48,9 @@ process.on("uncaughtException", (err) => {
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+// Interface onde a API escuta. Default 127.0.0.1 — quem fala com o mundo é o
+// nginx. BIND_HOST=0.0.0.0 só se algum dia o backend rodar em host separado.
+const BIND_HOST = process.env.BIND_HOST || "127.0.0.1";
 
 // ────────────────────────────────────────────────────────────────────────
 // Hardening (Fase 0)
@@ -66,14 +69,28 @@ app.use(helmet({
 // Patterns suportados: domínio exato OU "*.dominio.com" (wildcard de subdomínio).
 const { corsOrigins: CORS_ORIGINS } = require("./config/publicUrl");
 
+// Em produção a allowlist não pode ficar vazia: combinada com credentials:true,
+// "aceita qualquer origem" deixa qualquer site ler respostas autenticadas da API.
+// Falhar no boot é melhor do que subir aberto sem ninguém perceber.
+if (process.env.NODE_ENV === "production" && !CORS_ORIGINS.length) {
+  console.error("[cors] NODE_ENV=production sem allowlist de origem. Defina PUBLIC_BASE_URL ou NIMBUS_CORS_ORIGINS no .env.");
+  process.exit(1);
+}
+
 function originAllowed(origin) {
-  if (!CORS_ORIGINS.length) return true; // dev mode (sem env definida)
   if (!origin) return true; // requests same-origin / curl
+  if (!CORS_ORIGINS.length) return true; // dev sem env definida
   for (const pat of CORS_ORIGINS) {
     if (pat === origin) return true;
     if (pat.startsWith("*.")) {
+      // Compara o host parseado, não a string toda: "https://evil.com/#.dominio.com"
+      // termina com ".dominio.com" mas não é subdomínio dele. E exige https, senão
+      // "http://sub.dominio.com" (texto claro) passaria pelo mesmo teste.
+      let u;
+      try { u = new URL(origin); } catch { return false; }
+      if (u.protocol !== "https:") continue;
       const suffix = pat.slice(1); // ".dominio.com"
-      if (origin.endsWith(suffix)) return true;
+      if (u.host.endsWith(suffix)) return true;
     }
   }
   return false;
@@ -313,11 +330,16 @@ app.get("/healthz", async (req, res) => {
     lastError: adminScraper.status().lastError,
   };
 
-  res.status(healthy ? 200 : 503).json({
-    status: healthy ? "ok" : "degraded",
-    uptime: Math.round(process.uptime()),
-    checks,
-  });
+  // /healthz é público (o monitoramento externo precisa alcançar). O detalhe dos
+  // checks fica só pra quem chama de dentro: as mensagens de erro do Postgres e
+  // do Redis costumam trazer host, porta e usuário do banco, e o resto entrega
+  // contagem de sessões e profundidade de fila pra qualquer um.
+  const fromLocalhost = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.ip);
+  const body = fromLocalhost
+    ? { status: healthy ? "ok" : "degraded", uptime: Math.round(process.uptime()), checks }
+    : { status: healthy ? "ok" : "degraded" };
+
+  res.status(healthy ? 200 : 503).json(body);
 });
 
 // ────────────────────────────────────────────────────────────────────────
@@ -439,8 +461,10 @@ app.patch("/api/auth/me", auth.requireAuth, async (req, res) => {
 
 app.post("/api/auth/password", auth.requireAuth, async (req, res) => {
   try {
-    await auth.changePassword(req.user.id, req.body || {});
-    res.json({ ok: true });
+    // Trocar a senha invalida os tokens antigos (inclusive o desta aba), então
+    // devolvemos um token novo pra sessão atual seguir sem precisar relogar.
+    const { token } = await auth.changePassword(req.user.id, req.body || {});
+    res.json({ ok: true, token });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -514,6 +538,25 @@ app.get("/api/state/ops", auth.requireAuth, async (req, res) => {
 // ────────────────────────────────────────────────────────────────────────
 // Billing (Stripe)
 // ────────────────────────────────────────────────────────────────────────
+
+// Gate de assinatura para as rotas que DISPARAM envio na hora. O loop automático
+// já checava isso (scheduler.js), mas as rotas manuais não — quem cancelava
+// seguia enviando por elas, à mão, indefinidamente. Admin passa sempre.
+async function requireActiveSubscription(req, res, next) {
+  try {
+    const sub = await billing.getByUserId(req.user.id);
+    if (!billing.isActive(sub, req.user.role)) {
+      return res.status(402).json({
+        error: "Sua assinatura não está ativa. Reative o plano para voltar a enviar.",
+        code: "subscription_inactive",
+      });
+    }
+    next();
+  } catch (err) {
+    console.error("[billing] gate:", err.message);
+    res.status(500).json({ error: "Erro ao verificar a assinatura" });
+  }
+}
 
 // Reconciliação com o Stripe: busca a assinatura ao vivo e atualiza o banco.
 // Usada pelo POST /sync e pelo GET /me?fresh=1. Também marca trialUsedAt
@@ -856,7 +899,7 @@ app.post("/api/affiliate/shopee/test", auth.requireAuth, requireStoreUnlocked("s
 });
 
 // Dispara envio do próximo item da fila imediatamente
-app.post("/api/state/groups/:gid/send-now", auth.requireAuth, async (req, res) => {
+app.post("/api/state/groups/:gid/send-now", auth.requireAuth, requireActiveSubscription, async (req, res) => {
   try {
     const groupId = isNaN(Number(req.params.gid)) ? req.params.gid : Number(req.params.gid);
     const r = await scheduler.sendNextNow(req.user.id, groupId);
@@ -1951,7 +1994,7 @@ app.delete("/api/whatsapp/sessions/:id/groups/:jid", auth.requireAuth, async (re
   }
 });
 
-app.post("/api/whatsapp/sessions/:id/send", auth.requireAuth, async (req, res) => {
+app.post("/api/whatsapp/sessions/:id/send", auth.requireAuth, requireActiveSubscription, async (req, res) => {
   try {
     const { jid, text, imageUrl } = req.body || {};
     if (!jid) return res.status(400).json({ error: "jid obrigatório" });
@@ -1968,7 +2011,7 @@ app.post("/api/whatsapp/sessions/:id/send", auth.requireAuth, async (req, res) =
   }
 });
 
-app.post("/api/whatsapp/sessions/:id/broadcast", auth.requireAuth, async (req, res) => {
+app.post("/api/whatsapp/sessions/:id/broadcast", auth.requireAuth, requireActiveSubscription, async (req, res) => {
   try {
     const { jids = [], text, imageUrl, intervalMs = 4000 } = req.body || {};
     if (!Array.isArray(jids) || jids.length === 0) return res.status(400).json({ error: "jids obrigatório (array)" });
@@ -2017,7 +2060,10 @@ async function boot() {
   // workers é o backend/worker.js (em redis mode). Em memory é no-op.
   await queueMod.init({ producer: true, consumer: false });
 
-  const server = app.listen(PORT, () => {
+  // Bind em 127.0.0.1: só o nginx (que roda na mesma máquina) alcança a API.
+  // Sem o host, o Express escuta em 0.0.0.0 e responde direto pela porta 3001,
+  // contornando o nginx e portanto o HTTPS — senhas e tokens em texto claro.
+  const server = app.listen(PORT, BIND_HOST, () => {
     console.log(`Nimbus Backend rodando em http://localhost:${PORT} [queue=${queueMod.backendName()}]`);
     console.log(`  GET  /api/ofertas?category=gamer&minDiscount=20&limit=10`);
     console.log(`  GET  /api/status`);

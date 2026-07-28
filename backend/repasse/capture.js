@@ -11,6 +11,7 @@
 
 // Requerido como objeto (não desestruturado) pra permitir spy/mocks nos testes.
 const scraper = require("../scraping/scraper");
+const urlGuard = require("../scraping/urlGuard");
 const affiliate = require("../scraping/affiliate");
 const storage = require("../storage");
 const userNotifier = require("../notifications/user-notifier");
@@ -147,17 +148,17 @@ function extractUrls(text) {
 // Resolve redirects (amzn.to, merc.li, mlb.li, links /sec/ de afiliado alheio)
 // pra chegar na URL canônica — necessário pra extractASIN/createLink funcionarem.
 // Best-effort: em qualquer falha devolve a URL original.
+// A URL aqui vem de mensagem de WhatsApp, ou seja, de qualquer pessoa num grupo
+// monitorado — sem login. safeFetchFollow valida a cada salto do redirect que o
+// destino é domínio de loja conhecida e resolve pra IP público (ver urlGuard.js).
 async function resolveUrl(url) {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), 8000);
   try {
-    const res = await fetch(url, {
-      method: "GET",
-      redirect: "follow",
+    const { res, finalUrl } = await urlGuard.safeFetchFollow(url, {
       headers: { "User-Agent": UA },
       signal: controller.signal,
     });
-    const finalUrl = res.url || url;
     try { await res.body?.cancel?.(); } catch { /* ignore */ }
     return finalUrl;
   } catch {

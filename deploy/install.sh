@@ -101,13 +101,29 @@ npm install --omit=dev
 npx prisma generate
 npx prisma migrate deploy
 
-# .env vem do repo. Se sumir por algum motivo, cai pro .env.example.
+# .env NÃO vem do repo (guarda senha de banco, chaves de API e credenciais de
+# e-mail). Copie o arquivo do servidor atual, ou preencha a partir do exemplo.
 if [[ ! -f .env ]]; then
-  echo "  backend/.env não encontrado — caindo pro .env.example"
   cp .env.example .env
-  echo "  >>> EDITE backend/.env com STRIPE_*, ADMIN_EMAILS, etc. <<<"
+  chmod 600 .env
+  echo "  backend/.env criado a partir do .env.example."
+  echo "  >>> PREENCHA backend/.env (DATABASE_URL, REDIS_URL, STRIPE_*, SMTP_*,"
+  echo "      BACKUP_S3_*, ADMIN_EMAILS) antes de seguir. <<<"
 else
-  echo "  backend/.env já versionado no repo — usando."
+  chmod 600 .env
+  echo "  backend/.env encontrado — usando."
+fi
+
+# O docker-compose lê variáveis do .env da RAIZ do projeto, não do backend/.env.
+if [[ ! -f "$REPO_DIR/.env" ]]; then
+  umask 077
+  {
+    echo "# Variáveis lidas pelo docker-compose.yml. Fora do Git."
+    echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)"
+    echo "REDIS_PASSWORD=$(openssl rand -hex 24)"
+  } > "$REPO_DIR/.env"
+  echo "  .env da raiz criado com senhas geradas para Postgres e Redis."
+  echo "  >>> Ajuste DATABASE_URL e REDIS_URL em backend/.env com essas senhas. <<<"
 fi
 
 mkdir -p logs
@@ -140,14 +156,62 @@ sudo nginx -t
 sudo systemctl reload nginx
 sudo systemctl enable nginx >/dev/null
 
+# HTTPS. Sem isso a instalação fica em HTTP puro — senha e token de sessão
+# trafegam em texto claro. O domínio sai do PUBLIC_BASE_URL do backend/.env.
+NIMBUS_DOMAIN="$(grep -m1 '^PUBLIC_BASE_URL=' "$REPO_DIR/backend/.env" 2>/dev/null \
+  | cut -d= -f2- | sed -E 's#^https?://##; s#/.*$##')"
+if [[ -z "$NIMBUS_DOMAIN" ]]; then
+  echo "  !! PUBLIC_BASE_URL não definido em backend/.env — pulando HTTPS."
+  echo "     Rode depois: sudo certbot --nginx -d SEU.DOMINIO"
+elif sudo test -d "/etc/letsencrypt/live/$NIMBUS_DOMAIN"; then
+  echo "  Certificado para $NIMBUS_DOMAIN já existe — mantendo."
+else
+  echo "  Emitindo certificado para $NIMBUS_DOMAIN..."
+  sudo apt-get install -y certbot python3-certbot-nginx >/dev/null
+  # --redirect: força o 301 de HTTP pra HTTPS. Se falhar (DNS ainda não
+  # apontando, porta 80 fechada), o install segue e avisa.
+  if ! sudo certbot --nginx -d "$NIMBUS_DOMAIN" --non-interactive --agree-tos \
+        --register-unsafely-without-email --redirect; then
+    echo "  !! certbot falhou. O site está em HTTP puro."
+    echo "     Confira se o DNS de $NIMBUS_DOMAIN aponta pra esta máquina e rode:"
+    echo "       sudo certbot --nginx -d $NIMBUS_DOMAIN --redirect"
+  fi
+fi
+
 # UFW
+# A porta do SSH é lida do sshd_config, não chutada: o perfil "OpenSSH" do ufw
+# libera só a 22, e este servidor escuta na 22022 — habilitar o firewall com a
+# regra errada tranca o acesso à máquina na hora.
+SSH_PORT="$(sudo sshd -T 2>/dev/null | awk '/^port /{print $2; exit}')"
+SSH_PORT="${SSH_PORT:-22}"
+echo "  SSH detectado na porta ${SSH_PORT} — liberando no firewall."
+
 sudo ufw --force reset >/dev/null 2>&1 || true
 sudo ufw default deny incoming >/dev/null
 sudo ufw default allow outgoing >/dev/null
-sudo ufw allow OpenSSH >/dev/null
+sudo ufw allow "${SSH_PORT}/tcp" >/dev/null
 sudo ufw allow 80/tcp >/dev/null
 sudo ufw allow 443/tcp >/dev/null
 sudo ufw --force enable >/dev/null
+
+# O UFW não filtra portas publicadas por container: o Docker insere as próprias
+# regras antes das dele. Postgres e Redis já sobem com bind em 127.0.0.1 (ver
+# docker-compose.yml), e esta regra é a segunda camada, caso alguém volte a
+# publicar uma porta em 0.0.0.0 sem perceber.
+if ! grep -q 'NIMBUS-DOCKER-USER' /etc/ufw/after.rules 2>/dev/null; then
+  sudo tee -a /etc/ufw/after.rules >/dev/null <<'EOF'
+
+# NIMBUS-DOCKER-USER: bloqueia acesso externo a portas publicadas por container.
+*filter
+:DOCKER-USER - [0:0]
+-A DOCKER-USER -i lo -j RETURN
+-A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
+-A DOCKER-USER -s 172.16.0.0/12 -j RETURN
+-A DOCKER-USER -j DROP
+COMMIT
+EOF
+  sudo ufw reload >/dev/null 2>&1 || true
+fi
 
 # PM2 — sobe backend + worker
 cd "$REPO_DIR/backend"

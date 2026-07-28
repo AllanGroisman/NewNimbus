@@ -38,6 +38,11 @@ model User {
   suspended   Boolean   @default(false)
   suspendedAt DateTime?
 
+  // Versão da sessão: vai dentro do JWT e é conferida a cada request. Subir este
+  // número invalida na hora todos os tokens já emitidos pro usuário — é o que
+  // faz troca de senha, reset e suspensão expulsarem quem já estava logado.
+  tokenVersion Int @default(0)
+
   state           UserState?
   groups          Group[]
   whatsappGroups  WhatsappGroup[]

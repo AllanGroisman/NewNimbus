@@ -15,9 +15,21 @@ que faz quase tudo — então o caminho de produção é bem direto.
 - O resto — **Node 22, Docker + compose, PM2, nginx, libs nativas do Chromium** —
   o instalador instala sozinho.
 
-> **`backend/.env` é versionado** (vem no clone, já com os segredos: DB, SMTP,
-> Stripe, Backblaze). Apenas **`backend/.env.ngrok` é gitignored** — recrie-o na
-> máquina nova só se for usar o modo ngrok.
+> **Nenhum `.env` é versionado.** Eles guardam senha de banco, chaves do Stripe e
+> do Backblaze e credenciais de e-mail — repo privado não protege, porque o
+> histórico do Git acompanha qualquer clone, fork ou CI.
+>
+> Numa máquina nova você precisa levar **dois** arquivos, copiados do servidor
+> atual (por `scp`, nunca por e-mail ou chat):
+>
+> | Arquivo | Para que serve |
+> |---|---|
+> | `backend/.env` | Configuração da aplicação (DB, SMTP, Stripe, Backblaze) |
+> | `.env` (raiz) | Senhas do Postgres e do Redis, lidas pelo `docker-compose.yml` |
+>
+> Se não tiver de onde copiar, o `install.sh` cria os dois a partir do exemplo,
+> com senhas novas geradas para o banco e a fila — aí é só preencher o resto.
+> `backend/.env.ngrok` continua opcional, só para o modo ngrok.
 
 ---
 

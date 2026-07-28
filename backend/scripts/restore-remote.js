@@ -18,6 +18,7 @@ const fsp  = require("fs/promises");
 const path = require("path");
 const os   = require("os");
 const readline = require("readline");
+const backupCrypto = require("./backup-crypto");
 
 const {
   S3Client,
@@ -75,8 +76,10 @@ async function listRemoteBackups(client) {
     Bucket: config.bucket,
     Prefix: config.prefix,
   }));
+  // Aceita os dois formatos: .sql.gz (antigos, em claro) e .sql.gz.enc (cifrados
+  // a partir de 07/2026). Um bucket pode ter os dois durante a transição.
   return (res.Contents || [])
-    .filter(o => o.Key.endsWith(".sql.gz"))
+    .filter(o => o.Key.endsWith(".sql.gz") || o.Key.endsWith(`.sql.gz${backupCrypto.ENC_SUFFIX}`))
     .sort((a, b) => b.Key.localeCompare(a.Key)); // mais novo primeiro
 }
 
@@ -85,12 +88,25 @@ async function download(client, key, destPath) {
     Bucket: config.bucket,
     Key:    key,
   }));
-  const ws = fs.createWriteStream(destPath);
-  await new Promise((resolve, reject) => {
-    res.Body.pipe(ws);
-    res.Body.on("error", reject);
-    ws.on("finish", resolve);
-  });
+
+  const chunks = [];
+  for await (const chunk of res.Body) chunks.push(chunk);
+  let buf = Buffer.concat(chunks);
+
+  // Decifra se o arquivo veio cifrado. A detecção é pelo cabeçalho, não pela
+  // extensão — assim um objeto renomeado no bucket ainda é tratado certo.
+  if (backupCrypto.looksEncrypted(buf)) {
+    if (!backupCrypto.isEnabled()) {
+      throw new Error(
+        `${key} está cifrado e BACKUP_ENC_KEY não está definida. ` +
+        `Sem a chave o backup não pode ser restaurado — recupere-a da cópia guardada fora do servidor.`
+      );
+    }
+    buf = backupCrypto.decryptBuffer(buf);
+    console.log(`[restore-remote] ${key} decifrado (${(buf.length / 1024 / 1024).toFixed(2)} MB)`);
+  }
+
+  await fsp.writeFile(destPath, buf);
 }
 
 function docker(cmd) {
@@ -194,7 +210,12 @@ async function main() {
     }
   }
 
-  const tmpFile = path.join(os.tmpdir(), name);
+  // Tira o .enc do nome local: depois do download o arquivo já está decifrado e
+  // é um .sql.gz comum. O gunzip do restoreBackup recusa sufixo desconhecido.
+  const localName = name.endsWith(backupCrypto.ENC_SUFFIX)
+    ? name.slice(0, -backupCrypto.ENC_SUFFIX.length)
+    : name;
+  const tmpFile = path.join(os.tmpdir(), localName);
   await download(client, chosen.Key, tmpFile);
   console.log(`[restore-remote] download OK (${(fs.statSync(tmpFile).size / 1024 / 1024).toFixed(2)} MB)`);
 

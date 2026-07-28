@@ -150,7 +150,7 @@ describe("WhatsApp — grupos", () => {
 
 describe("WhatsApp — envio direto via /send", () => {
   it("rejeita sem jid", async () => {
-    const { auth } = await createTestUser();
+    const { auth } = await userOnPlan("pro");
     await auth("post", "/api/whatsapp/sessions/num-1");
     const r = await auth("post", "/api/whatsapp/sessions/num-1/send").send({ text: "oi" });
     expect(r.status).toBe(400);
@@ -158,14 +158,14 @@ describe("WhatsApp — envio direto via /send", () => {
   });
 
   it("rejeita sem text e sem imageUrl", async () => {
-    const { auth } = await createTestUser();
+    const { auth } = await userOnPlan("pro");
     await auth("post", "/api/whatsapp/sessions/num-1");
     const r = await auth("post", "/api/whatsapp/sessions/num-1/send").send({ jid: "x@g.us" });
     expect(r.status).toBe(400);
   });
 
   it("envia texto puro", async () => {
-    const { auth } = await createTestUser();
+    const { auth } = await userOnPlan("pro");
     await auth("post", "/api/whatsapp/sessions/num-1");
     const r = await auth("post", "/api/whatsapp/sessions/num-1/send").send({ jid: "x@g.us", text: "olá" });
     expect(r.status).toBe(200);
@@ -174,7 +174,7 @@ describe("WhatsApp — envio direto via /send", () => {
   });
 
   it("envia imagem quando imageUrl presente (text vira caption)", async () => {
-    const { auth } = await createTestUser();
+    const { auth } = await userOnPlan("pro");
     await auth("post", "/api/whatsapp/sessions/num-1");
     const r = await auth("post", "/api/whatsapp/sessions/num-1/send").send({
       jid: "x@g.us", text: "legenda", imageUrl: "https://img.test/a.jpg",
@@ -189,7 +189,7 @@ describe("WhatsApp — envio direto via /send", () => {
 
 describe("WhatsApp — broadcast", () => {
   it("envia pra múltiplos jids", async () => {
-    const { auth } = await createTestUser();
+    const { auth } = await userOnPlan("pro");
     await auth("post", "/api/whatsapp/sessions/num-1");
     const r = await auth("post", "/api/whatsapp/sessions/num-1/broadcast").send({
       jids: ["a@g.us", "b@g.us", "c@g.us"],
@@ -198,6 +198,32 @@ describe("WhatsApp — broadcast", () => {
     });
     expect(r.status).toBe(200);
     expect(waCalls.sendText.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+// As rotas de envio direto passaram a exigir assinatura ativa. Antes, quem
+// cancelava continuava enviando por elas na mão — o gate só existia no envio
+// automático do scheduler.
+describe("WhatsApp — envio exige assinatura ativa", () => {
+  it("/send responde 402 com assinatura cancelada", async () => {
+    const { auth, user } = await createTestUser();
+    await auth("post", "/api/whatsapp/sessions/num-1");
+    await billing.update(user.id, { planId: "pro", status: "canceled" });
+    const r = await auth("post", "/api/whatsapp/sessions/num-1/send")
+      .send({ jid: "x@g.us", text: "olá" });
+    expect(r.status).toBe(402);
+    expect(r.body.code).toBe("subscription_inactive");
+    expect(waCalls.sendText).toHaveLength(0);
+  });
+
+  it("/broadcast responde 402 com assinatura cancelada", async () => {
+    const { auth, user } = await createTestUser();
+    await auth("post", "/api/whatsapp/sessions/num-1");
+    await billing.update(user.id, { planId: "pro", status: "canceled" });
+    const r = await auth("post", "/api/whatsapp/sessions/num-1/broadcast")
+      .send({ jids: ["a@g.us"], text: "promoção", intervalMs: 0 });
+    expect(r.status).toBe(402);
+    expect(waCalls.sendText).toHaveLength(0);
   });
 });
 

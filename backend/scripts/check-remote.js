@@ -31,7 +31,8 @@ const client = new S3Client({
       Prefix: config.prefix,
     }));
     const backups = (res.Contents || [])
-      .filter(o => /db-\d{8}-\d{6}\.sql\.gz$/.test(o.Key))
+      // O .enc é opcional: dumps enviados a partir de 07/2026 vão cifrados.
+      .filter(o => /db-\d{8}-\d{6}\.sql\.gz(\.enc)?$/.test(o.Key))
       .sort((a, b) => b.Key.localeCompare(a.Key));
     if (backups.length > 0) {
       process.stdout.write(backups[0].Key.replace(config.prefix, "") + "\n");

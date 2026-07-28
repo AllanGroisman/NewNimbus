@@ -15,6 +15,7 @@ const {
 } = require("@aws-sdk/client-s3");
 
 const { mode } = require("../config/loadEnv");
+const backupCrypto = require("../scripts/backup-crypto");
 
 const BACKUPS_DIR = path.join(__dirname, "..", "backups");
 const CONTAINER   = process.env.POSTGRES_CONTAINER || "nimbus-postgres";
@@ -112,12 +113,18 @@ async function deleteLocal(filename) {
 
 // ── Remoto ────────────────────────────────────────────────────────────────
 
+// Nome de arquivo remoto. Continua estrito (é input de request e vira chave no
+// bucket e caminho em disco) — só passou a aceitar o sufixo .enc dos dumps
+// cifrados. As rotas locais mantêm a regex sem .enc: o dump local não é cifrado.
+const REMOTE_NAME_RE = /^db-\d{8}-\d{6}\.sql\.gz(\.enc)?$/;
+
 async function listRemote() {
   if (!B2_OK) return { ok: false, error: "Backblaze não configurado", items: [] };
   const client = makeClient();
   const res = await client.send(new ListObjectsV2Command({ Bucket: s3cfg.bucket, Prefix: s3cfg.prefix }));
   const items = (res.Contents || [])
-    .filter(o => /db-\d{8}-\d{6}\.sql\.gz$/.test(o.Key))
+    // O .enc é opcional: dumps enviados a partir de 07/2026 vão cifrados.
+    .filter(o => /db-\d{8}-\d{6}\.sql\.gz(\.enc)?$/.test(o.Key))
     .sort((a, b) => b.Key.localeCompare(a.Key))
     .map(o => ({ name: o.Key.replace(s3cfg.prefix, ""), size: o.Size, createdAt: o.LastModified?.toISOString() }));
   return { ok: true, items, writable: REMOTE_WRITE_ALLOWED };
@@ -126,18 +133,23 @@ async function listRemote() {
 async function uploadToRemote(filename) {
   assertRemoteWriteAllowed();
   if (!B2_OK) throw new Error("Backblaze não configurado");
-  if (!/^db-\d{8}-\d{6}\.sql\.gz$/.test(filename)) throw new Error("Arquivo inválido");
+  if (!REMOTE_NAME_RE.test(filename)) throw new Error("Arquivo inválido");
   const filePath = path.join(BACKUPS_DIR, filename);
   if (!fs.existsSync(filePath)) throw new Error("Arquivo local não encontrado");
 
   const client = makeClient();
+  // Mesma regra do backup automático: sai cifrado do servidor quando há chave.
+  const cifrar = backupCrypto.isEnabled();
+  const body   = cifrar
+    ? backupCrypto.encryptBuffer(await fsp.readFile(filePath))
+    : fs.createReadStream(filePath);
   const stat   = await fsp.stat(filePath);
   await client.send(new PutObjectCommand({
     Bucket:        s3cfg.bucket,
-    Key:           s3cfg.prefix + filename,
-    Body:          fs.createReadStream(filePath),
-    ContentLength: stat.size,
-    ContentType:   "application/gzip",
+    Key:           s3cfg.prefix + filename + (cifrar ? backupCrypto.ENC_SUFFIX : ""),
+    Body:          body,
+    ContentLength: cifrar ? body.length : stat.size,
+    ContentType:   cifrar ? "application/octet-stream" : "application/gzip",
   }));
   return { ok: true };
 }
@@ -145,7 +157,7 @@ async function uploadToRemote(filename) {
 async function deleteRemote(filename) {
   assertRemoteWriteAllowed();
   if (!B2_OK) throw new Error("Backblaze não configurado");
-  if (!/^db-\d{8}-\d{6}\.sql\.gz$/.test(filename)) throw new Error("Arquivo inválido");
+  if (!REMOTE_NAME_RE.test(filename)) throw new Error("Arquivo inválido");
   const client = makeClient();
   await client.send(new DeleteObjectCommand({ Bucket: s3cfg.bucket, Key: s3cfg.prefix + filename }));
   return { ok: true };
@@ -188,18 +200,28 @@ async function restoreLocal(filename) {
 
 async function restoreRemote(filename) {
   if (!B2_OK) throw new Error("Backblaze não configurado");
-  if (!/^db-\d{8}-\d{6}\.sql\.gz$/.test(filename)) throw new Error("Arquivo inválido");
+  if (!REMOTE_NAME_RE.test(filename)) throw new Error("Arquivo inválido");
 
-  const client  = makeClient();
-  const tmpFile = path.join(os.tmpdir(), filename);
+  const client = makeClient();
+  // O arquivo local precisa terminar em .sql.gz: depois de decifrado ele é um
+  // gzip comum, e o gunzip do restoreFromFile recusa sufixo desconhecido.
+  const localName = filename.endsWith(backupCrypto.ENC_SUFFIX)
+    ? filename.slice(0, -backupCrypto.ENC_SUFFIX.length)
+    : filename;
+  const tmpFile = path.join(os.tmpdir(), localName);
 
   const res = await client.send(new GetObjectCommand({ Bucket: s3cfg.bucket, Key: s3cfg.prefix + filename }));
-  const ws  = fs.createWriteStream(tmpFile);
-  await new Promise((resolve, reject) => {
-    res.Body.pipe(ws);
-    res.Body.on("error", reject);
-    ws.on("finish", resolve);
-  });
+  const chunks = [];
+  for await (const chunk of res.Body) chunks.push(chunk);
+  let buf = Buffer.concat(chunks);
+
+  if (backupCrypto.looksEncrypted(buf)) {
+    if (!backupCrypto.isEnabled()) {
+      throw new Error("Backup cifrado e BACKUP_ENC_KEY não está definida — sem a chave não dá pra restaurar.");
+    }
+    buf = backupCrypto.decryptBuffer(buf);
+  }
+  await fsp.writeFile(tmpFile, buf);
 
   try {
     restoreFromFile(tmpFile);

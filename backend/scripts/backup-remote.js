@@ -25,6 +25,7 @@ require("../config/loadEnv"); // .env + override por modo (honra BACKUP_S3_PREFI
 const fs = require("fs");
 const fsp = require("fs/promises");
 const path = require("path");
+const backupCrypto = require("./backup-crypto");
 
 const BACKUPS_DIR = path.join(__dirname, "..", "backups");
 
@@ -86,26 +87,38 @@ async function makeClient() {
 
 async function uploadDump(client, dump) {
   const { PutObjectCommand } = require("@aws-sdk/client-s3");
-  const key = `${config.prefix}${dump.name}`;
+  // O dump vai cifrado pra nuvem quando BACKUP_ENC_KEY existe: o bucket está
+  // fora do nosso controle e o conteúdo inclui hashes de senha e as sessões de
+  // WhatsApp. O sufixo .enc marca o formato pro restore-remote.js.
+  const cifrar = backupCrypto.isEnabled();
+  const key = `${config.prefix}${dump.name}${cifrar ? backupCrypto.ENC_SUFFIX : ""}`;
   const stat = await fsp.stat(dump.path);
   if (DRY) {
-    console.log(`  [dry] ${key} (${(stat.size / 1024 / 1024).toFixed(2)} MB)`);
+    console.log(`  [dry] ${key} (${(stat.size / 1024 / 1024).toFixed(2)} MB)${cifrar ? " cifrado" : ""}`);
     return stat.size;
   }
-  const body = fs.createReadStream(dump.path);
+  const body = cifrar
+    ? backupCrypto.encryptBuffer(await fsp.readFile(dump.path))
+    : fs.createReadStream(dump.path);
   await client.send(new PutObjectCommand({
     Bucket: config.bucket,
     Key: key,
     Body: body,
-    ContentType: "application/gzip",
+    ContentType: cifrar ? "application/octet-stream" : "application/gzip",
   }));
-  console.log(`[backup-remote] ${dump.name} OK (${(stat.size / 1024 / 1024).toFixed(2)} MB)`);
+  const marca = cifrar ? " (cifrado)" : " (SEM CIFRA — defina BACKUP_ENC_KEY)";
+  console.log(`[backup-remote] ${dump.name} OK (${(stat.size / 1024 / 1024).toFixed(2)} MB)${marca}`);
   return stat.size;
 }
 
+// Devolve [{ name, key }] — `name` é o nome canônico do dump (sem o .enc) e
+// `key` é o objeto real no bucket. Separar os dois importa porque a comparação
+// "já subi este dump?" e a rotação usam o nome, mas o delete precisa da chave.
+// Sem isso, um bucket com objetos .enc pareceria vazio: o script re-enviaria
+// tudo a cada execução e nunca rotacionaria.
 async function listRemoteDumps(client) {
   const { ListObjectsV2Command } = require("@aws-sdk/client-s3");
-  const seen = new Set();
+  const seen = new Map();
   let token;
   do {
     const out = await client.send(new ListObjectsV2Command({
@@ -114,12 +127,17 @@ async function listRemoteDumps(client) {
       ContinuationToken: token,
     }));
     for (const obj of (out.Contents || [])) {
-      const name = obj.Key.slice(config.prefix.length);
-      if (DUMP_RE.test(name)) seen.add(name);
+      const key = obj.Key.slice(config.prefix.length);
+      const name = key.endsWith(backupCrypto.ENC_SUFFIX)
+        ? key.slice(0, -backupCrypto.ENC_SUFFIX.length)
+        : key;
+      if (DUMP_RE.test(name)) seen.set(name, key);
     }
     token = out.IsTruncated ? out.NextContinuationToken : undefined;
   } while (token);
-  return [...seen].sort((a, b) => b.localeCompare(a));
+  return [...seen.entries()]
+    .map(([name, key]) => ({ name, key }))
+    .sort((a, b) => b.name.localeCompare(a.name));
 }
 
 async function rotateRemote(client, all) {
@@ -131,14 +149,14 @@ async function rotateRemote(client, all) {
     for (const name of toDelete) console.log(`[dry] removeria remoto ${name}`);
     return;
   }
-  const keys = toDelete.map(n => ({ Key: `${config.prefix}${n}` }));
+  const keys = toDelete.map(d => ({ Key: `${config.prefix}${d.key}` }));
   for (let i = 0; i < keys.length; i += 1000) {
     await client.send(new DeleteObjectsCommand({
       Bucket: config.bucket,
       Delete: { Objects: keys.slice(i, i + 1000) },
     }));
   }
-  for (const name of toDelete) console.log(`[backup-remote] removido remoto antigo: ${name}`);
+  for (const d of toDelete) console.log(`[backup-remote] removido remoto antigo: ${d.name}`);
 }
 
 async function main() {
@@ -155,7 +173,7 @@ async function main() {
   }
 
   const client = await makeClient();
-  const remote = new Set(await listRemoteDumps(client));
+  const remote = new Set((await listRemoteDumps(client)).map(d => d.name));
   console.log(`[backup-remote] local=${local.length} remote=${remote.size} target=${config.bucket}/${config.prefix}`);
 
   const candidates = LATEST_ONLY ? [local[0]] : local;

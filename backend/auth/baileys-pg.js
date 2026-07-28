@@ -8,16 +8,58 @@
 //   - Backup automático (vai junto no dump do PG)
 //   - Múltiplos workers podem ler do mesmo storage (Phase 2.2 — sticky routing)
 
+const crypto = require("crypto");
 const { initAuthCreds, BufferJSON, proto } = require("@whiskeysockets/baileys");
 const { prisma } = require("../db");
 
+// ── Cifra em repouso ────────────────────────────────────────────────────
+// Estas linhas guardam as chaves do Signal e as credenciais completas da sessão
+// do WhatsApp: quem as lê assume a conta do cliente e envia em nome dele. Como
+// elas vão junto em todo dump do banco (e os dumps sobem pra nuvem), ficar em
+// texto puro significa que um backup vazado = todos os WhatsApps sequestrados.
+//
+// SESSION_ENC_KEY = 32 bytes em hex. Sem a variável, grava em claro (mesmo
+// comportamento de antes) e avisa — assim nada quebra em quem ainda não migrou.
+//
+// ATENÇÃO: perder a chave = perder as sessões. Restaurar um backup numa máquina
+// nova exige levar o SESSION_ENC_KEY junto; sem ele, é preciso reescanear o QR
+// de cada número.
+const ENC_PREFIX = "v1:";
+const _encKey = (() => {
+  const raw = String(process.env.SESSION_ENC_KEY || "").trim();
+  if (!raw) {
+    console.warn("[baileys-auth] SESSION_ENC_KEY não definida — sessões gravadas SEM cifra.");
+    return null;
+  }
+  const buf = Buffer.from(raw, "hex");
+  if (buf.length !== 32) {
+    console.warn(`[baileys-auth] SESSION_ENC_KEY inválida (${buf.length} bytes, esperado 32) — gravando SEM cifra.`);
+    return null;
+  }
+  return buf;
+})();
+
 // Encode/decode do valor — BufferJSON suporta os Buffer nodes do Signal protocol
 function encode(value) {
-  return JSON.stringify(value, BufferJSON.replacer);
+  const json = JSON.stringify(value, BufferJSON.replacer);
+  if (!_encKey) return json;
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", _encKey, iv);
+  const ct = Buffer.concat([cipher.update(json, "utf8"), cipher.final()]);
+  return ENC_PREFIX + [iv, cipher.getAuthTag(), ct].map(b => b.toString("base64")).join(":");
 }
+
 function decode(str) {
   if (str == null) return null;
-  return JSON.parse(str, BufferJSON.reviver);
+  // Linhas antigas são JSON puro — seguem legíveis, e são regravadas cifradas na
+  // próxima escrita do Baileys (que acontece o tempo todo).
+  if (!str.startsWith(ENC_PREFIX)) return JSON.parse(str, BufferJSON.reviver);
+  if (!_encKey) throw new Error("[baileys-auth] sessão cifrada mas SESSION_ENC_KEY não está definida");
+  const [ivB64, tagB64, ctB64] = str.slice(ENC_PREFIX.length).split(":");
+  const decipher = crypto.createDecipheriv("aes-256-gcm", _encKey, Buffer.from(ivB64, "base64"));
+  decipher.setAuthTag(Buffer.from(tagB64, "base64"));
+  const json = Buffer.concat([decipher.update(Buffer.from(ctB64, "base64")), decipher.final()]).toString("utf8");
+  return JSON.parse(json, BufferJSON.reviver);
 }
 
 async function readKey(sessionId, keyType, keyId) {

@@ -26,12 +26,17 @@ pnpm-debug.log*
 backend/logs/
 
 # Environment
-# .env é versionado de propósito (repo privado, vem pronto pra VPS).
-# Pra valores específicos de máquina/branch, use .env.local.
+# NENHUM .env é versionado. Eles guardam senha de banco, chaves de API e
+# credenciais de e-mail — repo privado não é proteção suficiente, porque o
+# histórico do Git acompanha qualquer clone, fork ou CI.
+# Ao instalar em outra máquina, copie os .env na mão a partir do servidor atual.
+.env
 .env.local
 .env.*.local
-# Overrides do modo ngrok (domínio de teste local) — não versionar.
+backend/.env
+backend/.env.e2e
 backend/.env.ngrok
+frontend/.env
 
 # Editor / OS
 .DS_Store

@@ -40,15 +40,26 @@ function resetUrl(token) {
 
 const MAIL_FROM = () => process.env.MAIL_FROM || `"Nimbus" <${process.env.SMTP_USER || "noreply@nimbus.app"}>`;
 
+// Fallback de quando não há SMTP: em dev imprime o link pra dar pra testar.
+// Em produção o link NÃO vai pro log — ele contém o token de reset, que dá
+// posse da conta, e os logs do PM2 ficam em disco legíveis por muito tempo.
+function logLinkFallback(assunto, to, name, url, validade) {
+  if (process.env.NODE_ENV === "production") {
+    console.warn(`[mailer] SMTP não configurado — ${assunto} para ${to} NÃO foi enviado. Configure SMTP_* no .env.`);
+    return;
+  }
+  console.log("\n────────────────────────────────────────────────────────────────");
+  console.log(`[mailer] ${assunto} → ${to} (${name || "—"})`);
+  console.log(`         Link: ${url}`);
+  console.log(`         (válido por ${validade})`);
+  console.log("────────────────────────────────────────────────────────────────\n");
+}
+
 async function sendVerificationEmail({ to, name, token }) {
   const url = verifyUrl(token);
 
   if (!SMTP_CONFIGURED) {
-    console.log("\n────────────────────────────────────────────────────────────────");
-    console.log(`[mailer] VERIFICAÇÃO DE EMAIL → ${to} (${name || "—"})`);
-    console.log(`         Link: ${url}`);
-    console.log(`         (válido por 24h)`);
-    console.log("────────────────────────────────────────────────────────────────\n");
+    logLinkFallback("VERIFICAÇÃO DE EMAIL", to, name, url, "24h");
     return { ok: true, url };
   }
 
@@ -78,11 +89,7 @@ async function sendPasswordResetEmail({ to, name, token }) {
   const url = resetUrl(token);
 
   if (!SMTP_CONFIGURED) {
-    console.log("\n────────────────────────────────────────────────────────────────");
-    console.log(`[mailer] RESET DE SENHA → ${to} (${name || "—"})`);
-    console.log(`         Link: ${url}`);
-    console.log(`         (válido por 1h)`);
-    console.log("────────────────────────────────────────────────────────────────\n");
+    logLinkFallback("RESET DE SENHA", to, name, url, "1h");
     return { ok: true, url };
   }
 

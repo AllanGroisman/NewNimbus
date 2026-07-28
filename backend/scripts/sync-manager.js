@@ -112,7 +112,8 @@ async function listRemote(client) {
     Bucket: s3cfg.bucket, Prefix: s3cfg.prefix,
   }));
   return (res.Contents || [])
-    .filter(o => /db-\d{8}-\d{6}\.sql\.gz$/.test(o.Key))
+    // O .enc é opcional: dumps enviados a partir de 07/2026 vão cifrados.
+    .filter(o => /db-\d{8}-\d{6}\.sql\.gz(\.enc)?$/.test(o.Key))
     .sort((a, b) => b.Key.localeCompare(a.Key))
     .map(o => ({ name: o.Key.replace(s3cfg.prefix, ""), size: o.Size, mtime: o.LastModified }));
 }
