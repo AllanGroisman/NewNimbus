@@ -34,7 +34,10 @@ function getWindowStatus(group, now = new Date()) {
   return { kind: "next", text: `Amanhã ${first.from}`, sub: `em ${fmtMins(wait)}` };
 }
 
-export default function PageDashboard({ groups, whatsappGroups = [], onSelectGroup, onCreateGroup, onUpdate, affiliateConfigured = true, onGoToSettings, limits }) {
+export default function PageDashboard({ groups, whatsappGroups = [], onSelectGroup, onCreateGroup, onUpdate, affiliateConfigured = true, onGoToSettings, limits, planPausedIds = [], onActivatePlanPaused }) {
+  // Campanhas pausadas pelo plano (cancelamento/downgrade): continuam aqui,
+  // editáveis, mas não enviam. O botão vira "Ativar", que troca com uma ativa.
+  const isPlanPaused = (g) => planPausedIds.some(id => Number(id) === Number(g.id));
   const [showCreate, setShowCreate] = useState(false);
   // type: null = tela de escolha; "scraping" | "repasse" = formulário do tipo.
   const [form, setForm] = useState({ name: "", categories: [], type: null, autoApprove: false });
@@ -84,7 +87,8 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
         <h2 style={{ fontSize: 18, fontWeight: 500, display: "flex", alignItems: "center", gap: 8 }}>
           Campanhas
-          <UsageBadge current={groups.length} limit={limits?.groups} label="campanhas criadas" />
+          {/* O limite vale sobre as ATIVAS — as pausadas pelo plano não contam. */}
+          <UsageBadge current={groups.filter(g => !isPlanPaused(g)).length} limit={limits?.groups} label="campanhas ativas" />
         </h2>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <button onClick={() => setShowCreate(true)} style={{ padding: "7px 14px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>+ Nova campanha</button>
@@ -125,8 +129,9 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
               const win = getWindowStatus(g);
               // Estado efetivo: manual OU afiliado faltando OU sem WhatsApp conectado —
               // botão reflete todos. (degraded/parcial ainda envia, então não pausa.)
-              const isPaused = !!g.paused || stats.pausedByAffiliate || stats.status === "disconnected";
-              const isLive = !stats.paused && stats.status === "connected";
+              const planPaused = isPlanPaused(g);
+              const isPaused = planPaused || !!g.paused || stats.pausedByAffiliate || stats.status === "disconnected";
+              const isLive = !planPaused && !stats.paused && stats.status === "connected";
               const missingAff = stats.pausedByAffiliateML && stats.pausedByAffiliateShopee
                 ? "ML e Shopee"
                 : stats.pausedByAffiliateML
@@ -134,7 +139,9 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                   : stats.pausedByAffiliateShopee
                     ? "Shopee"
                     : null;
-              const statusBadge = stats.pausedManual
+              const statusBadge = planPaused
+                ? <Badge color="amber">Pausada pelo plano</Badge>
+                : stats.pausedManual
                 ? <Badge color="amber">Campanha pausada</Badge>
                 : stats.pausedByAffiliate
                   ? <Badge color="amber">Pausado · sem afiliado {missingAff}</Badge>
@@ -162,6 +169,10 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
+                        // Pausada pelo plano: ativar é escolher ela entre as que
+                        // cabem no plano — se não houver vaga, o app pergunta qual
+                        // campanha sai no lugar.
+                        if (planPaused) { onActivatePlanPaused?.(g.id); return; }
                         // Pausa por afiliado faltando OU sem WhatsApp: clicar abre a
                         // campanha pra ver o alerta — pausar/retomar manual aqui não
                         // resolve sozinho.
@@ -170,7 +181,8 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                         togglePause(g);
                       }}
                       title={
-                        g.paused ? "Reativar campanha"
+                        planPaused ? "Ativar esta campanha dentro do seu plano"
+                          : g.paused ? "Reativar campanha"
                           : stats.pausedByAffiliate ? `Configure o afiliado ${missingAff} para reativar`
                           : stats.status === "disconnected" ? "Conecte um WhatsApp para reativar (retoma sozinho)"
                           : "Pausar campanha"

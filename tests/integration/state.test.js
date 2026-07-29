@@ -16,6 +16,8 @@ describe("GET /api/state — vazio", () => {
       numbers: [],
       whatsappGroups: [],
       settings: {},
+      // Pausa por plano — vem sempre, vazia enquanto nada estourou o limite.
+      planPaused: { groups: [], numbers: [] },
     });
   });
 });

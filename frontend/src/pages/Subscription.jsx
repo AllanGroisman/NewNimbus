@@ -297,8 +297,20 @@ export default function PageSubscription() {
             <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10, padding: 14 }}>
               <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 10 }}>Benefícios e uso</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-                <UsageRow label="Campanhas" used={me.usage?.groups} limit={me.limits?.groups} />
-                <UsageRow label="Números de WhatsApp" used={me.usage?.numbers} limit={me.limits?.numbers} />
+                {/* O limite conta só o que está ATIVO — o que passou do plano fica
+                    pausado (não envia), mas continua guardado. */}
+                <UsageRow label="Campanhas ativas" used={me.usage?.activeGroups ?? me.usage?.groups} limit={me.limits?.groups} />
+                {me.usage?.pausedGroups > 0 && (
+                  <div style={{ fontSize: 11, color: "var(--warn-text)", marginTop: -6 }}>
+                    +{me.usage.pausedGroups} campanha{me.usage.pausedGroups === 1 ? "" : "s"} pausada{me.usage.pausedGroups === 1 ? "" : "s"} pelo plano (guardada{me.usage.pausedGroups === 1 ? "" : "s"}, sem enviar)
+                  </div>
+                )}
+                <UsageRow label="Números de WhatsApp ativos" used={me.usage?.activeNumbers ?? me.usage?.numbers} limit={me.limits?.numbers} />
+                {me.usage?.pausedNumbers > 0 && (
+                  <div style={{ fontSize: 11, color: "var(--warn-text)", marginTop: -6 }}>
+                    +{me.usage.pausedNumbers} número{me.usage.pausedNumbers === 1 ? "" : "s"} pausado{me.usage.pausedNumbers === 1 ? "" : "s"} pelo plano (segue{me.usage.pausedNumbers === 1 ? "" : "m"} conectado{me.usage.pausedNumbers === 1 ? "" : "s"})
+                  </div>
+                )}
                 <UsageRow label="Grupos por campanha (máx.)" used={me.usage?.maxWhatsappGroupsPerCampaign} limit={me.limits?.whatsappGroupsPerCampaign} />
                 <UsageRow label="Categorias de produtos por campanha (máx.)" used={me.usage?.maxCategoriesPerGroup} limit={me.limits?.categoriesPerGroup} />
               </div>
@@ -539,7 +551,7 @@ export default function PageSubscription() {
             {me.cancelAtPeriodEnd
               ? `Cancelamento já agendado — acesso até ${fmtDate(me.currentPeriodEnd)}. Pode reverter aqui mesmo.`
               : hasActiveSub
-                ? "Você continua com acesso até o fim do período já pago. Os dados ficam guardados caso decida voltar."
+                ? "Você continua com acesso até o fim do período já pago. Seus dados ficam guardados enquanto a conta existir, caso decida voltar."
                 : "Você não tem uma assinatura ativa pra cancelar."
             }
           </div>
@@ -572,8 +584,9 @@ export default function PageSubscription() {
         </FAQ>
         <FAQ q="O que acontece quando eu cancelo?">
           Você continua com acesso completo até o fim do período já pago — depois disso a conta vira plano Free
-          e os envios automáticos param. Seus dados (campanhas, grupos, histórico) ficam guardados por 30 dias
-          caso queira voltar.
+          e os envios automáticos param. Nada é apagado: suas campanhas, números e histórico ficam guardados
+          enquanto a conta existir — só param de enviar, e voltam assim que você assinar de novo. Se quiser
+          apagar seus dados, é só pedir pelo suporte.
         </FAQ>
         <FAQ q="Posso trocar de plano?">
           Sim. Upgrades entram em vigor na hora (cobrança proporcional). Downgrades passam a valer na próxima
@@ -610,7 +623,7 @@ export default function PageSubscription() {
               <ul style={{ paddingLeft: 18, margin: "0 0 14px", color: "var(--color-text-secondary)", fontSize: 13, lineHeight: 1.6 }}>
                 <li>Os envios automáticos serão interrompidos</li>
                 <li>A conta vira plano Free (sem acesso a recursos pagos)</li>
-                <li>Suas campanhas, grupos e histórico ficam guardados por 30 dias</li>
+                <li>Suas campanhas, grupos e histórico ficam guardados (nada é apagado) — só param de enviar</li>
                 <li>Você pode reativar a qualquer momento</li>
               </ul>
               <div style={{ background: "var(--color-background-secondary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 8, padding: "8px 12px", marginBottom: 16, fontSize: 12, color: "var(--color-text-secondary)" }}>

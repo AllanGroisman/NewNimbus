@@ -53,7 +53,9 @@ function pgAuth() {
   return _pgAuth;
 }
 
-const log = pino({ level: "warn" });
+// "warn" no dia a dia. WA_LOG_LEVEL=debug/trace liga o log de protocolo do
+// Baileys — necessário pra diagnosticar sessão que não conecta e não fecha.
+const log = pino({ level: process.env.WA_LOG_LEVEL || "warn" });
 
 // chave: `${userId}::${numberId}` -> { sock, status, qr, qrDataUrl, info, ... }
 const sessions = new Map();
@@ -190,6 +192,15 @@ async function startSession(userId, numberId) {
 
       const err = lastDisconnect?.error;
       const { status, lastError, reconnect } = classifyClose(err, { shuttingDown });
+
+      // Diagnóstico: `classifyClose` rebaixa quase tudo pra "connecting" com
+      // lastError null (de propósito, pra UI não piscar erro). Sem este log, uma
+      // sessão presa em loop de reconexão não deixa NENHUM rastro do motivo.
+      console.warn(`[whatsapp] close ${userId}/${numberId} → ${status}` +
+        ` code=${err?.output?.statusCode ?? "-"}` +
+        ` tag=${err?.data?.content?.[0]?.tag ?? "-"}` +
+        ` msg=${err?.message || "-"}` +
+        ` tentativa=${(session.restartCount || 0) + 1}`);
 
       session.status = status;
       session.lastError = lastError;

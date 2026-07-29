@@ -84,3 +84,24 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     PENDENTE (manual): guardar a BACKUP_ENC_KEY fora do servidor; `pm2 delete nimbus-backup-remote && pm2 save`.
 
 33. [x] Verificar se a infraestrutura atual consegue atender a demanda.
+
+34. [x] Quero decidir o que acontece se o usuario cancelar a assinatura ou fazer downgrade de plano
+    Decisao: nada e apagado. O que passa do limite fica "pausado pelo plano" — continua
+    na tela e editavel, mas nao envia e nao conta no limite. O cliente escolhe o que fica
+    ativo (botao Ativar troca com um dos ativos). Cartao que falha ganha 3 dias de carencia
+    antes de pausar. Numeros de WhatsApp excedentes seguem conectados, so pausados.
+    Retencao: dados guardados enquanto a conta existir (tirado o texto que prometia 30 dias). 
+
+35. [] Trocar aba grupos para depois da fila e janelas de envio para depois do modelo de mensagem.
+
+36. [] Na primeira configuracao de uma campanha quero que o front va guiando a pessoa na configuracao.
+
+37. [] Quero que ao criar a conta o usuario seja guiado tomando as decisoes do que vai utilizar e va configurando o sistema.
+
+38. [] Quero ter um tour de highlights que mostre ao usuario onde fica cada coisa.
+
+39. [] Quero que os guias de configuração do sistema das tasks 36, 37 e 38 estejam disponiveis para serem realizados novamente se o usuario requerir.
+
+40. [] Quero adicionar a marca nimbus como icone na aba do navegador e onde geralmente é utilizado. Quero tb que a marca esteja no topo do site. É o N de Nimbus, posso colocar o png em uma pasta que tu sugerir para adicionar esse tipo de asset.
+
+41. [] Quero conferir se o ambiente mobile esta condizente e bem construido para utilizacao do usuario.

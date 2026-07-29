@@ -60,6 +60,12 @@ model UserState {
   settings  Json     @default("{}")
   updatedAt DateTime @default(now()) @updatedAt
 
+  // Pausa por plano — { groups: [id, …], numbers: ["id", …] }. Só o servidor
+  // escreve (saveState toca apenas `settings`), então um PUT /api/state antigo
+  // do frontend não apaga a marcação. Item pausado não envia e não conta
+  // contra o limite do plano; o cliente escolhe quais ficam ativos.
+  planPaused Json @default("{\"groups\":[],\"numbers\":[]}")
+
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("user_state")
@@ -317,6 +323,7 @@ model Subscription {
   currentPeriodEnd     DateTime?
   cancelAtPeriodEnd    Boolean   @default(false)
   trialUsedAt          DateTime? // quando iniciou o trial de R$1 — nunca resetado (1 trial por conta)
+  pastDueSince         DateTime? // início do atraso (past_due/unpaid) — base da carência de 3 dias
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 

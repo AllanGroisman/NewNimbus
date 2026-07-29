@@ -1,6 +1,7 @@
 const store = require("./pg");
 const limits = require("./limits");
 const prices = require("./prices");
+const enforce = require("./enforce");
 
 // Hidrata sub do usuário pra responder /api/billing/me e gating.
 // Sem row = free/inactive (sem acesso até assinar). Não há mais trial automático.
@@ -30,6 +31,11 @@ async function getStatus(userId, userRole) {
     const ms = new Date(sub.currentPeriodEnd).getTime() - Date.now();
     daysUntilPeriodEnd = Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
   }
+  // Carência de pagamento — o cliente segue com o plano por 3 dias após a
+  // falha do cartão; o frontend usa isto pro banner com a data limite.
+  const inGrace = limits.inGracePeriod(sub);
+  const graceEndsAt = inGrace ? limits.graceEndsAt(sub) : null;
+
   return {
     planId: sub.planId,
     effectivePlan,
@@ -38,6 +44,8 @@ async function getStatus(userId, userRole) {
     cancelAtPeriodEnd: !!sub.cancelAtPeriodEnd,
     daysLeftInTrial,
     daysUntilPeriodEnd,
+    inGrace,
+    graceEndsAt,
     limits: planLimits,
     hasStripeCustomer: !!sub.stripeCustomerId,
     isAdmin: userRole === "admin",
@@ -62,11 +70,12 @@ async function publicPlans() {
 }
 
 // Indica se o scheduler pode processar grupos desse usuário.
-// trialing/active = sim; qualquer outro = não. Admin sempre ativo.
+// trialing/active = sim; past_due/unpaid dentro da carência de 3 dias também.
+// Qualquer outro = não. Admin sempre ativo.
 function isActive(sub, userRole) {
   if (userRole === "admin") return true;
   if (!sub) return false;
-  return sub.status === "active" || sub.status === "trialing";
+  return sub.status === "active" || sub.status === "trialing" || limits.inGracePeriod(sub);
 }
 
 module.exports = {
@@ -74,4 +83,5 @@ module.exports = {
   getStatus,
   isActive,
   limits,
+  enforce,
 };

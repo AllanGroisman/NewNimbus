@@ -24,6 +24,13 @@ npm install --omit=dev
 npx prisma generate
 npx prisma migrate deploy
 
+# O Chrome do Puppeteer mora em ~/.cache/puppeteer, FORA do node_modules: se o
+# cache for apagado (limpeza de disco, troca de usuário), o npm install não o
+# traz de volta — o pacote não mudou, então não roda o postinstall. Sem isso o
+# scraping de ML/Amazon morre em silêncio. Idempotente: sai na hora se já existe.
+echo "  garantindo o Chrome do Puppeteer..."
+npx puppeteer browsers install chrome
+
 echo
 echo "[3/4] frontend: build..."
 cd "$REPO_DIR/frontend"

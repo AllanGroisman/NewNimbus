@@ -27,7 +27,13 @@ export default function PageWhatsApp({
   onRemoveNumber,
   onRelinkNumber,
   limits,
+  planPausedIds = [],
+  onActivatePlanPaused,
 }) {
+  // Números pausados pelo plano (cancelamento/downgrade): a sessão continua de
+  // pé — não perde o pareamento — mas nenhum envio sai por eles até o cliente
+  // ativar de volta (trocando com um dos ativos).
+  const isPlanPaused = (id) => planPausedIds.some(x => String(x) === String(id));
   const [showQR, setShowQR] = useState(null); // sessionId em conexão | "new" | null
   const [newLabel, setNewLabel] = useState("");
   const [confirmDisconnect, setConfirmDisconnect] = useState(null);
@@ -218,7 +224,8 @@ export default function PageWhatsApp({
         <div>
           <h2 style={{ fontSize: 18, fontWeight: 500, display: "flex", alignItems: "center", gap: 8 }}>
             WhatsApp
-            <UsageBadge current={numbers.length} limit={limits?.numbers} label="números conectados" />
+            {/* O limite vale sobre os ATIVOS — pausados pelo plano não contam. */}
+            <UsageBadge current={numbers.filter(n => !isPlanPaused(n.id)).length} limit={limits?.numbers} label="números ativos" />
           </h2>
           <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 4 }}>
             Gerencie os números aqui; grupos vão na aba de cada campanha.
@@ -261,6 +268,7 @@ export default function PageWhatsApp({
           const connecting = st === "connecting";
           // Preso reconectando: connecting há mais que o limiar → oferece "Reconectar".
           const stuck = connecting && !!stuckIds[n.id];
+          const planPausedNumber = isPlanPaused(n.id);
           return (
             <div key={n.id} style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: "14px 16px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
@@ -297,11 +305,21 @@ export default function PageWhatsApp({
                   <div style={{ fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 6 }}>{n.phone}</div>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                     <Badge color={ui.badge}>{ui.label}</Badge>
+                    {planPausedNumber && <Badge color="amber">Pausado pelo plano</Badge>}
                     {wgCount > 0 && <Badge color="gray">Em uso por {wgCount} grupo{wgCount !== 1 ? "s" : ""}</Badge>}
                     {n.lastActivity && <Badge color="gray">Atividade: {n.lastActivity}</Badge>}
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  {planPausedNumber && (
+                    <button
+                      onClick={() => onActivatePlanPaused?.(n.id)}
+                      title="Ativar este número dentro do seu plano (troca com um dos ativos)"
+                      style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "var(--warn-text)", color: "var(--color-background-primary)", fontSize: 12, cursor: "pointer", fontWeight: 500 }}
+                    >
+                      ▶ Ativar
+                    </button>
+                  )}
                   {connected ? (
                     <button onClick={() => setConfirmDisconnect(n.id)} style={{ padding: "6px 14px", borderRadius: 8, border: "0.5px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", fontSize: 12, cursor: "pointer" }}>Desconectar</button>
                   ) : connecting ? (

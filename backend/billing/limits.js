@@ -53,13 +53,38 @@ const PLANS = {
   },
 };
 
+// Carência de pagamento: cartão que falha (past_due/unpaid) não derruba o
+// cliente na hora — o Stripe ainda vai tentar cobrar de novo. Durante estes
+// 3 dias, contados de `pastDueSince`, o plano pago continua valendo.
+const GRACE_MS = 3 * 24 * 60 * 60 * 1000;
+const PAST_DUE_STATUSES = new Set(["past_due", "unpaid"]);
+
+// true enquanto a assinatura em atraso ainda está dentro da carência.
+// Sem `pastDueSince` (linha antiga, atraso de origem desconhecida) não há
+// carência — comportamento conservador de antes.
+function inGracePeriod(sub, now = Date.now()) {
+  if (!sub || !PAST_DUE_STATUSES.has(sub.status)) return false;
+  if (!sub.pastDueSince) return false;
+  const since = new Date(sub.pastDueSince).getTime();
+  if (!Number.isFinite(since)) return false;
+  return now - since < GRACE_MS;
+}
+
+// Fim da carência em ms (ou null) — usado pelo banner "atualize o cartão até…".
+function graceEndsAt(sub) {
+  if (!sub?.pastDueSince || !PAST_DUE_STATUSES.has(sub.status)) return null;
+  const since = new Date(sub.pastDueSince).getTime();
+  if (!Number.isFinite(since)) return null;
+  return new Date(since + GRACE_MS);
+}
+
 // Plano efetivo: o que o usuário pode usar AGORA. trialing/active = planId real;
-// qualquer outro status (past_due, canceled, …) cai pra free.
+// past_due/unpaid dentro da carência também. Qualquer outro caso cai pra free.
 // Admins recebem Business permanentemente — bypass de gating.
 function effectivePlanId(sub, userRole) {
   if (userRole === "admin") return "business";
   if (!sub) return "free";
-  const active = sub.status === "active" || sub.status === "trialing";
+  const active = sub.status === "active" || sub.status === "trialing" || inGracePeriod(sub);
   if (!active) return "free";
   return PLANS[sub.planId] ? sub.planId : "free";
 }
@@ -73,7 +98,39 @@ function getPlan(planId) {
   return PLANS[planId] || PLANS.free;
 }
 
-// Helper de gating — retorna { ok, error?, limit?, current?, planRequired? }
+// Rótulos em pt-BR pra montar mensagem que o cliente entende — o texto antigo
+// ("Limite de groups excedido (2/1)") aparecia cru na tela.
+const LABELS = {
+  groups: { one: "campanha ativa", many: "campanhas ativas", fix: "Pause uma campanha" },
+  numbers: { one: "número de WhatsApp ativo", many: "números de WhatsApp ativos", fix: "Pause um número" },
+  whatsappGroupsPerCampaign: {
+    one: "grupo de WhatsApp por campanha", many: "grupos de WhatsApp por campanha",
+    fix: "Remova grupos desta campanha",
+  },
+  categoriesPerGroup: {
+    one: "categoria por campanha", many: "categorias por campanha",
+    fix: "Remova categorias desta campanha",
+  },
+};
+
+// Mensagem amigável do estouro de limite. Sem plano ativo (limite 0) o caminho
+// é assinar; com plano, dá pra pausar/remover ou subir de plano.
+function limitMessage(sub, key, current, limit, planRequired, userRole) {
+  const label = LABELS[key] || { one: key, many: key, fix: "Remova itens" };
+  const planLabel = getPlan(effectivePlanId(sub, userRole)).label;
+  const upgradeLabel = getPlan(planRequired).label;
+  const upgradeLimit = getPlan(planRequired).limits[key];
+  if (!limit) {
+    return `Você está sem plano ativo, então não dá para usar ${label.many}. Assine o ${upgradeLabel} para liberar.`;
+  }
+  const unit = limit === 1 ? label.one : label.many;
+  const upgradePart = planRequired && upgradeLimit > limit
+    ? ` ${label.fix} ou assine o ${upgradeLabel} para ter ${upgradeLimit}.`
+    : ` ${label.fix}.`;
+  return `Seu plano ${planLabel} permite ${limit} ${unit} e você já tem ${current}.${upgradePart}`;
+}
+
+// Helper de gating — retorna { ok, error?, code?, limit?, current?, planRequired? }
 function checkLimit(sub, key, current, userRole) {
   // Admin bypass total — não checa limites mesmo se exceder business.
   if (userRole === "admin") return { ok: true, bypass: "admin" };
@@ -84,17 +141,22 @@ function checkLimit(sub, key, current, userRole) {
   if (typeof limit === "boolean") {
     return limit ? { ok: true } : {
       ok: false,
-      error: `Feature "${key}" não disponível no plano atual`,
+      code: "plan_limit",
+      key,
+      error: `Este recurso não está disponível no seu plano.`,
       planRequired: "pro",
     };
   }
   if (current > limit) {
+    const planRequired = suggestUpgrade(sub, key, current);
     return {
       ok: false,
-      error: `Limite de ${key} excedido (${current}/${limit})`,
+      code: "plan_limit",
+      key,
+      error: limitMessage(sub, key, current, limit, planRequired, userRole),
       limit,
       current,
-      planRequired: suggestUpgrade(sub, key, current),
+      planRequired,
     };
   }
   return { ok: true, limit, current };
@@ -117,7 +179,10 @@ function suggestUpgrade(sub, key, current) {
 
 module.exports = {
   PLANS,
+  GRACE_MS,
   effectivePlanId,
+  inGracePeriod,
+  graceEndsAt,
   getLimits,
   getPlan,
   checkLimit,

@@ -198,6 +198,45 @@ describe("scheduler.sendNextNow — envia primeiro item da queue", () => {
     expect(g.sentWeek).toBe(1);
   });
 
+  // Task 34: campanha pausada por cancelamento/downgrade não envia, nem no
+  // "Enviar agora" — mas continua existindo com fila e tudo.
+  it("campanha pausada pelo plano não envia e explica o motivo", async () => {
+    const { user, auth } = await createUserWithMLAffiliate();
+    const numbers = [{ id: "num-9", phone: "5511..." }];
+    const waGroups = [makeWhatsAppGroup({ id: "wa-9", numberId: "num-9", jid: "fake9@g.us" })];
+    const group = makeGroup({ id: 320, whatsappGroupIds: ["wa-9"], sources: ["amazon"] });
+    await auth("put", "/api/state").send({ groups: [group], numbers, whatsappGroups: waGroups });
+    waConnect(user.id, "num-9");
+    await storage.updateGroupOps(user.id, 320, {
+      queue: [{ id: "i", key: "i", name: "Nao Envia", link: "https://x.com/a", img: null, price: 10, discount: 10, store: "Amazon", category: "gamer" }],
+    });
+
+    await storage.savePlanPaused(user.id, { groups: [320], numbers: [] });
+
+    await expect(scheduler.sendNextNow(user.id, 320)).rejects.toThrow(/pausada pelo seu plano/i);
+    expect(waCalls.sendText.length).toBe(0);
+    // Nada foi apagado: a fila continua lá pra quando o plano voltar.
+    const st = await storage.loadState(user.id);
+    expect(st.groups.find(g => g.id === 320).queue).toHaveLength(1);
+  });
+
+  it("número pausado pelo plano não recebe envio", async () => {
+    const { user, auth } = await createUserWithMLAffiliate();
+    const numbers = [{ id: "num-10", phone: "5511..." }];
+    const waGroups = [makeWhatsAppGroup({ id: "wa-10", numberId: "num-10", jid: "fake10@g.us" })];
+    const group = makeGroup({ id: 321, whatsappGroupIds: ["wa-10"], sources: ["amazon"] });
+    await auth("put", "/api/state").send({ groups: [group], numbers, whatsappGroups: waGroups });
+    waConnect(user.id, "num-10");
+    await storage.updateGroupOps(user.id, 321, {
+      queue: [{ id: "i", key: "i", name: "Nao Envia 2", link: "https://x.com/a", img: null, price: 10, discount: 10, store: "Amazon", category: "gamer" }],
+    });
+
+    await storage.savePlanPaused(user.id, { groups: [], numbers: ["num-10"] });
+
+    await expect(scheduler.sendNextNow(user.id, 321)).rejects.toThrow(/pausados pelo seu plano/i);
+    expect(waCalls.sendText.length).toBe(0);
+  });
+
   it("dispara wa.sendText quando item nao tem img", async () => {
     const { user, auth } = await createUserWithMLAffiliate();
     const waGroups = [makeWhatsAppGroup({ id: "wa-2", numberId: "num-2", jid: "fake2@g.us" })];

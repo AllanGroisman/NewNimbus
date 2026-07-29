@@ -54,7 +54,9 @@ describe("WhatsApp — sessões (gating + auth)", () => {
     }
     const fourth = await u.auth("post", "/api/whatsapp/sessions/num-4");
     expect(fourth.status).toBe(402);
-    expect(fourth.body.error).toMatch(/numbers/i);
+    // Mensagem é em pt-BR, pro cliente entender o que fazer (limits.js).
+    expect(fourth.body.error).toMatch(/números de WhatsApp/i);
+    expect(fourth.body.code).toBe("plan_limit");
     expect(fourth.body.limit).toBe(3);
     expect(fourth.body.current).toBe(4);
     expect(fourth.body.planRequired).toBe("business");

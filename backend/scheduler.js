@@ -161,19 +161,33 @@ function groupPausedByAffiliate(userId, group) {
   return affiliateGate(userId, group).paused;
 }
 
+// Remove os grupos de WhatsApp cujo número está pausado pelo plano. O número
+// segue conectado (não perde o pareamento), mas não envia nada até o cliente
+// ativá-lo de volta na página WhatsApp.
+function excludePlanPausedNumbers(whatsappGroups, planPaused) {
+  const paused = new Set((planPaused?.numbers || []).map(String));
+  if (!paused.size) return whatsappGroups || [];
+  return (whatsappGroups || []).filter(w => !paused.has(String(w.numberId)));
+}
+
 // Campanha "sem WhatsApp": pausa derivada (não persistida) quando NENHUM número
 // vinculado está conectado. Se pelo menos um está de pé, segue enviando (o
 // sendItem já pula os grupos caídos). Retoma sozinho quando reconectar.
 // `empty` (nenhum grupo vinculado) não é tratado aqui — o dispatch já não envia.
-async function whatsappGate(userId, group, whatsappGroups) {
+// Números pausados pelo plano contam como indisponíveis, com motivo próprio.
+async function whatsappGate(userId, group, whatsappGroups, planPaused) {
   const linkedIds = group.whatsappGroupIds || [];
   const linked = (whatsappGroups || []).filter(w => linkedIds.includes(w.id));
   if (!linked.length) return { paused: false, reason: null };
+  const usable = excludePlanPausedNumbers(linked, planPaused);
+  if (!usable.length) {
+    return { paused: true, reason: "os números de WhatsApp desta campanha estão pausados pelo seu plano" };
+  }
   const sessions = await wa.listSessions(userId);
   const connectedNumbers = new Set(
     (sessions || []).filter(s => s.status === "connected").map(s => s.numberId)
   );
-  const anyUp = linked.some(w => connectedNumbers.has(w.numberId));
+  const anyUp = usable.some(w => connectedNumbers.has(w.numberId));
   return anyUp
     ? { paused: false, reason: null }
     : { paused: true, reason: "nenhum WhatsApp vinculado está conectado" };
@@ -537,8 +551,19 @@ async function processSendJob(job) {
     const state = await storage.loadState(userId);
     const group = (state.groups || []).find(g => g.id === groupId);
     if (!group) throw new Error(`campanha ${groupId} não encontrada`);
+    // O plano pode ter caído entre o enfileiramento e o consumo do job —
+    // devolve o item pra fila em vez de enviar por uma campanha pausada.
+    if (group.planPaused) {
+      await storage.updateGroupOps(userId, groupId, { queue: [item, ...(group.queue || [])] });
+      log.info({ userId, groupId }, "job descartado — campanha pausada pelo plano");
+      return { skipped: "plan_paused" };
+    }
 
-    const result = await sendItem(userId, group, state.whatsappGroups || [], item);
+    const result = await sendItem(
+      userId, group,
+      excludePlanPausedNumbers(state.whatsappGroups || [], state.planPaused),
+      item,
+    );
     await storage.updateGroupOps(userId, groupId, {
       history: result.history,
       sentToday: result.sentToday,
@@ -564,11 +589,14 @@ async function sendNextNow(userId, groupId) {
   if (group.paused) {
     throw new Error("Campanha pausada: retome a campanha pra enviar.");
   }
+  if (group.planPaused) {
+    throw new Error("Campanha pausada pelo seu plano: escolha ela entre as campanhas ativas ou assine um plano maior pra enviar.");
+  }
   const gate = affiliateGate(userId, group);
   if (gate.paused) {
     throw new Error(`Campanha pausada: ${gate.reason}.`);
   }
-  const waGate = await whatsappGate(userId, group, state.whatsappGroups || []);
+  const waGate = await whatsappGate(userId, group, state.whatsappGroups || [], state.planPaused);
   if (waGate.paused) {
     throw new Error(`Campanha pausada: ${waGate.reason}.`);
   }
@@ -600,7 +628,11 @@ async function sendNextNow(userId, groupId) {
     throw new Error("Fila vazia — sem produtos no catálogo que passem nos filtros desta campanha. Peça pro admin atualizar o catálogo (página Scraping) ou afrouxe os filtros.");
   }
 
-  const result = await sendItem(userId, group, state.whatsappGroups || [], queue[0]);
+  const result = await sendItem(
+    userId, group,
+    excludePlanPausedNumbers(state.whatsappGroups || [], state.planPaused),
+    queue[0],
+  );
   if (!result) throw new Error("Nenhum envio realizado");
   await storage.updateGroupOps(userId, groupId, {
     queue: result.queue,
@@ -614,11 +646,17 @@ async function sendNextNow(userId, groupId) {
 }
 
 // Processa um grupo: refill + dispatch
-async function processGroup(userId, group, whatsappGroups, numbers) {
+async function processGroup(userId, group, whatsappGroups, numbers, planPaused) {
   const updates = {};
   const now = new Date();
 
   if (group.paused) {
+    return;
+  }
+  // Pausada pelo plano (cancelamento/downgrade): nada de refill nem envio.
+  // O aviso de "por que parou" fica na UI, não vira notificação de campanha
+  // parada — o cliente já sabe que baixou de plano.
+  if (group.planPaused) {
     return;
   }
   // Parada por gate (afiliado/whatsapp) — notifica o dono com o motivo (edge-trigger).
@@ -627,7 +665,7 @@ async function processGroup(userId, group, whatsappGroups, numbers) {
     userNotifier.onCampaignStopped(userId, group.id, group.name, affGate.reason, true).catch(() => {});
     return;
   }
-  const waGate = await whatsappGate(userId, group, whatsappGroups);
+  const waGate = await whatsappGate(userId, group, whatsappGroups, planPaused);
   if (waGate.paused) {
     userNotifier.onCampaignStopped(userId, group.id, group.name, waGate.reason, true).catch(() => {});
     return;
@@ -688,7 +726,11 @@ async function processGroup(userId, group, whatsappGroups, numbers) {
 
   // Dispatch (só consome de queue — pending precisa de aprovação manual)
   const groupForDispatch = updates.queue ? { ...group, queue: updates.queue } : group;
-  const res = await dispatchOne(userId, groupForDispatch, whatsappGroups, numbers);
+  const res = await dispatchOne(
+    userId, groupForDispatch,
+    excludePlanPausedNumbers(whatsappGroups, planPaused),
+    numbers,
+  );
   if (res) Object.assign(updates, res);
 
   if (Object.keys(updates).length) {
@@ -726,7 +768,7 @@ async function tick() {
       const numbers = state.numbers || [];
       for (const g of groups) {
         try {
-          await processGroup(userId, g, whatsappGroups, numbers);
+          await processGroup(userId, g, whatsappGroups, numbers, state.planPaused);
         } catch (err) {
           log.error({ err, userId, groupId: g.id }, "processGroup erro");
         }

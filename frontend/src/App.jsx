@@ -9,11 +9,12 @@ const DEFAULT_SETTINGS = {
   sources: allSources,
   theme: "auto",
 };
-import { authMe, authLogout, authRefresh, loadAppState, saveAppState, loadAppOps, getToken, clearToken, getLastActivity, setLastActivity, IDLE_TIMEOUT_MS, getAffiliateStatus, billingMe, billingSync, listWASessions, storeLocks as fetchStoreLocks } from "./data/api";
+import { authMe, authLogout, authRefresh, loadAppState, saveAppState, loadAppOps, getToken, clearToken, getLastActivity, setLastActivity, IDLE_TIMEOUT_MS, getAffiliateStatus, billingMe, billingSync, billingActiveSelection, listWASessions, storeLocks as fetchStoreLocks } from "./data/api";
 import Sidebar from "./components/Sidebar";
 import GroupDashboard from "./components/GroupDashboard";
 import UnsavedChangesModal from "./components/UnsavedChangesModal";
 import LogoutConfirmModal from "./components/LogoutConfirmModal";
+import PlanSwapModal from "./components/PlanSwapModal";
 import StoreLockedNotice from "./components/ui/StoreLockedNotice";
 import { NavGuardContext } from "./data/navGuard";
 import { mergeGroupOps, mergeGroupsOps } from "./data/opsMerge";
@@ -66,10 +67,21 @@ const AFFILIATE_POLL_MS = 30 * 1000;
 const STORE_LOCKS_POLL_MS = 60 * 1000;
 // Teto do backoff em 429 (rate-limit): intervalo nunca passa de POLL_MS × este fator.
 const MAX_BACKOFF_MULT = 8;
+// Referência estável pra "nada pausado pelo plano" — evita recriar objeto a
+// cada render e disparar efeitos à toa.
+const EMPTY_PLAN_PAUSED = { groups: [], numbers: [] };
 
 export default function App() {
   const [groups, setGroups] = useState(initialGroups);
   const [numbers, setNumbers] = useState(initialNumbers);
+  // Pausa por plano (cancelamento/downgrade): quem está aqui continua na tela e
+  // editável, mas não envia e não conta contra o limite. Quem manda é o
+  // servidor — o frontend só lê e oferece a troca.
+  const [planPaused, setPlanPaused] = useState(EMPTY_PLAN_PAUSED);
+  // Troca pendente: { kind, target, candidates } enquanto o modal está aberto.
+  const [planSwap, setPlanSwap] = useState(null);
+  const [planSwapBusy, setPlanSwapBusy] = useState(false);
+  const [planSwapError, setPlanSwapError] = useState(null);
   const [whatsappGroups, setWhatsappGroups] = useState(initialWhatsappGroups);
   // Status ao vivo das sessões WhatsApp por numberId ({ [numberId]: "connected" | ... }).
   // Alimentado por poll; usado pra derivar o status real das campanhas (ver liveWhatsappGroups).
@@ -193,6 +205,7 @@ export default function App() {
         setNumbers(state.numbers || []);
         setWhatsappGroups(state.whatsappGroups || []);
         setSettings({ ...DEFAULT_SETTINGS, ...(state.settings || {}) });
+        setPlanPaused(state.planPaused || EMPTY_PLAN_PAUSED);
         stateUpdatedAtRef.current = state.updatedAt || null;
         stateLoadedRef.current = true;
         // Reabre a campanha do endereço (ou a que estava aberta antes do F5).
@@ -294,9 +307,14 @@ export default function App() {
         } catch { /* próxima tentativa de save cuida disso */ }
       } else if (err.status === 402) {
         // Limite do plano excedido — backend recusou o save. Insistir não
-        // resolve (o limite continua estourado), então nada de "Tentar agora".
+        // resolve (o limite continua estourado), então nada de "Tentar agora";
+        // o caminho é pausar/remover algo ou assinar um plano maior.
         lastFailedSaveRef.current = null;
-        setSaveError({ message: err.message || "Limite do plano excedido.", retryable: false });
+        setSaveError({
+          message: err.message || "Limite do plano excedido.",
+          retryable: false,
+          showPlans: err.code === "plan_limit",
+        });
       } else {
         // Falha de rede/servidor: o usuário já viu "✓ Salvo!" na tela da campanha,
         // mas nada foi gravado. Guarda o payload e avisa, com opção de tentar de novo.
@@ -415,6 +433,13 @@ export default function App() {
         const opsList = ops.groups || [];
         setGroups(prev => mergeGroupsOps(prev, opsList));
         setSelectedGroup(prev => prev ? mergeGroupOps(prev, opsList.find(o => o.id === prev.id)) : prev);
+        // Pausa por plano vem no mesmo poll — só troca a referência se mudou
+        // (senão dispararia autosave a cada 3s, ver opsMerge.js).
+        if (ops.planPaused) {
+          setPlanPaused(prev => (
+            JSON.stringify(prev) === JSON.stringify(ops.planPaused) ? prev : ops.planPaused
+          ));
+        }
       } catch (err) {
         // 429 (rate-limit) não é transitório do mesmo jeito que uma falha de rede —
         // insistir no intervalo cheio só mantém a janela sempre estourada. Recua
@@ -573,6 +598,7 @@ export default function App() {
       setNumbers(state.numbers || []);
       setWhatsappGroups(state.whatsappGroups || []);
       setSettings({ ...DEFAULT_SETTINGS, ...(state.settings || {}) });
+      setPlanPaused(state.planPaused || EMPTY_PLAN_PAUSED);
       // Quem chegou por um link de campanha e passou pelo login vai direto pra
       // ela, em vez de cair no painel e ter que procurar.
       const wanted = initialNavRef.current;
@@ -719,6 +745,75 @@ export default function App() {
     setWhatsappGroups(ws => ws.map(w => w.id === wgId ? { ...w, ...updates } : w));
   };
 
+  // ─── Pausa por plano (cancelamento / downgrade) ────────────────────────
+  // Quem passou do limite fica pausado, não apagado. Aqui o cliente troca quem
+  // está ativo: se sobra vaga, ativa direto; se não, o modal pergunta qual sai.
+  const isGroupPlanPaused = (id) => (planPaused.groups || []).some(x => Number(x) === Number(id));
+  const isNumberPlanPaused = (id) => (planPaused.numbers || []).some(x => String(x) === String(id));
+  const planPausedCount = (planPaused.groups || []).length + (planPaused.numbers || []).length;
+  const numberName = (n) => n.label || n.phone || `Número ${n.id}`;
+
+  // Listas de ativos no formato que a rota espera (o que não vem fica pausado).
+  const currentSelection = () => ({
+    groups: groups.filter(g => !isGroupPlanPaused(g.id)).map(g => Number(g.id)),
+    numbers: numbers.filter(n => !isNumberPlanPaused(n.id)).map(n => String(n.id)),
+  });
+
+  const applyActiveSelection = async (selection) => {
+    const res = await billingActiveSelection(selection);
+    setPlanPaused(res.planPaused || EMPTY_PLAN_PAUSED);
+    billingMe().then(b => setBilling(b)).catch(() => {});
+    return res;
+  };
+
+  // kind: "groups" | "numbers"
+  const activatePlanPaused = async (kind, id) => {
+    const items = kind === "groups" ? groups : numbers;
+    const isPaused = kind === "groups" ? isGroupPlanPaused : isNumberPlanPaused;
+    const limit = kind === "groups" ? billing?.limits?.groups : billing?.limits?.numbers;
+    const nameOf = (i) => (kind === "groups" ? i.name : numberName(i));
+    const active = items.filter(i => !isPaused(i.id));
+    const target = items.find(i => String(i.id) === String(id));
+    if (!target) return;
+
+    if (limit != null && active.length >= limit) {
+      // Plano cheio — o cliente escolhe quem sai no lugar.
+      setPlanSwapError(null);
+      setPlanSwap({
+        kind,
+        id,
+        target: { id, name: nameOf(target) },
+        candidates: active.map(i => ({ id: i.id, name: nameOf(i) })),
+      });
+      return;
+    }
+    const selection = currentSelection();
+    selection[kind] = [...selection[kind], kind === "groups" ? Number(id) : String(id)];
+    try {
+      await applyActiveSelection(selection);
+    } catch (err) {
+      setSaveError({ message: err.message, retryable: false, showPlans: err.code === "plan_limit" });
+    }
+  };
+
+  const confirmPlanSwap = async (victimId) => {
+    if (!planSwap) return;
+    setPlanSwapBusy(true);
+    setPlanSwapError(null);
+    try {
+      const { kind, id } = planSwap;
+      const norm = (v) => (kind === "groups" ? Number(v) : String(v));
+      const selection = currentSelection();
+      selection[kind] = selection[kind].filter(x => norm(x) !== norm(victimId)).concat([norm(id)]);
+      await applyActiveSelection(selection);
+      setPlanSwap(null);
+    } catch (err) {
+      setPlanSwapError(err.message || "Não conseguimos fazer a troca agora.");
+    } finally {
+      setPlanSwapBusy(false);
+    }
+  };
+
   if (bootstrapping) {
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-text-secondary)", fontSize: 13 }}>
@@ -731,7 +826,7 @@ export default function App() {
     return <Login onLogin={handleLogin} />;
   }
 
-  const fallbackPage = <PageDashboard groups={groups} whatsappGroups={liveWhatsappGroups} onSelectGroup={handleSelectGroup} onCreateGroup={handleCreateGroup} onUpdate={handleUpdate} affiliateConfigured={affiliateConfigured} onGoToSettings={() => setPage("settings")} limits={billing?.limits} />;
+  const fallbackPage = <PageDashboard groups={groups} whatsappGroups={liveWhatsappGroups} onSelectGroup={handleSelectGroup} onCreateGroup={handleCreateGroup} onUpdate={handleUpdate} affiliateConfigured={affiliateConfigured} onGoToSettings={() => setPage("settings")} limits={billing?.limits} planPausedIds={planPaused.groups} onActivatePlanPaused={(id) => activatePlanPaused("groups", id)} />;
   // Loja trancada pelo admin → mostra só a mensagem no lugar da página de
   // afiliado. Admin continua vendo a página normal pra poder validar antes de liberar.
   const lockedStore = (storeId) => {
@@ -742,7 +837,7 @@ export default function App() {
     return <StoreLockedNotice storeLabel={label} message={msg} />;
   };
   const pageMap = {
-    dashboard: <PageDashboard groups={groups} whatsappGroups={liveWhatsappGroups} onSelectGroup={handleSelectGroup} onCreateGroup={handleCreateGroup} onUpdate={handleUpdate} affiliateConfigured={affiliateConfigured} onGoToSettings={() => setPage("settings")} limits={billing?.limits} />,
+    dashboard: <PageDashboard groups={groups} whatsappGroups={liveWhatsappGroups} onSelectGroup={handleSelectGroup} onCreateGroup={handleCreateGroup} onUpdate={handleUpdate} affiliateConfigured={affiliateConfigured} onGoToSettings={() => setPage("settings")} limits={billing?.limits} planPausedIds={planPaused.groups} onActivatePlanPaused={(id) => activatePlanPaused("groups", id)} />,
     products: user?.role === "admin" ? <PageProducts /> : fallbackPage,
     whatsapp: <PageWhatsApp
       numbers={numbers}
@@ -751,6 +846,8 @@ export default function App() {
       onRemoveNumber={removeNumberAndGroups}
       onRelinkNumber={relinkNumber}
       limits={billing?.limits}
+      planPausedIds={planPaused.numbers}
+      onActivatePlanPaused={(id) => activatePlanPaused("numbers", id)}
     />,
     settings: <PageSettings user={user} setUser={setUser} onLogout={handleLogout} settings={settings} setSettings={setSettings} numbers={numbers} onAffiliateChange={applyAffiliateStatus} />,
     subscription: <PageSubscription />,
@@ -783,6 +880,17 @@ export default function App() {
           onConfirm={() => { setConfirmLogout(false); handleLogout(); }}
         />
       )}
+      {planSwap && (
+        <PlanSwapModal
+          kind={planSwap.kind === "groups" ? "campanha" : "número"}
+          target={planSwap.target}
+          candidates={planSwap.candidates}
+          busy={planSwapBusy}
+          error={planSwapError}
+          onCancel={() => { setPlanSwap(null); setPlanSwapError(null); }}
+          onConfirm={confirmPlanSwap}
+        />
+      )}
       <Sidebar
         page={page}
         selectedGroup={selectedGroup}
@@ -809,6 +917,11 @@ export default function App() {
                 Tentar agora
               </button>
             )}
+            {saveError.showPlans && (
+              <button onClick={() => requestNavigation(() => { setSaveError(null); setSelectedGroup(null); setPage("subscription"); })} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--danger-text)", color: "var(--color-background-primary)", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
+                Ver planos
+              </button>
+            )}
           </div>
         )}
         {degradedPolls.size > 0 && (
@@ -816,8 +929,30 @@ export default function App() {
             Atualização automática mais lenta no momento (muitas requisições) — tentando novamente. Se algo parecer desatualizado, recarregue a página.
           </div>
         )}
+        {/* Pausado pelo plano: nada foi apagado — só parou de enviar. O cliente
+            escolhe quem volta a ficar ativo na própria lista (botão "Ativar"). */}
+        {planPausedCount > 0 && (
+          <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", color: "var(--warn-text)", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ flex: 1, minWidth: 220 }}>
+              {(planPaused.groups || []).length > 0 && (
+                <>Seu plano cobre {billing?.limits?.groups ?? 0} campanha{billing?.limits?.groups === 1 ? "" : "s"} ativa{billing?.limits?.groups === 1 ? "" : "s"} — {(planPaused.groups || []).length} está{(planPaused.groups || []).length === 1 ? "" : "ão"} pausada{(planPaused.groups || []).length === 1 ? "" : "s"} e não envia{(planPaused.groups || []).length === 1 ? "" : "m"}. </>
+              )}
+              {(planPaused.numbers || []).length > 0 && (
+                <>{(planPaused.numbers || []).length} número{(planPaused.numbers || []).length === 1 ? "" : "s"} de WhatsApp pausado{(planPaused.numbers || []).length === 1 ? "" : "s"} pelo plano (segue{(planPaused.numbers || []).length === 1 ? "" : "m"} conectado{(planPaused.numbers || []).length === 1 ? "" : "s"}). </>
+              )}
+              Nada foi apagado — escolha o que fica ativo em <strong>Campanhas</strong> / <strong>WhatsApp</strong>, ou assine um plano maior.
+            </span>
+            <button onClick={() => requestNavigation(() => { setSelectedGroup(null); setPage("subscription"); })} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--warn-text)", color: "var(--color-background-primary)", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
+              Ver planos
+            </button>
+          </div>
+        )}
         {billing && !billing.isAdmin && (
-          (billing.status === "past_due" || billing.status === "unpaid") ? (
+          billing.inGrace ? (
+            <div onClick={() => requestNavigation(() => setPage("subscription"))} style={{ cursor: "pointer", background: "var(--danger-bg)", border: "0.5px solid var(--danger-border)", color: "var(--danger-text)", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
+              Não conseguimos cobrar seu cartão. Você continua enviando até {billing.graceEndsAt ? new Date(billing.graceEndsAt).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) : "o fim da carência"} — clique para atualizar o pagamento.
+            </div>
+          ) : (billing.status === "past_due" || billing.status === "unpaid") ? (
             <div onClick={() => requestNavigation(() => setPage("subscription"))} style={{ cursor: "pointer", background: "var(--danger-bg)", border: "0.5px solid var(--danger-border)", color: "var(--danger-text)", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
               Pagamento pendente — clique para regularizar e manter envios ativos.
             </div>

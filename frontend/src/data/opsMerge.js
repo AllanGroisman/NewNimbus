@@ -8,7 +8,9 @@
 // sem o usuário ter editado nada. Retornar a mesma referência quando não há
 // mudança corta esse ciclo.
 
-export const OPS_FIELDS = ["queue", "pending", "history", "sentToday", "sentWeek", "weekData", "lastSend", "avgDiscount"];
+// `planPaused` não é ops de verdade, mas viaja no mesmo poll: é escrito só pelo
+// servidor (pausa por cancelamento/downgrade) e precisa aparecer sem F5.
+export const OPS_FIELDS = ["queue", "pending", "history", "sentToday", "sentWeek", "weekData", "lastSend", "avgDiscount", "planPaused"];
 
 // Compara dois valores de campo. Igualdade por referência é o caminho rápido;
 // senão compara por conteúdo (JSON) pra não trocar a referência quando o

@@ -101,6 +101,11 @@ npm install --omit=dev
 npx prisma generate
 npx prisma migrate deploy
 
+# Chrome do Puppeteer (usado pelo scraping de ML/Amazon). Fica em
+# ~/.cache/puppeteer, fora do node_modules — por isso é garantido explicitamente
+# aqui e no update.sh. Idempotente.
+npx puppeteer browsers install chrome
+
 # .env NÃO vem do repo (guarda senha de banco, chaves de API e credenciais de
 # e-mail). Copie o arquivo do servidor atual, ou preencha a partir do exemplo.
 if [[ ! -f .env ]]; then

@@ -181,6 +181,9 @@ async function handleStripeEvent(event) {
         if (!existing?.trialUsedAt) norm.trialUsedAt = new Date();
       }
       await billing.update(userId, norm);
+      // Plano mudou → recalcula o que fica ativo/pausado (downgrade pausa o
+      // excedente, upgrade despausa). Nunca derruba o webhook se falhar.
+      await applyPlanLimits(userId);
       return;
     }
     case "customer.subscription.deleted": {
@@ -194,6 +197,8 @@ async function handleStripeEvent(event) {
           cancelAtPeriodEnd: false,
           stripeSubscriptionId: null,
         });
+        // Sem plano = tudo pausado (nada é apagado; volta ao reassinar).
+        await applyPlanLimits(existing.userId);
       }
       return;
     }
@@ -481,7 +486,19 @@ app.post("/api/auth/password", auth.requireAuth, async (req, res) => {
 
 app.get("/api/state", auth.requireAuth, async (req, res) => {
   try {
-    res.json(await storage.loadState(req.user.id));
+    // Abertura da página: reavalia a pausa por plano com o estado em mãos.
+    // Cobre o caso sem evento nenhum (carência que venceu) — o poll de ops
+    // depois só reflete o que já está gravado.
+    const state = await storage.loadState(req.user.id);
+    const applied = await applyPlanLimits(req.user.id, { role: req.user.role, state });
+    if (applied.changed && applied.planPaused) {
+      const pausedGroups = new Set(applied.planPaused.groups.map(Number));
+      const pausedNumbers = new Set(applied.planPaused.numbers.map(String));
+      for (const g of state.groups || []) g.planPaused = pausedGroups.has(Number(g.id));
+      for (const n of state.numbers || []) n.planPaused = pausedNumbers.has(String(n.id));
+      state.planPaused = applied.planPaused;
+    }
+    res.json(state);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -489,29 +506,38 @@ app.get("/api/state", auth.requireAuth, async (req, res) => {
 
 app.put("/api/state", auth.requireAuth, async (req, res) => {
   try {
-    // Plan-gating — bloqueia se contagens excedem limites do plano efetivo.
-    // Admin passa direto. Mensagens explícitas pra UI sugerir upgrade.
+    // Plan-gating — o limite vale sobre os itens ATIVOS. O que está pausado
+    // pelo plano (cancelamento/downgrade) não conta e não é checado: assim
+    // quem está acima do limite ainda consegue apagar, editar e reorganizar —
+    // só não consegue criar item ativo novo. Admin passa direto.
     const incoming = req.body || {};
     if (req.user.role !== "admin") {
       const sub = await billing.getByUserId(req.user.id);
+      // Reavalia ANTES de checar: se o plano encolheu sem ninguém ter
+      // recalculado (fim da carência, downgrade sem webhook), o excedente é
+      // pausado agora. Sem isso o cliente tomaria 402 até pra apagar campanha.
+      const applied = await applyPlanLimits(req.user.id, { role: req.user.role, sub });
+      const planPaused = applied.planPaused || await storage.loadPlanPaused(req.user.id);
 
       const incomingGroups = Array.isArray(incoming.groups) ? incoming.groups : [];
       const incomingNumbers = Array.isArray(incoming.numbers) ? incoming.numbers : [];
+      const activeGroups = incomingGroups.filter(g => !billing.enforce.isGroupPlanPaused(planPaused, g.id));
+      const activeNumbers = incomingNumbers.filter(n => !billing.enforce.isNumberPlanPaused(planPaused, n.id));
 
       const checks = [
-        billing.limits.checkLimit(sub, "groups", incomingGroups.length, req.user.role),
-        billing.limits.checkLimit(sub, "numbers", incomingNumbers.length, req.user.role),
+        billing.limits.checkLimit(sub, "groups", activeGroups.length, req.user.role),
+        billing.limits.checkLimit(sub, "numbers", activeNumbers.length, req.user.role),
       ];
-      // categoriesPerGroup — qualquer grupo que exceda é bloqueio.
-      const worstCats = incomingGroups.reduce((max, g) => {
+      // categoriesPerGroup — qualquer campanha ATIVA que exceda é bloqueio.
+      const worstCats = activeGroups.reduce((max, g) => {
         const n = Array.isArray(g.categories) ? g.categories.length : 0;
         return n > max ? n : max;
       }, 0);
       if (worstCats > 0) {
         checks.push(billing.limits.checkLimit(sub, "categoriesPerGroup", worstCats, req.user.role));
       }
-      // whatsappGroupsPerCampaign — qualquer campanha com mais grupos do WA que o limite bloqueia.
-      const worstWaGroups = incomingGroups.reduce((max, g) => {
+      // whatsappGroupsPerCampaign — idem, só entre as campanhas ativas.
+      const worstWaGroups = activeGroups.reduce((max, g) => {
         const n = Array.isArray(g.whatsappGroupIds) ? g.whatsappGroupIds.length : 0;
         return n > max ? n : max;
       }, 0);
@@ -523,6 +549,9 @@ app.put("/api/state", auth.requireAuth, async (req, res) => {
     }
 
     const saved = await storage.saveState(req.user.id, incoming);
+    // Contagens mudaram (apagou/criou/editou) — reavalia a pausa por plano:
+    // apagar campanha acima do limite libera vaga pras que estavam pausadas.
+    await applyPlanLimits(req.user.id, { state: saved, role: req.user.role });
     res.json({ ok: true, updatedAt: saved.updatedAt });
   } catch (err) {
     if (err.code === "STALE_STATE") {
@@ -563,6 +592,43 @@ async function requireActiveSubscription(req, res, next) {
   }
 }
 
+// Gate por número: número pausado pelo plano continua conectado (não perde o
+// pareamento), mas não envia nada até o cliente ativá-lo de volta.
+async function requireNumberNotPlanPaused(req, res, next) {
+  try {
+    if (req.user.role === "admin") return next();
+    const planPaused = await storage.loadPlanPaused(req.user.id);
+    if (billing.enforce.isNumberPlanPaused(planPaused, req.params.id)) {
+      return res.status(402).json({
+        error: "Este número está pausado pelo seu plano. Ative-o na página WhatsApp (trocando com outro) ou assine um plano maior.",
+        code: "number_plan_paused",
+      });
+    }
+    next();
+  } catch (err) {
+    logger.error({ err: err.message }, "[billing] gate de número");
+    res.status(500).json({ error: "Erro ao verificar o plano" });
+  }
+}
+
+// Recalcula quais campanhas/números ficam ativos dentro do plano atual.
+// Chamada depois de qualquer mudança de assinatura ou de estado. Nunca lança —
+// falhar aqui não pode derrubar webhook, save ou página de assinatura.
+async function applyPlanLimits(userId, opts = {}) {
+  try {
+    let role = opts.role;
+    if (!role) {
+      const user = await auth.findById(userId);
+      role = user?.role;
+    }
+    const sub = opts.sub || await billing.getByUserId(userId);
+    return await billing.enforce.reconcileLimits(userId, sub, role, { state: opts.state });
+  } catch (err) {
+    logger.warn({ err: err.message, userId }, "[billing] applyPlanLimits falhou");
+    return { planPaused: null, changed: false };
+  }
+}
+
 // Reconciliação com o Stripe: busca a assinatura ao vivo e atualiza o banco.
 // Usada pelo POST /sync e pelo GET /me?fresh=1. Também marca trialUsedAt
 // na primeira vez que uma sub com trial aparece (set-if-null = idempotente).
@@ -573,6 +639,8 @@ async function reconcileWithStripe(userId) {
   if (!norm) return false;
   if (norm.trialEnd && !sub.trialUsedAt) norm.trialUsedAt = new Date();
   await billing.update(userId, norm);
+  // Plano pode ter mudado no Stripe sem webhook chegar — aplica os limites.
+  await applyPlanLimits(userId);
   return true;
 }
 
@@ -587,9 +655,16 @@ async function computeUsage(userId) {
   const state = await storage.loadState(userId);
   const groups = Array.isArray(state?.groups) ? state.groups : [];
   const numbers = Array.isArray(state?.numbers) ? state.numbers : [];
+  const planPaused = state?.planPaused || { groups: [], numbers: [] };
   return {
+    // `groups`/`numbers` = total; `active*` = o que conta contra o limite
+    // (o resto está pausado pelo plano e não envia).
     groups: groups.length,
     numbers: numbers.length,
+    activeGroups: groups.filter(g => !g.planPaused).length,
+    activeNumbers: numbers.filter(n => !n.planPaused).length,
+    pausedGroups: (planPaused.groups || []).length,
+    pausedNumbers: (planPaused.numbers || []).length,
     maxWhatsappGroupsPerCampaign: groups.reduce((max, g) => {
       const n = Array.isArray(g?.whatsappGroupIds) ? g.whatsappGroupIds.length : 0;
       return n > max ? n : max;
@@ -628,6 +703,31 @@ app.get("/api/billing/me", auth.requireAuth, async (req, res) => {
     }
     res.json({ ...status, usage, stripeEnabled: stripeMod.enabled() });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Escolha do cliente de quais campanhas/números ficam ATIVOS dentro do plano.
+// Body: { groups: [id, …], numbers: ["id", …] } — o que NÃO vier fica pausado
+// pelo plano (não envia, não conta no limite, não é apagado). Usada tanto pelo
+// "escolher quais campanhas ficam ativas" quanto pela troca de número.
+app.put("/api/billing/active-selection", auth.requireAuth, async (req, res) => {
+  try {
+    const sub = await billing.getByUserId(req.user.id);
+    const result = await billing.enforce.setActiveSelection(
+      req.user.id, sub, req.user.role, req.body || {},
+    );
+    if (!result.ok) {
+      const { ok, status, ...payload } = result;
+      return res.status(status || 400).json(payload);
+    }
+    let usage = null;
+    try {
+      usage = await computeUsage(req.user.id);
+    } catch { /* usage é informativo — não derruba a resposta */ }
+    res.json({ ok: true, planPaused: result.planPaused, usage });
+  } catch (err) {
+    logger.error({ err: err.message }, "[billing] active-selection falhou");
     res.status(500).json({ error: err.message });
   }
 });
@@ -1894,14 +1994,20 @@ app.get("/api/whatsapp/sessions", auth.requireAuth, async (req, res) => {
 
 app.post("/api/whatsapp/sessions/:id", auth.requireAuth, async (req, res) => {
   try {
-    // Plan-gating — número novo conta contra limite `numbers`. Sessão já existente
-    // (reconect) passa direto pq não estoura contagem.
+    // Plan-gating — número novo conta contra limite `numbers`. Sessão já
+    // existente (reconect) passa direto pq não estoura contagem. Números
+    // pausados pelo plano continuam conectados, mas não contam aqui — o que
+    // vale é quantos estão ativos.
     if (req.user.role !== "admin") {
       const existing = await wa.listSessions?.(req.user.id);
       const isNew = !(existing || []).some(s => s.numberId === req.params.id || s.id === req.params.id);
       if (isNew) {
         const sub = await billing.getByUserId(req.user.id);
-        const count = (existing || []).length + 1;
+        const planPaused = await storage.loadPlanPaused(req.user.id);
+        const activeExisting = (existing || []).filter(
+          s => !billing.enforce.isNumberPlanPaused(planPaused, s.numberId || s.id),
+        );
+        const count = activeExisting.length + 1;
         const check = billing.limits.checkLimit(sub, "numbers", count, req.user.role);
         if (!check.ok) return res.status(402).json(check);
       }
@@ -1999,7 +2105,7 @@ app.delete("/api/whatsapp/sessions/:id/groups/:jid", auth.requireAuth, async (re
   }
 });
 
-app.post("/api/whatsapp/sessions/:id/send", auth.requireAuth, requireActiveSubscription, async (req, res) => {
+app.post("/api/whatsapp/sessions/:id/send", auth.requireAuth, requireActiveSubscription, requireNumberNotPlanPaused, async (req, res) => {
   try {
     const { jid, text, imageUrl } = req.body || {};
     if (!jid) return res.status(400).json({ error: "jid obrigatório" });
@@ -2016,7 +2122,7 @@ app.post("/api/whatsapp/sessions/:id/send", auth.requireAuth, requireActiveSubsc
   }
 });
 
-app.post("/api/whatsapp/sessions/:id/broadcast", auth.requireAuth, requireActiveSubscription, async (req, res) => {
+app.post("/api/whatsapp/sessions/:id/broadcast", auth.requireAuth, requireActiveSubscription, requireNumberNotPlanPaused, async (req, res) => {
   try {
     const { jids = [], text, imageUrl, intervalMs = 4000 } = req.body || {};
     if (!Array.isArray(jids) || jids.length === 0) return res.status(400).json({ error: "jids obrigatório (array)" });

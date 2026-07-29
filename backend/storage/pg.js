@@ -77,6 +77,37 @@ function numberRowToObject(r) {
 // API pública
 // ────────────────────────────────────────────────────────────────────────
 
+// Normaliza a coluna planPaused pro shape { groups: [Number], numbers: [String] }.
+// Ids de campanha são numéricos (BigInt no banco, Number no frontend); ids de
+// número são string. Vem de JSON, então nunca confie no formato.
+function normalizePlanPaused(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  const groups = (Array.isArray(src.groups) ? src.groups : [])
+    .map(Number)
+    .filter(n => Number.isFinite(n));
+  const numbers = (Array.isArray(src.numbers) ? src.numbers : [])
+    .map(String)
+    .filter(Boolean);
+  return { groups: [...new Set(groups)], numbers: [...new Set(numbers)] };
+}
+
+async function loadPlanPaused(userId) {
+  const row = await prisma().userState.findUnique({ where: { userId }, select: { planPaused: true } });
+  return normalizePlanPaused(row?.planPaused);
+}
+
+// Grava a pausa por plano. Server-owned: só billing/enforce.js e a rota de
+// seleção chamam isso — nunca o PUT /api/state.
+async function savePlanPaused(userId, planPaused) {
+  const value = normalizePlanPaused(planPaused);
+  await prisma().userState.upsert({
+    where: { userId },
+    create: { userId, settings: {}, planPaused: value },
+    update: { planPaused: value },
+  });
+  return value;
+}
+
 async function loadState(userId) {
   const [stateRow, groupRows, queueRows, pendingRows, historyRows, waGroups, numbers] = await Promise.all([
     prisma().userState.findUnique({ where: { userId } }),
@@ -118,12 +149,24 @@ async function loadState(userId) {
     (hByG.get(String(g.id)) || []).slice(0, 200),
   ));
 
+  // Pausa por plano — some junto no state pra UI e scheduler não precisarem de
+  // uma segunda ida ao banco. `planPaused` no item é derivado (read-only).
+  const planPaused = normalizePlanPaused(stateRow?.planPaused);
+  const pausedGroups = new Set(planPaused.groups);
+  const pausedNumbers = new Set(planPaused.numbers);
+  for (const g of groups) g.planPaused = pausedGroups.has(Number(g.id));
+
   const result = {
     ...EMPTY_STATE,
     settings: stateRow?.settings || {},
     groups,
     whatsappGroups: waGroups.map(whatsappRowToObject),
-    numbers: numbers.map(numberRowToObject),
+    numbers: numbers.map(n => {
+      const obj = numberRowToObject(n);
+      obj.planPaused = pausedNumbers.has(String(obj.id));
+      return obj;
+    }),
+    planPaused,
   };
   // updatedAt: só inclui se houver state row (mantém shape do JSON pro user vazio)
   if (stateRow?.updatedAt) {
@@ -216,7 +259,9 @@ async function saveState(userId, incoming) {
   tx.push(prisma().whatsappNumber.deleteMany({ where: { userId } }));
   for (const n of (incoming.numbers || [])) {
     if (!n.id) continue;
-    const { id, label, phone, ...rest } = n;
+    // planPaused é derivado no loadState e volta no payload do frontend —
+    // descarta pra não virar lixo no metadata (o valor real fica em user_state).
+    const { id, label, phone, planPaused: _ignored, ...rest } = n;
     tx.push(prisma().whatsappNumber.create({
       data: {
         id: String(id),
@@ -395,7 +440,12 @@ async function loadOps(userId) {
   const groupMax = groupRows.reduce((acc, g) => g.updatedAt > acc ? g.updatedAt : acc, new Date(0));
   const stateMax = stateRow?.updatedAt || new Date(0);
   const max = stateMax > groupMax ? stateMax : groupMax;
-  return { groups, updatedAt: max.getTime() ? max.toISOString() : null };
+  // planPaused viaja junto no poll de ops (a linha de user_state já foi lida
+  // aqui) — assim a UI reage a um downgrade sem precisar de F5.
+  const planPaused = normalizePlanPaused(stateRow?.planPaused);
+  const pausedGroups = new Set(planPaused.groups);
+  for (const g of groups) g.planPaused = pausedGroups.has(Number(g.id));
+  return { groups, planPaused, updatedAt: max.getTime() ? max.toISOString() : null };
 }
 
 async function listAllUserIds() {
@@ -420,5 +470,7 @@ module.exports = {
   loadOps,
   clearState,
   listAllUserIds,
+  loadPlanPaused,
+  savePlanPaused,
   OPS_FIELDS,
 };

@@ -195,6 +195,12 @@ export async function billingSync() {
 export async function billingPortal() {
   return http("POST", "/api/billing/portal");
 }
+// Escolha de quais campanhas/números ficam ATIVOS dentro do plano. O que não
+// vier na lista fica pausado pelo plano (não envia, não é apagado).
+// selection: { groups: [id, …], numbers: ["id", …] }
+export async function billingActiveSelection(selection) {
+  return http("PUT", "/api/billing/active-selection", selection);
+}
 
 // ─── Afiliados ML ──────────────────────────────────────────────────────
 export async function getAffiliateStatus()      { return http("GET",    "/api/affiliate"); }

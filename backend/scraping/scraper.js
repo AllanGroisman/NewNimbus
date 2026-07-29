@@ -839,7 +839,11 @@ async function scrapeShopee({ category, limit = 50 } = {}) {
 
 // Roda os scrapers das `sources` informadas em paralelo e devolve a lista
 // concatenada. Falha em uma loja não derruba as outras — apenas loga.
-async function scrapeOfertas({ category, sources, limit = 200 } = {}) {
+// `errors` (opcional) é uma saída: recebe { source, label, error } de cada loja
+// que falhou. Sem ele, uma loja fora do ar é indistinguível de "não tinha oferta
+// hoje" — o retorno é [] nos dois casos. Quem monitora (scraping/admin.js) passa
+// o array pra conseguir reportar a falha em vez de gravar sucesso com 0 produtos.
+async function scrapeOfertas({ category, sources, limit = 200, errors } = {}) {
   const ids = (sources && sources.length ? sources : ["ml"])
     .map(normalizeSource)
     .filter(Boolean);
@@ -857,6 +861,7 @@ async function scrapeOfertas({ category, sources, limit = 200 } = {}) {
       return data;
     } catch (err) {
       console.error(`[scraper] ${store.label} / ${category || "geral"} falhou:`, err.message);
+      if (Array.isArray(errors)) errors.push({ source: id, label: store.label, error: err.message });
       return [];
     }
   }));

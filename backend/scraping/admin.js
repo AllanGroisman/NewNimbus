@@ -90,6 +90,29 @@ function status() {
   };
 }
 
+// Puro/testável: a partir do perCategory (chaves "<categoria>-<loja>"), aponta as
+// lojas que falharam em TODAS as suas categorias — sinal de loja fora do ar, não
+// de oscilação. Devolve a mensagem de erro da rodada, ou null se está tudo bem.
+//
+// É o aviso que faltava quando o Chrome sumiu do servidor: o ML ficou horas sem
+// coletar nada e o status continuava gravando sucesso.
+function summarizeDeadStores(perCategory) {
+  const bySource = {};
+  for (const [tag, r] of Object.entries(perCategory || {})) {
+    const src = tag.slice(tag.lastIndexOf("-") + 1);
+    bySource[src] = bySource[src] || { total: 0, failed: 0, sample: null };
+    bySource[src].total++;
+    if (!r.ok) {
+      bySource[src].failed++;
+      bySource[src].sample = bySource[src].sample || r.error;
+    }
+  }
+  const dead = Object.entries(bySource)
+    .filter(([, s]) => s.total > 0 && s.failed === s.total)
+    .map(([src, s]) => `${src}: ${s.sample}`);
+  return dead.length ? `loja(s) sem coletar nada nesta rodada — ${dead.join(" ; ")}` : null;
+}
+
 // Roda uma vez: para cada (categoria × loja), faz scrape e dá upsert no catálogo.
 async function runOnce() {
   if (_runPromise) return _runPromise;
@@ -118,11 +141,21 @@ async function runOnce() {
           const tag = `${cat}-${src}`;
           try {
             console.log(`[admin-scraper] ${tag}: iniciando...`);
+            // scrapeOfertas engole o erro de cada loja e devolve [] — sem coletar
+            // `storeErrors` uma loja fora do ar viraria "ok, 0 produtos".
+            const storeErrors = [];
             const products = await scrapeOfertas({
               category: cat,
               sources: [src],
               limit: (cfg.limitsBySource && cfg.limitsBySource[src]) || cfg.limitPerCategory,
+              errors: storeErrors,
             });
+            if (storeErrors.length) throw new Error(storeErrors.map(e => e.error).join(" | "));
+            // Varredura vazia é falha, não sucesso: uma loja que muda o HTML, bloqueia
+            // o robô ou perde o Chrome devolve 0 produtos sem lançar erro. Só é
+            // legítimo zerar quando o filtro do admin é restritivo — e aí o alerta
+            // avisando é preferível ao silêncio de um scraping quebrado há dias.
+            if (products.length === 0) throw new Error("nenhum produto retornado (loja bloqueando, layout mudou ou filtro restritivo demais)");
             // Marca a categoria EXPLICITAMENTE — o scraper às vezes devolve categoria
             // como objeto {label, mlCode, ...}; aqui forçamos string id.
             const tagged = products.map(p => ({ ...p, category: cat }));
@@ -136,6 +169,12 @@ async function runOnce() {
             perCategory[tag] = { ok: false, error: err.message };
           }
         }
+      }
+
+      const deadStoresError = summarizeDeadStores(perCategory);
+      if (deadStoresError) {
+        _status.lastError = deadStoresError;
+        console.error(`[admin-scraper] ${deadStoresError}`);
       }
 
       if (cancelled) {
@@ -250,6 +289,7 @@ module.exports = {
   cancel,
   start,
   stop,
+  summarizeDeadStores,
   DEFAULT_CONFIG,
   AVAILABLE_CATEGORIES: Object.keys(CATEGORIES),
   AVAILABLE_SOURCES: Object.keys(STORES),

@@ -38,6 +38,39 @@ describe("billing/limits — effectivePlanId", () => {
   });
 });
 
+describe("billing/limits — carência do past_due", () => {
+  const daysAgo = (d) => new Date(Date.now() - d * 24 * 60 * 60 * 1000);
+
+  it("cartão que falhou há 1 dia mantém o plano pago", () => {
+    const sub = { planId: "pro", status: "past_due", pastDueSince: daysAgo(1) };
+    expect(limits.inGracePeriod(sub)).toBe(true);
+    expect(limits.effectivePlanId(sub)).toBe("pro");
+  });
+
+  it("passados os 3 dias, cai pra free", () => {
+    const sub = { planId: "pro", status: "past_due", pastDueSince: daysAgo(4) };
+    expect(limits.inGracePeriod(sub)).toBe(false);
+    expect(limits.effectivePlanId(sub)).toBe("free");
+  });
+
+  it("unpaid usa a mesma carência; sem pastDueSince não há carência", () => {
+    expect(limits.inGracePeriod({ planId: "pro", status: "unpaid", pastDueSince: daysAgo(2) })).toBe(true);
+    expect(limits.inGracePeriod({ planId: "pro", status: "past_due" })).toBe(false);
+  });
+
+  it("canceled não ganha carência nenhuma", () => {
+    const sub = { planId: "pro", status: "canceled", pastDueSince: daysAgo(1) };
+    expect(limits.inGracePeriod(sub)).toBe(false);
+    expect(limits.effectivePlanId(sub)).toBe("free");
+  });
+
+  it("graceEndsAt cai 3 dias depois do início do atraso", () => {
+    const since = daysAgo(1);
+    const end = limits.graceEndsAt({ planId: "pro", status: "past_due", pastDueSince: since });
+    expect(end.getTime()).toBe(since.getTime() + limits.GRACE_MS);
+  });
+});
+
 describe("billing/limits — checkLimit", () => {
   const proSub = { planId: "pro", status: "active" };
   const basicSub = { planId: "basic", status: "active" };

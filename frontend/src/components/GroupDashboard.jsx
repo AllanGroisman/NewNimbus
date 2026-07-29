@@ -1271,6 +1271,18 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         })()}
       </div>
 
+      {/* Pausada pelo plano (cancelamento/downgrade): nada foi apagado e a
+          edição continua liberada — só os envios param. Ativar é escolher esta
+          campanha entre as que cabem no plano (feito no painel de Campanhas). */}
+      {group.planPaused && (
+        <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 16 }}>🔒</span>
+          <span style={{ fontSize: 13, color: "var(--warn-text)", flex: 1, minWidth: 200 }}>
+            Esta campanha está <strong>pausada pelo seu plano</strong> — ela não envia nada, mas continua aqui e pode ser editada normalmente. Para ativá-la, escolha ela em <strong>Campanhas</strong> (trocando com uma ativa) ou assine um plano maior.
+          </span>
+        </div>
+      )}
+
       {stats.pausedManual && (
         <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ fontSize: 16 }}>⏸</span>

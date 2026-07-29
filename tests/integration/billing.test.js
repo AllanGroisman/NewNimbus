@@ -399,6 +399,127 @@ describe("Billing — plan-gating no PUT /api/state", () => {
   });
 });
 
+// Task 34: o que acontece quando o cliente cancela ou baixa de plano.
+// Nada é apagado — o excedente fica pausado pelo plano, e ele continua
+// conseguindo mexer no que tem (o bug antigo era travar até a exclusão).
+describe("Billing — cancelamento e downgrade (pausa por plano)", () => {
+  const g5 = () => [1, 2, 3, 4, 5].map(i => makeGroup({ id: i, name: `G${i}`, categories: ["gamer"] }));
+
+  async function proUserWith5Campanhas() {
+    const ctx = await createTestUser();
+    await billing.update(ctx.user.id, { planId: "pro", status: "active" });
+    const res = await ctx.auth("put", "/api/state").send({ groups: g5(), numbers: [], whatsappGroups: [] });
+    expect(res.status).toBe(200);
+    return ctx;
+  }
+
+  it("downgrade pra Básico pausa 4 das 5 campanhas, mantendo a mais antiga ativa", async () => {
+    const { user, auth } = await proUserWith5Campanhas();
+    await billing.update(user.id, { planId: "basic", status: "active" });
+
+    const res = await auth("get", "/api/state");
+    expect(res.status).toBe(200);
+    expect(res.body.planPaused.groups.sort((a, b) => a - b)).toEqual([2, 3, 4, 5]);
+    expect(res.body.groups.find(g => g.id === 1).planPaused).toBe(false);
+  });
+
+  it("acima do limite ainda consegue apagar campanhas até caber", async () => {
+    const { user, auth } = await proUserWith5Campanhas();
+    await billing.update(user.id, { planId: "basic", status: "active" });
+
+    // Apaga uma de cada vez — todos os passos precisam passar (era o bug).
+    let groups = g5();
+    for (let i = 5; i >= 1; i--) {
+      groups = groups.filter(g => g.id !== i);
+      const res = await auth("put", "/api/state").send({ groups, numbers: [], whatsappGroups: [] });
+      expect(res.status).toBe(200);
+    }
+  });
+
+  it("cancelou (free): continua conseguindo salvar e apagar, mas não criar", async () => {
+    const { user, auth } = await proUserWith5Campanhas();
+    await billing.update(user.id, { planId: "free", status: "canceled" });
+
+    // Tudo pausado — salvar o que já existe passa.
+    const keep = await auth("put", "/api/state").send({ groups: g5(), numbers: [], whatsappGroups: [] });
+    expect(keep.status).toBe(200);
+
+    // Criar campanha nova (ativa) continua bloqueado.
+    const nova = [...g5(), makeGroup({ id: 6, name: "Nova", categories: ["gamer"] })];
+    const res = await auth("put", "/api/state").send({ groups: nova, numbers: [], whatsappGroups: [] });
+    expect(res.status).toBe(402);
+    expect(res.body.code).toBe("plan_limit");
+  });
+
+  it("volta pro Pro: as campanhas pausadas voltam a ficar ativas sozinhas", async () => {
+    const { user, auth } = await proUserWith5Campanhas();
+    await billing.update(user.id, { planId: "basic", status: "active" });
+    await auth("get", "/api/state");
+
+    await billing.update(user.id, { planId: "pro", status: "active" });
+    const res = await auth("get", "/api/state");
+    expect(res.body.planPaused.groups).toEqual([]);
+  });
+
+  it("carência: cartão que falhou há 1 dia não pausa nada", async () => {
+    const { user, auth } = await proUserWith5Campanhas();
+    await billing.update(user.id, { status: "past_due" });
+
+    const me = await auth("get", "/api/billing/me");
+    expect(me.body.inGrace).toBe(true);
+    expect(me.body.effectivePlan).toBe("pro");
+    const res = await auth("get", "/api/state");
+    expect(res.body.planPaused.groups).toEqual([]);
+  });
+
+  it("carência vencida: cai pra free e pausa tudo", async () => {
+    const { user, auth } = await proUserWith5Campanhas();
+    await billing.update(user.id, { status: "past_due" });
+    // Empurra o início do atraso pra 4 dias atrás (carência é de 3).
+    await billing.update(user.id, { pastDueSince: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000) });
+
+    const me = await auth("get", "/api/billing/me");
+    expect(me.body.inGrace).toBe(false);
+    expect(me.body.effectivePlan).toBe("free");
+    const res = await auth("get", "/api/state");
+    expect(res.body.planPaused.groups.sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5]);
+  });
+});
+
+describe("Billing — PUT /api/billing/active-selection", () => {
+  async function basicUserCom3Campanhas() {
+    const ctx = await createTestUser();
+    await billing.update(ctx.user.id, { planId: "pro", status: "active" });
+    const groups = [1, 2, 3].map(i => makeGroup({ id: i, name: `G${i}`, categories: ["gamer"] }));
+    await ctx.auth("put", "/api/state").send({ groups, numbers: [], whatsappGroups: [] });
+    await billing.update(ctx.user.id, { planId: "basic", status: "active" });
+    await ctx.auth("get", "/api/state"); // aplica a pausa por plano
+    return ctx;
+  }
+
+  it("troca qual campanha fica ativa", async () => {
+    const { auth } = await basicUserCom3Campanhas();
+    const res = await auth("put", "/api/billing/active-selection").send({ groups: [3], numbers: [] });
+    expect(res.status).toBe(200);
+    expect(res.body.planPaused.groups.sort((a, b) => a - b)).toEqual([1, 2]);
+    expect(res.body.usage.activeGroups).toBe(1);
+  });
+
+  it("recusa seleção acima do limite do plano", async () => {
+    const { auth } = await basicUserCom3Campanhas();
+    const res = await auth("put", "/api/billing/active-selection").send({ groups: [1, 2], numbers: [] });
+    expect(res.status).toBe(402);
+    expect(res.body.code).toBe("plan_limit");
+    expect(res.body.planRequired).toBe("pro");
+  });
+
+  it("recusa campanha que não existe", async () => {
+    const { auth } = await basicUserCom3Campanhas();
+    const res = await auth("put", "/api/billing/active-selection").send({ groups: [999], numbers: [] });
+    expect(res.status).toBe(400);
+  });
+});
+
 describe("Billing — trial de R$1 (15 dias, só Básico, 1x por conta)", () => {
   it("checkout com trial no basic passa withTrial=true pro Stripe", async () => {
     const { auth } = await createTestUser();
