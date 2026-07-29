@@ -72,7 +72,8 @@ describe("Subscription — render por status", () => {
     });
     render(<PageSubscription />);
     await waitFor(() => expect(screen.getByText(/Nimbus Business/)).toBeInTheDocument());
-    expect(screen.getByText(/Ativa/i)).toBeInTheDocument();
+    // Exato: a página também tem "Campanhas ativas" no bloco de uso.
+    expect(screen.getByText(/^Ativa$/)).toBeInTheDocument();
   });
 
   it("past_due: mostra badge 'Pagamento atrasado'", async () => {
