@@ -48,6 +48,7 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
     return (
       <button
         key={item.id}
+        data-tour={`nav-${item.id}`}
         onClick={() => nav(item.id)}
         title={lockMsg || (showAlert ? alertTitle : undefined)}
         style={{

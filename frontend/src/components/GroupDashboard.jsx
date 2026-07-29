@@ -3,6 +3,7 @@ import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, storeLockMessage, CAT
 import { createWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupQueue, saveGroupQueue, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue } from "../data/api";
 import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
 import { useUnsavedGuard, useRequestNavigation } from "../data/navGuard";
+import { TOUR_TAB_EVENT } from "../data/onboarding";
 import BusyOverlay from "./ui/BusyOverlay";
 
 // Persiste a aba aberta por campanha (sobrevive ao F5). Mapa { [groupId]: tabId }
@@ -234,6 +235,14 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const [tab, setTab] = useState(() => readSavedTab(group.id));
   // Guarda a aba atual por campanha pra restaurar no F5.
   useEffect(() => { writeSavedTab(group.id, tab); }, [group.id, tab]);
+  // O tour guiado entra nas abas por conta própria (task 38). Não passa pelo
+  // guard de alterações não salvas de propósito: o tour não altera nada, e um
+  // modal de confirmação no meio dele travaria o roteiro.
+  useEffect(() => {
+    const onTourTab = (e) => { if (VALID_TABS.includes(e.detail)) setTab(e.detail); };
+    window.addEventListener(TOUR_TAB_EVENT, onTourTab);
+    return () => window.removeEventListener(TOUR_TAB_EVENT, onTourTab);
+  }, []);
   const [sched, setSched] = useState(group.schedule);
   const [scraping, setScraping] = useState(group.scraping);
   const [queue, setQueue] = useState(group.queue);
@@ -1345,7 +1354,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
       {tab === "overview" && (
         <div>
-          <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+          <div data-tour="ov-stats" style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
             <StatCard label="Envios hoje" value={group.sentToday} color={PRIMARY_DARK} />
             <StatCard label="Envios semana" value={group.sentWeek} />
             <StatCard label="Na fila" value={queue.length} sub={pending.length > 0 ? `${pending.length} aguardando revisão` : undefined} color={pending.length > 0 ? "var(--warn-text)" : undefined} />
@@ -1379,7 +1388,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           </div>
 
           {/* Últimos 5 produtos enviados — derivado do histórico (mais recente primeiro) */}
-          <div style={{ marginTop: 14, background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+          <div data-tour="ov-last-sent" style={{ marginTop: 14, background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 8, flexWrap: "wrap" }}>
               <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-secondary)" }}>Últimos 5 produtos enviados</div>
               {(group.history || []).length > 5 && (
@@ -1433,7 +1442,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
       {tab === "manage" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+          <div data-tour="mg-info" style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
             <div style={{ fontWeight: 500, marginBottom: 4 }}>Informações da campanha</div>
             <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>{isRepasse ? "Nome" : "Nome e categorias"}</div>
             <div style={{ marginBottom: isRepasse ? 0 : 14 }}>
@@ -1464,7 +1473,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             )}
           </div>
 
-          <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+          <div data-tour="mg-sources" style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
             <div style={{ fontWeight: 500, marginBottom: 4 }}>Fontes de busca</div>
             <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
               {isRepasse
@@ -1497,7 +1506,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           )}
 
           {/* Cooldown: movido da aba Janelas — é uma regra de produto, não de horário */}
-          <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+          <div data-tour="mg-cooldown" style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
             <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Tempo de espera para reenvio</div>
             <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>Quanto tempo um produto aguarda antes de poder ser enviado novamente</div>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -1513,6 +1522,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
             <button
+              data-tour="mg-save"
               onClick={save}
               disabled={!manageDirty && !saved}
               title={manageDirty ? "Salvar alterações" : "Sem alterações pra salvar"}
@@ -1549,7 +1559,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             </div>
 
             {/* Lista suspensa — modelos prontos + meus modelos + ações */}
-            <div style={{ display: "flex", alignItems: "flex-end", gap: 10, flexWrap: "wrap", borderBottom: "0.5px solid var(--color-border-tertiary)", paddingBottom: 14, marginBottom: 14 }}>
+            <div data-tour="ms-picker" style={{ display: "flex", alignItems: "flex-end", gap: 10, flexWrap: "wrap", borderBottom: "0.5px solid var(--color-border-tertiary)", paddingBottom: 14, marginBottom: 14 }}>
               <div style={{ flex: "1 1 260px", minWidth: 200 }}>
                 <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Modelo</label>
                 <select
@@ -1605,7 +1615,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             </div>
 
             {/* Linha do nome do modelo (só editável em customs) + botão "Salvar alterações" */}
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12, alignItems: "flex-end" }}>
+            <div data-tour="ms-activate" style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12, alignItems: "flex-end" }}>
               <div style={{ flex: "1 1 240px", minWidth: 180 }}>
                 <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Nome do modelo</label>
                 {isCustomTab ? (
@@ -1696,7 +1706,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 </button>
               ))}
             </div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
+            <div data-tour="ms-vars" style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
               <span style={{ fontSize: 11, color: "var(--color-text-secondary)", marginRight: 4 }}>Inserir:</span>
               {TEMPLATE_VARS.map(v => (
                 <button
@@ -1711,7 +1721,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             </div>
 
             {/* Editor + Preview lado a lado */}
-            <div className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div data-tour="ms-editor" className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <div>
                 <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 4 }}>Editor</div>
                 <textarea
@@ -1809,6 +1819,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button
+                data-tour="wg-add"
                 onClick={() => setAddStep("choose")}
                 disabled={numbers.length === 0}
                 title={numbers.length === 0 ? "Conecte um número de WhatsApp primeiro" : "Adicionar grupo a esta campanha"}
@@ -1818,7 +1829,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           </div>
 
           {linkedWGs.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "40px 20px", color: "var(--color-text-secondary)", fontSize: 13, background: "var(--color-background-secondary)", borderRadius: 12 }}>
+            <div data-tour="wg-list" style={{ textAlign: "center", padding: "40px 20px", color: "var(--color-text-secondary)", fontSize: 13, background: "var(--color-background-secondary)", borderRadius: 12 }}>
               <div style={{ fontSize: 28, marginBottom: 10 }}>💬</div>
               <div style={{ fontWeight: 500, color: "var(--color-text-primary)", marginBottom: 6 }}>Nenhum grupo do WhatsApp vinculado</div>
               <div style={{ fontSize: 12, marginBottom: 14 }}>Crie um novo grupo ou vincule um existente para começar a enviar mensagens.</div>
@@ -1828,7 +1839,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               }
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div data-tour="wg-list" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {linkedWGs.map(w => {
                 const number = numbers.find(n => n.id === w.numberId);
                 const numberConnected = number?.status === "connected";
@@ -2245,7 +2256,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           )}
 
           {/* Grupo líder */}
-          <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+          <div data-tour="pr-leader" style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
             <div style={{ fontWeight: 500, marginBottom: 4 }}>Grupo líder</div>
             <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
               O grupo de onde os links serão capturados. Só um grupo pode ser líder.
@@ -2323,7 +2334,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           </div>
 
           {/* Aprovação automática */}
-          <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+          <div data-tour="pr-auto" style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 500, marginBottom: 4 }}>Aprovação automática</div>
@@ -2364,7 +2375,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           </div>
 
           {pending.length > 0 && (
-            <div style={{ marginTop: 6 }}>
+            <div data-tour="pr-pending" style={{ marginTop: 6 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 500 }}>Aguardando revisão</div>
@@ -2398,7 +2409,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       {tab === "products" && !isRepasse && (
         <div>
           <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 20 }}>
-            <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+            <div data-tour="pr-auto" style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontWeight: 500, marginBottom: 4 }}>Auto-aprovação</div>
@@ -2413,6 +2424,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             </div>
 
             <button
+              data-tour="pr-filters"
               onClick={() => setShowAdvancedFilters(v => !v)}
               style={{ alignSelf: "flex-start", padding: "8px 14px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}
             >
@@ -2421,7 +2433,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>(preço, desconto, avaliação, vendas)</span>
             </button>
 
-            <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+            <div data-tour="pr-search" style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
               <div style={{ fontWeight: 500, marginBottom: 8 }}>Pesquisa</div>
               <div style={{ position: "relative" }}>
                 <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14, color: "var(--color-text-secondary)", pointerEvents: "none" }}>🔍</span>
@@ -2528,7 +2540,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             </>}
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-              <button onClick={triggerRefill} disabled={refilling} title="Salva a configuração atual e busca produtos no catálogo com a pesquisa e os filtros definidos" style={{ padding: "9px 20px", borderRadius: 8, border: "none", background: PRIMARY, color: "#fff", fontSize: 13, cursor: refilling ? "wait" : "pointer", fontWeight: 500, opacity: refilling ? 0.6 : 1 }}>
+              <button data-tour="pr-run" onClick={triggerRefill} disabled={refilling} title="Salva a configuração atual e busca produtos no catálogo com a pesquisa e os filtros definidos" style={{ padding: "9px 20px", borderRadius: 8, border: "none", background: PRIMARY, color: "#fff", fontSize: 13, cursor: refilling ? "wait" : "pointer", fontWeight: 500, opacity: refilling ? 0.6 : 1 }}>
                 {refilling ? "⟳ Buscando..." : "🔍 Buscar produtos"}
               </button>
               <button onClick={resetFilters} title="Zera a pesquisa e todos os filtros" style={{ padding: "9px 18px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>
@@ -2554,7 +2566,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           </div>
 
           {pending.length > 0 && (
-            <div style={{ marginBottom: 20 }}>
+            <div data-tour="pr-pending" style={{ marginBottom: 20 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 500 }}>Aguardando revisão</div>
@@ -2598,11 +2610,12 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               </div>
             </div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <button onClick={openManualAdd} style={{ padding: "5px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
+              <button data-tour="qu-manual-add" onClick={openManualAdd} style={{ padding: "5px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
                 + Adicionar link manualmente
               </button>
               {queue.length > 0 && (
                 <button
+                  data-tour="qu-send-now"
                   onClick={triggerSendNow}
                   disabled={sendingNow || (group.whatsappGroupIds || []).length === 0 || stats.paused}
                   title={stats.pausedManual ? "Campanha pausada — retome pra enviar" : stats.pausedByAffiliateML ? "Configure o afiliado do Mercado Livre" : stats.pausedByAffiliateShopee ? "Configure o afiliado da Shopee" : (group.whatsappGroupIds || []).length === 0 ? "Vincule um grupo de WhatsApp primeiro" : "Envia o próximo produto agora e reseta o intervalo"}
@@ -2624,7 +2637,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: refillMsg.type === "err" ? "var(--danger-bg)" : refillMsg.type === "warn" ? "#FDF3E2" : PRIMARY_LIGHT, color: refillMsg.type === "err" ? "var(--danger-text)" : refillMsg.type === "warn" ? "var(--warn-text)" : PRIMARY_DARK }}>{refillMsg.text}</div>
           )}
           {queue.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "30px 20px", background: "var(--color-background-secondary)", borderRadius: 12 }}>
+            <div data-tour="qu-list" style={{ textAlign: "center", padding: "30px 20px", background: "var(--color-background-secondary)", borderRadius: 12 }}>
               <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Fila vazia</div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>
                 {isRepasse ? (
@@ -2646,7 +2659,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           ) : (() => {
             const etas = computeQueueETA(group);
             return (
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div data-tour="qu-list" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {queue.length > 1 && (
                   <div style={{ fontSize: 11, color: "var(--color-text-secondary)", padding: "0 4px" }}>
                     💡 Arraste os cards para reordenar a fila, ou use "Enviar primeiro" para furar a fila com um produto.
@@ -2683,10 +2696,10 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 Defina os intervalos do dia em que as mensagens podem ser enviadas. Os produtos da fila serão distribuídos automaticamente respeitando o intervalo.
               </div>
             </div>
-            <button onClick={addWindow} style={{ padding: "6px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer", flexShrink: 0 }}>+ Adicionar janela</button>
+            <button data-tour="sc-add" onClick={addWindow} style={{ padding: "6px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer", flexShrink: 0 }}>+ Adicionar janela</button>
           </div>
           {sched.windows.map((w, idx) => (
-            <div key={w.id} style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+            <div key={w.id} data-tour={idx === 0 ? "sc-window" : undefined} style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
                 <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-secondary)" }}>Janela {idx + 1}</div>
                 {sched.windows.length > 1 && <button onClick={() => removeWindow(w.id)} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 12, color: "var(--danger-text)" }}>Remover</button>}

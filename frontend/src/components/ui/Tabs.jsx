@@ -6,6 +6,7 @@ export default function Tabs({ tabs, active, onChange }) {
       {tabs.map(t => (
         <button
           key={t.id}
+          data-tour={`tab-${t.id}`}
           onClick={() => onChange(t.id)}
           style={{
             padding: "8px 14px", border: "none", background: "transparent", fontSize: 13, cursor: "pointer",

@@ -95,13 +95,27 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 35. [x] Trocar aba grupos para depois da fila e janelas de envio para depois do modelo de mensagem.
     Nova ordem das abas: Visão geral · Gerenciar · Busca de Produtos · Fila · Grupos · Modelos Mensagens · Janelas de envio · Histórico.
 
-36. [] Na primeira configuracao de uma campanha quero que o front va guiando a pessoa na configuracao.
+36. [x] Na primeira configuracao de uma campanha quero que o front va guiando a pessoa na configuracao.
+    Decisao: sem passo a passo dentro da campanha. Quem faz esse papel e o tour da campanha (task 38),
+    que explica pra que serve cada aba e comeca sozinho na primeira campanha aberta.
 
-37. [] Quero que ao criar a conta o usuario seja guiado tomando as decisoes do que vai utilizar e va configurando o sistema.
+37. [x] Quero que ao criar a conta o usuario seja guiado tomando as decisoes do que vai utilizar e va configurando o sistema.
+    Decisao: sem tela de boas-vindas com perguntas e sem lista de pendencias. Quem recebe a conta nova
+    e o tour do painel (task 38), que roda sozinho no primeiro acesso e mostra onde fica cada coisa —
+    inclusive o plano, os afiliados e o WhatsApp, que sao o que precisa ser configurado.
 
-38. [] Quero ter um tour de highlights que mostre ao usuario onde fica cada coisa.
+38. [x] Quero ter um tour de highlights que mostre ao usuario onde fica cada coisa.
+    Tour de holofote sobre a tela real (escurece tudo e ilumina um item por vez, com um balao explicando).
+    Dois roteiros: painel e campanha (o do WhatsApp foi removido a pedido). No do painel, o passo das lojas
+    ilumina Mercado Livre, Amazon e Shopee juntos. O da campanha entra em cada aba e explica os componentes
+    principais dela (31 passos). Setas e ESC no teclado; passo cujo alvo nao existe naquela tela e pulado
+    sozinho — no mesmo sentido em que a pessoa esta andando —, entao o tour nunca trava. O balao so aparece
+    colado no alvo, nunca no meio da tela. Painel e campanha comecam sozinhos na primeira vez.
 
-39. [] Quero que os guias de configuração do sistema das tasks 36, 37 e 38 estejam disponiveis para serem realizados novamente se o usuario requerir.
+39. [x] Quero que os guias de configuração do sistema das tasks 36, 37 e 38 estejam disponiveis para serem realizados novamente se o usuario requerir.
+    Secao "Tours guiados" no topo de Tutoriais (com selo de concluido e botao Refazer) + botao "?" fixo
+    no canto, que oferece o tour da tela atual. O que ja foi visto fica na conta (settings.onboarding),
+    nao no navegador. PENDENTE: validar no navegador depois do deploy.
 
 40. [] Quero adicionar a marca nimbus como icone na aba do navegador e onde geralmente é utilizado. Quero tb que a marca esteja no topo do site. É o N de Nimbus, posso colocar o png em uma pasta que tu sugerir para adicionar esse tipo de asset.
 

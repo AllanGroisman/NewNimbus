@@ -91,7 +91,7 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
           <UsageBadge current={groups.filter(g => !isPlanPaused(g)).length} limit={limits?.groups} label="campanhas ativas" />
         </h2>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <button onClick={() => setShowCreate(true)} style={{ padding: "7px 14px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>+ Nova campanha</button>
+          <button data-tour="new-campaign" onClick={() => setShowCreate(true)} style={{ padding: "7px 14px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>+ Nova campanha</button>
         </div>
       </div>
 
@@ -116,7 +116,7 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
           <div style={{ fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 18, maxWidth: 380, margin: "0 auto 18px" }}>
             Uma campanha agrupa categorias, filtros e grupos do WhatsApp que vão receber as ofertas. Comece criando uma campanha e depois conecte os grupos.
           </div>
-          <button onClick={() => setShowCreate(true)} style={{ padding: "9px 22px", borderRadius: 10, background: PRIMARY, color: "#fff", border: "none", fontSize: 14, cursor: "pointer", fontWeight: 500 }}>+ Criar campanha</button>
+          <button data-tour="new-campaign" onClick={() => setShowCreate(true)} style={{ padding: "9px 22px", borderRadius: 10, background: PRIMARY, color: "#fff", border: "none", fontSize: 14, cursor: "pointer", fontWeight: 500 }}>+ Criar campanha</button>
         </div>
       ) : (
         <>

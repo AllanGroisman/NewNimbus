@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { initialGroups, initialNumbers, initialWhatsappGroups, makeEmptyGroup, DEFAULT_MESSAGE_TEMPLATE } from "./data/mockData";
 import { allSources, storeLockMessage, unlockedSources, navToPath, pathToNav } from "./data/constants";
+import { DEFAULT_ONBOARDING, mergeOnboarding, TOURS } from "./data/onboarding";
 
 const DEFAULT_SETTINGS = {
   messageTemplate: DEFAULT_MESSAGE_TEMPLATE,
@@ -8,6 +9,9 @@ const DEFAULT_SETTINGS = {
   notifications: { email: true, push: false, weeklyReport: true, pendingReview: true },
   sources: allSources,
   theme: "auto",
+  // Quais tours a pessoa já viu (tasks 38-39). Fica no settings de propósito:
+  // assim segue a conta, não o navegador.
+  onboarding: DEFAULT_ONBOARDING,
 };
 import { authMe, authLogout, authRefresh, loadAppState, saveAppState, loadAppOps, getToken, clearToken, getLastActivity, setLastActivity, IDLE_TIMEOUT_MS, getAffiliateStatus, billingMe, billingSync, billingActiveSelection, listWASessions, storeLocks as fetchStoreLocks } from "./data/api";
 import Sidebar from "./components/Sidebar";
@@ -39,6 +43,8 @@ import PageAdminWhatsNimbus from "./pages/AdminWhatsNimbus";
 import PageAdminRepasse from "./pages/AdminRepasse";
 import PageTutoriais from "./pages/Tutoriais";
 import Login from "./pages/Login";
+import TourOverlay from "./components/onboarding/TourOverlay";
+import HelpButton from "./components/onboarding/HelpButton";
 
 const SAVE_DEBOUNCE_MS = 800;
 // Onde guardamos a navegação atual (página ou campanha aberta). A URL é a fonte
@@ -98,6 +104,8 @@ export default function App() {
   const openTutorial = (id) => requestNavigation(() => { setTutorialTarget(id); setSelectedGroup(null); setPage("tutorials"); });
   const [user, setUser] = useState(null);
   const [bootstrapping, setBootstrapping] = useState(true);
+  // Tour de holofote rodando agora (objeto de TOURS) ou null.
+  const [activeTour, setActiveTour] = useState(null);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
   // Guard de navegação: a tela ativa registra { dirty, save, discard } em guardRef;
@@ -210,11 +218,16 @@ export default function App() {
         stateLoadedRef.current = true;
         // Reabre a campanha do endereço (ou a que estava aberta antes do F5).
         // Comparação por string: o id da URL vem sempre como texto.
+        let abriuCampanha = false;
         if (savedNav.groupId != null) {
           const g = (state.groups || []).find(x => String(x.id) === String(savedNav.groupId));
-          if (g) { setSelectedGroup(g); setPage("group"); }
+          if (g) { setSelectedGroup(g); setPage("group"); abriuCampanha = true; }
           else setPage("dashboard"); // campanha do link não existe mais
         }
+        // Tour de boas-vindas na primeira vez (o do painel, ou o da campanha se
+        // a pessoa entrou direto por um link de campanha).
+        const vistos = mergeOnboarding(state.settings?.onboarding).tours;
+        maybeStartTour(abriuCampanha ? "campaign" : "main", vistos);
         // Billing — não bloqueia o boot se falhar
         billingMe().then(b => !cancelled && setBilling(b)).catch(() => {});
         // Travas de loja — idem: se falhar, nada fica trancado na UI.
@@ -521,6 +534,46 @@ export default function App() {
     [numbers, sessionStatus]
   );
 
+  // ─── Tour de primeiros passos (tasks 38-39) ─────────────────────────────
+  // O que já foi visto mora em settings.onboarding, então vai junto no autosave
+  // do estado e acompanha a conta em qualquer navegador.
+  const onboarding = useMemo(() => mergeOnboarding(settings.onboarding), [settings.onboarding]);
+  // Aceita um objeto (patch direto) ou uma função do onboarding atual.
+  const patchOnboarding = useCallback((patch) => {
+    setSettings(s => {
+      const current = mergeOnboarding(s.onboarding);
+      const delta = typeof patch === "function" ? patch(current) : patch;
+      if (!delta) return s;
+      return { ...s, onboarding: { ...current, ...delta } };
+    });
+  }, []);
+
+  const startTour = (tourId) => {
+    const tour = TOURS[tourId];
+    if (!tour) return;
+    const go = () => {
+      if (tour.page) { setSelectedGroup(null); setPage(tour.page); }
+      setActiveTour(tour);
+    };
+    // Passa pelo guard: um tour que troca de tela não pode engolir alteração
+    // não salva sem perguntar.
+    if (tour.page) requestNavigation(go);
+    else go();
+  };
+
+  const finishTour = useCallback(() => {
+    if (activeTour) patchOnboarding(prev => ({ tours: { ...prev.tours, [activeTour.id]: true } }));
+    setActiveTour(null);
+  }, [activeTour, patchOnboarding]);
+
+  // Primeira vez no painel e primeira campanha aberta: o tour começa sozinho,
+  // uma única vez cada. Depois disso, só pelo botão de ajuda ou por Tutoriais.
+  // `seen` é passado à mão no boot, quando o settings ainda não entrou no estado.
+  const maybeStartTour = (tourId, seen = onboarding.tours) => {
+    if (seen?.[tourId]) return;
+    setActiveTour(TOURS[tourId]);
+  };
+
   // Polling do status de afiliado — quando muda em Configurações, o badge
   // "pausado" some/aparece sem precisar recarregar a página.
   useEffect(() => {
@@ -602,12 +655,14 @@ export default function App() {
       // Quem chegou por um link de campanha e passou pelo login vai direto pra
       // ela, em vez de cair no painel e ter que procurar.
       const wanted = initialNavRef.current;
+      let abriuCampanha = false;
       if (wanted?.groupId != null) {
         const g = (state.groups || []).find(x => String(x.id) === String(wanted.groupId));
-        if (g) { setSelectedGroup(g); setPage("group"); }
+        if (g) { setSelectedGroup(g); setPage("group"); abriuCampanha = true; }
       } else if (wanted?.page) {
         setPage(wanted.page);
       }
+      maybeStartTour(abriuCampanha ? "campaign" : "main", mergeOnboarding(state.settings?.onboarding).tours);
     } catch {
       setGroups([]); setNumbers([]); setWhatsappGroups([]); setSettings(DEFAULT_SETTINGS);
     } finally {
@@ -624,6 +679,7 @@ export default function App() {
     initialNavRef.current = { page: "dashboard", groupId: null };
     urlSyncedRef.current = false;
     stateLoadedRef.current = false;
+    setActiveTour(null);
     setUser(null);
     setGroups([]); setNumbers([]); setWhatsappGroups([]);
     setSettings(DEFAULT_SETTINGS);
@@ -636,6 +692,7 @@ export default function App() {
     setGroups(gs => [...gs, newGroup]);
     setSelectedGroup(newGroup);
     setPage("group");
+    maybeStartTour("campaign");
     return newGroup.id;
   };
 
@@ -643,7 +700,7 @@ export default function App() {
   // pode ficar pendurada em `pendingNav` e só executar depois de um `guardSave()`
   // assíncrono — nesse ponto `groups` já mudou (o save acabou de atualizá-lo) mas
   // essa closure ainda apontaria pro valor de antes, sobrescrevendo o resultado do save.
-  const handleSelectGroup = g => requestNavigation(() => { setSelectedGroup(groupsRef.current.find(x => x.id === g.id)); setPage("group"); });
+  const handleSelectGroup = g => requestNavigation(() => { setSelectedGroup(groupsRef.current.find(x => x.id === g.id)); setPage("group"); maybeStartTour("campaign"); });
   const handleBack = () => requestNavigation(() => { setSelectedGroup(null); setPage("dashboard"); });
   const handleUpdate = (gid, updates) => {
     setGroups(gs => gs.map(g => g.id === gid ? { ...g, ...updates } : g));
@@ -865,7 +922,14 @@ export default function App() {
     "admin-notifications":  user?.role === "admin" ? <PageAdminNotifications onGoToWhatsNimbus={() => requestNavigation(() => setPage("admin-whatsnimbus"))} /> : fallbackPage,
     "admin-notif-templates": user?.role === "admin" ? <PageAdminNotifTemplates /> : fallbackPage,
     "admin-whatsnimbus":    user?.role === "admin" ? <PageAdminWhatsNimbus /> : fallbackPage,
-    "tutorials":     <PageTutoriais targetTutorialId={tutorialTarget} />,
+    "tutorials":     <PageTutoriais
+      targetTutorialId={tutorialTarget}
+      onboarding={onboarding}
+      onStartTour={startTour}
+      // O tour da campanha precisa de uma campanha aberta pra ter o que
+      // iluminar — aqui só rearmamos, e ele começa sozinho na próxima que abrir.
+      onArmCampaignTour={() => patchOnboarding(prev => ({ tours: { ...prev.tours, campaign: false } }))}
+    />,
   };
 
   return (
@@ -880,6 +944,19 @@ export default function App() {
           onConfirm={() => { setConfirmLogout(false); handleLogout(); }}
         />
       )}
+      {activeTour && (
+        <TourOverlay
+          tour={activeTour}
+          onNavigate={(p) => { setSelectedGroup(null); setPage(p); }}
+          onFinish={finishTour}
+        />
+      )}
+      <HelpButton
+        page={page}
+        hasGroupOpen={!!selectedGroup}
+        onStartTour={startTour}
+        onOpenTutorials={() => requestNavigation(() => { setSelectedGroup(null); setPage("tutorials"); })}
+      />
       {planSwap && (
         <PlanSwapModal
           kind={planSwap.kind === "groups" ? "campanha" : "número"}

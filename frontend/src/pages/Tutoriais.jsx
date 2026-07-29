@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../data/constants";
+import { TOURS } from "../data/onboarding";
 
 // ─── ESTRUTURA DE TUTORIAIS ──────────────────────────────────────────────
 // Cada tutorial tem `id` (slug) usado pra deep-link das outras páginas.
@@ -101,7 +102,79 @@ const TUTORIAL_INDEX = (() => {
   return m;
 })();
 
-export default function PageTutoriais({ targetTutorialId = null }) {
+// ─── TOURS (task 39) ─────────────────────────────────────────────────────
+// Os tours que rodam em cima do sistema podem ser refeitos daqui a qualquer
+// momento — inclusive os que já foram vistos.
+function GuiasInterativos({ onboarding, onStartTour, onArmCampaignTour }) {
+  if (!onboarding) return null;
+  const seen = onboarding.tours || {};
+
+  const guias = [
+    {
+      id: "tour-main",
+      title: TOURS.main.title,
+      desc: TOURS.main.description,
+      done: !!seen.main,
+      action: () => onStartTour?.("main"),
+      cta: "Começar agora",
+    },
+    {
+      id: "tour-campaign",
+      title: TOURS.campaign.title,
+      desc: `${TOURS.campaign.description} Começa quando você abrir uma campanha.`,
+      done: !!seen.campaign,
+      action: onArmCampaignTour,
+      cta: "Mostrar na próxima campanha",
+    },
+  ];
+
+  return (
+    <div style={{ marginBottom: 26 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 4 }}>
+        <span style={{ fontSize: 16, color: PRIMARY }}>✨</span>
+        <h3 style={{ fontSize: 15, fontWeight: 500, margin: 0 }}>Tours guiados</h3>
+        <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>· mostram onde fica cada coisa</span>
+      </div>
+      <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 10 }}>
+        Rodam por cima da tela de verdade, destacando um item de cada vez. Pode refazer quando
+        quiser — nada é apagado nem alterado.
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {guias.map(g => (
+          <div
+            key={g.id}
+            style={{
+              display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+              background: "var(--color-background-primary)",
+              border: "0.5px solid var(--color-border-tertiary)",
+              borderRadius: 10, padding: "12px 14px",
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <div style={{ fontSize: 13, fontWeight: 500, display: "flex", alignItems: "center", gap: 8 }}>
+                {g.title}
+                {g.done && (
+                  <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 5, background: "var(--color-background-secondary)", color: "var(--color-text-secondary)", border: "0.5px solid var(--color-border-tertiary)", fontWeight: 500 }}>
+                    concluído
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>{g.desc}</div>
+            </div>
+            <button
+              onClick={g.action}
+              style={{ padding: "7px 14px", borderRadius: 8, background: g.done ? "var(--color-background-secondary)" : PRIMARY, color: g.done ? "var(--color-text-primary)" : "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500, flexShrink: 0 }}
+            >
+              {g.done ? "Refazer" : g.cta}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export default function PageTutoriais({ targetTutorialId = null, onboarding = null, onStartTour, onArmCampaignTour }) {
   const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState(targetTutorialId);
   const refs = useRef(new Map());
@@ -145,6 +218,14 @@ export default function PageTutoriais({ targetTutorialId = null }) {
       <div style={{ fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 18 }}>
         Aprenda a usar o Nimbus passo a passo — desde a primeira campanha até filtros avançados e afiliados.
       </div>
+
+      {/* Tours interativos — a busca abaixo filtra só os tutoriais escritos,
+          então eles ficam fora dela. */}
+      <GuiasInterativos
+        onboarding={onboarding}
+        onStartTour={onStartTour}
+        onArmCampaignTour={onArmCampaignTour}
+      />
 
       {/* Busca */}
       <div style={{ position: "relative", marginBottom: 18 }}>
