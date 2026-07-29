@@ -12,7 +12,7 @@ const TAB_STORAGE_KEY = "nimbus:campaignTab";
 // Lembra se a pessoa já viu a explicação de "o que é uma campanha de repasse"
 // (mostrada só na primeira vez; depois fica só o botãozinho de ajuda).
 const REPASSE_INTRO_SEEN_KEY = "nimbus:repasseIntroSeen";
-const VALID_TABS = ["overview", "manage", "whatsapp", "products", "queue", "schedule", "messages", "history"];
+const VALID_TABS = ["overview", "manage", "products", "queue", "whatsapp", "messages", "schedule", "history"];
 function readSavedTab(groupId) {
   try {
     const tabId = JSON.parse(localStorage.getItem(TAB_STORAGE_KEY) || "{}")[groupId];
@@ -1187,10 +1187,10 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     { id: "overview", label: "Visão geral" },
     { id: "manage", label: "Gerenciar" },
     { id: "products", label: isRepasse ? "Repasse" : "Busca de Produtos", dot: pending.length > 0 },
-    { id: "whatsapp", label: `Grupos (${stats.count})` },
     { id: "queue", label: `Fila (${queue.length})` },
-    { id: "schedule", label: "Janelas de envio" },
+    { id: "whatsapp", label: `Grupos (${stats.count})` },
     { id: "messages", label: "Modelos Mensagens" },
+    { id: "schedule", label: "Janelas de envio" },
     { id: "history", label: "Histórico" },
   ];
 

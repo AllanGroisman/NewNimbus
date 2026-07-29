@@ -92,7 +92,8 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     antes de pausar. Numeros de WhatsApp excedentes seguem conectados, so pausados.
     Retencao: dados guardados enquanto a conta existir (tirado o texto que prometia 30 dias). 
 
-35. [] Trocar aba grupos para depois da fila e janelas de envio para depois do modelo de mensagem.
+35. [x] Trocar aba grupos para depois da fila e janelas de envio para depois do modelo de mensagem.
+    Nova ordem das abas: Visão geral · Gerenciar · Busca de Produtos · Fila · Grupos · Modelos Mensagens · Janelas de envio · Histórico.
 
 36. [] Na primeira configuracao de uma campanha quero que o front va guiando a pessoa na configuracao.
 
@@ -105,3 +106,13 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 40. [] Quero adicionar a marca nimbus como icone na aba do navegador e onde geralmente é utilizado. Quero tb que a marca esteja no topo do site. É o N de Nimbus, posso colocar o png em uma pasta que tu sugerir para adicionar esse tipo de asset.
 
 41. [] Quero conferir se o ambiente mobile esta condizente e bem construido para utilizacao do usuario.
+
+42. [] Quero buscar o nome dos produtos do stripe direto de la para ficar condizente assim como o preco.
+
+43. [] Todos os erros estao sendo tratados e mostrados ao usuario de maneira apropriada? Por exemplo, quando sistema ta off e o usuario ta em uma pagina fica aparecendo bad gateway ou algo do tipo, preferiria que aparecesse uma mensagem de offline, tente mais tarde ou algo do tipo. Revise bem o sistema.
+
+44. [] Quero uma maneira facil de trocar entre os produtos do modo teste do stripe e os produto de producao. Ja criei os produtos na producao do stripe.
+
+45. [] Tenho uma landpage pra vender o sistema no qual tenho botoes para assinar o sistema. Queia pensar na melhor forma de conduzir o usuario a criar conta, clico la na assinatura desejada e ele ja vai direto ao stripe? Com a assinatura em maos, passando os dados como email por exemplo, uma conta é criada automaticamente e ele recebe o acesso? Ou ele entra como é hoje para criar a conta e so depois faz a assinatura? Ter os dois caminhos? Ter mais algum outro caminho? Quero que me guie para fazer estas escolhas.
+
+46. [] Quero fazer um resumo geral do sistema e criar um arquivo na raiz do projeto que explique didaticamente como esta funcionando. Náo sei exatamente tudo que quero no resumo, mas as tecnologias usadas, onde estao os banco de dados, o que tenho guardado em cada um, quais sao minhas camadas de seguranca, como funciona, como esta arquitetado para expansao caso cresca o numero de usuario, onde e como sao feitos os backups e o que tem neles, um resumo do custo computacional das diferentes partes da arquitetura, etc...
