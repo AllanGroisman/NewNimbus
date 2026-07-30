@@ -1,8 +1,16 @@
-export const PRIMARY = "#ea580c";
-export const PRIMARY_DARK = "#c2410c";
-export const PRIMARY_LIGHT = "#ffedd5";
-export const BRAND_BLUE = "#031432";
-export const BRAND_BLUE_LIGHT = "#1a2b48";
+// Cores da marca usadas em estilo inline pelas telas. Apontam pras variáveis
+// CSS em vez de trazer o hex: assim a paleta ativa (Admin › Layout) troca tudo
+// de uma vez, sem precisar re-renderizar nada em React.
+//
+// Só servem como VALOR CSS (background, color, border...). Não dá pra fazer
+// conta com elas nem concatenar canal alpha (`${PRIMARY}20` não funciona mais)
+// — se precisar disso, leia o hex de getComputedStyle ou some uma variável nova
+// no index.css.
+export const PRIMARY = "var(--color-primary)";
+export const PRIMARY_DARK = "var(--color-primary-dark)";
+export const PRIMARY_LIGHT = "var(--color-primary-light)";
+export const BRAND_BLUE = "#012742";
+export const BRAND_BLUE_LIGHT = "#13232f";
 
 export const allSources = ["Mercado Livre", "Amazon", "Shopee"];
 
@@ -284,6 +292,7 @@ export const sidebarItems = [
   { id: "admin-notifications",  icon: "◉", label: "Notificações",   adminOnly: true },
   { id: "admin-notif-templates", icon: "✎", label: "Modelos Notificações", adminOnly: true },
   { id: "admin-whatsnimbus",    icon: "❂", label: "WhatsNimbus",    adminOnly: true },
+  { id: "admin-layout",         icon: "◐", label: "Layout",         adminOnly: true },
 ];
 
 // Rótulo do plano exibido na sidebar. Espelha PLANS em backend/billing/limits.js
@@ -326,7 +335,35 @@ export const PAGE_TO_PATH = {
   "admin-notifications": "/admin/notificacoes",
   "admin-notif-templates": "/admin/modelos-notificacoes",
   "admin-whatsnimbus": "/admin/whatsnimbus",
+  "admin-layout": "/admin/layout",
 };
+
+// Paletas oferecidas no Admin › Layout. O `id` vira data-palette no <html> e os
+// blocos correspondentes moram no topo do index.css. `swatch` é só pra prévia
+// no menu — não é usado pra pintar a tela.
+export const PALETTES = [
+  {
+    id: "nimbus",
+    label: "Nimbus",
+    hint: "Marinho e laranja do logo. É a paleta atual.",
+    swatch: { brand: "#cd6f04", bgLight: "#f5f8fa", bgDark: "#13232f", text: "#11212c" },
+  },
+  {
+    id: "laranja",
+    label: "Só laranja",
+    hint: "O laranja novo da marca, mas com os cinzas neutros de antes.",
+    swatch: { brand: "#cd6f04", bgLight: "#f7f7f5", bgDark: "#1e1e1e", text: "#1a1a1a" },
+  },
+  {
+    id: "classica",
+    label: "Clássica",
+    hint: "As cores do sistema antes da marca entrar.",
+    swatch: { brand: "#ea580c", bgLight: "#f7f7f5", bgDark: "#1e1e1e", text: "#1a1a1a" },
+  },
+];
+
+export const DEFAULT_PALETTE = "nimbus";
+export const isValidPalette = (id) => PALETTES.some(p => p.id === id);
 
 const PATH_TO_PAGE = Object.fromEntries(
   Object.entries(PAGE_TO_PATH).map(([page, path]) => [path, page])

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { initialGroups, initialNumbers, initialWhatsappGroups, makeEmptyGroup, DEFAULT_MESSAGE_TEMPLATE } from "./data/mockData";
-import { allSources, storeLockMessage, unlockedSources, navToPath, pathToNav } from "./data/constants";
+import { allSources, storeLockMessage, unlockedSources, navToPath, pathToNav, DEFAULT_PALETTE, isValidPalette } from "./data/constants";
 import { DEFAULT_ONBOARDING, mergeOnboarding, TOURS } from "./data/onboarding";
 
 const DEFAULT_SETTINGS = {
@@ -13,7 +13,7 @@ const DEFAULT_SETTINGS = {
   // assim segue a conta, não o navegador.
   onboarding: DEFAULT_ONBOARDING,
 };
-import { authMe, authLogout, authRefresh, loadAppState, saveAppState, loadAppOps, getToken, clearToken, getLastActivity, setLastActivity, IDLE_TIMEOUT_MS, getAffiliateStatus, billingMe, billingSync, billingActiveSelection, listWASessions, storeLocks as fetchStoreLocks } from "./data/api";
+import { authMe, authLogout, authRefresh, loadAppState, saveAppState, loadAppOps, getToken, clearToken, getLastActivity, setLastActivity, IDLE_TIMEOUT_MS, getAffiliateStatus, billingMe, billingSync, billingActiveSelection, listWASessions, storeLocks as fetchStoreLocks, layoutGet, PALETTE_CACHE_KEY } from "./data/api";
 import Sidebar from "./components/Sidebar";
 import GroupDashboard from "./components/GroupDashboard";
 import UnsavedChangesModal from "./components/UnsavedChangesModal";
@@ -40,6 +40,7 @@ import PageAdminBackups from "./pages/AdminBackups";
 import PageAdminNotifications from "./pages/AdminNotifications";
 import PageAdminNotifTemplates from "./pages/AdminNotifTemplates";
 import PageAdminWhatsNimbus from "./pages/AdminWhatsNimbus";
+import PageAdminLayout from "./pages/AdminLayout";
 import PageAdminRepasse from "./pages/AdminRepasse";
 import PageTutoriais from "./pages/Tutoriais";
 import Login from "./pages/Login";
@@ -375,6 +376,25 @@ export default function App() {
     const t = settings.theme || "auto";
     document.documentElement.dataset.theme = t;
   }, [settings.theme]);
+
+  // Paleta é global (Admin › Layout), não do usuário: buscada uma vez, sem
+  // depender de login, porque a tela de login também precisa dela. O script
+  // inline do index.html já pintou com o último valor conhecido; aqui só
+  // corrigimos se o servidor discordar.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { palette } = await layoutGet();
+        if (!alive || !isValidPalette(palette)) return;
+        document.documentElement.dataset.palette = palette;
+        try { localStorage.setItem(PALETTE_CACHE_KEY, palette); } catch { /* modo privado/quota */ }
+      } catch {
+        // Servidor fora do ar: fica no que o script inline já aplicou.
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
 
   // Escreve a navegação atual na barra de endereços. `mode`:
   //   "push"    — entrada nova no histórico (o botão voltar desfaz)
@@ -922,6 +942,7 @@ export default function App() {
     "admin-notifications":  user?.role === "admin" ? <PageAdminNotifications onGoToWhatsNimbus={() => requestNavigation(() => setPage("admin-whatsnimbus"))} /> : fallbackPage,
     "admin-notif-templates": user?.role === "admin" ? <PageAdminNotifTemplates /> : fallbackPage,
     "admin-whatsnimbus":    user?.role === "admin" ? <PageAdminWhatsNimbus /> : fallbackPage,
+    "admin-layout":         user?.role === "admin" ? <PageAdminLayout /> : fallbackPage,
     "tutorials":     <PageTutoriais
       targetTutorialId={tutorialTarget}
       onboarding={onboarding}

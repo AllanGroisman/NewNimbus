@@ -117,7 +117,7 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     no canto, que oferece o tour da tela atual. O que ja foi visto fica na conta (settings.onboarding),
     nao no navegador. PENDENTE: validar no navegador depois do deploy.
 
-40. [] Quero adicionar a marca nimbus como icone na aba do navegador e onde geralmente é utilizado. Quero tb que a marca esteja no topo do site. É o N de Nimbus, posso colocar o png em uma pasta que tu sugerir para adicionar esse tipo de asset.
+40. [x] Quero adicionar a marca nimbus como icone na aba do navegador e onde geralmente é utilizado. Quero tb que a marca esteja no topo do site. É o N de Nimbus, posso colocar o png em uma pasta que tu sugerir para adicionar esse tipo de asset.
 
 41. [] Quero conferir se o ambiente mobile esta condizente e bem construido para utilizacao do usuario.
 

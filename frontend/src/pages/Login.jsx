@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { PRIMARY } from "../data/constants";
+import Logo from "../components/ui/Logo";
 
 import {
   authLogin, authRegister, authGoogle,
@@ -402,7 +403,10 @@ export default function Login({ onLogin }) {
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 16, padding: 32, width: "100%", maxWidth: 360 }}>
         <div style={{ textAlign: "center", marginBottom: 24 }}>
-          <div style={{ fontSize: 28, fontWeight: 500, color: "var(--color-brand)" }}>Nimbus</div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, fontSize: 28, fontWeight: 500, color: "var(--color-brand)" }}>
+            <Logo size={34} />
+            <span>Nimbus</span>
+          </div>
           <div style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>
             {mode === "forgot" ? "Recuperar acesso"
               : mode === "reset" ? "Defina sua nova senha"

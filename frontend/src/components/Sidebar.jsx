@@ -1,4 +1,5 @@
 import { PRIMARY_DARK, PRIMARY_LIGHT, sidebarItems, getGroupStats, STORE_ID_TO_PAGE, storeLockMessage, planLabel } from "../data/constants";
+import Logo from "./ui/Logo";
 
 export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = [], numbers = [], affiliateConfigured = true, affiliateStatus, storeLocks = {}, user, billing, onNavigate, onSelectGroup, onLogout, mobileOpen, onToggleMobile }) {
   const nav = (id) => { onNavigate(id); onToggleMobile(false); };
@@ -82,7 +83,10 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
       <div style={{ padding: "0 16px 16px", borderBottom: "0.5px solid var(--color-border-tertiary)", marginBottom: 8 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 500, color: "var(--color-brand)" }}>Nimbus {isAdmin && <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "var(--color-brand)", color: "var(--color-brand-contrast)", marginLeft: 4, verticalAlign: "middle" }}>ADMIN</span>}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 16, fontWeight: 500, color: "var(--color-brand)" }}>
+              <Logo size={22} />
+              <span>Nimbus {isAdmin && <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "var(--color-brand)", color: "var(--color-brand-contrast)", marginLeft: 4, verticalAlign: "middle" }}>ADMIN</span>}</span>
+            </div>
             {subtitle && <div style={{ fontSize: 11, color: "var(--color-text-primary)", fontWeight: 500, opacity: 0.75 }}>{subtitle}</div>}
           </div>
           <button className="mobile-only" aria-label="Fechar menu" onClick={() => onToggleMobile(false)} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 20, color: "var(--color-text-secondary)", padding: "4px" }}>✕</button>
@@ -142,7 +146,10 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
         padding: "10px 16px", borderBottom: "0.5px solid var(--color-border-tertiary)",
         background: "var(--color-background-primary)", position: "sticky", top: 0, zIndex: 90,
       }}>
-        <div style={{ fontSize: 16, fontWeight: 500, color: "var(--color-brand)" }}>Nimbus</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 16, fontWeight: 500, color: "var(--color-brand)" }}>
+          <Logo size={20} />
+          <span>Nimbus</span>
+        </div>
         <button onClick={() => onToggleMobile(true)} aria-label="Abrir menu" style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 22, color: "var(--color-text-primary)", padding: "4px 8px", lineHeight: 1 }}>☰</button>
       </div>
 

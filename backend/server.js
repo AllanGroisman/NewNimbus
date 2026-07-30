@@ -373,6 +373,37 @@ app.get("/api/auth/registration-status", (req, res) => {
   res.json({ blocked: auth.isRegistrationBlocked() });
 });
 
+// ────────────────────────────────────────────────────────────────────────
+// Layout — paleta de cores, valendo pro sistema inteiro
+// ────────────────────────────────────────────────────────────────────────
+
+// Ids aceitos. Precisam bater com os blocos data-palette do frontend
+// (index.css) e com PALETTES em src/data/constants.js.
+const PALETTE_IDS = ["nimbus", "laranja", "classica"];
+const PALETTE_KEY = "layout-palette";
+const DEFAULT_PALETTE = "nimbus";
+
+function readPalette() {
+  const v = appConfig.get(PALETTE_KEY);
+  return PALETTE_IDS.includes(v) ? v : DEFAULT_PALETTE;
+}
+
+// Público de propósito: a tela de login precisa da paleta antes de existir
+// sessão, senão o usuário veria as cores trocando depois de entrar.
+app.get("/api/layout", (req, res) => {
+  res.json({ palette: readPalette() });
+});
+
+app.put("/api/admin/layout", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  const palette = (req.body || {}).palette;
+  if (!PALETTE_IDS.includes(palette)) {
+    return res.status(400).json({ error: `Paleta inválida. Use uma de: ${PALETTE_IDS.join(", ")}.` });
+  }
+  appConfig.set(PALETTE_KEY, palette);
+  if (!await confirmConfigSaved(res)) return;
+  res.json({ ok: true, palette });
+});
+
 app.post("/api/auth/login", loginLimiter, async (req, res) => {
   try {
     const { email, password } = req.body || {};

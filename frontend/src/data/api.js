@@ -347,6 +347,14 @@ export async function adminRepasseLogs({ page = 1, pageSize = 50, userId, groupI
   return http("GET", `/api/admin/repasse/logs?${params}`);
 }
 
+// ─── Layout (paleta de cores, global) ──────────────────────────────────
+// A leitura é pública: a tela de login precisa da paleta antes do login.
+export async function layoutGet()                 { return http("GET",  "/api/layout"); }
+// Última paleta conhecida, pra pintar a tela já na primeira renderização em vez
+// de esperar a resposta do servidor (ver o script inline no index.html).
+export const PALETTE_CACHE_KEY = "nimbus_palette";
+export async function adminLayoutSave(palette)    { return http("PUT",  "/api/admin/layout", { palette }); }
+
 // ─── Admin / Notificações WhatsApp ─────────────────────────────────────
 export async function adminNotifConfig()          { return http("GET",  "/api/admin/notifications/config"); }
 export async function adminNotifSave(cfg)         { return http("PUT",  "/api/admin/notifications/config", cfg); }
