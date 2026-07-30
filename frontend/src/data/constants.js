@@ -293,10 +293,12 @@ export const sidebarItems = [
   { id: "admin-notif-templates", icon: "✎", label: "Modelos Notificações", adminOnly: true },
   { id: "admin-whatsnimbus",    icon: "❂", label: "WhatsNimbus",    adminOnly: true },
   { id: "admin-layout",         icon: "◐", label: "Layout",         adminOnly: true },
+  { id: "admin-stripe",         icon: "▤", label: "Stripe",         adminOnly: true },
 ];
 
-// Rótulo do plano exibido na sidebar. Espelha PLANS em backend/billing/limits.js
-// e PLAN_META em pages/Subscription.jsx — fonte única para o texto curto.
+// Rótulo do plano exibido na sidebar. FALLBACK: o nome de verdade vem do
+// produto no Stripe (billing.plans), e estes textos só valem enquanto o
+// catálogo não chegou ou o Stripe está fora do ar.
 export const PLAN_LABELS = {
   free: "Sem plano ativo",
   basic: "Plano Básico",
@@ -306,8 +308,12 @@ export const PLAN_LABELS = {
 
 // Rótulo do plano em uso, ou null quando o billing ainda não carregou (aí a UI
 // não mostra nada em vez de chutar um plano que o usuário talvez não tenha).
-export function planLabel(effectivePlan) {
+// `plans` é o catálogo de /api/billing/me — quando presente, o nome vem do
+// Stripe, então renomear o produto no dashboard reflete aqui sem deploy.
+export function planLabel(effectivePlan, plans = null) {
   if (!effectivePlan) return null;
+  const fromStripe = plans?.find(p => p.id === effectivePlan)?.label;
+  if (fromStripe) return `Plano ${fromStripe}`;
   return PLAN_LABELS[effectivePlan] || null;
 }
 
@@ -336,6 +342,7 @@ export const PAGE_TO_PATH = {
   "admin-notif-templates": "/admin/modelos-notificacoes",
   "admin-whatsnimbus": "/admin/whatsnimbus",
   "admin-layout": "/admin/layout",
+  "admin-stripe": "/admin/stripe",
 };
 
 // Paletas oferecidas no Admin › Layout. O `id` vira data-palette no <html> e os

@@ -41,6 +41,7 @@ import PageAdminNotifications from "./pages/AdminNotifications";
 import PageAdminNotifTemplates from "./pages/AdminNotifTemplates";
 import PageAdminWhatsNimbus from "./pages/AdminWhatsNimbus";
 import PageAdminLayout from "./pages/AdminLayout";
+import PageAdminStripe from "./pages/AdminStripe";
 import PageAdminRepasse from "./pages/AdminRepasse";
 import PageTutoriais from "./pages/Tutoriais";
 import Login from "./pages/Login";
@@ -943,6 +944,7 @@ export default function App() {
     "admin-notif-templates": user?.role === "admin" ? <PageAdminNotifTemplates /> : fallbackPage,
     "admin-whatsnimbus":    user?.role === "admin" ? <PageAdminWhatsNimbus /> : fallbackPage,
     "admin-layout":         user?.role === "admin" ? <PageAdminLayout /> : fallbackPage,
+    "admin-stripe":         user?.role === "admin" ? <PageAdminStripe /> : fallbackPage,
     "tutorials":     <PageTutoriais
       targetTutorialId={tutorialTarget}
       onboarding={onboarding}

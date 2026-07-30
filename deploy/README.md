@@ -34,7 +34,7 @@ O script pede sudo quando precisa. Vai levar ~5–10 min (depende da velocidade 
 
 O `backend/.env` **já vem do repo** com as chaves do Stripe (modo test), `QUEUE_BACKEND=redis`, `NODE_ENV=production`, `ADMIN_EMAILS`. Só precisa ajustar se for:
 
-- Trocar Stripe pra **modo live** (`sk_live_...`)
+- Preencher as chaves de **produção** do Stripe (`STRIPE_SECRET_KEY_LIVE`, `STRIPE_WEBHOOK_SECRET_LIVE`, `STRIPE_PRICE_*_LIVE`). Com elas no `.env` e o backend reiniciado, a troca entre teste e produção passa a ser um botão na aba **Stripe** do painel admin — sem mexer no servidor de novo.
 - Apontar `STRIPE_SUCCESS_URL` / `STRIPE_CANCEL_URL` pro domínio de produção
 - Restringir `NIMBUS_CORS_ORIGINS`
 

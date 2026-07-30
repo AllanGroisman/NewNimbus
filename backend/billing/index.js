@@ -1,6 +1,7 @@
 const store = require("./pg");
 const limits = require("./limits");
 const prices = require("./prices");
+const stripe = require("./stripe");
 const enforce = require("./enforce");
 
 // Hidrata sub do usuário pra responder /api/billing/me e gating.
@@ -49,6 +50,9 @@ async function getStatus(userId, userRole) {
     limits: planLimits,
     hasStripeCustomer: !!sub.stripeCustomerId,
     isAdmin: userRole === "admin",
+    // Modo do Stripe valendo agora — a página de assinatura avisa o admin
+    // quando o sistema está em modo teste.
+    stripeMode: stripe.mode(),
     // Trial de R$1 só pra quem nunca assinou nem usou trial (assinantes antigos
     // não têm trialUsedAt, mas têm stripeSubscriptionId).
     trialEligible: !sub.trialUsedAt && !sub.stripeSubscriptionId,
@@ -58,13 +62,15 @@ async function getStatus(userId, userRole) {
 }
 
 // Catálogo de planos assináveis exposto ao frontend (sem "free").
-// Preço vem do Stripe quando disponível; limits.js é o fallback.
+// Nome e preço vêm do Stripe quando disponíveis; limits.js é o fallback — o
+// site nunca fica sem catálogo se o Stripe estiver fora do ar.
 async function publicPlans() {
   const live = await prices.getPublicPrices();
   return ["basic", "pro", "business"].map((id) => ({
     id,
-    label: limits.PLANS[id].label,
-    priceBRL: live?.[id] ?? limits.PLANS[id].priceBRL,
+    label: live?.[id]?.name || limits.PLANS[id].label,
+    priceBRL: live?.[id]?.priceBRL ?? limits.PLANS[id].priceBRL,
+    priceId: live?.[id]?.priceId || null,
     limits: limits.PLANS[id].limits,
   }));
 }
@@ -81,6 +87,7 @@ function isActive(sub, userRole) {
 module.exports = {
   ...store,
   getStatus,
+  publicPlans,
   isActive,
   limits,
   enforce,

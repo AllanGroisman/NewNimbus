@@ -32,6 +32,7 @@ const calls = {
   getDefaultPaymentMethod: [],
   fetchPlanPrices: [],
   reactivateSubscription: [],
+  setMode: [],
 };
 
 let state = {
@@ -45,10 +46,17 @@ let state = {
   upcomingInvoice: null,   // { amountBRL, currency, nextPaymentAttempt } | null
   invoices: [],            // [{ id, date, amountBRL, status, hostedUrl, pdfUrl }]
   paymentMethod: null,     // { brand, last4, expMonth, expYear } | null
-  // Catálogo devolvido por fetchPlanPrices. Default espelha limits.js pra não
-  // quebrar testes que fixam 69.90 no /api/billing/me.
-  planPrices: { basic: 69.90, pro: 99.90, business: 149.90 },
+  // Catálogo devolvido por fetchPlanPrices: preço + nome do produto no Stripe.
+  // Default espelha limits.js pra não quebrar testes que fixam 69.90 e "Básico"
+  // no /api/billing/me.
+  planPrices: {
+    basic: { priceBRL: 69.90, name: "Básico", priceId: "price_test_basic" },
+    pro: { priceBRL: 99.90, name: "Pro", priceId: "price_test_pro" },
+    business: { priceBRL: 149.90, name: "Business", priceId: "price_test_business" },
+  },
   shouldFailFetchPrices: false,
+  // Modo ativo do Stripe (test/live) — o mock guarda em memória o que setMode grava.
+  mode: "test",
 };
 
 const PRICE_IDS = {
@@ -74,8 +82,13 @@ function reset() {
     upcomingInvoice: null,
     invoices: [],
     paymentMethod: null,
-    planPrices: { basic: 69.90, pro: 99.90, business: 149.90 },
+    planPrices: {
+      basic: { priceBRL: 69.90, name: "Básico", priceId: "price_test_basic" },
+      pro: { priceBRL: 99.90, name: "Pro", priceId: "price_test_pro" },
+      business: { priceBRL: 149.90, name: "Business", priceId: "price_test_business" },
+    },
     shouldFailFetchPrices: false,
+    mode: "test",
   };
 }
 
@@ -92,6 +105,21 @@ const mock = {
   enabled() { calls.enabled += 1; return state.enabled; },
   priceFor(planId) { return PRICE_IDS[planId] || ""; },
   planFromPrice(priceId) { return PRICE_TO_PLAN[priceId] || null; },
+
+  // Modo teste/produção. O real grava em app_config; aqui basta a memória —
+  // o que importa nos testes é o efeito no billing (assinatura de outro modo
+  // fica inerte) e nas rotas de admin.
+  mode() { return state.mode; },
+  setMode(next) {
+    calls.setMode.push({ mode: next });
+    if (!["test", "live"].includes(next)) throw new Error(`Modo Stripe inválido: "${next}"`);
+    state.mode = next;
+    return next;
+  },
+  modeInfo() {
+    const complete = { hasSecret: true, hasWebhookSecret: true, missing: [], prices: { ...PRICE_IDS, trialFee: "price_test_trial" } };
+    return { mode: state.mode, defaultMode: "test", modes: { test: complete, live: { ...complete } } };
+  },
 
   async getOrCreateCustomer({ userId, email, name, existingCustomerId }) {
     calls.getOrCreateCustomer.push({ userId, email, name, existingCustomerId });
@@ -135,6 +163,7 @@ const mock = {
     return {
       stripeSubscriptionId: sub.id,
       stripeCustomerId: typeof sub.customer === "string" ? sub.customer : sub.customer?.id,
+      stripeMode: sub.livemode === true ? "live" : sub.livemode === false ? "test" : state.mode,
       planId: planId || "free",
       status: sub.status,
       currentPeriodEnd,

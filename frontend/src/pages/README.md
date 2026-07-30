@@ -15,3 +15,4 @@ Uma página por rota/seção do app. O `App.jsx` decide qual renderizar baseado 
 - **`Subscription.jsx`** — tela de plano/assinatura. Stripe Checkout + Portal hosted, trial 7d sem cartão, badge `past_due`. Bypass automático pra `role=admin`.
 - **`AdminUsers.jsx`** — só admin: lista de usuários, promove/rebaixa role.
 - **`AdminScraper.jsx`** — só admin: configura o admin-scraper (intervalo, categorias, limites) e vê status.
+- **`AdminStripe.jsx`** — só admin: mostra qual modo do Stripe está valendo (teste/produção), o que cada modo tem configurado no `.env`, os produtos em uso, e troca de modo em dois cliques.

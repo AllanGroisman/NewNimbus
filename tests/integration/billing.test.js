@@ -723,12 +723,16 @@ describe("Billing — reactivate", () => {
   });
 });
 
-describe("Billing — preços vindos do Stripe", () => {
+describe("Billing — preços e nomes vindos do Stripe", () => {
   beforeEach(() => pricesCache.__resetForTests());
   afterEach(() => pricesCache.__resetForTests());
 
   it("plans reflete o preço ao vivo do Stripe", async () => {
-    setStripeMock({ planPrices: { basic: 79.90, pro: 109.90, business: 149.90 } });
+    setStripeMock({ planPrices: {
+      basic: { priceBRL: 79.90, name: "Básico", priceId: "price_test_basic" },
+      pro: { priceBRL: 109.90, name: "Pro", priceId: "price_test_pro" },
+      business: { priceBRL: 149.90, name: "Business", priceId: "price_test_business" },
+    } });
     const { auth } = await createTestUser();
     const res = await auth("get", "/api/billing/me");
     expect(res.status).toBe(200);
@@ -736,17 +740,32 @@ describe("Billing — preços vindos do Stripe", () => {
     const pro = res.body.plans.find(p => p.id === "pro");
     expect(basic.priceBRL).toBe(79.90);
     expect(pro.priceBRL).toBe(109.90);
-    // Só o preço vem do Stripe — os limites continuam do limits.js.
+    // Só preço e nome vêm do Stripe — os limites continuam do limits.js.
     expect(basic.limits.groups).toBe(1);
   });
 
-  it("Stripe desabilitado → fallback pros preços do limits.js", async () => {
+  it("label vem do nome do produto no Stripe", async () => {
+    setStripeMock({ planPrices: {
+      basic: { priceBRL: 69.90, name: "Nimbus Essencial", priceId: "price_x" },
+      pro: { priceBRL: 99.90, name: "Nimbus Avançado", priceId: "price_y" },
+      business: { priceBRL: 149.90, name: "Nimbus Empresa", priceId: "price_z" },
+    } });
+    const { auth } = await createTestUser();
+    const res = await auth("get", "/api/billing/me");
+    expect(res.status).toBe(200);
+    expect(res.body.plans.find(p => p.id === "basic").label).toBe("Nimbus Essencial");
+    expect(res.body.plans.find(p => p.id === "business").label).toBe("Nimbus Empresa");
+    expect(res.body.plans.find(p => p.id === "pro").priceId).toBe("price_y");
+  });
+
+  it("Stripe desabilitado → fallback pros preços e labels do limits.js", async () => {
     setStripeMock({ enabled: false });
     const { auth } = await createTestUser();
     const res = await auth("get", "/api/billing/me");
     expect(res.status).toBe(200);
     const basic = res.body.plans.find(p => p.id === "basic");
     expect(basic.priceBRL).toBe(69.90);
+    expect(basic.label).toBe("Básico");
     expect(stripeCalls.fetchPlanPrices).toHaveLength(0);
   });
 
@@ -757,6 +776,7 @@ describe("Billing — preços vindos do Stripe", () => {
     expect(res.status).toBe(200);
     const basic = res.body.plans.find(p => p.id === "basic");
     expect(basic.priceBRL).toBe(69.90);
+    expect(basic.label).toBe("Básico");
   });
 
   it("cache: leituras seguidas fazem uma busca só no Stripe", async () => {
@@ -764,6 +784,78 @@ describe("Billing — preços vindos do Stripe", () => {
     await auth("get", "/api/billing/me");
     await auth("get", "/api/billing/me");
     expect(stripeCalls.fetchPlanPrices).toHaveLength(1);
+  });
+});
+
+describe("Billing — modo teste ↔ produção", () => {
+  afterEach(() => setStripeMock({ mode: "test" }));
+
+  it("assinatura de outro modo fica inerte (usuário aparece sem plano)", async () => {
+    const { user, auth } = await createTestUser();
+    await billing.update(user.id, {
+      stripeCustomerId: "cus_live_1",
+      stripeSubscriptionId: "sub_live_1",
+      planId: "pro",
+      status: "active",
+      stripeMode: "live",
+    });
+
+    // Sistema em modo teste: a assinatura de produção não vale agora.
+    const inTest = await auth("get", "/api/billing/me");
+    expect(inTest.status).toBe(200);
+    expect(inTest.body.effectivePlan).toBe("free");
+    expect(inTest.body.status).toBe("inactive");
+    expect(inTest.body.hasStripeCustomer).toBe(false);
+    expect(inTest.body.stripeMode).toBe("test");
+
+    // Voltando pro modo dela, tudo volta como estava — nada foi apagado.
+    setStripeMock({ mode: "live" });
+    const inLive = await auth("get", "/api/billing/me");
+    expect(inLive.body.effectivePlan).toBe("pro");
+    expect(inLive.body.status).toBe("active");
+    expect(inLive.body.hasStripeCustomer).toBe(true);
+  });
+
+  it("portal recusa quando a assinatura é de outro modo", async () => {
+    const { user, auth } = await createTestUser();
+    await billing.update(user.id, {
+      stripeCustomerId: "cus_live_2",
+      planId: "pro",
+      status: "active",
+      stripeMode: "live",
+    });
+    const res = await auth("post", "/api/billing/portal").send({});
+    expect(res.status).toBe(400);
+    expect(stripeCalls.createPortalSession).toHaveLength(0);
+  });
+
+  it("webhook carimba o modo pelo livemode do evento", async () => {
+    const { user, auth } = await createTestUser();
+    const res = await postEvent({
+      id: "evt_mode_1",
+      type: "customer.subscription.created",
+      data: {
+        object: {
+          id: "sub_mode_1",
+          customer: "cus_mode_1",
+          livemode: true,
+          status: "active",
+          current_period_end: Math.floor(Date.now() / 1000) + 30 * 86400,
+          cancel_at_period_end: false,
+          metadata: { nimbusUserId: user.id },
+          items: { data: [{ price: { id: "price_test_pro" } }] },
+        },
+      },
+    });
+    expect(res.status).toBe(200);
+
+    // Evento de produção com o sistema em teste: grava, mas não libera agora.
+    const inTest = await auth("get", "/api/billing/me");
+    expect(inTest.body.effectivePlan).toBe("free");
+
+    setStripeMock({ mode: "live" });
+    const inLive = await auth("get", "/api/billing/me");
+    expect(inLive.body.effectivePlan).toBe("pro");
   });
 });
 

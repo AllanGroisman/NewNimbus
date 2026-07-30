@@ -324,6 +324,7 @@ model Subscription {
   cancelAtPeriodEnd    Boolean   @default(false)
   trialUsedAt          DateTime? // quando iniciou o trial de R$1 — nunca resetado (1 trial por conta)
   pastDueSince         DateTime? // início do atraso (past_due/unpaid) — base da carência de 3 dias
+  stripeMode           String?   // "test" | "live" — modo do Stripe em que esta assinatura nasceu; NULL = linha sem Stripe
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 

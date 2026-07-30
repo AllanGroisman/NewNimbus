@@ -157,7 +157,12 @@ async function handleStripeEvent(event) {
       const userId = obj.client_reference_id;
       const customerId = typeof obj.customer === "string" ? obj.customer : obj.customer?.id;
       if (userId && customerId) {
-        await billing.update(userId, { stripeCustomerId: customerId });
+        // event.livemode diz de qual modo veio (o webhook aceita os dois), e é
+        // mais confiável que o modo ativo no momento em que o evento chegou.
+        await billing.update(userId, {
+          stripeCustomerId: customerId,
+          stripeMode: event.livemode ? "live" : "test",
+        });
       }
       return;
     }
@@ -1477,6 +1482,50 @@ app.put("/api/admin/registration", auth.requireAuth, auth.requireAdmin, async (r
   appConfig.set("registration-blocked", { blocked });
   if (!await confirmConfigSaved(res)) return;
   res.json({ blocked });
+});
+
+// ── Stripe: modo teste ↔ produção ────────────────────────────────────────
+// As credenciais dos dois modos vivem no .env; aqui só se escolhe qual está
+// valendo (app_config "stripe-mode"), sem reiniciar o sistema. O catálogo vem
+// junto pro admin conferir que os produtos do modo ativo são os certos.
+async function stripeAdminPayload() {
+  const info = stripeMod.modeInfo();
+  if (!stripeMod.enabled()) {
+    return { ...info, catalog: [], catalogError: "Modo sem chave secreta configurada no .env" };
+  }
+  try {
+    return { ...info, catalog: await billing.publicPlans(), catalogError: null };
+  } catch (err) {
+    // Stripe fora do ar não pode derrubar a tela — o admin ainda precisa poder
+    // ver a configuração e voltar de modo.
+    return { ...info, catalog: [], catalogError: err.message };
+  }
+}
+
+app.get("/api/admin/stripe", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  res.json(await stripeAdminPayload());
+});
+
+app.put("/api/admin/stripe", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const mode = String(req.body?.mode || "").trim();
+    const info = stripeMod.modeInfo();
+    if (!info.modes[mode]) {
+      return res.status(400).json({ error: 'Modo inválido — use "test" ou "live"' });
+    }
+    const missing = info.modes[mode].missing;
+    if (missing.length) {
+      return res.status(400).json({
+        error: `Modo "${mode}" incompleto — falta no .env do servidor: ${missing.join(", ")}`,
+      });
+    }
+    stripeMod.setMode(mode);
+    if (!await confirmConfigSaved(res)) return;
+    res.json(await stripeAdminPayload());
+  } catch (err) {
+    logger.error({ err: err.message }, "[billing] troca de modo falhou");
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.post("/api/admin/scraper/run", auth.requireAuth, auth.requireAdmin, async (req, res) => {

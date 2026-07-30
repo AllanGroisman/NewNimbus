@@ -369,6 +369,33 @@ describe("Subscription — preços vindos do backend", () => {
     // 79,90 vem do backend (PLAN_META hardcoda 69,90)
     await waitFor(() => expect(screen.getAllByText(/R\$ 79,90/).length).toBeGreaterThan(0));
   });
+
+  it("usa o label de me.plans (nome do produto no Stripe) nos cards e no plano atual", async () => {
+    setBillingMe({
+      planId: "pro", effectivePlan: "pro", status: "active",
+      hasStripeCustomer: true, stripeEnabled: true, isAdmin: false,
+      limits: { numbers: 3, groups: 5 },
+      plans: [
+        { id: "basic", label: "Nimbus Essencial", priceBRL: 69.9, limits: {} },
+        { id: "pro", label: "Nimbus Avançado", priceBRL: 99.9, limits: {} },
+        { id: "business", label: "Nimbus Empresa", priceBRL: 149.9, limits: {} },
+      ],
+    });
+    render(<PageSubscription />);
+    // Renomear o produto no Stripe reflete no site sem deploy.
+    await waitFor(() => expect(screen.getByText("Nimbus Essencial")).toBeInTheDocument());
+    expect(screen.getByText(/Nimbus Nimbus Avançado/)).toBeInTheDocument();
+  });
+
+  it("sem plans no backend cai nos nomes locais", async () => {
+    setBillingMe({
+      planId: "free", effectivePlan: "free", status: "inactive",
+      hasStripeCustomer: false, stripeEnabled: true, isAdmin: false,
+      limits: { numbers: 0, groups: 0 },
+    });
+    render(<PageSubscription />);
+    await waitFor(() => expect(screen.getByText("Básico")).toBeInTheDocument());
+  });
 });
 
 describe("Subscription — billingMe falha", () => {

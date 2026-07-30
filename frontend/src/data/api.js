@@ -285,6 +285,10 @@ export async function adminResendUserVerification(id) {
 export async function adminGetRegistration()        { return http("GET", "/api/admin/registration"); }
 export async function adminSetRegistration(blocked) { return http("PUT", "/api/admin/registration", { blocked }); }
 
+// ─── Admin / Stripe (modo teste ↔ produção) ────────────────────────────
+export async function adminStripeGet()          { return http("GET", "/api/admin/stripe"); }
+export async function adminStripeSetMode(mode)  { return http("PUT", "/api/admin/stripe", { mode }); }
+
 // ─── Admin / Backups ───────────────────────────────────────────────────
 export async function adminBackupsLocal()              { return http("GET",    "/api/admin/backups/local"); }
 export async function adminBackupsRemote()             { return http("GET",    "/api/admin/backups/remote"); }

@@ -1,9 +1,34 @@
 // Persistência Postgres do módulo billing.
 
 const { prisma } = require("../db");
+const stripe = require("./stripe");
 
+// Assinatura de OUTRO modo do Stripe não vale agora: os IDs de customer e de
+// subscription só existem no modo em que nasceram, então usá-los daria erro em
+// toda chamada (portal, faturas, sync). Em vez disso a linha aparece como "sem
+// plano" enquanto o sistema está no outro modo — e volta ao normal quando o
+// admin volta o modo. Nada é apagado.
+// `crossMode` deixa a UI explicar a situação em vez de sumir com o plano.
+function maskCrossMode(row) {
+  if (!row || !row.stripeMode || row.stripeMode === stripe.mode()) return row;
+  return {
+    ...row,
+    planId: "free",
+    status: "inactive",
+    currentPeriodEnd: null,
+    cancelAtPeriodEnd: false,
+    pastDueSince: null,
+    stripeCustomerId: null,
+    stripeSubscriptionId: null,
+    crossMode: row.stripeMode,
+  };
+}
+
+// Leitura do app (gating, /api/billing/me, portal, scheduler) — passa pela
+// máscara de modo. O webhook usa getByCustomerId/getBySubscriptionId, que
+// devolvem a linha crua de propósito.
 async function getByUserId(userId) {
-  return prisma().subscription.findUnique({ where: { userId } });
+  return maskCrossMode(await prisma().subscription.findUnique({ where: { userId } }));
 }
 
 async function getByCustomerId(stripeCustomerId) {
@@ -18,7 +43,9 @@ async function getBySubscriptionId(stripeSubscriptionId) {
 
 async function ensureForUser(userId, defaults = {}) {
   const existing = await prisma().subscription.findUnique({ where: { userId } });
-  if (existing) return existing;
+  // Mascarada também: o checkout precisa criar um customer NOVO no modo atual
+  // em vez de reaproveitar o customer do outro modo (que o Stripe não conhece).
+  if (existing) return maskCrossMode(existing);
   return prisma().subscription.create({
     data: {
       userId,
@@ -28,6 +55,7 @@ async function ensureForUser(userId, defaults = {}) {
       cancelAtPeriodEnd: !!defaults.cancelAtPeriodEnd,
       stripeCustomerId: defaults.stripeCustomerId || null,
       stripeSubscriptionId: defaults.stripeSubscriptionId || null,
+      stripeMode: defaults.stripeMode || null,
     },
   });
 }
@@ -40,6 +68,14 @@ async function update(userId, patch) {
   if (patch.trialUsedAt) data.trialUsedAt = new Date(patch.trialUsedAt);
   // trialEnd vem de normalizeSubscription mas não é coluna — nunca persistir.
   delete data.trialEnd;
+  // crossMode é anotação da máscara de leitura, não coluna.
+  delete data.crossMode;
+
+  // Toda escrita que linka um objeto do Stripe carimba o modo. Quem chama sem
+  // informar (ex.: update só de planId interno) mantém o modo já gravado.
+  if (data.stripeMode === undefined && (data.stripeCustomerId || data.stripeSubscriptionId)) {
+    data.stripeMode = stripe.mode();
+  }
 
   // pastDueSince é derivado do status e marcado aqui porque este é o funil
   // único de escrita (webhook e reconcile passam por aqui). Marca na PRIMEIRA
@@ -68,6 +104,7 @@ async function update(userId, patch) {
       pastDueSince: data.pastDueSince || null,
       stripeCustomerId: data.stripeCustomerId || null,
       stripeSubscriptionId: data.stripeSubscriptionId || null,
+      stripeMode: data.stripeMode || null,
     },
     update: data,
   });

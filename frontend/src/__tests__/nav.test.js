@@ -23,6 +23,16 @@ describe("planLabel", () => {
   it("cobre todos os planos do backend", () => {
     expect(Object.keys(PLAN_LABELS).sort()).toEqual(["basic", "business", "free", "pro"]);
   });
+
+  it("prefere o nome do produto no Stripe quando o catálogo chegou", () => {
+    const plans = [
+      { id: "basic", label: "Nimbus Essencial" },
+      { id: "pro", label: "Nimbus Avançado" },
+    ];
+    expect(planLabel("pro", plans)).toBe("Plano Nimbus Avançado");
+    // Plano fora do catálogo (free) continua no texto local.
+    expect(planLabel("free", plans)).toBe("Sem plano ativo");
+  });
 });
 
 describe("navToPath / pathToNav", () => {

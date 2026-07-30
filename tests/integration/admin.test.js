@@ -2,7 +2,7 @@
 // catalog admin, DLQ. Cobre tanto gating (403 pra user comum) quanto comportamento.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { request, app, createTestUser, auth as authMod, catalog } from "../helpers/app.js";
+import { request, app, createTestUser, auth as authMod, catalog, setStripeMock } from "../helpers/app.js";
 import { mlProduct, amazonProduct, shopeeProduct } from "../helpers/fixtures.js";
 
 async function makeAdmin(opts = {}) {
@@ -29,6 +29,8 @@ describe("Admin — gating", () => {
       ["put", "/api/admin/scraper/amazon/filters"],
       ["get", "/api/admin/scraper/shopee/filters"],
       ["put", "/api/admin/scraper/shopee/filters"],
+      ["get", "/api/admin/stripe"],
+      ["put", "/api/admin/stripe"],
     ];
     for (const [method, url] of rotas) {
       const res = await auth(method, url);
@@ -132,6 +134,41 @@ describe("Admin — scraper config + run", () => {
     const r = await admin.auth("get", "/api/admin/scraper/status");
     expect(r.status).toBe(200);
     expect(r.body).toHaveProperty("running");
+  });
+});
+
+describe("Admin — Stripe (modo teste ↔ produção)", () => {
+  // O mock guarda o modo em memória; volta pro default entre casos.
+  beforeEach(() => setStripeMock({ mode: "test" }));
+
+  it("GET devolve modo ativo, o que está configurado e o catálogo", async () => {
+    const admin = await makeAdmin();
+    const r = await admin.auth("get", "/api/admin/stripe");
+    expect(r.status).toBe(200);
+    expect(r.body.mode).toBe("test");
+    expect(r.body.modes.test.hasSecret).toBe(true);
+    expect(r.body.modes.live).toBeDefined();
+    // Nunca devolve segredo, só se existe.
+    expect(JSON.stringify(r.body)).not.toMatch(/sk_/);
+    expect(r.body.catalog.map(p => p.id)).toEqual(["basic", "pro", "business"]);
+  });
+
+  it("PUT troca o modo e a troca persiste", async () => {
+    const admin = await makeAdmin();
+    const r = await admin.auth("put", "/api/admin/stripe").send({ mode: "live" });
+    expect(r.status).toBe(200);
+    expect(r.body.mode).toBe("live");
+
+    const get = await admin.auth("get", "/api/admin/stripe");
+    expect(get.body.mode).toBe("live");
+  });
+
+  it("modo inválido → 400 e nada muda", async () => {
+    const admin = await makeAdmin();
+    const r = await admin.auth("put", "/api/admin/stripe").send({ mode: "producao" });
+    expect(r.status).toBe(400);
+    const get = await admin.auth("get", "/api/admin/stripe");
+    expect(get.body.mode).toBe("test");
   });
 });
 

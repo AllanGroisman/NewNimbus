@@ -1,53 +1,139 @@
 // Wrapper do Stripe SDK — centraliza configuração e mapeamento de price→plan.
-// Sem STRIPE_SECRET_KEY, todas as ops viram no-op com `enabled=false` — útil pra
-// rodar dev/test sem credenciais ou desativar billing em deploys específicos.
+// Sem chave secreta no modo ativo, todas as ops viram no-op com `enabled=false`
+// — útil pra rodar dev/test sem credenciais ou desativar billing em deploys
+// específicos.
+//
+// MODOS (test/live): o sistema carrega os DOIS conjuntos de credenciais do .env
+// e o admin escolhe qual está valendo (aba Stripe do painel → app_config
+// "stripe-mode"). Assim dá pra alternar entre os produtos de teste e os de
+// produção sem editar .env nem reiniciar. O modo é lido a cada chamada porque
+// o cache do app_config é atualizado sozinho a cada 30s — o worker acompanha a
+// troca feita no server sem restart.
 
 const logger = require("../infra/logger");
+const appConfig = require("../config");
 
-const SECRET = process.env.STRIPE_SECRET_KEY || "";
-const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
+const MODES = ["test", "live"];
+const MODE_KEY = "stripe-mode";
 
-const PRICE_IDS = {
-  basic: process.env.STRIPE_PRICE_BASIC || "",
-  pro: process.env.STRIPE_PRICE_PRO || "",
-  business: process.env.STRIPE_PRICE_BUSINESS || "",
-};
+// A que modo pertencem as variáveis SEM sufixo (formato antigo do .env): a
+// própria chave diz — sk_live_… é produção, qualquer outra coisa é teste.
+// Amarrar isso ao STRIPE_MODE_DEFAULT seria uma armadilha: quem setasse
+// STRIPE_MODE_DEFAULT=live antes de preencher as _LIVE rodaria "em produção"
+// com as chaves de teste, sem nenhum aviso.
+const LEGACY_MODE = /^sk_live_/.test(process.env.STRIPE_SECRET_KEY || "") ? "live" : "test";
 
-// Price avulso de R$1 cobrado hoje no checkout com trial ("15 dias por R$1").
-const TRIAL_FEE_PRICE = process.env.STRIPE_PRICE_TRIAL_FEE || "";
+// Modo do primeiro boot, antes de alguém escolher no painel. Sem
+// STRIPE_MODE_DEFAULT, segue o modo das variáveis sem sufixo — assim um .env
+// antigo (só chaves live, sem sufixo) continua subindo em produção como antes.
+const DEFAULT_MODE = MODES.includes(process.env.STRIPE_MODE_DEFAULT)
+  ? process.env.STRIPE_MODE_DEFAULT
+  : LEGACY_MODE;
+
+// Sufixo _TEST/_LIVE, com fallback pras variáveis sem sufixo (que valem só pro
+// LEGACY_MODE). O .env que já existe continua funcionando sem edição nenhuma.
+function envFor(name, m) {
+  const suffixed = process.env[`${name}_${m.toUpperCase()}`];
+  if (suffixed) return suffixed;
+  return (m === LEGACY_MODE && process.env[name]) || "";
+}
+
+function buildConf(m) {
+  const prices = {
+    basic: envFor("STRIPE_PRICE_BASIC", m),
+    pro: envFor("STRIPE_PRICE_PRO", m),
+    business: envFor("STRIPE_PRICE_BUSINESS", m),
+  };
+  return {
+    secret: envFor("STRIPE_SECRET_KEY", m),
+    webhookSecret: envFor("STRIPE_WEBHOOK_SECRET", m),
+    prices,
+    // Price avulso de R$1 cobrado hoje no checkout com trial ("15 dias por R$1").
+    trialFeePrice: envFor("STRIPE_PRICE_TRIAL_FEE", m),
+    // Mapa reverso pra resolver planId a partir de price.id no webhook.
+    priceToPlan: Object.fromEntries(
+      Object.entries(prices).filter(([, v]) => v).map(([k, v]) => [v, k])
+    ),
+  };
+}
+
+const CONF = Object.fromEntries(MODES.map((m) => [m, buildConf(m)]));
+
 const TRIAL_DAYS = 15;
-
-// Mapa reverso pra resolver planId a partir de price.id no webhook.
-const PRICE_TO_PLAN = Object.fromEntries(
-  Object.entries(PRICE_IDS).filter(([, v]) => v).map(([k, v]) => [v, k])
-);
 
 const { stripeSuccessUrl: SUCCESS_URL, stripeCancelUrl: CANCEL_URL } = require("../config/publicUrl");
 
-let _client = null;
+// Modo ativo. Cai no default quando o banco ainda não tem a chave (primeiro
+// boot) ou quando o valor gravado é inválido.
+function mode() {
+  const saved = appConfig.get(MODE_KEY);
+  const value = typeof saved === "string" ? saved : saved?.mode;
+  return MODES.includes(value) ? value : DEFAULT_MODE;
+}
+
+function conf(m = mode()) {
+  return CONF[m] || CONF[DEFAULT_MODE];
+}
+
+// Troca o modo ativo. Grava no app_config (compartilhado entre server e worker)
+// e limpa o cache de preços pra próxima leitura já trazer o catálogo novo.
+// Quem precisa de confirmação da gravação chama appConfig.flush() depois.
+function setMode(next) {
+  if (!MODES.includes(next)) throw new Error(`Modo Stripe inválido: "${next}"`);
+  appConfig.set(MODE_KEY, { mode: next });
+  // require tardio: prices.js requer este módulo (ciclo se fosse no topo).
+  require("./prices").__invalidate();
+  logger.info({ mode: next }, "[stripe] modo alterado");
+  return next;
+}
+
+// Retrato da configuração pro painel admin — nunca expõe segredo, só se existe.
+function modeInfo() {
+  const active = mode();
+  const modes = Object.fromEntries(MODES.map((m) => {
+    const c = CONF[m];
+    return [m, {
+      hasSecret: !!c.secret,
+      hasWebhookSecret: !!c.webhookSecret,
+      prices: { ...c.prices, trialFee: c.trialFeePrice },
+      // Faltando algo essencial, o painel explica o que colocar no .env.
+      missing: [
+        !c.secret && `STRIPE_SECRET_KEY_${m.toUpperCase()}`,
+        !c.prices.basic && `STRIPE_PRICE_BASIC_${m.toUpperCase()}`,
+        !c.prices.pro && `STRIPE_PRICE_PRO_${m.toUpperCase()}`,
+        !c.prices.business && `STRIPE_PRICE_BUSINESS_${m.toUpperCase()}`,
+      ].filter(Boolean),
+    }];
+  }));
+  return { mode: active, defaultMode: DEFAULT_MODE, modes };
+}
+
+const _clients = { test: null, live: null };
 function client() {
-  if (!SECRET) return null;
-  if (!_client) {
+  const m = mode();
+  const { secret } = conf(m);
+  if (!secret) return null;
+  if (!_clients[m]) {
     const Stripe = require("stripe");
-    _client = new Stripe(SECRET, {
+    _clients[m] = new Stripe(secret, {
       // Sem apiVersion fixa — usa a versão default da chave (configurada no dashboard).
       // Fixar aqui ajuda em prod (estabilidade), mas em dev/test deixar livre é mais simples.
       typescript: false,
     });
   }
-  return _client;
+  return _clients[m];
 }
 
 function enabled() {
-  return !!SECRET;
+  return !!conf().secret;
 }
 
 function priceFor(planId) {
-  return PRICE_IDS[planId] || "";
+  return conf().prices[planId] || "";
 }
 
 function planFromPrice(priceId) {
-  return PRICE_TO_PLAN[priceId] || null;
+  return conf().priceToPlan[priceId] || null;
 }
 
 // Cria (ou recupera) o Stripe Customer pra um user do Nimbus.
@@ -72,12 +158,13 @@ async function getOrCreateCustomer({ userId, email, name, existingCustomerId }) 
 async function createCheckoutSession({ planId, customer, userId, withTrial = false }) {
   const price = priceFor(planId);
   if (!price) throw new Error(`Price ID não configurado pro plano "${planId}"`);
-  if (withTrial && !TRIAL_FEE_PRICE) {
+  const trialFeePrice = conf().trialFeePrice;
+  if (withTrial && !trialFeePrice) {
     throw new Error("STRIPE_PRICE_TRIAL_FEE não configurado — trial de R$1 indisponível");
   }
 
   const lineItems = [{ price, quantity: 1 }];
-  if (withTrial) lineItems.push({ price: TRIAL_FEE_PRICE, quantity: 1 });
+  if (withTrial) lineItems.push({ price: trialFeePrice, quantity: 1 });
 
   const subscriptionData = {
     metadata: { nimbusUserId: userId, planId, ...(withTrial ? { trial: "1" } : {}) },
@@ -117,9 +204,23 @@ async function createPortalSession({ customer }) {
 }
 
 // Verifica assinatura do webhook. Lança em falha — express handler responde 400.
+//
+// Tenta o segredo do modo ativo e, se não bater, o do outro modo: teste e
+// produção são endpoints DIFERENTES no dashboard do Stripe (com segredos
+// diferentes) apontando pra mesma URL. Sem isso, todo evento do modo inativo
+// viraria 400 no log — inclusive os do modo teste que chegam atrasados logo
+// depois de virar a chave pra produção.
 function constructEvent(rawBody, signature) {
-  if (!WEBHOOK_SECRET) throw new Error("STRIPE_WEBHOOK_SECRET não configurado");
-  return client().webhooks.constructEvent(rawBody, signature, WEBHOOK_SECRET);
+  const active = mode();
+  const secrets = [conf(active).webhookSecret, ...MODES.filter((m) => m !== active).map((m) => conf(m).webhookSecret)]
+    .filter(Boolean);
+  if (!secrets.length) throw new Error("STRIPE_WEBHOOK_SECRET não configurado");
+  let lastErr = null;
+  for (const secret of secrets) {
+    try { return client().webhooks.constructEvent(rawBody, signature, secret); }
+    catch (err) { lastErr = err; }
+  }
+  throw lastErr;
 }
 
 // Extrai os campos relevantes de um Stripe Subscription pra persistir.
@@ -138,6 +239,9 @@ function normalizeSubscription(sub) {
   return {
     stripeSubscriptionId: sub.id,
     stripeCustomerId: typeof sub.customer === "string" ? sub.customer : sub.customer?.id,
+    // Modo em que esta assinatura vive — assinatura de teste não pode valer
+    // quando o sistema está em produção (e vice-versa). Ver billing/pg.js.
+    stripeMode: sub.livemode === true ? "live" : sub.livemode === false ? "test" : mode(),
     planId: planId || "free",
     status: sub.status,
     currentPeriodEnd,
@@ -229,19 +333,27 @@ async function getDefaultPaymentMethod(customerId, subscriptionId) {
   };
 }
 
-// Busca no Stripe o valor atual dos prices configurados (STRIPE_PRICE_*).
-// Retorna { basic: 69.9, ... } só com os planos válidos (BRL, unit_amount
-// presente) — plano ausente aqui cai no fallback de limits.js no chamador.
+// Busca no Stripe o preço E o nome do produto de cada plano configurado
+// (STRIPE_PRICE_*). Retorna { basic: { priceBRL, name, priceId }, ... } só com
+// os planos válidos (BRL, unit_amount presente) — plano ausente aqui cai no
+// fallback de limits.js no chamador.
 async function fetchPlanPrices() {
   const out = {};
-  for (const [planId, priceId] of Object.entries(PRICE_IDS)) {
+  for (const [planId, priceId] of Object.entries(conf().prices)) {
     if (!priceId) continue;
-    const price = await client().prices.retrieve(priceId);
+    // expand product: o nome exibido no site passa a ser o do dashboard.
+    const price = await client().prices.retrieve(priceId, { expand: ["product"] });
     if (price.currency !== "brl" || price.unit_amount == null) {
       logger.warn({ planId, priceId, currency: price.currency }, "[stripe] price sem unit_amount em BRL — ignorando");
       continue;
     }
-    out[planId] = price.unit_amount / 100;
+    const product = typeof price.product === "object" ? price.product : null;
+    out[planId] = {
+      priceBRL: price.unit_amount / 100,
+      // Produto arquivado/sem nome não derruba nada — chamador cai no label local.
+      name: product?.name || null,
+      priceId,
+    };
   }
   return out;
 }
@@ -257,6 +369,9 @@ async function reactivateSubscription(subscriptionId) {
 module.exports = {
   client,
   enabled,
+  mode,
+  setMode,
+  modeInfo,
   priceFor,
   planFromPrice,
   getOrCreateCustomer,

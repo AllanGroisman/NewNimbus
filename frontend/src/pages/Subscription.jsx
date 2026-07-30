@@ -199,6 +199,10 @@ export default function PageSubscription() {
   }
 
   const currentPlan = me.effectivePlan || "free";
+  // Nome do produto no Stripe; PLAN_META (e, no limite, o próprio id) é fallback.
+  const currentPlanName = me.plans?.find(p => p.id === currentPlan)?.label
+    || PLAN_META[currentPlan]?.name
+    || currentPlan;
   const isAdmin = !!me.isAdmin;
   const hasActiveSub = (me.status === "active" || me.status === "trialing") && me.hasStripeCustomer;
   const badge = statusBadge(me.status, me.daysLeftInTrial, me.cancelAtPeriodEnd);
@@ -251,7 +255,7 @@ export default function PageSubscription() {
             <div style={{ fontSize: 11, color: "var(--color-text-secondary)", fontWeight: 500, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Plano atual</div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
               <div style={{ fontSize: 26, fontWeight: 500 }}>
-                Nimbus {currentPlan === "free" ? "Free" : (PLAN_META[currentPlan]?.name || currentPlan)}
+                Nimbus {currentPlan === "free" ? "Free" : currentPlanName}
               </div>
               <span style={{ background: badge.bg, color: badge.color, border: `0.5px solid ${badge.border}`, fontSize: 11, padding: "3px 10px", borderRadius: 6, fontWeight: 500 }}>
                 {badge.label}
@@ -376,8 +380,12 @@ export default function PageSubscription() {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14, marginBottom: 28 }}>
         {PLAN_ORDER.map(id => {
           const p = PLAN_META[id];
-          // Preço vem do backend (fonte única em limits.js); PLAN_META é fallback.
-          const price = me.plans?.find(pl => pl.id === id)?.priceBRL ?? p.price;
+          // Nome e preço vêm do backend, que os lê do produto no Stripe;
+          // PLAN_META é o fallback (e segue dono de tagline/features, que não
+          // existem no Stripe).
+          const livePlan = me.plans?.find(pl => pl.id === id);
+          const price = livePlan?.priceBRL ?? p.price;
+          const name = livePlan?.label || p.name;
           const current = currentPlan === id;
           // Trial de R$1: só no Básico, só pra quem nunca assinou/trialou.
           const trialOffer = id === "basic" && !!me.trialEligible && me.stripeEnabled && !current;
@@ -421,7 +429,7 @@ export default function PageSubscription() {
                   15 DIAS POR R$1
                 </div>
               )}
-              <div style={{ fontWeight: 500, fontSize: 15, marginBottom: 2 }}>{p.name}</div>
+              <div style={{ fontWeight: 500, fontSize: 15, marginBottom: 2 }}>{name}</div>
               <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 12 }}>{p.tagline}</div>
               <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginBottom: 6 }}>
                 <span style={{ fontSize: 24, fontWeight: 500, color: "var(--color-text-primary)" }}>{fmtPrice(price)}</span>

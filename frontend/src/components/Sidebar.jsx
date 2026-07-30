@@ -7,7 +7,7 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
   const isAdmin = user?.role === "admin";
   // Rótulo do plano vem do billing. Enquanto não carrega (null), não mostra nada —
   // antes era o texto fixo "Plano Pro", que mentia pra quem estava em outro plano.
-  const subtitle = isAdmin ? "Painel administrativo" : planLabel(billing?.effectivePlan);
+  const subtitle = isAdmin ? "Painel administrativo" : planLabel(billing?.effectivePlan, billing?.plans);
 
   const visibleItems = sidebarItems.filter(it => !it.adminOnly);
   const adminItems = sidebarItems.filter(it => it.adminOnly);

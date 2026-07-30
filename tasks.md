@@ -121,11 +121,18 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 
 41. [] Quero conferir se o ambiente mobile esta condizente e bem construido para utilizacao do usuario.
 
-42. [] Quero buscar o nome dos produtos do stripe direto de la para ficar condizente assim como o preco.
+42. [x] Quero buscar o nome dos produtos do stripe direto de la para ficar condizente assim como o preco. Tb, quero ter um botao em uma nova aba de ADMIN para trocar entre os produtos em ambiente de teste e ambiente de producao do stripe.
+    Nome do produto vem do Stripe junto com o preco (cards da Assinatura, "plano atual" e rotulo da
+    sidebar); limits.js so entra como reserva. Nova aba ADMIN > Stripe mostra o modo ativo, o que cada
+    modo tem no .env e os produtos em uso, e troca teste<->producao em dois cliques, sem reiniciar.
+    Assinatura guarda o modo em que nasceu (coluna stripeMode) e fica inerte enquanto o sistema esta no
+    outro modo. Fecha tambem a task 44. PENDENTE: preencher STRIPE_*_LIVE no .env da VPS e validar a
+    troca no navegador depois do deploy.
 
 43. [] Todos os erros estao sendo tratados e mostrados ao usuario de maneira apropriada? Por exemplo, quando sistema ta off e o usuario ta em uma pagina fica aparecendo bad gateway ou algo do tipo, preferiria que aparecesse uma mensagem de offline, tente mais tarde ou algo do tipo. Revise bem o sistema.
 
-44. [] Quero uma maneira facil de trocar entre os produtos do modo teste do stripe e os produto de producao. Ja criei os produtos na producao do stripe.
+44. [x] Quero uma maneira facil de trocar entre os produtos do modo teste do stripe e os produto de producao. Ja criei os produtos na producao do stripe.
+    Feito junto com a task 42: botao na aba ADMIN > Stripe.
 
 45. [] Tenho uma landpage pra vender o sistema no qual tenho botoes para assinar o sistema. Queia pensar na melhor forma de conduzir o usuario a criar conta, clico la na assinatura desejada e ele ja vai direto ao stripe? Com a assinatura em maos, passando os dados como email por exemplo, uma conta é criada automaticamente e ele recebe o acesso? Ou ele entra como é hoje para criar a conta e so depois faz a assinatura? Ter os dois caminhos? Ter mais algum outro caminho? Quero que me guie para fazer estas escolhas.
 
