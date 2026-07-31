@@ -9,6 +9,7 @@ const jwt = require("jsonwebtoken");
 const { prisma } = require("../db");
 const appConfig = require("../config");
 const mailer = require("./mailer");
+const { normalizeCpf, isValidCpf, maskCpf } = require("../utils/cpf");
 
 // Limites e regras de input padronizadas (compartilhadas com o frontend via copy).
 const MAX_NAME_LEN = 100;
@@ -24,6 +25,7 @@ const BCRYPT_ROUNDS = 12;
 const EMAIL_VERIFY_TTL_MS    = 24 * 60 * 60 * 1000; // 24h
 const PASSWORD_RESET_TTL_MS  = 60 * 60 * 1000;     // 1h
 const RESEND_COOLDOWN_MS     = 2 * 60 * 1000;       // 2 min entre reenvios
+const EMAIL_CHANGE_TTL_MS    = 60 * 60 * 1000;      // 1h — igual ao reset de senha
 
 function validatePassword(password) {
   const s = String(password || "");
@@ -164,8 +166,18 @@ function getJwtSecret() {
 
 function publicUser(u) {
   if (!u) return null;
-  const { passwordHash, ...rest } = u;
+  // Tokens de e-mail ficam de fora: quem os tem em mãos verifica a conta,
+  // reseta a senha ou confirma a troca de e-mail — não têm por que trafegar
+  // no /me. pendingEmail (só o endereço) fica, é o que a tela de conta mostra.
+  const {
+    passwordHash, emailVerifyToken, passwordResetToken, pendingEmailToken, ...rest
+  } = u;
   if (!rest.role) rest.role = "user";
+  // CPF nunca volta inteiro pro cliente: quem digitou já sabe o número, e o
+  // mascarado basta pra pessoa reconhecer o próprio documento. cpfRequired é o
+  // que faz o painel pedir o CPF de quem tem conta anterior à regra.
+  rest.cpfRequired = !rest.cpf && rest.role !== "admin";
+  rest.cpf = rest.cpf ? maskCpf(rest.cpf) : null;
   return rest;
 }
 
@@ -187,6 +199,48 @@ async function findByEmail(email) {
 
 async function findById(id) {
   return prisma().user.findUnique({ where: { id } });
+}
+
+// CPF é gravado só com dígitos, então a busca normaliza antes de comparar.
+async function findByCpf(cpf) {
+  const digits = normalizeCpf(cpf);
+  if (digits.length !== 11) return null;
+  return prisma().user.findUnique({ where: { cpf: digits } });
+}
+
+// Grava o CPF de uma conta que ainda não tem (contas anteriores à regra, ou
+// criadas por um pagamento em que o documento não chegou). Não sobrescreve:
+// trocar de CPF é mudar de dono, e isso passa pelo admin.
+async function setCpf(userId, cpf) {
+  const digits = normalizeCpf(cpf);
+  if (!isValidCpf(digits)) {
+    const err = new Error("CPF inválido");
+    err.code = "invalid_cpf";
+    throw err;
+  }
+  const user = await findById(userId);
+  if (!user) throw new Error("Usuário não encontrado");
+  if (user.cpf) {
+    if (user.cpf === digits) return publicUser(user);
+    const err = new Error("Esta conta já tem um CPF cadastrado. Fale com o suporte para alterar.");
+    err.code = "cpf_locked";
+    throw err;
+  }
+
+  const updated = await prisma().user.update({
+    where: { id: userId },
+    data: { cpf: digits },
+  }).catch(err => {
+    if (err.code === "P2002") {
+      const e = new Error("Já existe uma conta com este CPF.");
+      e.code = "cpf_taken";
+      throw e;
+    }
+    throw err;
+  });
+  invalidateUser(userId);
+  cacheUser(updated);
+  return publicUser(updated);
 }
 
 // Sync com cache pra requireAuth (sync) — versão async da consulta original.
@@ -461,6 +515,113 @@ async function loginWithGoogle({ idToken }) {
   return { token, user: publicUser(user), created: !user.createdAt || (Date.now() - new Date(user.createdAt).getTime() < 5000) };
 }
 
+// Janela do link "defina sua senha" mandado pra quem assinou pela landing.
+// Maior que o reset normal (1h) porque este e-mail é a única credencial da
+// pessoa até ela criar a senha — 1h é pouco pra quem paga e fecha o navegador.
+const SETUP_PASSWORD_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+
+// Cria (ou recupera) a conta de quem pagou ANTES de ter cadastro — o caminho
+// landing → Stripe → sistema. Difere de register() em três pontos, todos
+// justificados pelo pagamento já aprovado:
+//   - não passa por assertRegistrationAllowed: quem pagou entra mesmo com o
+//     beta fechado, senão a pessoa é cobrada e fica sem acesso;
+//   - nasce com emailVerified=true — pagar com cartão naquele e-mail já é
+//     prova de posse mais forte que o clique no link de verificação;
+//   - senha aleatória (mesma ideia da conta criada pelo Google), com um token
+//     de "defina sua senha" pro e-mail de boas-vindas.
+// Idempotente: e-mail que já tem conta é devolvido como está (created=false).
+async function createPaidUser({ email, name, cpf }) {
+  email = normalizeEmail(email);
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Email inválido");
+  const displayName = String(name || "").trim().slice(0, MAX_NAME_LEN)
+    || email.split("@")[0];
+  // CPF veio da metadata do checkout. Se estiver ausente ou torto, a conta
+  // nasce sem ele e o sistema pede na primeira entrada — a assinatura foi paga
+  // e não pode ficar sem dono por causa de um campo.
+  const digits = isValidCpf(cpf) ? normalizeCpf(cpf) : null;
+
+  const existing = await findByEmail(email);
+  if (existing) {
+    // Conta que já existe pode estar sem CPF (é anterior à regra, ou o
+    // pagamento anterior não trouxe um) — este checkout preenche a lacuna.
+    const fill = {};
+    if (existing.emailVerified === false) {
+      // Conta que existia mas nunca confirmou o e-mail: o pagamento confirma.
+      Object.assign(fill, { emailVerified: true, emailVerifyToken: null, emailVerifyExpires: null });
+    }
+    if (digits && !existing.cpf) fill.cpf = digits;
+    if (!Object.keys(fill).length) return { user: existing, created: false, setPasswordToken: null };
+
+    const updated = await prisma().user.update({
+      where: { id: existing.id },
+      data: fill,
+    }).catch(async err => {
+      // O CPF foi tomado por outra conta no meio do caminho: grava o resto.
+      if (err.code === "P2002" && fill.cpf) {
+        delete fill.cpf;
+        if (!Object.keys(fill).length) return existing;
+        return prisma().user.update({ where: { id: existing.id }, data: fill });
+      }
+      throw err;
+    });
+    invalidateUser(existing.id);
+    cacheUser(updated);
+    return { user: updated, created: false, setPasswordToken: null };
+  }
+
+  const setPasswordToken = newToken();
+  const randomPass = crypto.randomBytes(32).toString("hex");
+  let user = await prisma().user.create({
+    data: {
+      id: crypto.randomUUID(),
+      name: displayName,
+      email,
+      phone: "",
+      ...(digits ? { cpf: digits } : {}),
+      passwordHash: await bcrypt.hash(randomPass, BCRYPT_ROUNDS),
+      role: isAdminEmail(email) ? "admin" : "user",
+      emailVerified: true,
+      passwordResetToken: setPasswordToken,
+      passwordResetExpires: new Date(Date.now() + SETUP_PASSWORD_TTL_MS),
+    },
+  }).catch(async err => {
+    // Race com o webhook (ou com um segundo clique): a conta já existe.
+    if (err.code === "P2002") {
+      const byEmail = await findByEmail(email);
+      if (byEmail) return byEmail;
+      // Colidiu no CPF, não no e-mail. O pagamento está feito, então a conta
+      // nasce sem CPF em vez de ficar sem existir — o duplicado é resolvido
+      // depois, no aviso que o painel dá pra quem está sem documento.
+      return prisma().user.create({
+        data: {
+          id: crypto.randomUUID(),
+          name: displayName,
+          email,
+          phone: "",
+          passwordHash: await bcrypt.hash(randomPass, BCRYPT_ROUNDS),
+          role: isAdminEmail(email) ? "admin" : "user",
+          emailVerified: true,
+          passwordResetToken: setPasswordToken,
+          passwordResetExpires: new Date(Date.now() + SETUP_PASSWORD_TTL_MS),
+        },
+      });
+    }
+    throw err;
+  });
+
+  const created = user?.passwordResetToken === setPasswordToken;
+  cacheUser(user);
+  return { user, created, setPasswordToken: created ? setPasswordToken : null };
+}
+
+// Emite sessão pra um usuário já autenticado por outro meio (hoje: resgate do
+// checkout público, onde a prova é o id da Checkout Session paga).
+async function issueSession(user) {
+  await syncRole(user);
+  cacheUser(user);
+  return { token: signToken(user), user: publicUser(user) };
+}
+
 // Fonte única do formato do token. `tv` carrega a versão de sessão do usuário —
 // requireAuth compara com a do banco e recusa se não bater, que é o mecanismo de
 // expulsar sessões antigas em troca de senha, reset e suspensão.
@@ -574,6 +735,119 @@ async function changePassword(userId, { currentPassword, newPassword }) {
   cacheUser(updated);
   // Token novo pra quem trocou continuar logado — só as OUTRAS sessões caem.
   return { token: signToken(updated) };
+}
+
+// ── Troca de email ──────────────────────────────────────────────────────
+// O email é a identidade de login, então a troca é em dois tempos: aqui só
+// estaciona o endereço novo e manda o link PARA ELE. Enquanto ninguém clicar,
+// o login continua no email antigo — errar a digitação não tranca ninguém
+// fora da conta. Pede a senha atual porque uma sessão esquecida aberta não
+// pode bastar pra levar a conta embora.
+async function requestEmailChange(userId, { password, newEmail }) {
+  const email = normalizeEmail(newEmail);
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Email inválido");
+  const user = await findById(userId);
+  if (!user) throw new Error("Usuário não encontrado");
+  const ok = await bcrypt.compare(String(password || ""), user.passwordHash);
+  if (!ok) {
+    const err = new Error("Senha incorreta");
+    err.code = "invalid_password";
+    throw err;
+  }
+  if (email === normalizeEmail(user.email)) throw new Error("Este já é o email da sua conta");
+  const existing = await findByEmail(email);
+  if (existing) {
+    // Não é vazamento: quem chegou aqui provou a senha da própria conta.
+    const err = new Error("Já existe uma conta com este email");
+    err.code = "email_taken";
+    throw err;
+  }
+
+  const token = newToken();
+  await prisma().user.update({
+    where: { id: userId },
+    data: {
+      pendingEmail: email,
+      pendingEmailToken: token,
+      pendingEmailExpires: new Date(Date.now() + EMAIL_CHANGE_TTL_MS),
+    },
+  });
+  invalidateUser(userId);
+  await mailer.sendEmailChangeEmail({ to: email, name: user.name, token, currentEmail: user.email });
+  return { ok: true, pendingEmail: email };
+}
+
+// Efetiva a troca. Chamado pelo link do email novo, sem exigir sessão: o token
+// é a prova, e quem trocou de email pode muito bem estar em outro navegador.
+async function confirmEmailChange(token) {
+  if (!token || typeof token !== "string") throw new Error("Link inválido");
+  const user = await prisma().user.findUnique({ where: { pendingEmailToken: token } });
+  if (!user) throw new Error("Link de troca de email inválido ou já usado");
+
+  const clearPending = { pendingEmail: null, pendingEmailToken: null, pendingEmailExpires: null };
+  if (user.pendingEmailExpires && user.pendingEmailExpires.getTime() < Date.now()) {
+    await prisma().user.update({ where: { id: user.id }, data: clearPending });
+    invalidateUser(user.id);
+    throw new Error("Link expirado — peça a troca de email novamente");
+  }
+  const email = normalizeEmail(user.pendingEmail);
+  if (!email) throw new Error("Link de troca de email inválido ou já usado");
+
+  const updated = await prisma().user.update({
+    where: { id: user.id },
+    data: {
+      email,
+      // Clicar no link já é a prova de que o endereço existe e é dela.
+      emailVerified: true,
+      emailVerifyToken: null,
+      emailVerifyExpires: null,
+      ...clearPending,
+      // A identidade mudou: as sessões abertas (inclusive a que pediu a troca)
+      // caem e a pessoa volta pelo login já com o email novo.
+      tokenVersion: { increment: 1 },
+    },
+  }).catch(err => {
+    if (err.code === "P2002") {
+      // Alguém tomou o endereço entre o pedido e o clique.
+      const e = new Error("Já existe uma conta com este email");
+      e.code = "email_taken";
+      throw e;
+    }
+    throw err;
+  });
+  invalidateUser(user.id);
+  // ADMIN_EMAILS é por endereço — trocar de email pode dar (ou tirar) o admin.
+  await syncRole(updated);
+  cacheUser(updated);
+  return { ok: true, user: publicUser(updated), previousEmail: user.email };
+}
+
+// Define a PRIMEIRA senha de quem nunca escolheu uma — hoje só as contas
+// criadas pelo pagamento (createPaidUser), que nascem com senha aleatória.
+// Não pede a senha atual (a pessoa não tem uma), então a autorização é a
+// sessão já aberta MAIS o token de definição de senha ainda pendente: assim
+// que a senha existe, este caminho fecha e a troca volta a ser changePassword.
+async function setInitialPassword(userId, newPassword) {
+  validatePassword(newPassword);
+  const user = await findById(userId);
+  if (!user) throw new Error("Usuário não encontrado");
+  if (!user.passwordResetToken) {
+    throw new Error("Esta conta já tem senha — use a troca de senha informando a atual");
+  }
+  const updated = await prisma().user.update({
+    where: { id: userId },
+    data: {
+      passwordHash: await bcrypt.hash(String(newPassword), BCRYPT_ROUNDS),
+      // Queima o token do e-mail de boas-vindas: o link não vale mais.
+      passwordResetToken: null,
+      passwordResetExpires: null,
+      emailVerified: true,
+      tokenVersion: { increment: 1 },
+    },
+  });
+  invalidateUser(userId);
+  cacheUser(updated);
+  return { token: signToken(updated), user: publicUser(updated) };
 }
 
 // Versão async — server.js precisará adaptar pra await em algumas rotas admin.
@@ -693,7 +967,15 @@ module.exports = {
   reissueToken,
   updateProfile,
   changePassword,
+  requestEmailChange,
+  confirmEmailChange,
+  setInitialPassword,
   findById,
+  findByEmail,
+  findByCpf,
+  setCpf,
+  createPaidUser,
+  issueSession,
   publicUser,
   listUsers,
   deleteUser,

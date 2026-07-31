@@ -75,6 +75,28 @@ async function publicPlans() {
   }));
 }
 
+// Leva o email novo da conta pro Customer do Stripe. Chamado depois que a
+// pessoa confirma a troca de email — recibo e aviso de cartão vencido precisam
+// chegar no endereço em que ela realmente lê.
+//
+// Nunca derruba a troca de email: se o Stripe estiver fora do ar ou a conta não
+// tiver customer, só registra e segue. E não mexe em customer de outro modo —
+// um id de "test" não existe na conta "live" e a chamada só tomaria 404.
+async function syncCustomerEmail(userId, email) {
+  try {
+    const sub = await store.getByUserId(userId);
+    if (!sub?.stripeCustomerId) return { ok: false, reason: "sem_customer" };
+    if (sub.stripeMode && sub.stripeMode !== stripe.mode()) {
+      return { ok: false, reason: "modo_diferente" };
+    }
+    await stripe.updateCustomerEmail(sub.stripeCustomerId, email);
+    return { ok: true };
+  } catch (err) {
+    console.error("[billing] syncCustomerEmail:", err.message);
+    return { ok: false, reason: "erro" };
+  }
+}
+
 // Indica se o scheduler pode processar grupos desse usuário.
 // trialing/active = sim; past_due/unpaid dentro da carência de 3 dias também.
 // Qualquer outro = não. Admin sempre ativo.
@@ -88,7 +110,11 @@ module.exports = {
   ...store,
   getStatus,
   publicPlans,
+  syncCustomerEmail,
   isActive,
   limits,
   enforce,
+  // require tardio: provision.js requer ../auth, que não conhece billing —
+  // manter aqui embaixo evita surpresa de ordem de carregamento.
+  get provision() { return require("./provision"); },
 };

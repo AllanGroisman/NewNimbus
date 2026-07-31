@@ -16,6 +16,8 @@ const require = createRequire(import.meta.url);
 const calls = {
   sendVerificationEmail: [],
   sendPasswordResetEmail: [],
+  sendWelcomeSetPasswordEmail: [],
+  sendEmailChangeEmail: [],
 };
 
 function reset() {
@@ -33,8 +35,19 @@ const mock = {
     calls.sendPasswordResetEmail.push(args);
     return { ok: true, mocked: true };
   },
+  // Boas-vindas de quem assinou pela landing (conta criada pelo pagamento).
+  async sendWelcomeSetPasswordEmail(args) {
+    calls.sendWelcomeSetPasswordEmail.push(args);
+    return { ok: true, mocked: true };
+  },
+  // Confirmação de troca de email — vai pro endereço novo.
+  async sendEmailChangeEmail(args) {
+    calls.sendEmailChangeEmail.push(args);
+    return { ok: true, mocked: true };
+  },
   verifyUrl(token) { return `https://test.local/verify?token=${token}`; },
   resetUrl(token) { return `https://test.local/reset?token=${token}`; },
+  emailChangeUrl(token) { return `https://test.local/trocaemail?token=${token}`; },
 };
 
 function installMock() {

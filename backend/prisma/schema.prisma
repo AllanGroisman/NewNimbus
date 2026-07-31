@@ -20,6 +20,10 @@ model User {
   email        String   @unique
   name         String
   phone        String?
+  // Uma conta por CPF. Só os 11 dígitos, sem pontuação. Nulo nas contas
+  // criadas antes da regra — o índice único do Postgres ignora NULL, e o
+  // sistema pede o documento na primeira entrada de quem ainda não tem.
+  cpf          String?  @unique
   passwordHash String
   role         String   @default("user") // "user" | "admin"
   createdAt    DateTime @default(now())
@@ -33,6 +37,15 @@ model User {
   // Password reset por email.
   passwordResetToken   String?   @unique
   passwordResetExpires DateTime?
+
+  // Troca de email pendente. O endereço novo só entra em `email` depois que a
+  // pessoa clica no link enviado PARA ELE — assim um erro de digitação não
+  // tranca a conta fora do login. Sem índice único: dois usuários podem ter
+  // pedido o mesmo endereço; quem confirmar primeiro leva, o outro esbarra no
+  // unique de `email` na hora de confirmar.
+  pendingEmail        String?
+  pendingEmailToken   String?   @unique
+  pendingEmailExpires DateTime?
 
   // Suspensão administrativa.
   suspended   Boolean   @default(false)
@@ -325,6 +338,14 @@ model Subscription {
   trialUsedAt          DateTime? // quando iniciou o trial de R$1 — nunca resetado (1 trial por conta)
   pastDueSince         DateTime? // início do atraso (past_due/unpaid) — base da carência de 3 dias
   stripeMode           String?   // "test" | "live" — modo do Stripe em que esta assinatura nasceu; NULL = linha sem Stripe
+
+  // Checkout público (veio da landing page, sem conta): a Checkout Session é o
+  // que liga o retorno do Stripe (/bem-vindo?session_id=…) à conta provisionada.
+  // claimedAt trava o resgate em uso único — o session_id anda na URL.
+  checkoutSessionId String?   @unique
+  claimedAt         DateTime?
+  signupSource      String? // "landing" | "app" — de onde veio a assinatura
+
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 

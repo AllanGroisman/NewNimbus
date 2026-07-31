@@ -19,6 +19,7 @@ const adminScraper = require("./scraping/admin");
 const storeLocks = require("./scraping/store-locks");
 const scrapTester = require("./scraping/tester");
 const appConfig = require("./config");
+const cpfUtil = require("./utils/cpf");
 const queueMod = require("./infra/queue");
 const logger = require("./infra/logger");
 const metrics = require("./infra/metrics");
@@ -68,7 +69,8 @@ app.use(helmet({
 // CORS allowlist via env. Default em dev: aceita tudo (mantém comportamento legado).
 // Em produção: defina NIMBUS_CORS_ORIGINS=https://app.x.com,https://admin.x.com
 // Patterns suportados: domínio exato OU "*.dominio.com" (wildcard de subdomínio).
-const { corsOrigins: CORS_ORIGINS } = require("./config/publicUrl");
+const publicUrl = require("./config/publicUrl");
+const { corsOrigins: CORS_ORIGINS } = publicUrl;
 
 // Em produção a allowlist não pode ficar vazia: combinada com credentials:true,
 // "aceita qualquer origem" deixa qualquer site ler respostas autenticadas da API.
@@ -156,6 +158,14 @@ async function handleStripeEvent(event) {
       // subscription.created/updated logo depois — aqui só garantimos o link.
       const userId = obj.client_reference_id;
       const customerId = typeof obj.customer === "string" ? obj.customer : obj.customer?.id;
+      // Sem client_reference_id = checkout público (veio da landing, pagou
+      // antes de ter conta). A conta nasce aqui, do pagamento aprovado.
+      // Idempotente e disputado com POST /api/public/claim — quem chegar
+      // primeiro cria, o outro só encontra.
+      if (!userId) {
+        await billing.provision.provisionFromCheckout(obj);
+        return;
+      }
       if (userId && customerId) {
         // event.livemode diz de qual modo veio (o webhook aceita os dois), e é
         // mais confiável que o modo ativo no momento em que o evento chegou.
@@ -379,6 +389,210 @@ app.get("/api/auth/registration-status", (req, res) => {
 });
 
 // ────────────────────────────────────────────────────────────────────────
+// Checkout público — landing page → Stripe → sistema
+// ────────────────────────────────────────────────────────────────────────
+//
+// Quem chega da landing ainda não tem conta, então nada aqui exige login. A
+// conta nasce do pagamento aprovado (billing/provision.js), e o retorno do
+// Stripe cai em /bem-vindo?session_id=…, que troca a sessão paga por um JWT.
+//
+// O e-mail é pedido ANTES de abrir o Stripe porque é a única forma de barrar
+// quem já assina (o Checkout só coleta o e-mail depois, com a cobrança feita).
+
+const publicCheckoutLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: skipLimitInTests,
+  message: { error: "Muitas tentativas. Aguarde 1 minuto." },
+});
+
+const SUBSCRIBABLE_PLANS = ["basic", "pro", "business"];
+
+// Catálogo pra landing e pra tela /assinar montarem nome e preço sem login.
+app.get("/api/public/plans", async (req, res) => {
+  try {
+    res.json({ plans: await billing.publicPlans(), stripeEnabled: stripeMod.enabled() });
+  } catch (err) {
+    logger.error({ err: err.message }, "[public] plans falhou");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Diz se aquele e-mail e CPF podem seguir pro pagamento — usado pelo popup da
+// landing e pela tela /assinar pra avisar antes de mandar pro Stripe. Mesma
+// decisão do checkout.
+app.post("/api/public/plan-check", publicCheckoutLimiter, async (req, res) => {
+  try {
+    const planId = String(req.body?.planId || "").trim();
+    if (!SUBSCRIBABLE_PLANS.includes(planId)) {
+      return res.status(400).json({ error: "planId inválido" });
+    }
+    const d = await billing.provision.decideForSignup({
+      planId, email: req.body?.email, cpf: req.body?.cpf,
+    });
+    res.json({
+      decision: d.decision,
+      message: d.message || null,
+      currentPlan: d.decision === "checkout" ? null : d.currentPlan,
+      trialEligible: d.trialEligible,
+    });
+  } catch (err) {
+    logger.error({ err: err.message }, "[public] plan-check falhou");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Cria a Checkout Session de quem veio da landing. Body: { planId, email, cpf, trial }.
+app.post("/api/public/checkout", publicCheckoutLimiter, async (req, res) => {
+  try {
+    if (!stripeMod.enabled()) return res.status(501).json({ error: "Stripe não configurado" });
+    const planId = String(req.body?.planId || "").trim();
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const cpf = cpfUtil.normalizeCpf(req.body?.cpf);
+    const withTrial = !!req.body?.trial;
+
+    if (!SUBSCRIBABLE_PLANS.includes(planId)) {
+      return res.status(400).json({ error: "planId inválido" });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: "Informe um e-mail válido" });
+    }
+    // CPF conferido antes de qualquer chamada ao Stripe: uma conta = um CPF.
+    if (!cpfUtil.isValidCpf(cpf)) {
+      return res.status(400).json({ error: "Informe um CPF válido", code: "invalid_cpf" });
+    }
+    if (!stripeMod.priceFor(planId)) {
+      return res.status(500).json({ error: `Price ID do plano "${planId}" não configurado no servidor` });
+    }
+    if (withTrial && planId !== "basic") {
+      return res.status(400).json({ error: "O teste de 15 dias está disponível apenas no plano Básico" });
+    }
+
+    const d = await billing.provision.decideForSignup({ planId, email, cpf });
+    if (d.decision === "invalid_cpf") {
+      return res.status(400).json({ error: d.message, code: d.decision });
+    }
+    if (d.decision !== "checkout") {
+      return res.status(409).json({
+        error: d.message,
+        code: d.decision,
+        currentPlan: d.currentPlan,
+      });
+    }
+    // Trial é 1x por conta — e-mail que já usou paga o valor cheio em vez de
+    // receber um erro (a intenção dele é assinar, não brigar com a regra).
+    const trial = withTrial && d.trialEligible;
+
+    // Conta existente sem plano ativo: o checkout é dela, com o customer que
+    // ela já tiver — cai exatamente no fluxo autenticado de sempre.
+    let customer = null;
+    if (d.user) {
+      const sub = await billing.ensureForUser(d.user.id, { planId: "free", status: "inactive" });
+      customer = await stripeMod.getOrCreateCustomer({
+        userId: d.user.id,
+        email: d.user.email,
+        name: d.user.name,
+        existingCustomerId: sub.stripeCustomerId,
+      });
+      if (!sub.stripeCustomerId) {
+        await billing.update(d.user.id, { stripeCustomerId: customer.id });
+      }
+    }
+
+    const session = await stripeMod.createCheckoutSession({
+      planId,
+      customer,
+      customerEmail: customer ? undefined : email,
+      userId: d.user?.id,
+      withTrial: trial,
+      successUrl: publicUrl.stripeWelcomeUrl,
+      cancelUrl: publicUrl.subscribeUrl(planId),
+      metadataExtra: { source: "landing", pendingEmail: email, pendingCpf: cpf },
+    });
+    metrics.recordCheckout?.(planId, "ok");
+    res.json({ url: session.url });
+  } catch (err) {
+    metrics.recordCheckout?.(String(req.body?.planId || "unknown"), "error");
+    logger.error({ err: err.message }, "[public] checkout falhou");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Resgate do retorno do Stripe: troca o id da Checkout Session paga por uma
+// sessão logada. Uso único (o id anda na URL) e só vale enquanto a sessão do
+// Checkout é recente — depois disso o caminho é o e-mail de boas-vindas.
+const CLAIM_WINDOW_MS = 2 * 60 * 60 * 1000; // 2h desde a criação do checkout
+
+app.post("/api/public/claim", publicCheckoutLimiter, async (req, res) => {
+  try {
+    if (!stripeMod.enabled()) return res.status(501).json({ error: "Stripe não configurado" });
+    const sessionId = String(req.body?.sessionId || "").trim();
+    if (!sessionId.startsWith("cs_")) return res.status(400).json({ error: "Sessão inválida" });
+
+    let session;
+    try {
+      session = await stripeMod.getCheckoutSession(sessionId);
+    } catch {
+      return res.status(404).json({ error: "Pagamento não encontrado" });
+    }
+
+    const paid = session.payment_status === "paid"
+      || session.payment_status === "no_payment_required" // trial sem cobrança hoje
+      || session.status === "complete";
+    if (!paid) return res.status(402).json({ error: "Pagamento ainda não confirmado" });
+
+    if (session.created && Date.now() - session.created * 1000 > CLAIM_WINDOW_MS) {
+      return res.status(410).json({
+        error: "Este link expirou. Verifique seu e-mail para criar a senha e entrar.",
+        code: "claim_expired",
+      });
+    }
+
+    const { user } = await billing.provision.provisionFromCheckout(session);
+    if (!user) return res.status(500).json({ error: "Não foi possível localizar sua conta" });
+
+    // Conta que JÁ tinha senha não abre sessão por aqui. O pagamento prova
+    // intenção de assinar, não posse da conta — senão bastaria saber o e-mail
+    // de alguém e pagar uma mensalidade pra entrar no lugar dela. Só quem nasceu
+    // deste pagamento (senha aleatória, token de definição pendente) entra
+    // direto; o resto assina normalmente e faz login com a própria senha.
+    if (!user.passwordResetToken) {
+      await billing.markClaimed(user.id);
+      return res.json({
+        requiresLogin: true,
+        email: user.email,
+        message: "Pagamento confirmado! Sua assinatura já está ativa — entre com seu e-mail e senha.",
+      });
+    }
+
+    // Uso único: se já foi resgatado, a pessoa entra pelo login normal.
+    const first = await billing.markClaimed(user.id);
+    if (!first) {
+      return res.status(410).json({
+        error: "Este link já foi usado. Entre com seu e-mail e senha.",
+        code: "already_claimed",
+      });
+    }
+
+    // Reconcilia antes de responder pro painel já abrir com o plano certo,
+    // mesmo se o webhook de subscription.created ainda não chegou.
+    try { await reconcileWithStripe(user.id); }
+    catch (err) { logger.warn({ err: err.message }, "[public] reconcile pós-claim falhou"); }
+
+    // needsPassword: conta criada pelo pagamento nasce com senha aleatória e um
+    // token de "defina sua senha" pendente — é o que faz /bem-vindo abrir o
+    // formulário de senha em vez de mandar direto pro painel.
+    const issued = await auth.issueSession(user);
+    res.json({ ...issued, needsPassword: !!user.passwordResetToken });
+  } catch (err) {
+    logger.error({ err: err.message }, "[public] claim falhou");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────
 // Layout — paleta de cores, valendo pro sistema inteiro
 // ────────────────────────────────────────────────────────────────────────
 
@@ -511,6 +725,62 @@ app.post("/api/auth/password", auth.requireAuth, async (req, res) => {
     // devolvemos um token novo pra sessão atual seguir sem precisar relogar.
     const { token } = await auth.changePassword(req.user.id, req.body || {});
     res.json({ ok: true, token });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// CPF de quem já tinha conta antes da regra "uma conta = um CPF". O painel
+// pede isso na primeira entrada (user.cpfRequired). Grava uma vez só: trocar o
+// documento é trocar de dono, e isso passa pelo admin.
+app.post("/api/account/cpf", auth.requireAuth, async (req, res) => {
+  try {
+    const user = await auth.setCpf(req.user.id, req.body?.cpf);
+    res.json({ ok: true, user });
+  } catch (err) {
+    const status = err.code === "cpf_taken" ? 409 : 400;
+    res.status(status).json({ error: err.message, code: err.code || null });
+  }
+});
+
+// Troca de email em dois tempos. Aqui só pede: a senha atual autoriza e o
+// endereço novo recebe o link. Nada muda na conta até o clique.
+app.post("/api/account/email", auth.requireAuth, registerLimiter, async (req, res) => {
+  try {
+    const r = await auth.requestEmailChange(req.user.id, {
+      password: req.body?.password,
+      newEmail: req.body?.newEmail,
+    });
+    res.json(r);
+  } catch (err) {
+    const status = err.code === "email_taken" ? 409 : 400;
+    res.status(status).json({ error: err.message, code: err.code || null });
+  }
+});
+
+// Confirmação vinda do link. Sem requireAuth de propósito: a pessoa pode abrir
+// o email em outro navegador, e o token já é a prova de posse do endereço.
+app.post("/api/account/email/confirm", loginLimiter, async (req, res) => {
+  try {
+    const r = await auth.confirmEmailChange(req.body?.token);
+    // Recibo e aviso de cobrança precisam seguir o email novo. Best-effort:
+    // syncCustomerEmail nunca lança, então uma falha no Stripe não desfaz nem
+    // reprova uma troca de email que já está gravada.
+    await billing.syncCustomerEmail(r.user.id, r.user.email);
+    res.json(r);
+  } catch (err) {
+    const status = err.code === "email_taken" ? 409 : 400;
+    res.status(status).json({ error: err.message, code: err.code || null });
+  }
+});
+
+// Primeira senha de quem entrou pelo checkout público — a conta foi criada pelo
+// pagamento e não tem senha atual pra informar. auth.setInitialPassword recusa
+// se a conta já tiver uma senha escolhida.
+app.post("/api/auth/set-initial-password", auth.requireAuth, async (req, res) => {
+  try {
+    const { token, user } = await auth.setInitialPassword(req.user.id, req.body?.password);
+    res.json({ ok: true, token, user });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -816,6 +1086,20 @@ app.post("/api/billing/checkout", auth.requireAuth, async (req, res) => {
       return res.status(400).json({ error: "Trial disponível apenas no plano Básico" });
     }
 
+    // Uma conta = um CPF. Quem tem conta anterior à regra informa o documento
+    // aqui mesmo, antes de a assinatura existir.
+    if (req.user.cpfRequired) {
+      const cpf = cpfUtil.normalizeCpf(req.body?.cpf);
+      if (!cpfUtil.isValidCpf(cpf)) {
+        return res.status(400).json({ error: "Informe seu CPF para assinar", code: "cpf_required" });
+      }
+      try {
+        await auth.setCpf(req.user.id, cpf);
+      } catch (err) {
+        return res.status(err.code === "cpf_taken" ? 409 : 400).json({ error: err.message, code: err.code });
+      }
+    }
+
     // Garante sub existente; pega customer se já tem.
     const sub = await billing.ensureForUser(req.user.id, { planId: "free", status: "inactive" });
     if (withTrial && (sub.trialUsedAt || sub.stripeSubscriptionId)) {
@@ -844,6 +1128,40 @@ app.post("/api/billing/checkout", auth.requireAuth, async (req, res) => {
   } catch (err) {
     metrics.recordCheckout?.(String(req.body?.planId || "unknown"), "error");
     logger.error({ err: err.message }, "[billing] checkout falhou");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Upgrade de plano numa assinatura que já existe. Body: { planId }.
+// Troca o item da assinatura no Stripe e cobra a diferença proporcional na hora
+// (proration), em vez de abrir um checkout novo — que criaria uma SEGUNDA
+// assinatura pro mesmo cliente. Descer de plano continua indo pelo Portal, que
+// agenda a troca pro fim do período já pago.
+app.post("/api/billing/change-plan", auth.requireAuth, async (req, res) => {
+  try {
+    if (!stripeMod.enabled()) return res.status(501).json({ error: "Stripe não configurado" });
+    const planId = String(req.body?.planId || "").trim();
+    if (!["basic", "pro", "business"].includes(planId)) {
+      return res.status(400).json({ error: "planId inválido" });
+    }
+    const sub = await billing.getByUserId(req.user.id);
+    if (!sub?.stripeSubscriptionId) {
+      return res.status(400).json({ error: "Sem assinatura ativa — assine um plano primeiro" });
+    }
+    if (!billing.limits.isUpgrade(sub.planId, planId)) {
+      return res.status(400).json({
+        error: "Para mudar para um plano menor, use o portal de cobrança — a troca vale a partir da próxima renovação.",
+        code: "downgrade_via_portal",
+      });
+    }
+    const norm = await stripeMod.changeSubscriptionPlan(sub.stripeSubscriptionId, planId);
+    await billing.update(req.user.id, norm);
+    // Upgrade libera limites — despausa o que estava travado pelo plano antigo.
+    await applyPlanLimits(req.user.id);
+    const status = await billing.getStatus(req.user.id, req.user.role);
+    res.json({ ...status, stripeEnabled: true });
+  } catch (err) {
+    logger.error({ err: err.message }, "[billing] change-plan falhou");
     res.status(500).json({ error: err.message });
   }
 });

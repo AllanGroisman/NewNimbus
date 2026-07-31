@@ -1,0 +1,556 @@
+<title>Bancada de teste — botões de assinatura Nimbus</title>
+
+<style>
+  :root {
+    color-scheme: light;
+    --paper:      #f2f6f9;
+    --surface:    #ffffff;
+    --surface-2:  #e9f0f5;
+    --ink:        #11212c;
+    --ink-soft:   #4d6577;
+    --ink-faint:  #7d94a3;
+    --line:       #d3e0e9;
+    --line-soft:  #e4edf3;
+    --brand:      #cd6f04;
+    --brand-ink:  #ffffff;
+    --brand-wash: #fbf0e2;
+    --navy:       #13232f;
+    --good:       #1f7a4d;
+
+    --radius: 10px;
+    --font-body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --paper:      #0d1720;
+      --surface:    #13232f;
+      --surface-2:  #1a2f3e;
+      --ink:        #e6eef3;
+      --ink-soft:   #9db2c0;
+      --ink-faint:  #6d8595;
+      --line:       #263d4d;
+      --line-soft:  #1d3140;
+      --brand:      #e8873a;
+      --brand-ink:  #16232c;
+      --brand-wash: #2b2015;
+      --navy:       #0a141b;
+      --good:       #4fbf88;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --paper:      #0d1720;
+    --surface:    #13232f;
+    --surface-2:  #1a2f3e;
+    --ink:        #e6eef3;
+    --ink-soft:   #9db2c0;
+    --ink-faint:  #6d8595;
+    --line:       #263d4d;
+    --line-soft:  #1d3140;
+    --brand:      #e8873a;
+    --brand-ink:  #16232c;
+    --brand-wash: #2b2015;
+    --navy:       #0a141b;
+    --good:       #4fbf88;
+  }
+
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --paper:      #f2f6f9;
+    --surface:    #ffffff;
+    --surface-2:  #e9f0f5;
+    --ink:        #11212c;
+    --ink-soft:   #4d6577;
+    --ink-faint:  #7d94a3;
+    --line:       #d3e0e9;
+    --line-soft:  #e4edf3;
+    --brand:      #cd6f04;
+    --brand-ink:  #ffffff;
+    --brand-wash: #fbf0e2;
+    --navy:       #13232f;
+    --good:       #1f7a4d;
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1040px;
+    margin: 0 auto;
+    padding: 40px 24px 72px;
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+  }
+
+  /* ── Cabeçalho ─────────────────────────────────────────── */
+  header { display: flex; flex-direction: column; gap: 8px; }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--brand);
+  }
+
+  h1 {
+    font-size: clamp(26px, 4vw, 34px);
+    line-height: 1.15;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  header p {
+    margin: 0;
+    max-width: 62ch;
+    color: var(--ink-soft);
+  }
+
+  /* ── Grade principal ───────────────────────────────────── */
+  .grid {
+    display: grid;
+    gap: 24px;
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  @media (min-width: 900px) {
+    .grid { grid-template-columns: 340px 1fr; }
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .panel h2, .stack h2 {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0;
+  }
+
+  .field { display: flex; flex-direction: column; gap: 6px; }
+
+  .field label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink);
+  }
+
+  .field .hint {
+    font-size: 12px;
+    color: var(--ink-faint);
+    line-height: 1.45;
+  }
+
+  input[type="text"], input[type="email"] {
+    width: 100%;
+    padding: 9px 11px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: 13px;
+  }
+
+  input:focus-visible, a:focus-visible, button:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+  }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+  .chip {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 4px 9px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    color: var(--ink-soft);
+    cursor: pointer;
+  }
+
+  .chip:hover { border-color: var(--brand); color: var(--brand); }
+
+  /* ── Lista de ações ────────────────────────────────────── */
+  .stack { display: flex; flex-direction: column; gap: 12px; }
+
+  .action {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .action.featured { border-color: var(--brand); background: var(--brand-wash); }
+
+  .action-top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+
+  .action-name { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+
+  .action-desc { font-size: 13px; color: var(--ink-soft); }
+
+  .btn {
+    display: inline-block;
+    padding: 8px 16px;
+    border-radius: 8px;
+    background: var(--brand);
+    color: var(--brand-ink);
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .btn:hover { filter: brightness(1.07); }
+
+  .btn.ghost {
+    background: transparent;
+    color: var(--brand);
+    border: 1px solid var(--brand);
+  }
+
+  .url {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--ink-soft);
+    background: var(--paper);
+    border: 1px solid var(--line-soft);
+    border-radius: 7px;
+    padding: 8px 10px;
+    overflow-x: auto;
+    white-space: nowrap;
+    user-select: all;
+  }
+
+  .action.featured .url { background: var(--surface); }
+
+  /* ── Código pra copiar ─────────────────────────────────── */
+  .code-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  pre {
+    margin: 0;
+    background: var(--navy);
+    color: #dbe7ef;
+    border-radius: var(--radius);
+    padding: 18px;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.6;
+    tab-size: 2;
+  }
+
+  .copied { font-size: 12px; color: var(--good); font-weight: 600; }
+
+  /* ── Notas ─────────────────────────────────────────────── */
+  .notes {
+    border-top: 1px solid var(--line);
+    padding-top: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .notes h2 { margin-bottom: 2px; }
+
+  .note {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 10px;
+    font-size: 13.5px;
+    color: var(--ink-soft);
+    max-width: 78ch;
+  }
+
+  .note b { color: var(--ink); font-weight: 600; }
+
+  .marker {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--brand);
+    padding-top: 3px;
+  }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    background: var(--surface-2);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">Bancada de teste</div>
+    <h1>Botões de assinatura da landing page</h1>
+    <p>
+      Preencha o e-mail e clique num plano: você vai para a mesma tela que a landing
+      vai abrir, e de lá para o Stripe. O código no fim da página é o que você cola
+      na landing depois de testar.
+    </p>
+  </header>
+
+  <div class="grid">
+
+    <div class="panel">
+      <h2>Configuração</h2>
+
+      <div class="field">
+        <label for="base">Endereço do sistema</label>
+        <input type="text" id="base" value="https://sistema.nimbuspromocoes.com" spellcheck="false">
+        <div class="chips">
+          <button type="button" class="chip" data-base="https://sistema.nimbuspromocoes.com">produção</button>
+          <button type="button" class="chip" data-base="http://localhost:5173">localhost</button>
+        </div>
+        <div class="hint">O mesmo valor de <code>PUBLIC_BASE_URL</code> no backend.</div>
+      </div>
+
+      <div class="field">
+        <label for="email">E-mail de acesso</label>
+        <input type="email" id="email" placeholder="voce@email.com" spellcheck="false" autocomplete="off">
+        <div class="hint">
+          É o dono da conta que nasce do pagamento. Deixe em branco para testar o
+          caminho em que a pessoa digita o e-mail já na tela de assinatura.
+        </div>
+      </div>
+    </div>
+
+    <div class="stack">
+      <h2>Os quatro botões</h2>
+
+      <div class="action featured">
+        <div class="action-top">
+          <div>
+            <div class="action-name">Teste 15 dias por R$ 1,00</div>
+            <div class="action-desc">Cobra R$ 1 hoje e o valor do Básico no 16º dia. Uma vez por conta.</div>
+          </div>
+          <a class="btn" target="_blank" rel="noopener" data-plan="basic" data-trial="1">Abrir</a>
+        </div>
+        <div class="url" data-url-for="basic-trial"></div>
+      </div>
+
+      <div class="action">
+        <div class="action-top">
+          <div>
+            <div class="action-name">Assinar Básico</div>
+            <div class="action-desc">1 número, 1 campanha.</div>
+          </div>
+          <a class="btn ghost" target="_blank" rel="noopener" data-plan="basic">Abrir</a>
+        </div>
+        <div class="url" data-url-for="basic"></div>
+      </div>
+
+      <div class="action">
+        <div class="action-top">
+          <div>
+            <div class="action-name">Assinar Pro</div>
+            <div class="action-desc">3 números, 5 campanhas.</div>
+          </div>
+          <a class="btn ghost" target="_blank" rel="noopener" data-plan="pro">Abrir</a>
+        </div>
+        <div class="url" data-url-for="pro"></div>
+      </div>
+
+      <div class="action">
+        <div class="action-top">
+          <div>
+            <div class="action-name">Assinar Business</div>
+            <div class="action-desc">5 números, campanhas ilimitadas.</div>
+          </div>
+          <a class="btn ghost" target="_blank" rel="noopener" data-plan="business">Abrir</a>
+        </div>
+        <div class="url" data-url-for="business"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stack">
+    <div class="code-head">
+      <h2>Código para a landing page</h2>
+      <div style="display:flex; align-items:center; gap:12px;">
+        <span class="copied" id="copied" hidden>copiado</span>
+        <button type="button" class="btn ghost" id="copy">Copiar HTML</button>
+      </div>
+    </div>
+    <pre id="snippet"></pre>
+  </div>
+
+  <div class="notes">
+    <h2>Antes de rodar o teste</h2>
+
+    <div class="note">
+      <span class="marker">01</span>
+      <span>
+        <b>Ligue o modo teste</b> em Admin › Stripe. Os links são os mesmos nos dois
+        modos — o sistema escolhe as chaves e os preços do modo ativo na hora.
+      </span>
+    </div>
+
+    <div class="note">
+      <span class="marker">02</span>
+      <span>
+        <b>Cartão de teste:</b> <code>4242 4242 4242 4242</code>, qualquer data futura
+        e qualquer CVC.
+      </span>
+    </div>
+
+    <div class="note">
+      <span class="marker">03</span>
+      <span>
+        <b>Use um e-mail novo a cada teste.</b> Repetir um e-mail que já tem assinatura
+        ativa é justamente o caso bloqueado — e é o segundo teste que vale a pena fazer,
+        para ver o aviso aparecer.
+      </span>
+    </div>
+
+    <div class="note">
+      <span class="marker">04</span>
+      <span>
+        <b>Contas de teste ficam no banco.</b> Se você testar apontando para produção,
+        as contas criadas são reais (com pagamento fictício). Apague depois em
+        Admin › Usuários.
+      </span>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  var baseInput  = document.getElementById("base");
+  var emailInput = document.getElementById("email");
+  var snippetEl  = document.getElementById("snippet");
+  var copyBtn    = document.getElementById("copy");
+  var copiedEl   = document.getElementById("copied");
+
+  function cleanBase() {
+    return baseInput.value.trim().replace(/\/+$/, "") || "https://sistema.nimbuspromocoes.com";
+  }
+
+  function buildUrl(plan, trial, email) {
+    var url = cleanBase() + "/assinar?plano=" + plan;
+    if (trial) url += "&teste=1";
+    if (email) url += "&email=" + encodeURIComponent(email);
+    return url;
+  }
+
+  function render() {
+    var email = emailInput.value.trim();
+
+    document.querySelectorAll("a[data-plan]").forEach(function (a) {
+      var plan  = a.getAttribute("data-plan");
+      var trial = a.getAttribute("data-trial") === "1";
+      var url   = buildUrl(plan, trial, email);
+      a.href = url;
+      var key = trial ? plan + "-trial" : plan;
+      var box = document.querySelector('[data-url-for="' + key + '"]');
+      if (box) box.textContent = url;
+    });
+
+    snippetEl.textContent = buildSnippet();
+  }
+
+  // O código da landing nunca leva e-mail fixo: quem digita é o visitante.
+  function buildSnippet() {
+    var base = cleanBase();
+    var blocks = [
+      { titulo: "Teste 15 dias por R$ 1,00", plano: "basic", trial: true,  rotulo: "Testar 15 dias por R$ 1,00" },
+      { titulo: "Plano Básico",              plano: "basic", trial: false, rotulo: "Assinar Básico" },
+      { titulo: "Plano Pro",                 plano: "pro",   trial: false, rotulo: "Assinar Pro" },
+      { titulo: "Plano Business",            plano: "business", trial: false, rotulo: "Assinar Business" }
+    ];
+
+    return blocks.map(function (b) {
+      var linhas = [];
+      linhas.push("<!-- " + b.titulo + " -->");
+      linhas.push('<form method="get" action="' + base + '/assinar">');
+      linhas.push('  <input type="hidden" name="plano" value="' + b.plano + '">');
+      if (b.trial) linhas.push('  <input type="hidden" name="teste" value="1">');
+      linhas.push('  <input type="email" name="email" placeholder="Seu e-mail de acesso" required>');
+      linhas.push('  <button type="submit">' + b.rotulo + "</button>");
+      linhas.push("</form>");
+      return linhas.join("\n");
+    }).join("\n\n");
+  }
+
+  baseInput.addEventListener("input", render);
+  emailInput.addEventListener("input", render);
+
+  document.querySelectorAll(".chip").forEach(function (chip) {
+    chip.addEventListener("click", function () {
+      baseInput.value = chip.getAttribute("data-base");
+      render();
+    });
+  });
+
+  copyBtn.addEventListener("click", function () {
+    var texto = snippetEl.textContent;
+    function feito() {
+      copiedEl.hidden = false;
+      setTimeout(function () { copiedEl.hidden = true; }, 2000);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(texto).then(feito, selecionar);
+    } else {
+      selecionar();
+    }
+  });
+
+  // Sem permissão de clipboard: seleciona o bloco pro Ctrl+C funcionar.
+  function selecionar() {
+    var range = document.createRange();
+    range.selectNodeContents(snippetEl);
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
+  render();
+</script>

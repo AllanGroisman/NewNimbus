@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../data/constants";
 import Modal from "../components/ui/Modal";
-import { billingMe, billingCheckout, billingPortal, billingDetails, billingReactivate } from "../data/api";
+import { billingMe, billingCheckout, billingPortal, billingDetails, billingReactivate, billingChangePlan } from "../data/api";
 
 const BILLING_POLL_MS = 20 * 1000;
 
@@ -86,6 +86,8 @@ export default function PageSubscription() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(null); // planId em checkout, "portal", "cancel" ou "reactivate"
   const [error, setError] = useState("");
+  // Confirmação de ações que acontecem sem sair da página (hoje: upgrade).
+  const [notice, setNotice] = useState("");
   const [showCancel, setShowCancel] = useState(false);
   // Detalhes de cobrança (próxima fatura, cartão, histórico) — carrega 1x no
   // mount, separado do status pra não bloquear a página se o Stripe demorar.
@@ -144,6 +146,24 @@ export default function PageSubscription() {
       else window.location.assign(url); // popup bloqueado → segue na mesma aba
     } catch (err) {
       if (win) win.close();
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Upgrade de quem JÁ tem assinatura: troca o plano na assinatura existente e
+  // cobra só a diferença proporcional. Sem isto, subir de plano abria um novo
+  // checkout — e o cliente terminaria com duas assinaturas ativas.
+  async function upgradePlan(planId, planName) {
+    setBusy(planId);
+    setError("");
+    try {
+      const updated = await billingChangePlan(planId);
+      setMe(prev => ({ ...prev, ...updated }));
+      setNotice(`Plano alterado para ${planName}. A diferença proporcional foi cobrada no cartão cadastrado.`);
+      billingDetails().then(setDetails).catch(() => {});
+    } catch (err) {
       setError(err.message);
     } finally {
       setBusy(null);
@@ -217,6 +237,11 @@ export default function PageSubscription() {
       {error && (
         <div style={{ background: "var(--danger-bg)", border: "0.5px solid var(--danger-border)", color: "var(--danger-text)", padding: 10, borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
           {error}
+        </div>
+      )}
+      {notice && (
+        <div style={{ background: "var(--success-bg)", border: "0.5px solid var(--success-border)", color: "var(--success-text)", padding: 10, borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
+          {notice}
         </div>
       )}
 
@@ -393,11 +418,21 @@ export default function PageSubscription() {
           const currentIdx = PLAN_ORDER.indexOf(currentPlan);
           const isUpgrade = currentIdx >= 0 && PLAN_ORDER.indexOf(id) > currentIdx;
           const isDowngrade = currentIdx >= 0 && PLAN_ORDER.indexOf(id) < currentIdx;
+          // Com assinatura viva, subir de plano é troca na própria assinatura
+          // (cobra só a diferença) — não um checkout novo, que geraria uma
+          // segunda assinatura pro mesmo cliente.
+          const hasLiveSub = me.status === "active" || me.status === "trialing";
+          const inlineUpgrade = isUpgrade && hasLiveSub;
           const ctaLabel = current ? "Plano atual"
-            : busy === id ? "Abrindo Stripe…"
+            : busy === id ? (inlineUpgrade ? "Alterando…" : "Abrindo Stripe…")
             : trialOffer ? "Testar por R$ 1,00"
+            : inlineUpgrade ? "Fazer upgrade"
             : "Assinar";
-          const ctaHint = current ? null : isUpgrade ? "Upgrade" : isDowngrade ? "Mudar para este" : null;
+          const ctaHint = current ? null
+            : inlineUpgrade ? "Paga só a diferença"
+            : isUpgrade ? "Upgrade"
+            : isDowngrade ? "Mudar para este"
+            : null;
           return (
             <div
               key={id}
@@ -450,7 +485,11 @@ export default function PageSubscription() {
                 ))}
               </ul>
               <button
-                onClick={() => !current && startCheckout(id, trialOffer ? { trial: true } : undefined)}
+                onClick={() => {
+                  if (current) return;
+                  if (inlineUpgrade) return upgradePlan(id, name);
+                  startCheckout(id, trialOffer ? { trial: true } : undefined);
+                }}
                 disabled={current || !!busy || !me.stripeEnabled}
                 style={{
                   width: "100%", padding: "9px", borderRadius: 8,

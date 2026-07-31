@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { initialGroups, initialNumbers, initialWhatsappGroups, makeEmptyGroup, DEFAULT_MESSAGE_TEMPLATE } from "./data/mockData";
-import { allSources, storeLockMessage, unlockedSources, navToPath, pathToNav, DEFAULT_PALETTE, isValidPalette } from "./data/constants";
+import { allSources, storeLockMessage, unlockedSources, navToPath, pathToNav, publicPageFor, popQueryParam, DEFAULT_PALETTE, isValidPalette } from "./data/constants";
 import { DEFAULT_ONBOARDING, mergeOnboarding, TOURS } from "./data/onboarding";
 
 const DEFAULT_SETTINGS = {
@@ -45,6 +45,10 @@ import PageAdminStripe from "./pages/AdminStripe";
 import PageAdminRepasse from "./pages/AdminRepasse";
 import PageTutoriais from "./pages/Tutoriais";
 import Login from "./pages/Login";
+import PageAssinar from "./pages/Assinar";
+import PageBemVindo from "./pages/BemVindo";
+import ConfirmarCpf from "./pages/ConfirmarCpf";
+import ConfirmarNovoEmail from "./pages/ConfirmarNovoEmail";
 import TourOverlay from "./components/onboarding/TourOverlay";
 import HelpButton from "./components/onboarding/HelpButton";
 
@@ -106,6 +110,21 @@ export default function App() {
   const openTutorial = (id) => requestNavigation(() => { setTutorialTarget(id); setSelectedGroup(null); setPage("tutorials"); });
   const [user, setUser] = useState(null);
   const [bootstrapping, setBootstrapping] = useState(true);
+  // Rota pública (/assinar, /bem-vindo): o caminho de quem veio da landing e
+  // ainda não tem conta. Vem da URL de entrada e só sai daqui quando a pessoa
+  // entra no sistema — inclusive por cima de um token antigo no navegador, que
+  // senão logaria a conta errada em cima de um pagamento recém-feito.
+  const [publicPage, setPublicPage] = useState(() =>
+    typeof window !== "undefined" ? publicPageFor(window.location.pathname) : null
+  );
+  // Token do link "confirmar novo email". Lido (e removido da URL) uma vez só,
+  // antes do bootstrap: essa tela vem antes de tudo, porque confirmar derruba a
+  // sessão e vale mesmo pra quem abriu o link deslogado ou em outro navegador.
+  const emailChangeRef = useRef(null);
+  if (emailChangeRef.current === null) {
+    emailChangeRef.current = typeof window !== "undefined" ? popQueryParam("trocaemail") : "";
+  }
+  const [emailChangeToken, setEmailChangeToken] = useState(emailChangeRef.current || null);
   // Tour de holofote rodando agora (objeto de TOURS) ou null.
   const [activeTour, setActiveTour] = useState(null);
   const [mobileMenu, setMobileMenu] = useState(false);
@@ -195,6 +214,12 @@ export default function App() {
     // setado, então precisamos do groupId aqui pra reabrir a campanha certa.
     const savedNav = initialNavRef.current;
     async function bootstrap() {
+      // Numa rota pública não há sessão a restaurar — e em /bem-vindo restaurar
+      // um token antigo abriria a conta errada por cima do pagamento novo.
+      if (publicPage) { setBootstrapping(false); return; }
+      // Idem na confirmação de troca de email: a sessão antiga vai ser
+      // derrubada pela própria confirmação, não há o que restaurar.
+      if (emailChangeRef.current) { setBootstrapping(false); return; }
       if (!getToken()) { setBootstrapping(false); return; }
       // Inatividade: se a última atividade foi há mais que o timeout, a sessão
       // expirou enquanto a aba esteve fechada — cai direto no login sem validar.
@@ -892,6 +917,32 @@ export default function App() {
     }
   };
 
+  // Confirmação de troca de email vem antes até das telas públicas: o link
+  // pode ser aberto logado ou deslogado, e o que vale é o token da URL.
+  if (emailChangeToken) {
+    return (
+      <ConfirmarNovoEmail
+        token={emailChangeToken}
+        onDone={() => {
+          // Confirmar já subiu o tokenVersion no servidor: a sessão desta aba
+          // não vale mais. Limpa e cai no login com o email novo.
+          clearToken();
+          setUser(null);
+          setEmailChangeToken(null);
+        }}
+      />
+    );
+  }
+
+  // Telas públicas vêm antes de tudo: não dependem de sessão e não podem ser
+  // engolidas pelo "Carregando…" do bootstrap nem pela tela de login.
+  if (publicPage === "assinar") {
+    return <PageAssinar onGoToLogin={() => { window.history.replaceState({}, "", "/"); setPublicPage(null); }} />;
+  }
+  if (publicPage === "bem-vindo") {
+    return <PageBemVindo onLogin={(u) => { window.history.replaceState({}, "", "/"); setPublicPage(null); handleLogin(u); }} />;
+  }
+
   if (bootstrapping) {
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-text-secondary)", fontSize: 13 }}>
@@ -902,6 +953,12 @@ export default function App() {
 
   if (!user) {
     return <Login onLogin={handleLogin} />;
+  }
+
+  // Uma conta = um CPF: contas criadas antes da regra informam o documento
+  // aqui, antes de o painel abrir. Admin é isento (cpfRequired já vem false).
+  if (user.cpfRequired) {
+    return <ConfirmarCpf user={user} onDone={setUser} onLogout={handleLogout} />;
   }
 
   const fallbackPage = <PageDashboard groups={groups} whatsappGroups={liveWhatsappGroups} onSelectGroup={handleSelectGroup} onCreateGroup={handleCreateGroup} onUpdate={handleUpdate} affiliateConfigured={affiliateConfigured} onGoToSettings={() => setPage("settings")} limits={billing?.limits} planPausedIds={planPaused.groups} onActivatePlanPaused={(id) => activatePlanPaused("groups", id)} />;

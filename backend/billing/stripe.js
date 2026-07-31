@@ -152,12 +152,31 @@ async function getOrCreateCustomer({ userId, email, name, existingCustomerId }) 
   });
 }
 
+// Acerta o email do Customer depois que a pessoa troca o email da conta —
+// senão recibo e aviso de cobrança continuam indo pro endereço antigo.
+async function updateCustomerEmail(customerId, email) {
+  if (!customerId || !email) return null;
+  const c = client();
+  if (!c) return null;
+  return c.customers.update(customerId, { email });
+}
+
 // Cria sessão de Checkout em modo subscription.
 // payment_method_types: cartão sempre; Pix só se planId não for trial-only.
 // withTrial: cobra R$1 hoje (line item avulso) + 15 dias de trial na assinatura.
-async function createCheckoutSession({ planId, customer, userId, withTrial = false }) {
+//
+// Dois chamadores:
+//   - app (usuário logado): passa `customer` + `userId`, volta pra SUCCESS_URL.
+//   - landing (sem conta ainda): passa `customerEmail`; não há userId pra gravar
+//     em client_reference_id, então a conta é provisionada depois a partir da
+//     própria Checkout Session — daí o retorno em stripeWelcomeUrl.
+async function createCheckoutSession({
+  planId, customer, customerEmail, userId, withTrial = false,
+  successUrl, cancelUrl, metadataExtra,
+}) {
   const price = priceFor(planId);
   if (!price) throw new Error(`Price ID não configurado pro plano "${planId}"`);
+  if (!customer && !customerEmail) throw new Error("Checkout precisa de customer ou customerEmail");
   const trialFeePrice = conf().trialFeePrice;
   if (withTrial && !trialFeePrice) {
     throw new Error("STRIPE_PRICE_TRIAL_FEE não configurado — trial de R$1 indisponível");
@@ -166,8 +185,16 @@ async function createCheckoutSession({ planId, customer, userId, withTrial = fal
   const lineItems = [{ price, quantity: 1 }];
   if (withTrial) lineItems.push({ price: trialFeePrice, quantity: 1 });
 
+  // userId é undefined no checkout público — metadata do Stripe rejeita valores
+  // não-string, então só entra quando existe.
+  const baseMeta = {
+    ...(userId ? { nimbusUserId: userId } : {}),
+    planId,
+    ...(metadataExtra || {}),
+  };
+
   const subscriptionData = {
-    metadata: { nimbusUserId: userId, planId, ...(withTrial ? { trial: "1" } : {}) },
+    metadata: { ...baseMeta, ...(withTrial ? { trial: "1" } : {}) },
   };
   if (withTrial) {
     subscriptionData.trial_period_days = TRIAL_DAYS;
@@ -178,8 +205,11 @@ async function createCheckoutSession({ planId, customer, userId, withTrial = fal
 
   return client().checkout.sessions.create({
     mode: "subscription",
-    customer: customer.id,
-    client_reference_id: userId,
+    ...(customer
+      ? { customer: customer.id }
+      // Sem customer: o Stripe cria um na conclusão e já vincula à assinatura.
+      : { customer_email: customerEmail }),
+    ...(userId ? { client_reference_id: userId } : {}),
     line_items: lineItems,
     // Pix recorrente em BRL precisa estar habilitado no dashboard.
     // Se ainda não ativou, deixar só "card" funciona; com Pix ativo, ambos.
@@ -188,11 +218,42 @@ async function createCheckoutSession({ planId, customer, userId, withTrial = fal
     ...(withTrial ? { payment_method_collection: "always" } : {}),
     locale: "pt-BR",
     allow_promotion_codes: true,
-    success_url: SUCCESS_URL,
-    cancel_url: CANCEL_URL,
-    metadata: { nimbusUserId: userId, planId },
+    success_url: successUrl || SUCCESS_URL,
+    cancel_url: cancelUrl || CANCEL_URL,
+    metadata: baseMeta,
     subscription_data: subscriptionData,
   });
+}
+
+// Busca uma Checkout Session pelo id, com o customer expandido — é a fonte do
+// e-mail e do plano no provisionamento de quem pagou antes de ter conta.
+async function getCheckoutSession(sessionId) {
+  return client().checkout.sessions.retrieve(sessionId, {
+    expand: ["customer", "subscription"],
+  });
+}
+
+// Troca o plano de uma assinatura viva, cobrando a diferença na hora
+// (always_invoice gera a fatura proporcional imediatamente, em vez de jogar o
+// crédito/débito pra próxima renovação). Só usado pra upgrade — descer de plano
+// continua indo pelo Customer Portal.
+async function changeSubscriptionPlan(subscriptionId, planId) {
+  const price = priceFor(planId);
+  if (!price) throw new Error(`Price ID não configurado pro plano "${planId}"`);
+  const sub = await client().subscriptions.retrieve(subscriptionId);
+  const item = sub.items?.data?.[0];
+  if (!item) throw new Error("Assinatura sem item de cobrança");
+
+  const updated = await client().subscriptions.update(subscriptionId, {
+    items: [{ id: item.id, price, quantity: 1 }],
+    proration_behavior: "always_invoice",
+    // Se a cobrança da diferença cair em 3DS/recusa, a assinatura não é
+    // derrubada — fica incomplete e o Stripe segue tentando.
+    payment_behavior: "pending_if_incomplete",
+    // Mantém o planId explícito que normalizeSubscription prefere ler.
+    metadata: { ...(sub.metadata || {}), planId },
+  });
+  return normalizeSubscription(updated);
 }
 
 // Customer Portal — Stripe-hosted UI pra trocar cartão / cancelar / ver faturas.
@@ -375,7 +436,10 @@ module.exports = {
   priceFor,
   planFromPrice,
   getOrCreateCustomer,
+  updateCustomerEmail,
   createCheckoutSession,
+  getCheckoutSession,
+  changeSubscriptionPlan,
   createPortalSession,
   constructEvent,
   normalizeSubscription,

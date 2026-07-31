@@ -18,6 +18,18 @@ Integração com **Stripe** (Checkout + Customer Portal hosted) + lógica de pla
 4. **Portal** → `POST /api/billing/portal` cria Stripe Portal Session pra trocar cartão / cancelar.
 5. **Plan-gating** acontece em 3 lugares: `PUT /api/state` (limites de groups/numbers/categoriesPerGroup → 402), `POST /api/whatsapp/sessions/:id` (criação de sessão NOVA → 402), `scheduler.tick` (pula user sem `isActive`).
 
+## Checkout público (landing page → Stripe → sistema)
+
+Quem chega da landing **paga antes de ter conta**: a conta nasce do pagamento aprovado. `provision.js` é o coração disso.
+
+Caminho: landing (popup de e-mail + CPF no `index.html`, ou `/assinar?plano=pro` na SPA) → `POST /api/public/checkout` → Stripe → volta em `/bem-vindo?session_id=…` → `POST /api/public/claim` → já entra logado e define a senha.
+
+- **Por que pedimos e-mail e CPF antes do Stripe**: é a única chance de barrar quem já assina. O Checkout só coletaria o e-mail depois de cobrar, e aí a saída seria estorno. `provision.decideForSignup` decide entre `checkout`, `invalid_cpf`, `cpf_taken` (o CPF já é de outra conta), `blocked` (plano igual ou melhor já ativo) e `upgrade_requires_login` (quer plano melhor → o caminho certo é `/api/billing/change-plan`, que cobra só a diferença).
+- **Uma conta = um CPF** (`User.cpf`, UNIQUE, só dígitos — `backend/utils/cpf.js`). É o que impede a mesma pessoa de repetir o teste de R$ 1,00 trocando de e-mail; o bloqueio vale mesmo se a conta antiga estiver cancelada. Contas anteriores à regra ficam com `cpf = NULL` e informam o documento na primeira entrada (`user.cpfRequired` → `POST /api/account/cpf`). O CPF vai como `metadata.pendingCpf` na Checkout Session e é carimbado no Customer do Stripe.
+- **`provisionFromCheckout(session)` é idempotente** e disputado por dois caminhos: o webhook `checkout.session.completed` (sem `client_reference_id`) e o `/claim`. O trilho é o UNIQUE em `Subscription.checkoutSessionId`; quem chegar primeiro cria.
+- **Conta criada pelo pagamento** (`auth.createPaidUser`): senha aleatória, `emailVerified=true` (o cartão naquele e-mail prova posse melhor que o link de verificação) e **bypass do beta fechado** — quem pagou não pode ficar sem acesso. A senha é escolhida em `/bem-vindo` (`POST /api/auth/set-initial-password`), e o e-mail de boas-vindas com link de definição de senha é o plano B.
+- **`/claim` é de uso único** (`Subscription.claimedAt`) e expira em 2h: o `session_id` viaja na URL de retorno do Stripe, então vale como credencial temporária.
+
 ## Admin bypass
 
 `role=admin` (via `ADMIN_EMAILS`) sempre vira `effectivePlan=business` independente da assinatura. Vide `limits.effectivePlanId` e `billing.isActive`.

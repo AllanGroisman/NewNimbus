@@ -201,6 +201,59 @@ export async function billingPortal() {
 export async function billingActiveSelection(selection) {
   return http("PUT", "/api/billing/active-selection", selection);
 }
+// Upgrade de plano numa assinatura existente — cobra só a diferença (proration).
+// Devolve o status atualizado (mesmo shape do billingMe).
+export async function billingChangePlan(planId) {
+  return http("POST", "/api/billing/change-plan", { planId });
+}
+
+// ─── Checkout público (landing → Stripe → sistema) ─────────────────────
+// Sem token: são as rotas usadas por quem ainda não tem conta.
+
+// Catálogo pra tela /assinar montar nome e preço do plano escolhido.
+export async function publicPlans() { return http("GET", "/api/public/plans"); }
+
+// Diz se o e-mail e o CPF podem seguir pro pagamento:
+// { decision: "checkout" | "cpf_taken" | "blocked" | "upgrade_requires_login", message, currentPlan }
+export async function publicPlanCheck({ planId, email, cpf }) {
+  return http("POST", "/api/public/plan-check", { planId, email, cpf });
+}
+
+// Cria a Checkout Session pública e devolve { url }. Erro 409 traz err.code com
+// a decisão ("cpf_taken" | "blocked" | "upgrade_requires_login") pra tela explicar.
+export async function publicCheckout({ planId, email, cpf, trial }) {
+  return http("POST", "/api/public/checkout", { planId, email, cpf, trial: !!trial });
+}
+
+// Troca a Checkout Session paga por uma sessão logada: { token, user, needsPassword }.
+export async function publicClaim(sessionId) {
+  return http("POST", "/api/public/claim", { sessionId });
+}
+
+// CPF de quem já tinha conta antes da regra "uma conta = um CPF".
+// Erro 409 traz code "cpf_taken" (documento já usado por outra conta).
+export async function accountSetCpf(cpf) {
+  return http("POST", "/api/account/cpf", { cpf });
+}
+
+// Pede a troca de email: manda o link de confirmação pro endereço novo. Nada
+// muda na conta até o clique. Erro 409 traz code "email_taken".
+export async function accountRequestEmailChange({ password, newEmail }) {
+  return http("POST", "/api/account/email", { password, newEmail });
+}
+
+// Confirma a troca pelo token do link. Não exige sessão — e derruba as sessões
+// abertas no servidor, então quem chamar aqui volta pro login com o email novo.
+export async function accountConfirmEmailChange(token) {
+  return http("POST", "/api/account/email/confirm", { token });
+}
+
+// Primeira senha de quem entrou pelo checkout público (não pede a senha atual).
+export async function authSetInitialPassword(password) {
+  const r = await http("POST", "/api/auth/set-initial-password", { password });
+  if (r.token) setToken(r.token);
+  return r;
+}
 
 // ─── Afiliados ML ──────────────────────────────────────────────────────
 export async function getAffiliateStatus()      { return http("GET",    "/api/affiliate"); }

@@ -26,6 +26,8 @@ const calls = {
   getOrCreateCustomer: [],
   createCheckoutSession: [],
   createPortalSession: [],
+  getCheckoutSession: [],
+  changeSubscriptionPlan: [],
   getActiveSubscriptionForCustomer: [],
   getUpcomingInvoice: [],
   listInvoices: [],
@@ -55,6 +57,10 @@ let state = {
     business: { priceBRL: 149.90, name: "Business", priceId: "price_test_business" },
   },
   shouldFailFetchPrices: false,
+  // Checkout Session devolvida por getCheckoutSession — é o que o resgate do
+  // checkout público (/api/public/claim) lê pra provisionar a conta.
+  checkoutSession: null,
+  checkoutSessionError: false,
   // Modo ativo do Stripe (test/live) — o mock guarda em memória o que setMode grava.
   mode: "test",
 };
@@ -88,6 +94,8 @@ function reset() {
       business: { priceBRL: 149.90, name: "Business", priceId: "price_test_business" },
     },
     shouldFailFetchPrices: false,
+    checkoutSession: null,
+    checkoutSessionError: false,
     mode: "test",
   };
 }
@@ -126,11 +134,41 @@ const mock = {
     return { id: existingCustomerId || `cus_test_${userId}`, email, name };
   },
 
-  async createCheckoutSession({ planId, customer, userId, withTrial = false }) {
-    calls.createCheckoutSession.push({ planId, customerId: customer.id, userId, withTrial });
+  // customer é null no checkout público (landing) — aí vem customerEmail.
+  async createCheckoutSession({ planId, customer, customerEmail, userId, withTrial = false, successUrl, cancelUrl, metadataExtra }) {
+    calls.createCheckoutSession.push({
+      planId, customerId: customer?.id || null, customerEmail: customerEmail || null,
+      userId, withTrial, successUrl, cancelUrl, metadataExtra,
+    });
+    const ref = userId || customerEmail || "anon";
     return {
-      id: `cs_test_${userId}_${planId}`,
+      id: `cs_test_${ref}_${planId}`,
       url: `https://checkout.stripe.test/c/${planId}${withTrial ? "?trial=1" : ""}`,
+    };
+  },
+
+  // Checkout Session buscada no resgate (/api/public/claim). Os testes montam
+  // a sessão via __setMock({ checkoutSession }).
+  async getCheckoutSession(sessionId) {
+    calls.getCheckoutSession.push({ sessionId });
+    if (state.checkoutSessionError) throw new Error("sessão não encontrada (mock)");
+    if (!state.checkoutSession) throw new Error("sessão não encontrada (mock)");
+    return { id: sessionId, ...state.checkoutSession };
+  },
+
+  // Upgrade com proration — devolve a assinatura já com o plano novo.
+  async changeSubscriptionPlan(subscriptionId, planId) {
+    calls.changeSubscriptionPlan.push({ subscriptionId, planId });
+    if (state.activeSubscription) {
+      state.activeSubscription.metadata = { ...(state.activeSubscription.metadata || {}), planId };
+      return this.normalizeSubscription(state.activeSubscription);
+    }
+    return {
+      stripeSubscriptionId: subscriptionId,
+      planId,
+      status: "active",
+      cancelAtPeriodEnd: false,
+      trialEnd: null,
     };
   },
 

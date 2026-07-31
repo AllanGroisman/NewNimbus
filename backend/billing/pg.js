@@ -41,6 +41,24 @@ async function getBySubscriptionId(stripeSubscriptionId) {
   return prisma().subscription.findUnique({ where: { stripeSubscriptionId } });
 }
 
+// Linha crua (sem máscara de modo) da assinatura nascida de uma Checkout
+// Session — é como o resgate em /bem-vindo acha a conta provisionada.
+async function getByCheckoutSessionId(checkoutSessionId) {
+  if (!checkoutSessionId) return null;
+  return prisma().subscription.findUnique({ where: { checkoutSessionId } });
+}
+
+// Marca o resgate do checkout público como consumido. Uso único: o session_id
+// viaja na URL de retorno do Stripe, então só a primeira chamada abre sessão.
+// Retorna false se já estava carimbado (ou se a linha sumiu).
+async function markClaimed(userId) {
+  const r = await prisma().subscription.updateMany({
+    where: { userId, claimedAt: null },
+    data: { claimedAt: new Date() },
+  });
+  return r.count > 0;
+}
+
 async function ensureForUser(userId, defaults = {}) {
   const existing = await prisma().subscription.findUnique({ where: { userId } });
   // Mascarada também: o checkout precisa criar um customer NOVO no modo atual
@@ -105,6 +123,9 @@ async function update(userId, patch) {
       stripeCustomerId: data.stripeCustomerId || null,
       stripeSubscriptionId: data.stripeSubscriptionId || null,
       stripeMode: data.stripeMode || null,
+      checkoutSessionId: data.checkoutSessionId || null,
+      claimedAt: data.claimedAt || null,
+      signupSource: data.signupSource || null,
     },
     update: data,
   });
@@ -130,6 +151,8 @@ module.exports = {
   getByUserId,
   getByCustomerId,
   getBySubscriptionId,
+  getByCheckoutSessionId,
+  markClaimed,
   ensureForUser,
   update,
   isWebhookProcessed,

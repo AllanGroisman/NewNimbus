@@ -38,6 +38,22 @@ function uniqueEmail(prefix = "user") {
   return `${prefix}-${crypto.randomBytes(4).toString("hex")}@test.local`;
 }
 
+// CPF válido e aleatório — os 9 primeiros dígitos sorteados, os 2 últimos
+// calculados. Toda conta real tem CPF (uma conta = um CPF), então os testes
+// precisam de um documento diferente por usuário.
+function randomCpf() {
+  const base = Array.from({ length: 9 }, () => crypto.randomInt(0, 10));
+  for (const [len, pos] of [[9, 10], [10, 11]]) {
+    let soma = 0;
+    for (let i = 0; i < len; i++) soma += base[i] * (pos - i);
+    const resto = (soma * 10) % 11;
+    base.push(resto === 10 ? 0 : resto);
+  }
+  const cpf = base.join("");
+  // Sequência repetida é recusada pela validação — sorteia de novo.
+  return /^(\d)\1{10}$/.test(cpf) ? randomCpf() : cpf;
+}
+
 async function createTestUser(overrides = {}) {
   const email = overrides.email || uniqueEmail();
   const password = overrides.password || "Senha123";
@@ -55,7 +71,14 @@ async function createTestUser(overrides = {}) {
   if (verifyRes.status !== 200) throw new Error(`verify-email falhou: ${verifyRes.status} ${JSON.stringify(verifyRes.body)}`);
   const { token } = verifyRes.body;
 
-  // 3. Opcional: assinatura ativa ("basic" | "pro" | "business"). Sem isso o
+  // 3. CPF: toda conta tem o seu. `cpf: null` nos overrides simula as contas
+  // criadas antes da regra, que o sistema faz preencher na primeira entrada.
+  const cpf = overrides.cpf === undefined ? randomCpf() : overrides.cpf;
+  // Via auth.setCpf (e não prisma direto) porque é ele quem invalida o cache
+  // de usuário do requireAuth — sem isso as rotas ainda veriam a conta sem CPF.
+  if (cpf) await auth.setCpf(user.id, cpf);
+
+  // 4. Opcional: assinatura ativa ("basic" | "pro" | "business"). Sem isso o
   // usuário fica no plano free (0 campanhas/números) e leva 402 ao salvar estado.
   if (overrides.plan && overrides.plan !== "free") {
     await seedSubscription(user.id, overrides.plan);
@@ -66,6 +89,7 @@ async function createTestUser(overrides = {}) {
     token,
     email,
     password,
+    cpf,
     auth: (method, url) => request(app)[method](url).set("Authorization", `Bearer ${token}`),
   };
 }
@@ -76,6 +100,7 @@ export {
   createTestUser,
   seedSubscription,
   uniqueEmail,
+  randomCpf,
   auth,
   storage,
   catalog,

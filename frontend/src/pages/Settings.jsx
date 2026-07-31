@@ -4,7 +4,7 @@ import Badge from "../components/ui/Badge";
 import Toggle from "../components/ui/Toggle";
 import Modal from "../components/ui/Modal";
 import LogoutConfirmModal from "../components/LogoutConfirmModal";
-import { authUpdate, authChangePassword } from "../data/api";
+import { authUpdate, authChangePassword, accountRequestEmailChange } from "../data/api";
 import { useUnsavedGuard } from "../data/navGuard";
 
 // Eventos que o WhatsNimbus (WhatsApp do sistema) pode avisar por DM.
@@ -31,6 +31,8 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
   const [account, setAccount] = useState({
     name: user?.name || "",
     email: user?.email || "",
+    // Já vem mascarado do servidor (123.***.***-09) — o CPF inteiro nunca sai do backend.
+    cpf: user?.cpf || "",
     phone: user?.phone || "",
   });
   const [accountMsg, setAccountMsg] = useState(null);
@@ -38,6 +40,11 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [showLogout, setShowLogout] = useState(false);
+  const [showEmailModal, setShowEmailModal] = useState(false);
+  const [newEmail, setNewEmail] = useState("");
+  const [emailPwd, setEmailPwd] = useState("");
+  const [emailMsg, setEmailMsg] = useState(null);
+  const [emailSaving, setEmailSaving] = useState(false);
   const [pwd, setPwd] = useState({ current: "", next: "", confirm: "" });
   const [pwdMsg, setPwdMsg] = useState(null);
   const [pwdSaving, setPwdSaving] = useState(false);
@@ -46,7 +53,7 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
   const accountDirty = account.name !== (user?.name || "")
     || account.phone !== (user?.phone || "");
   const discardAccount = () => setAccount({
-    name: user?.name || "", email: user?.email || "", phone: user?.phone || "",
+    name: user?.name || "", email: user?.email || "", cpf: user?.cpf || "", phone: user?.phone || "",
   });
   useUnsavedGuard({ dirty: accountDirty, save: handleSaveAccount, discard: discardAccount });
 
@@ -61,6 +68,26 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
       setAccountMsg({ type: "err", text: err.message });
     } finally {
       setAccountSaving(false);
+    }
+  }
+
+  // Pede a troca: o email novo recebe um link e nada muda até alguém clicar.
+  // Por isso a tela termina em "confira sua caixa de entrada", não em "pronto".
+  async function handleRequestEmailChange() {
+    setEmailMsg(null);
+    const alvo = newEmail.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(alvo)) { setEmailMsg({ type: "err", text: "Email inválido" }); return; }
+    if (alvo === (user?.email || "").toLowerCase()) { setEmailMsg({ type: "err", text: "Este já é o email da sua conta" }); return; }
+    if (!emailPwd) { setEmailMsg({ type: "err", text: "Informe sua senha atual" }); return; }
+    setEmailSaving(true);
+    try {
+      await accountRequestEmailChange({ password: emailPwd, newEmail: alvo });
+      setEmailPwd("");
+      setEmailMsg({ type: "ok", text: `Enviamos um link para ${alvo}. Abra o email e confirme — só depois disso o endereço muda.` });
+    } catch (err) {
+      setEmailMsg({ type: "err", text: err.message });
+    } finally {
+      setEmailSaving(false);
     }
   }
 
@@ -79,6 +106,15 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
       setPwdSaving(false);
     }
   }
+
+  // [label, chave, somente leitura]. O CPF só aparece pra quem já informou: contas
+  // anteriores à regra e o admin (isento) têm cpf nulo e não devem ver campo vazio.
+  const personalFields = [
+    ["Nome completo", "name", false],
+    ["Email", "email", true],
+    ...(user?.cpf ? [["CPF", "cpf", true]] : []),
+    ["Telefone", "phone", false],
+  ];
 
   const sections = [
     { id: "account", label: "Conta" },
@@ -105,18 +141,35 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
                 <div style={{ fontWeight: 500, marginBottom: 4 }}>Informações pessoais</div>
                 <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>Dados exibidos na sua conta</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {[["Nome completo", "name", false], ["Email", "email", true], ["Telefone", "phone", false]].map(([label, key, readOnly]) => (
+                  {personalFields.map(([label, key, readOnly]) => (
                     <div key={key}>
                       <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>{label}</label>
-                      <input
-                        value={account[key]}
-                        onChange={e => !readOnly && setAccount(a => ({ ...a, [key]: e.target.value }))}
-                        readOnly={readOnly}
-                        style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: readOnly ? "var(--color-background-tertiary, #f3f3f3)" : "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", color: readOnly ? "var(--color-text-secondary)" : "inherit" }}
-                      />
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <input
+                          value={account[key]}
+                          onChange={e => !readOnly && setAccount(a => ({ ...a, [key]: e.target.value }))}
+                          readOnly={readOnly}
+                          // Campo travado: o fundo e a borda é que dizem "não dá pra editar".
+                          // O texto fica na cor normal — cinza sobre cinza some no tema escuro.
+                          style={{ flex: 1, minWidth: 0, padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: readOnly ? "var(--color-background-tertiary)" : "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", color: "var(--color-text-primary)" }}
+                        />
+                        {key === "email" && (
+                          <button onClick={() => { setEmailMsg(null); setNewEmail(""); setEmailPwd(""); setShowEmailModal(true); }} style={{ padding: "7px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: "pointer", whiteSpace: "nowrap" }}>Alterar</button>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
+                {user?.pendingEmail && (
+                  <div style={{ marginTop: 10, fontSize: 11, color: "var(--warn-text)", background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 8, padding: "8px 10px", lineHeight: 1.5 }}>
+                    Troca de email aguardando confirmação em <strong>{user.pendingEmail}</strong>. Abra o link que mandamos para lá — até isso, o login continua neste email.
+                  </div>
+                )}
+                {user?.cpf && (
+                  <div style={{ marginTop: 10, fontSize: 11, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+                    Mostramos só parte do CPF por segurança. O documento não pode ser alterado — se estiver errado, fale com o suporte.
+                  </div>
+                )}
                 {accountMsg && (
                   <div style={{ marginTop: 10, fontSize: 12, color: accountMsg.type === "ok" ? PRIMARY_DARK : "var(--danger-text)" }}>{accountMsg.text}</div>
                 )}
@@ -259,6 +312,43 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
           )}
         </div>
       </div>
+
+      {showEmailModal && (
+        <Modal title="Alterar email" onClose={() => { setShowEmailModal(false); setEmailMsg(null); }}>
+          <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12, lineHeight: 1.5 }}>
+            Você usa <strong style={{ color: "var(--color-text-primary)" }}>{user?.email}</strong> para entrar.
+            Vamos mandar um link de confirmação para o endereço novo — o email só muda depois que você clicar nele.
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div>
+              <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Novo email</label>
+              <input
+                type="email"
+                value={newEmail}
+                onChange={e => setNewEmail(e.target.value)}
+                placeholder="voce@exemplo.com"
+                style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Sua senha atual</label>
+              <input
+                type="password"
+                value={emailPwd}
+                onChange={e => setEmailPwd(e.target.value)}
+                style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }}
+              />
+            </div>
+          </div>
+          {emailMsg && (
+            <div style={{ marginTop: 10, fontSize: 12, lineHeight: 1.5, color: emailMsg.type === "ok" ? PRIMARY_DARK : "var(--danger-text)" }}>{emailMsg.text}</div>
+          )}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
+            <button onClick={() => { setShowEmailModal(false); setEmailMsg(null); }} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Fechar</button>
+            <button onClick={handleRequestEmailChange} disabled={emailSaving} style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: emailSaving ? "wait" : "pointer", fontWeight: 500, opacity: emailSaving ? 0.7 : 1 }}>{emailSaving ? "Enviando..." : "Enviar link"}</button>
+          </div>
+        </Modal>
+      )}
 
       {showPasswordModal && (
         <Modal title="Alterar senha" onClose={() => { setShowPasswordModal(false); setPwdMsg(null); }}>

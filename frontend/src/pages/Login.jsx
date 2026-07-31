@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
-import { PRIMARY } from "../data/constants";
+import { PRIMARY, popQueryParam } from "../data/constants";
 import Logo from "../components/ui/Logo";
+import { passwordChecks, passwordOk, MIN_PASSWORD } from "../data/password";
 
 import {
   authLogin, authRegister, authGoogle,
@@ -17,35 +18,7 @@ const LIMITS = {
   email: 254,
   password: 128,
 };
-const MIN_PASSWORD = 8;
-
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-// Regras de senha forte — mesmo conjunto validado no backend.
-function passwordChecks(pw) {
-  const s = String(pw || "");
-  return {
-    length: s.length >= MIN_PASSWORD,
-    lower: /[a-z]/.test(s),
-    upper: /[A-Z]/.test(s),
-    number: /[0-9]/.test(s),
-  };
-}
-function passwordOk(pw) {
-  const c = passwordChecks(pw);
-  return c.length && c.lower && c.upper && c.number;
-}
-
-// Lê e remove um parâmetro da query string (?verify=… / ?reset=…).
-function popQueryParam(name) {
-  const qs = new URLSearchParams(window.location.search);
-  const v = qs.get(name);
-  if (v == null) return null;
-  qs.delete(name);
-  const newSearch = qs.toString();
-  window.history.replaceState({}, "", window.location.pathname + (newSearch ? `?${newSearch}` : ""));
-  return v;
-}
 
 export default function Login({ onLogin }) {
   // mode: "login" | "register" | "forgot" | "registered" | "verifying" | "reset"

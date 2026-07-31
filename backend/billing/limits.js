@@ -98,6 +98,21 @@ function getPlan(planId) {
   return PLANS[planId] || PLANS.free;
 }
 
+// Ordem de grandeza dos planos. Usada pelo checkout público pra decidir entre
+// bloquear a compra (mesmo plano ou pior) e mandar fazer upgrade (plano melhor),
+// e pelo /api/billing/change-plan, que só aceita subir de plano — descer
+// continua sendo pelo Customer Portal, que agenda a troca pro fim do período.
+const PLAN_RANK = { free: 0, basic: 1, pro: 2, business: 3 };
+
+function planRank(planId) {
+  return PLAN_RANK[planId] ?? 0;
+}
+
+// true se `toPlanId` é estritamente maior que `fromPlanId`.
+function isUpgrade(fromPlanId, toPlanId) {
+  return planRank(toPlanId) > planRank(fromPlanId);
+}
+
 // Rótulos em pt-BR pra montar mensagem que o cliente entende — o texto antigo
 // ("Limite de groups excedido (2/1)") aparecia cru na tela.
 const LABELS = {
@@ -179,7 +194,10 @@ function suggestUpgrade(sub, key, current) {
 
 module.exports = {
   PLANS,
+  PLAN_RANK,
   GRACE_MS,
+  planRank,
+  isUpgrade,
   effectivePlanId,
   inGracePeriod,
   graceEndsAt,

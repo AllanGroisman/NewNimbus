@@ -345,6 +345,32 @@ export const PAGE_TO_PATH = {
   "admin-stripe": "/admin/stripe",
 };
 
+// Rotas que funcionam SEM login — o caminho de quem vem da landing page pagar.
+// App.jsx trata estas antes do gate de autenticação.
+export const PUBLIC_PATHS = {
+  "/assinar": "assinar",
+  "/bem-vindo": "bem-vindo",
+};
+
+// Lê e remove um parâmetro da query string (?verify=… / ?reset=… /
+// ?trocaemail=…). Tirar da URL na leitura evita que um F5 refaça a ação e que o
+// token de uso único fique no histórico do navegador.
+export function popQueryParam(name) {
+  const qs = new URLSearchParams(window.location.search);
+  const v = qs.get(name);
+  if (v == null) return null;
+  qs.delete(name);
+  const newSearch = qs.toString();
+  window.history.replaceState({}, "", window.location.pathname + (newSearch ? `?${newSearch}` : ""));
+  return v;
+}
+
+// Nome da página pública deste endereço, ou null se a rota exige login.
+export function publicPageFor(pathname) {
+  const clean = (pathname || "/").replace(/\/+$/, "") || "/";
+  return PUBLIC_PATHS[clean] || null;
+}
+
 // Paletas oferecidas no Admin › Layout. O `id` vira data-palette no <html> e os
 // blocos correspondentes moram no topo do index.css. `swatch` é só pra prévia
 // no menu — não é usado pra pintar a tela.

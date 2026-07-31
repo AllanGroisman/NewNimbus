@@ -32,6 +32,14 @@ const stripeCancelUrl = (BASE && `${BASE}/?checkout=cancel`)
   || process.env.STRIPE_CANCEL_URL
   || "http://localhost:5173/?checkout=cancel";
 
+// Retorno do checkout PÚBLICO (quem veio da landing e ainda não tem conta).
+// O success leva o id da Checkout Session, que a página /bem-vindo troca por
+// uma sessão logada; o cancel devolve pra própria tela de assinatura do plano.
+const appBase = appPublicUrl;
+const stripeWelcomeUrl = `${appBase}/bem-vindo?session_id={CHECKOUT_SESSION_ID}`;
+const subscribeUrl = (planId) =>
+  `${appBase}/assinar?plano=${encodeURIComponent(planId || "")}&cancelado=1`;
+
 // Allowlist de CORS: junta PUBLIC_BASE_URL com NIMBUS_CORS_ORIGINS (CSV).
 // Lista vazia = aceita tudo (comportamento de dev mantido em server.js).
 const corsOrigins = [
@@ -45,5 +53,7 @@ module.exports = {
   appPublicUrl,
   stripeSuccessUrl,
   stripeCancelUrl,
+  stripeWelcomeUrl,
+  subscribeUrl,
   corsOrigins,
 };
