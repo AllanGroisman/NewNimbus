@@ -39,6 +39,7 @@ import PageAdminUsers from "./pages/AdminUsers";
 import PageAdminBackups from "./pages/AdminBackups";
 import PageAdminNotifications from "./pages/AdminNotifications";
 import PageAdminNotifTemplates from "./pages/AdminNotifTemplates";
+import PageAdminEmails from "./pages/AdminEmails";
 import PageAdminWhatsNimbus from "./pages/AdminWhatsNimbus";
 import PageAdminLayout from "./pages/AdminLayout";
 import PageAdminStripe from "./pages/AdminStripe";
@@ -999,6 +1000,7 @@ export default function App() {
     "admin-backups":        user?.role === "admin" ? <PageAdminBackups /> : fallbackPage,
     "admin-notifications":  user?.role === "admin" ? <PageAdminNotifications onGoToWhatsNimbus={() => requestNavigation(() => setPage("admin-whatsnimbus"))} /> : fallbackPage,
     "admin-notif-templates": user?.role === "admin" ? <PageAdminNotifTemplates /> : fallbackPage,
+    "admin-emails": user?.role === "admin" ? <PageAdminEmails /> : fallbackPage,
     "admin-whatsnimbus":    user?.role === "admin" ? <PageAdminWhatsNimbus /> : fallbackPage,
     "admin-layout":         user?.role === "admin" ? <PageAdminLayout /> : fallbackPage,
     "admin-stripe":         user?.role === "admin" ? <PageAdminStripe /> : fallbackPage,

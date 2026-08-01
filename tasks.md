@@ -210,3 +210,15 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     diferença. Não abre um segundo pagamento — duas assinaturas no mesmo CPF
     seriam cobrança dupla. A confirmação é sempre um clique da pessoa.
 
+54. [x] Quero Uma aba de ADMIN onde eu possa editar todos os emails que mandamos no sistema.
+    Admin › E-mails lista os 17 e-mails do sistema (links de conta, segurança e
+    cobrança) e deixa editar assunto, título, saudação, parágrafos, texto do
+    botão e rodapé, com pré-visualização do e-mail de verdade ao lado e botão
+    pra mandar um teste pro seu endereço. O visual não é editável de propósito —
+    cor, botão e largura vêm de um lugar só, então não dá pra quebrar um e-mail
+    escrevendo texto. Variáveis entre chaves ({nome}, {prazo}...) e *negrito*
+    com asterisco, igual aos modelos de WhatsApp. Os 13 avisos podem ser
+    desligados um a um; os 4 com link (confirmar conta, redefinir senha,
+    boas-vindas, trocar e-mail) não, senão ninguém consegue entrar. De brinde,
+    esses 4 deixaram de montar HTML na mão e agora escapam o nome do usuário.
+

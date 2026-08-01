@@ -64,6 +64,9 @@ function baseLayout({ title, greeting, paragraphs, cta, footnote, tone }) {
 // usam nos parágrafos (<strong>, <a>) em vez de exigir dois textos por e-mail.
 function stripTags(s) {
   return String(s || "")
+    // <br> é quebra de linha de verdade: sem isso as duas frases do rodapé dos
+    // e-mails com link saíam grudadas ("...ignore este email.Ou copie: http...").
+    .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<[^>]+>/g, "")
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")

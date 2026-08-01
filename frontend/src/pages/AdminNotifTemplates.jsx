@@ -6,10 +6,10 @@ import {
   adminNotifTemplatePreview,
 } from "../data/api";
 
-const cardStyle = { background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: 10, padding: "20px 24px", marginBottom: 16 };
+const cardStyle = { background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10, padding: "20px 24px", marginBottom: 16 };
 const btnPrimary = { background: PRIMARY, color: "#fff", border: "none", borderRadius: 6, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" };
-const textareaStyle = { width: "100%", minHeight: 130, padding: "10px 12px", border: "1px solid var(--color-border)", borderRadius: 6, fontSize: 13, lineHeight: 1.5, fontFamily: "inherit", background: "var(--color-surface)", color: "var(--color-text-primary)", boxSizing: "border-box", resize: "vertical" };
-const chipStyle = { display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 12, border: "1px solid var(--color-border)", background: "var(--color-surface-alt)", color: "var(--color-text-secondary)", fontSize: 11, cursor: "pointer" };
+const textareaStyle = { width: "100%", minHeight: 130, padding: "10px 12px", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 8, fontSize: 13, lineHeight: 1.5, fontFamily: "inherit", background: "var(--color-background-secondary)", color: "var(--color-text-primary)", boxSizing: "border-box", resize: "vertical" };
+const chipStyle = { display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 12, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-tertiary)", color: "var(--color-text-secondary)", fontSize: 11, cursor: "pointer" };
 
 function TemplateCard({ meta, value, onChange, onReset }) {
   const [preview, setPreview] = useState("");
@@ -77,7 +77,7 @@ function TemplateCard({ meta, value, onChange, onReset }) {
       <div style={{ marginTop: 10 }}>
         <button
           onClick={onReset}
-          style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid var(--color-border)", background: "transparent", color: "var(--color-text-primary)", fontSize: 12, cursor: "pointer" }}
+          style={{ padding: "5px 12px", borderRadius: 6, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 12, cursor: "pointer" }}
         >
           Restaurar padrão
         </button>

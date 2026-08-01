@@ -32,6 +32,11 @@ const billingReminders = require("./billing/reminders");
 // O log direto, e não notifications/email: a rota só lê o histórico, e assim
 // continua lendo o banco de verdade mesmo com o módulo de envio mockado.
 const emailLog = require("./notifications/email/log");
+// Modelos de e-mail (Admin › E-mails): catálogo, render e o transporte SMTP —
+// o envio de teste vai direto pelo transporte, sem passar pelo email_log.
+const emailCatalog = require("./notifications/email/catalog");
+const emailRender = require("./notifications/email/render");
+const emailTransport = require("./notifications/email/transport");
 const adminNotifier = require("./notifications/admin-notifier");
 const whatsnimbus = require("./notifications/whatsnimbus");
 
@@ -2386,6 +2391,65 @@ app.post("/api/admin/notifications/templates/preview", auth.requireAuth, auth.re
   try {
     const { key, text } = req.body || {};
     res.json({ text: adminNotifier.renderPreview(key, text) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+
+// ────────────────────────────────────────────────────────────────────────
+// Admin — Modelos de e-mail (tela Admin › E-mails)
+//
+// O texto dos 17 e-mails do sistema. O override fica em app_config, então a
+// gravação passa por confirmConfigSaved: "salvo" na tela só aparece quando o
+// Postgres confirmou.
+// ────────────────────────────────────────────────────────────────────────
+
+app.get("/api/admin/emails/templates", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json(emailRender.getTemplates());
+});
+
+app.put("/api/admin/emails/templates", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  let saved;
+  try {
+    saved = emailRender.saveTemplates(req.body || {});
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  if (!await confirmConfigSaved(res)) return;
+  res.json(saved);
+});
+
+app.post("/api/admin/emails/preview", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  try {
+    const { key, block } = req.body || {};
+    res.json(emailRender.renderPreview(key, block));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Envia o e-mail de verdade pro admin logado, com os valores de exemplo. Não
+// passa por notifications/email de propósito: não deve virar linha no email_log
+// nem esbarrar em dedupe/throttle, e o assunto vai marcado como teste.
+app.post("/api/admin/emails/test", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const { key } = req.body || {};
+    const spec = emailCatalog.get(key);
+    if (!spec) return res.status(400).json({ error: `E-mail desconhecido: ${key}` });
+    if (!req.user.email) return res.status(400).json({ error: "Sua conta de admin não tem e-mail." });
+
+    const { subject, html, text } = emailRender.renderPreview(key, (req.body || {}).block);
+    const r = await emailTransport.sendMail({
+      to: req.user.email,
+      subject: `[TESTE] ${subject}`,
+      html,
+      text,
+    });
+    if (!r.delivered) {
+      return res.status(503).json({ error: "SMTP não configurado neste ambiente — nada foi enviado." });
+    }
+    res.json({ ok: true, to: req.user.email });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

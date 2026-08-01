@@ -12,6 +12,7 @@
 
 const logger = require("../../infra/logger");
 const registry = require("./registry");
+const render = require("./render");
 const transport = require("./transport");
 const log = require("./log");
 
@@ -20,6 +21,11 @@ const log = require("./log");
 async function send(kind, payload = {}, opts = {}) {
   const template = registry.get(kind);
   if (!template) throw new Error(`[email] template desconhecido: ${kind}`);
+
+  // Desligado pelo Admin (tela Admin › E-mails). Checagem num ponto só, antes
+  // de qualquer escrita no email_log: um e-mail desligado não deixa rastro de
+  // "quase enviado". Os e-mails com link não podem ser desligados (render.js).
+  if (!render.isEnabled(kind)) return { ok: true, skipped: true, reason: "desligado" };
 
   const to = payload.to;
   if (!to) return { ok: false, reason: "sem_destinatario" };

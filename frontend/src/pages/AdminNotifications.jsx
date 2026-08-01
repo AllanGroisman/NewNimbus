@@ -10,10 +10,10 @@ import {
 } from "../data/api";
 
 const labelStyle = { fontSize: 12, fontWeight: 600, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 };
-const cardStyle = { background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: 10, padding: "20px 24px", marginBottom: 16 };
+const cardStyle = { background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10, padding: "20px 24px", marginBottom: 16 };
 const btnPrimary = { background: PRIMARY, color: "#fff", border: "none", borderRadius: 6, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" };
 const btnSecondary = { background: "transparent", color: PRIMARY_DARK, border: `1px solid ${PRIMARY}`, borderRadius: 6, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" };
-const inputStyle = { width: "100%", padding: "8px 10px", border: "1px solid var(--color-border)", borderRadius: 6, fontSize: 13, background: "var(--color-surface)", color: "var(--color-text-primary)", boxSizing: "border-box" };
+const inputStyle = { width: "100%", padding: "8px 10px", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 8, fontSize: 13, background: "var(--color-background-secondary)", color: "var(--color-text-primary)", boxSizing: "border-box" };
 
 const EVENT_LABELS = {
   scraping:     { label: "Resumo do scraping", desc: "Envia um resumo ao final de cada execução do scraper global." },
@@ -142,7 +142,7 @@ export default function PageAdminNotifications({ onGoToWhatsNimbus }) {
         <div style={{ fontSize: 15, fontWeight: 700, color: "var(--color-text-primary)", marginBottom: 16 }}>Grupo de destino</div>
 
         {!isConnected ? (
-          <div style={{ fontSize: 13, color: "var(--color-text-secondary)", background: "var(--color-surface-alt)", borderRadius: 8, padding: "12px 14px" }}>
+          <div style={{ fontSize: 13, color: "var(--color-text-secondary)", background: "var(--color-background-tertiary)", borderRadius: 8, padding: "12px 14px" }}>
             O WhatsNimbus não está conectado.{" "}
             {onGoToWhatsNimbus ? (
               <span onClick={onGoToWhatsNimbus} style={{ color: PRIMARY_DARK, fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}>
@@ -156,13 +156,13 @@ export default function PageAdminNotifications({ onGoToWhatsNimbus }) {
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {config.groupJid && (
-              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, background: "var(--color-surface-alt)", border: `1px solid ${PRIMARY}` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, background: "var(--color-background-tertiary)", border: `1px solid ${PRIMARY}` }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: "var(--color-text-primary)" }}>{config.groupName || config.groupJid}</div>
                 </div>
                 <button
                   onClick={() => update({ groupJid: null, groupName: null })}
-                  style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid var(--color-border)", background: "transparent", color: "var(--color-text-primary)", fontSize: 12, cursor: "pointer" }}
+                  style={{ padding: "5px 12px", borderRadius: 6, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 12, cursor: "pointer" }}
                 >
                   Trocar
                 </button>
@@ -194,7 +194,7 @@ export default function PageAdminNotifications({ onGoToWhatsNimbus }) {
                     </div>
                   ) : (
                     filteredGroups.map(g => (
-                      <div key={g.jid} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 8, border: "1px solid var(--color-border)", background: "var(--color-surface-alt)" }}>
+                      <div key={g.jid} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-tertiary)" }}>
                         <div style={{ flex: 1 }}>
                           <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-primary)" }}>{g.name || g.jid}</div>
                           <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{g.members || 0} membros</div>

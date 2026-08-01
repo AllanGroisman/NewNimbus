@@ -424,6 +424,12 @@ export async function adminNotifTemplates()               { return http("GET",  
 export async function adminNotifTemplatesSave(t)         { return http("PUT",  "/api/admin/notifications/templates", { templates: t }); }
 export async function adminNotifTemplatePreview(key, text) { return http("POST", "/api/admin/notifications/templates/preview", { key, text }); }
 
+// ─── Admin / Modelos de e-mail ─────────────────────────────────────────────
+export async function adminEmailTemplates()          { return http("GET",  "/api/admin/emails/templates"); }
+export async function adminEmailTemplatesSave(t)     { return http("PUT",  "/api/admin/emails/templates", { templates: t }); }
+export async function adminEmailPreview(key, block)  { return http("POST", "/api/admin/emails/preview", { key, block }); }
+export async function adminEmailTest(key, block)     { return http("POST", "/api/admin/emails/test", { key, block }); }
+
 // ─── Admin / WhatsNimbus (remetente do sistema) ────────────────────────────
 export async function whatsNimbusStatus()         { return http("GET",  "/api/admin/whatsnimbus"); }
 export async function whatsNimbusConnect()        { return http("POST", "/api/admin/whatsnimbus/connect"); }

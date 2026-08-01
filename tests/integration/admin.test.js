@@ -31,6 +31,10 @@ describe("Admin — gating", () => {
       ["put", "/api/admin/scraper/shopee/filters"],
       ["get", "/api/admin/stripe"],
       ["put", "/api/admin/stripe"],
+      ["get", "/api/admin/emails/templates"],
+      ["put", "/api/admin/emails/templates"],
+      ["post", "/api/admin/emails/preview"],
+      ["post", "/api/admin/emails/test"],
     ];
     for (const [method, url] of rotas) {
       const res = await auth(method, url);
