@@ -124,18 +124,89 @@ describe("Checkout público — decisão por e-mail", () => {
   });
 });
 
+// Bloqueio não pode ser beco sem saída: quem já assina precisa enxergar, na
+// própria tela, como subir de plano (tasks 52 e 53).
+describe("Checkout público — saídas oferecidas no bloqueio", () => {
+  it("quem tentou um plano maior recebe ele como alvo e os demais upgrades", async () => {
+    const { user, email, cpf } = await createTestUser();
+    await seedLiveSub(user.id, "basic");
+    const res = await request(app).post("/api/public/plan-check").send({ planId: "pro", email, cpf });
+    expect(res.body.decision).toBe("upgrade_requires_login");
+    expect(res.body.currentPlanLabel).toBe("Básico");
+    expect(res.body.targetPlan).toMatchObject({ id: "pro", priceBRL: 99.90 });
+    expect(res.body.targetPlan.url).toMatch(/\/assinatura\?plano=pro$/);
+    // O Business também é maior que o Básico, então entra como opção.
+    expect(res.body.upgrades.map(p => p.id)).toEqual(["pro", "business"]);
+  });
+
+  it("plano menor que o ativo: sem alvo, mas com os planos maiores", async () => {
+    const { user, email, cpf } = await createTestUser();
+    await seedLiveSub(user.id, "pro");
+    const res = await request(app).post("/api/public/plan-check").send({ planId: "basic", email, cpf });
+    expect(res.body.decision).toBe("blocked");
+    expect(res.body.targetPlan).toBeNull();
+    expect(res.body.upgrades.map(p => p.id)).toEqual(["business"]);
+  });
+
+  it("quem já está no maior plano só recebe a informação", async () => {
+    const { user, email, cpf } = await createTestUser();
+    await seedLiveSub(user.id, "business");
+    const res = await request(app).post("/api/public/plan-check").send({ planId: "pro", email, cpf });
+    expect(res.body.decision).toBe("blocked");
+    expect(res.body.upgrades).toEqual([]);
+    expect(res.body.targetPlan).toBeNull();
+    expect(res.body.loginUrl).toBeTruthy();
+  });
+
+  it("CPF de outra conta não expõe plano nenhum", async () => {
+    const { cpf } = await createTestUser();
+    const res = await request(app).post("/api/public/plan-check")
+      .send({ planId: "pro", email: uniqueEmail("terceiro"), cpf });
+    expect(res.body.decision).toBe("cpf_taken");
+    expect(res.body.currentPlan).toBeNull();
+    expect(res.body.upgrades).toEqual([]);
+  });
+
+  it("o 409 do checkout traz as mesmas opções do plan-check", async () => {
+    const { user, email, cpf } = await createTestUser();
+    await seedLiveSub(user.id, "basic");
+    const res = await request(app).post("/api/public/checkout").send({ planId: "business", email, cpf });
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe("upgrade_requires_login");
+    expect(res.body.targetPlan.id).toBe("business");
+    expect(res.body.upgrades.map(p => p.id)).toEqual(["pro", "business"]);
+  });
+
+  it("e-mail liberado não recebe opções de upgrade", async () => {
+    const res = await request(app).post("/api/public/plan-check")
+      .send({ planId: "pro", email: uniqueEmail("livre"), cpf: randomCpf() });
+    expect(res.body.decision).toBe("checkout");
+    expect(res.body.upgrades).toBeUndefined();
+  });
+});
+
 describe("Checkout público — criação da sessão", () => {
-  it("e-mail novo gera sessão sem userId, com customer_email e retorno em /bem-vindo", async () => {
+  it("e-mail novo gera sessão sem userId, com customer já criado e retorno em /bem-vindo", async () => {
     const email = uniqueEmail("landing");
     const res = await request(app).post("/api/public/checkout").send({ planId: "pro", email, cpf: randomCpf() });
     expect(res.status).toBe(200);
     expect(res.body.url).toMatch(/^https:\/\/checkout\.stripe\.test\/c\/pro/);
     const call = stripeCalls.createCheckoutSession.at(-1);
     expect(call.userId).toBeUndefined();
-    expect(call.customerId).toBeNull();
-    expect(call.customerEmail).toBe(email);
+    // O Customer é criado antes do Checkout pra o CPF já ser documento fiscal
+    // na primeira fatura — por isso não vai mais customerEmail.
+    expect(call.customerId).toMatch(/^cus_test_/);
+    expect(call.customerEmail).toBeNull();
     expect(call.successUrl).toMatch(/\/bem-vindo\?session_id=/);
     expect(call.metadataExtra.source).toBe("landing");
+  });
+
+  it("reaproveita o customer do Stripe quando o e-mail já tem um", async () => {
+    setStripeMock({ customerByEmail: { id: "cus_existente_landing" } });
+    const res = await request(app).post("/api/public/checkout")
+      .send({ planId: "pro", email: uniqueEmail("recorrente"), cpf: randomCpf() });
+    expect(res.status).toBe(200);
+    expect(stripeCalls.createCheckoutSession.at(-1).customerId).toBe("cus_existente_landing");
   });
 
   it("conta existente sem plano reaproveita o customer e vai com userId", async () => {
@@ -239,6 +310,19 @@ describe("Checkout público — uma conta = um CPF", () => {
     await request(app).post("/api/public/checkout")
       .send({ planId: "pro", email: uniqueEmail("meta"), cpf });
     expect(stripeCalls.createCheckoutSession.at(-1).metadataExtra.pendingCpf).toBe(cpf);
+  });
+
+  it("o CPF vai pro Customer do Stripe, pra virar documento fiscal", async () => {
+    const cpf = randomCpf();
+    await request(app).post("/api/public/checkout")
+      .send({ planId: "pro", email: uniqueEmail("fiscal"), cpf });
+    expect(stripeCalls.getOrCreateCustomer.at(-1).cpf).toBe(cpf);
+  });
+
+  it("conta existente também leva o CPF pro Customer", async () => {
+    const { email, cpf } = await createTestUser();
+    await request(app).post("/api/public/checkout").send({ planId: "basic", email, cpf });
+    expect(stripeCalls.getOrCreateCustomer.at(-1).cpf).toBe(cpf);
   });
 
   it("conta criada pelo pagamento nasce com o CPF gravado", async () => {

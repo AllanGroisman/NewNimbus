@@ -24,6 +24,8 @@ const calls = {
   enabled: 0,
   constructEvent: [],
   getOrCreateCustomer: [],
+  ensureCustomerTaxId: [],
+  findCustomerByEmail: [],
   createCheckoutSession: [],
   createPortalSession: [],
   getCheckoutSession: [],
@@ -60,6 +62,8 @@ let state = {
   // Checkout Session devolvida por getCheckoutSession — é o que o resgate do
   // checkout público (/api/public/claim) lê pra provisionar a conta.
   checkoutSession: null,
+  // Customer devolvido por findCustomerByEmail (checkout público). null = e-mail novo.
+  customerByEmail: null,
   checkoutSessionError: false,
   // Modo ativo do Stripe (test/live) — o mock guarda em memória o que setMode grava.
   mode: "test",
@@ -96,6 +100,7 @@ function reset() {
     shouldFailFetchPrices: false,
     checkoutSession: null,
     checkoutSessionError: false,
+    customerByEmail: null,
     mode: "test",
   };
 }
@@ -129,9 +134,24 @@ const mock = {
     return { mode: state.mode, defaultMode: "test", modes: { test: complete, live: { ...complete } } };
   },
 
-  async getOrCreateCustomer({ userId, email, name, existingCustomerId }) {
-    calls.getOrCreateCustomer.push({ userId, email, name, existingCustomerId });
-    return { id: existingCustomerId || `cus_test_${userId}`, email, name };
+  async getOrCreateCustomer({ userId, email, name, cpf, existingCustomerId }) {
+    calls.getOrCreateCustomer.push({ userId, email, name, cpf: cpf || null, existingCustomerId });
+    // Sem userId (checkout público de quem ainda não tem conta) o id sai do e-mail.
+    const fallback = userId ? `cus_test_${userId}` : `cus_test_${String(email || "anon").replace(/[^a-z0-9]/gi, "_")}`;
+    return { id: existingCustomerId || fallback, email, name };
+  },
+
+  // CPF como documento fiscal (br_cpf) do Customer — no mock só registra.
+  async ensureCustomerTaxId(customerId, cpf) {
+    calls.ensureCustomerTaxId.push({ customerId, cpf });
+    return { id: "txi_test", type: "br_cpf", value: cpf };
+  },
+
+  // Busca por e-mail no checkout público: por padrão não acha nada (Customer
+  // novo). Os testes forçam um existente via __setMock({ customerByEmail }).
+  async findCustomerByEmail(email) {
+    calls.findCustomerByEmail.push({ email });
+    return state.customerByEmail || null;
   },
 
   // customer é null no checkout público (landing) — aí vem customerEmail.

@@ -46,6 +46,9 @@ async function http(method, path, body, { signal } = {}) {
     const err = new Error(detail || `Falha ${method} ${path}`);
     if (code) err.code = code;
     if (extra.retryAfterSeconds) err.retryAfterSeconds = extra.retryAfterSeconds;
+    // Corpo inteiro do erro: respostas como o 409 do checkout público mandam
+    // dados que a tela usa (planos maiores, links) além da mensagem.
+    err.body = extra;
     err.status = res.status;
     throw err;
   }

@@ -1094,7 +1094,16 @@ include __DIR__ . '/header.php';
             </div>
 
             <div class="mt-8 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                <p class="text-xs text-white/40">&copy; 2026 Nimbus Promoções.</p>
+                <p class="text-xs text-white/40">
+                    &copy; 2026 Nimbus Promoções.
+                    <!--
+                    Selo de versao: serve pra confirmar, olhando o rodape do site
+                    publicado, QUAL versao da landing esta no ar. Ao mexer nesta
+                    pagina ou no lead-modal.php, suba a data/numero nos DOIS
+                    arquivos (o modal usa o mesmo valor em NIMBUS_LP_VERSION).
+                    -->
+                    <span class="text-white/40" title="Versão da landing publicada">v2026-07-31.2</span>
+                </p>
                 <!-- TODO: incluir razão social e CNPJ -->
             </div>
         </div>

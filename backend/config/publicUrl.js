@@ -40,6 +40,15 @@ const stripeWelcomeUrl = `${appBase}/bem-vindo?session_id={CHECKOUT_SESSION_ID}`
 const subscribeUrl = (planId) =>
   `${appBase}/assinar?plano=${encodeURIComponent(planId || "")}&cancelado=1`;
 
+// Destino de quem já assina e quer um plano maior: entra na conta e cai na tela
+// de Assinatura com o plano escolhido em destaque, onde a troca cobra só a
+// diferença (POST /api/billing/change-plan) em vez de abrir uma segunda
+// assinatura pro mesmo CPF.
+const upgradeUrl = (planId) =>
+  `${appBase}/assinatura?plano=${encodeURIComponent(planId || "")}`;
+// Entrada genérica do sistema, pra quem não tem opção de upgrade a oferecer.
+const loginUrl = `${appBase}/`;
+
 // Allowlist de CORS: junta PUBLIC_BASE_URL com NIMBUS_CORS_ORIGINS (CSV).
 // Lista vazia = aceita tudo (comportamento de dev mantido em server.js).
 const corsOrigins = [
@@ -55,5 +64,7 @@ module.exports = {
   stripeCancelUrl,
   stripeWelcomeUrl,
   subscribeUrl,
+  upgradeUrl,
+  loginUrl,
   corsOrigins,
 };

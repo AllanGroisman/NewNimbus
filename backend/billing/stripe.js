@@ -12,6 +12,7 @@
 
 const logger = require("../infra/logger");
 const appConfig = require("../config");
+const { normalizeCpf, isValidCpf, formatCpf } = require("../utils/cpf");
 
 const MODES = ["test", "live"];
 const MODE_KEY = "stripe-mode";
@@ -138,18 +139,71 @@ function planFromPrice(priceId) {
 
 // Cria (ou recupera) o Stripe Customer pra um user do Nimbus.
 // userId vai como metadata pra rastrear no dashboard.
-async function getOrCreateCustomer({ userId, email, name, existingCustomerId }) {
+//
+// O CPF entra como documento fiscal (tax ID br_cpf), não só como metadata: é o
+// que faz o número aparecer no cadastro do cliente, nas faturas e nos recibos.
+// Gravamos na criação (tax_id_data) e conferimos no reuso (ensureCustomerTaxId),
+// porque o Customer pode ter nascido antes desta regra.
+async function getOrCreateCustomer({ userId, email, name, cpf, existingCustomerId }) {
+  const digits = normalizeCpf(cpf);
+  const validCpf = isValidCpf(digits) ? digits : null;
+
   if (existingCustomerId) {
-    try { return await client().customers.retrieve(existingCustomerId); }
-    catch (err) {
+    try {
+      const existing = await client().customers.retrieve(existingCustomerId);
+      if (validCpf) await ensureCustomerTaxId(existing.id, validCpf);
+      return existing;
+    } catch (err) {
       logger.warn({ err: err.message, existingCustomerId }, "[stripe] customer retrieve falhou — criando novo");
     }
   }
   return client().customers.create({
     email,
     name,
-    metadata: { nimbusUserId: userId },
+    metadata: { ...(userId ? { nimbusUserId: userId } : {}), ...(validCpf ? { cpf: validCpf } : {}) },
+    ...(validCpf ? { tax_id_data: [{ type: "br_cpf", value: formatCpf(validCpf) }] } : {}),
   });
+}
+
+// Garante que o Customer tenha o CPF como documento fiscal, sem duplicar.
+// Best-effort de propósito: documento fiscal não pode derrubar um pagamento —
+// se o Stripe recusar, o CPF continua no metadata e o log conta o que houve.
+async function ensureCustomerTaxId(customerId, cpf) {
+  const digits = normalizeCpf(cpf);
+  if (!customerId || !isValidCpf(digits)) return null;
+  const c = client();
+  if (!c) return null;
+  try {
+    const { data } = await c.customers.listTaxIds(customerId, { limit: 20 });
+    const already = (data || []).some(
+      t => t.type === "br_cpf" && normalizeCpf(t.value) === digits
+    );
+    if (already) return null;
+    return await c.customers.createTaxId(customerId, {
+      type: "br_cpf",
+      value: formatCpf(digits),
+    });
+  } catch (err) {
+    logger.warn({ err: err.message, customerId }, "[stripe] CPF fiscal não gravado no customer");
+    return null;
+  }
+}
+
+// Procura um Customer pelo e-mail. Usado no checkout público, onde a conta ainda
+// não existe: sem isso, cada tentativa abandonada criaria um Customer novo pro
+// mesmo e-mail.
+async function findCustomerByEmail(email) {
+  const e = String(email || "").trim().toLowerCase();
+  if (!e) return null;
+  const c = client();
+  if (!c) return null;
+  try {
+    const { data } = await c.customers.list({ email: e, limit: 1 });
+    return data?.[0] || null;
+  } catch (err) {
+    logger.warn({ err: err.message }, "[stripe] busca de customer por e-mail falhou");
+    return null;
+  }
 }
 
 // Acerta o email do Customer depois que a pessoa troca o email da conta —
@@ -436,6 +490,8 @@ module.exports = {
   priceFor,
   planFromPrice,
   getOrCreateCustomer,
+  ensureCustomerTaxId,
+  findCustomerByEmail,
   updateCustomerEmail,
   createCheckoutSession,
   getCheckoutSession,

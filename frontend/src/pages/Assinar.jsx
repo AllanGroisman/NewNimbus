@@ -18,6 +18,9 @@ import { isValidCpf, maskCpfInput, normalizeCpf } from "../data/cpf";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PLAN_IDS = ["basic", "pro", "business"];
+// Respostas em que insistir no pagamento não resolve — a saída é entrar na
+// conta (e, quando existe, subir de plano por lá).
+const BLOCK_CODES = ["blocked", "upgrade_requires_login", "cpf_taken", "cpf_mismatch"];
 
 const brl = (v) => (v == null ? null : `R$ ${v.toFixed(2).replace(".", ",")}`);
 
@@ -58,8 +61,16 @@ export default function Assinar({ onGoToLogin }) {
       });
       window.location.assign(url);
     } catch (err) {
-      if (err.code === "blocked" || err.code === "upgrade_requires_login" || err.code === "cpf_taken") {
-        setBlocked({ code: err.code, message: err.message });
+      // Bloqueio: a saída não é pagar de novo. O corpo do 409 traz os planos
+      // maiores que o atual e para onde mandar a pessoa (backend/server.js →
+      // buildBlockedPayload) — é o que a tela renderiza abaixo.
+      if (BLOCK_CODES.includes(err.code)) {
+        setBlocked({
+          code: err.code,
+          message: err.message,
+          upgrades: err.body?.upgrades || [],
+          targetPlan: err.body?.targetPlan || null,
+        });
       } else {
         setError(err.message || "Não foi possível abrir o pagamento");
       }
@@ -101,10 +112,49 @@ export default function Assinar({ onGoToLogin }) {
         {blocked ? (
           <>
             <Alert kind="info">{blocked.message}</Alert>
+
+            {/* Tentou um plano maior do que o que já assina: caminho direto pra
+                troca, que cobra só a diferença em vez de abrir outra assinatura. */}
+            {blocked.targetPlan && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => window.location.assign(blocked.targetPlan.url)}
+                  style={{ width: "100%", padding: 11, borderRadius: 10, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, fontWeight: 500, cursor: "pointer" }}
+                >
+                  Quero assinar o {blocked.targetPlan.label} mesmo assim
+                </button>
+                <div style={{ fontSize: 11, color: "var(--color-text-secondary)", textAlign: "center", marginTop: -4 }}>
+                  Você entra na sua conta e confirma a troca — paga só a diferença.
+                </div>
+              </>
+            )}
+
+            {/* Demais planos maiores que o atual. Vazio = já está no maior. */}
+            {(blocked.upgrades || [])
+              .filter(p => p.id !== blocked.targetPlan?.id)
+              .map(p => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => window.location.assign(p.url)}
+                  style={{ width: "100%", padding: 11, borderRadius: 10, background: "transparent", color: "var(--color-text-primary)", border: `1px solid ${PRIMARY}`, fontSize: 13, fontWeight: 500, cursor: "pointer", display: "flex", justifyContent: "space-between" }}
+                >
+                  <span>{p.label}</span>
+                  {p.priceBRL != null && <span style={{ fontWeight: 400 }}>{brl(p.priceBRL)}/mês</span>}
+                </button>
+              ))}
+
             <button
               type="button"
               onClick={onGoToLogin}
-              style={{ width: "100%", padding: 11, borderRadius: 10, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, fontWeight: 500, cursor: "pointer" }}
+              style={{
+                width: "100%", padding: 11, borderRadius: 10, fontSize: 13, fontWeight: 500, cursor: "pointer",
+                // Com opção de upgrade na tela, entrar é a saída secundária.
+                ...(blocked.targetPlan || (blocked.upgrades || []).length
+                  ? { background: "transparent", color: "var(--color-text-secondary)", border: "0.5px solid var(--color-border-tertiary)" }
+                  : { background: PRIMARY, color: "#fff", border: "none" }),
+              }}
             >
               Entrar na minha conta
             </button>

@@ -410,6 +410,49 @@ const publicCheckoutLimiter = rateLimit({
 
 const SUBSCRIBABLE_PLANS = ["basic", "pro", "business"];
 
+// Bloqueio nunca é beco sem saída: quem já assina recebe, junto da mensagem, o
+// caminho para os planos MAIORES que o dele. Todos apontam para
+// /assinatura?plano=…, onde a troca cobra só a diferença — abrir um checkout
+// novo criaria uma segunda assinatura pro mesmo CPF.
+//
+// Vive aqui, e não em provision.js, porque é a camada que conhece URL pública.
+// Usado pelos DOIS endpoints (plan-check e o 409 do checkout) pra eles nunca
+// divergirem: o popup da landing chama um, a tela /assinar chama o outro.
+async function buildBlockedPayload(decision, planId) {
+  const base = {
+    currentPlan: decision.currentPlan || null,
+    currentPlanLabel: null,
+    upgrades: [],
+    targetPlan: null,
+    loginUrl: publicUrl.loginUrl,
+  };
+  // cpf_taken / cpf_mismatch: a conta dona é de outra pessoa (ou o documento
+  // não confere), então não há plano a comparar nem upgrade a oferecer.
+  if (!decision.currentPlan) return base;
+
+  const catalog = await billing.publicPlans().catch(() => []);
+  const asOption = (id) => {
+    const p = catalog.find(x => x.id === id);
+    return {
+      id,
+      label: p?.label || billing.limits.getPlan(id).label,
+      priceBRL: p?.priceBRL ?? billing.limits.getPlan(id).priceBRL ?? null,
+      url: publicUrl.upgradeUrl(id),
+    };
+  };
+
+  const upgrades = SUBSCRIBABLE_PLANS.filter(id => billing.limits.isUpgrade(decision.currentPlan, id));
+  return {
+    ...base,
+    currentPlanLabel: billing.limits.getPlan(decision.currentPlan).label,
+    // Vazio quando a pessoa já está no maior plano — aí a tela só informa.
+    upgrades: upgrades.map(asOption),
+    // O plano que ela tentou assinar, quando é de fato um upgrade: é o botão
+    // "quero assinar mesmo assim".
+    targetPlan: upgrades.includes(planId) ? asOption(planId) : null,
+  };
+}
+
 // Catálogo pra landing e pra tela /assinar montarem nome e preço sem login.
 app.get("/api/public/plans", async (req, res) => {
   try {
@@ -432,11 +475,16 @@ app.post("/api/public/plan-check", publicCheckoutLimiter, async (req, res) => {
     const d = await billing.provision.decideForSignup({
       planId, email: req.body?.email, cpf: req.body?.cpf,
     });
+    if (d.decision === "checkout") {
+      return res.json({
+        decision: d.decision, message: null, currentPlan: null, trialEligible: d.trialEligible,
+      });
+    }
     res.json({
       decision: d.decision,
       message: d.message || null,
-      currentPlan: d.decision === "checkout" ? null : d.currentPlan,
       trialEligible: d.trialEligible,
+      ...(await buildBlockedPayload(d, planId)),
     });
   } catch (err) {
     logger.error({ err: err.message }, "[public] plan-check falhou");
@@ -478,7 +526,7 @@ app.post("/api/public/checkout", publicCheckoutLimiter, async (req, res) => {
       return res.status(409).json({
         error: d.message,
         code: d.decision,
-        currentPlan: d.currentPlan,
+        ...(await buildBlockedPayload(d, planId)),
       });
     }
     // Trial é 1x por conta — e-mail que já usou paga o valor cheio em vez de
@@ -494,11 +542,23 @@ app.post("/api/public/checkout", publicCheckoutLimiter, async (req, res) => {
         userId: d.user.id,
         email: d.user.email,
         name: d.user.name,
+        cpf,
         existingCustomerId: sub.stripeCustomerId,
       });
       if (!sub.stripeCustomerId) {
         await billing.update(d.user.id, { stripeCustomerId: customer.id });
       }
+    } else {
+      // Sem conta ainda: o Customer é criado AQUI, e não pelo Stripe no fim do
+      // pagamento, porque é a única forma de o CPF já ser documento fiscal na
+      // primeira fatura. A busca por e-mail evita um Customer novo a cada
+      // tentativa abandonada.
+      const existing = await stripeMod.findCustomerByEmail(email);
+      customer = await stripeMod.getOrCreateCustomer({
+        email,
+        cpf,
+        existingCustomerId: existing?.id,
+      });
     }
 
     const session = await stripeMod.createCheckoutSession({
@@ -1105,10 +1165,14 @@ app.post("/api/billing/checkout", auth.requireAuth, async (req, res) => {
     if (withTrial && (sub.trialUsedAt || sub.stripeSubscriptionId)) {
       return res.status(400).json({ error: "Trial já utilizado nesta conta" });
     }
+    // req.user.cpf vem mascarado (publicUser) — o documento fiscal precisa do
+    // número inteiro, então vem do banco.
+    const fullUser = await auth.findById(req.user.id);
     const customer = await stripeMod.getOrCreateCustomer({
       userId: req.user.id,
       email: req.user.email,
       name: req.user.name,
+      cpf: fullUser?.cpf,
       existingCustomerId: sub.stripeCustomerId,
     });
 

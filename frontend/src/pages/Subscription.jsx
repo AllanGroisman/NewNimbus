@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../data/constants";
+import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, popQueryParam } from "../data/constants";
 import Modal from "../components/ui/Modal";
 import { billingMe, billingCheckout, billingPortal, billingDetails, billingReactivate, billingChangePlan } from "../data/api";
 
@@ -92,6 +92,14 @@ export default function PageSubscription() {
   // Detalhes de cobrança (próxima fatura, cartão, histórico) — carrega 1x no
   // mount, separado do status pra não bloquear a página se o Stripe demorar.
   const [details, setDetails] = useState(null);
+  // Plano escolhido lá na landing por quem já assinava (/assinatura?plano=pro).
+  // Serve só pra destacar o card certo — a troca continua sendo um clique da
+  // pessoa, cobrança nenhuma acontece sozinha. Lido uma vez; popQueryParam já
+  // limpa a URL, então um F5 não repete o destaque.
+  const [wantedPlan] = useState(() => {
+    const p = popQueryParam("plano");
+    return PLAN_ORDER.includes(p) ? p : null;
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -242,6 +250,15 @@ export default function PageSubscription() {
       {notice && (
         <div style={{ background: "var(--success-bg)", border: "0.5px solid var(--success-border)", color: "var(--success-text)", padding: 10, borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
           {notice}
+        </div>
+      )}
+
+      {/* Veio da landing querendo um plano maior: a tela explica onde confirmar
+          em vez de deixar a pessoa procurar o card certo. */}
+      {wantedPlan && wantedPlan !== currentPlan && (
+        <div style={{ background: PRIMARY_LIGHT, border: `0.5px solid ${PRIMARY}`, color: PRIMARY_DARK, padding: 10, borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
+          Você escolheu o plano {me.plans?.find(p => p.id === wantedPlan)?.label || PLAN_META[wantedPlan].name} na
+          nossa página. Confirme abaixo — {hasActiveSub ? "você paga só a diferença do que já assina." : "é só escolher e seguir pro pagamento."}
         </div>
       )}
 
@@ -412,6 +429,9 @@ export default function PageSubscription() {
           const price = livePlan?.priceBRL ?? p.price;
           const name = livePlan?.label || p.name;
           const current = currentPlan === id;
+          // Plano que a pessoa escolheu na landing — o card ganha destaque e um
+          // selo, pra ela reconhecer onde confirmar.
+          const wanted = wantedPlan === id && !current;
           // Trial de R$1: só no Básico, só pra quem nunca assinou/trialou.
           const trialOffer = id === "basic" && !!me.trialEligible && me.stripeEnabled && !current;
           const recommended = p.recommended && !current;
@@ -447,19 +467,25 @@ export default function PageSubscription() {
                 display: "flex", flexDirection: "column",
                 // Plano atual fica esmaecido — não dá pra "mudar" pra ele mesmo.
                 opacity: current ? 0.55 : 1,
+                ...(wanted ? { boxShadow: `0 0 0 4px ${PRIMARY_LIGHT}` } : {}),
               }}
             >
+              {wanted && (
+                <div style={{ position: "absolute", top: -10, left: "50%", transform: "translateX(-50%)", background: PRIMARY_DARK, color: "#fff", fontSize: 10, padding: "3px 10px", borderRadius: 6, fontWeight: 600, whiteSpace: "nowrap", letterSpacing: 0.3 }}>
+                  VOCÊ ESCOLHEU
+                </div>
+              )}
               {current && (
                 <div style={{ position: "absolute", top: -10, left: "50%", transform: "translateX(-50%)", background: PRIMARY, color: "#fff", fontSize: 10, padding: "3px 10px", borderRadius: 6, fontWeight: 600, whiteSpace: "nowrap", letterSpacing: 0.3 }}>
                   SEU PLANO
                 </div>
               )}
-              {recommended && !trialOffer && (
+              {recommended && !trialOffer && !wanted && (
                 <div style={{ position: "absolute", top: -10, left: "50%", transform: "translateX(-50%)", background: PRIMARY, color: "#fff", fontSize: 10, padding: "3px 10px", borderRadius: 6, fontWeight: 600, whiteSpace: "nowrap", letterSpacing: 0.3 }}>
                   MAIS POPULAR
                 </div>
               )}
-              {trialOffer && (
+              {trialOffer && !wanted && (
                 <div style={{ position: "absolute", top: -10, left: "50%", transform: "translateX(-50%)", background: "#22C55E", color: "#fff", fontSize: 10, padding: "3px 10px", borderRadius: 6, fontWeight: 600, whiteSpace: "nowrap", letterSpacing: 0.3 }}>
                   15 DIAS POR R$1
                 </div>
@@ -509,7 +535,7 @@ export default function PageSubscription() {
               >
                 {ctaLabel}
               </button>
-              {trialOffer && (
+              {trialOffer && !wanted && (
                 <button
                   onClick={() => startCheckout(id)}
                   disabled={!!busy}

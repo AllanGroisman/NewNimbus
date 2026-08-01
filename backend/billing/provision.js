@@ -164,6 +164,10 @@ async function tagStripeObjects({ customerId, subscriptionId, userId, planId, cp
       await client.customers.update(customerId, {
         metadata: { nimbusUserId: userId, ...(cpf ? { cpf } : {}) },
       });
+      // Rede de segurança do documento fiscal: o checkout já grava o br_cpf,
+      // mas pagamentos que nasceram sem passar por lá (ou Customers antigos)
+      // são acertados aqui. A função é idempotente.
+      if (cpf) await stripe.ensureCustomerTaxId(customerId, cpf);
     }
     if (subscriptionId) {
       await client.subscriptions.update(subscriptionId, {

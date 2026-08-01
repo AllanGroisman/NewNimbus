@@ -134,13 +134,13 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 44. [x] Quero uma maneira facil de trocar entre os produtos do modo teste do stripe e os produto de producao. Ja criei os produtos na producao do stripe.
     Feito junto com a task 42: botao na aba ADMIN > Stripe.
 
-45. [] Tenho uma landpage pra vender o sistema no qual tenho botoes para assinar o sistema. Queia pensar na melhor forma de conduzir o usuario a criar conta, clico la na assinatura desejada e ele ja vai direto ao stripe? Com a assinatura em maos, passando os dados como email por exemplo, uma conta é criada automaticamente e ele recebe o acesso? Ou ele entra como é hoje para criar a conta e so depois faz a assinatura? Ter os dois caminhos? Ter mais algum outro caminho? Quero que me guie para fazer estas escolhas.
+45. [] Quero que os grupos de whatsapp sejam criados com a possibilidade de mandar msg apenas pelos admins do grupo.
 
 46. [] Quero fazer um resumo geral do sistema e criar um arquivo na raiz do projeto que explique didaticamente como esta funcionando. Náo sei exatamente tudo que quero no resumo, mas as tecnologias usadas, onde estao os banco de dados, o que tenho guardado em cada um, quais sao minhas camadas de seguranca, como funciona, como esta arquitetado para expansao caso cresca o numero de usuario, onde e como sao feitos os backups e o que tem neles, um resumo do custo computacional das diferentes partes da arquitetura, etc...
 
 47. [] Pack 3meses ,6 meses e 1 ano nos planos
 
-48. [] Se aumentar o plano, o que deve ser cobrado
+48. [] 
 
 49. [] Fluxo de pagamento com stripe test
 
@@ -151,8 +151,21 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     CPF na primeira entrada. O teste de R$ 1,00 continua só no Bronze — o texto
     da landing que prometia "todos os planos" foi corrigido.
 
-51. [] Adicionar o cpf la no stripe na hora que vai pro pagamento.
+51. [x] Adicionar o cpf la no stripe na hora que vai pro pagamento.
+    O CPF agora é gravado como documento fiscal do cliente no Stripe (tax ID
+    br_cpf), e não só como anotação interna — aparece no cadastro, nas faturas e
+    nos recibos. Como o cliente do Stripe passou a ser criado ANTES do pagamento,
+    o CPF já vale na primeira fatura. Vale para os dois caminhos: quem vem da
+    landing e quem assina por dentro do sistema.
 
-52. [] Se entrar com mesmo email e cpf de uma conta ja criada e com assinatura, aparece a opcao de assinar os planos maiores.
+52. [x] Na LP (index.php) ao tentar assinar o plano de 1 real ou qualquer um dos outros 3, no popup, se entrar com mesmo email e cpf de uma conta ja criada e com assinatura, aparece botoes com as opcoes de assinar os planos maiores. Se for o plano maior apenas informa.
+    O popup mostra os planos maiores que o atual com nome e preço; quem já está
+    no maior plano só recebe a informação e o botão de entrar. A mesma tela vale
+    em /assinar. Quem decide quais planos aparecem é o backend, então a regra
+    mora num lugar só.
 
-53. [] Se entrar com mesmo email e cpf de uma conta ja criada e com assinatura, mas ta tentando assinar uma assinatura maior do que a ativa, aparece mensagem explicando a situacao e um botao "Quero assinar o plano mesmo assim" ou algo do tipo como tu sugerir melhor.
+53. [x] Na LP (index.php) ao tentar assinar o plano de 1 real ou qualquer um dos outros 3, se entrar com mesmo email e cpf de uma conta ja criada e com assinatura, mas ta tentando assinar uma assinatura maior do que a ativa, aparece mensagem explicando a situacao e um botao "Quero assinar o plano mesmo assim" ou algo do tipo como tu sugerir melhor.
+    Botão "Quero assinar o {plano} mesmo assim": leva pro login e cai na tela de
+    Assinatura com o plano escolhido em destaque, onde a troca cobra só a
+    diferença. Não abre um segundo pagamento — duas assinaturas no mesmo CPF
+    seriam cobrança dupla. A confirmação é sempre um clique da pessoa.
