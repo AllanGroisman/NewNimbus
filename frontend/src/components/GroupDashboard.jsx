@@ -902,12 +902,14 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     const useSuffix = selectedIds.length > 1;
     const created = [];
     const errors = [];
+    const warnings = [];
     try {
       for (const numId of selectedIds) {
         const num = numbers.find(n => n.id === numId);
         const name = useSuffix && num ? `${baseName} — ${num.label}` : baseName;
         try {
           const result = await createWAGroup(numId, name, parts);
+          if (result.adminOnly === false) warnings.push(result.name || name);
           const newId = onCreateWhatsappGroup({
             id: result.jid,
             name: result.name,
@@ -925,12 +927,23 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         setGroupInfo(g => ({ ...g, whatsappGroupIds: next }));
         onUpdate(group.id, { whatsappGroupIds: next });
       }
-      if (errors.length > 0) {
-        setCreateWGError(`Falhou em ${errors.length} número(s):\n${errors.join("\n")}`);
-        if (created.length === 0) return;
+      // Grupo criado mas sem conseguir travar o envio só para admins: não é erro
+      // de criação, é aviso — o usuário precisa ajustar na mão no WhatsApp.
+      const msgs = [];
+      if (errors.length > 0) msgs.push(`Falhou em ${errors.length} número(s):\n${errors.join("\n")}`);
+      if (warnings.length > 0) {
+        msgs.push(
+          `Grupo(s) criado(s), mas não foi possível deixar o envio só para admins em: ${warnings.join(", ")}. ` +
+          `Ajuste manualmente no WhatsApp em Configurações do grupo > Enviar mensagens.`
+        );
       }
-      closeAddModal();
+      if (msgs.length > 0) setCreateWGError(msgs.join("\n\n"));
+      if (errors.length > 0 && created.length === 0) return;
+      // Limpa o form antes de manter o modal aberto: o botão de criar fica
+      // desabilitado sem nome, então não dá pra duplicar o grupo sem querer.
       setNewWGForm({ name: "", numberIds: numbers[0]?.id ? [numbers[0].id] : [], participants: "" });
+      if (msgs.length > 0) return;
+      closeAddModal();
     } finally {
       setCreatingWG(false);
     }

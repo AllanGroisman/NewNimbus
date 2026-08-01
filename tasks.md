@@ -134,7 +134,10 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 44. [x] Quero uma maneira facil de trocar entre os produtos do modo teste do stripe e os produto de producao. Ja criei os produtos na producao do stripe.
     Feito junto com a task 42: botao na aba ADMIN > Stripe.
 
-45. [] Quero que os grupos de whatsapp sejam criados com a possibilidade de mandar msg apenas pelos admins do grupo.
+45. [x] Quero que os grupos de whatsapp sejam criados com a possibilidade de mandar msg apenas pelos admins do grupo.
+    Todo grupo criado pelo Nimbus ja nasce com "Enviar mensagens: somente administradores"
+    (groupSettingUpdate announcement logo apos o groupCreate). Vale so para grupos novos; se o
+    WhatsApp recusar a restricao o grupo e criado do mesmo jeito e o modal avisa pra ajustar na mao.
 
 46. [] Quero fazer um resumo geral do sistema e criar um arquivo na raiz do projeto que explique didaticamente como esta funcionando. Náo sei exatamente tudo que quero no resumo, mas as tecnologias usadas, onde estao os banco de dados, o que tenho guardado em cada um, quais sao minhas camadas de seguranca, como funciona, como esta arquitetado para expansao caso cresca o numero de usuario, onde e como sao feitos os backups e o que tem neles, um resumo do custo computacional das diferentes partes da arquitetura, etc...
 
@@ -142,7 +145,12 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 
 48. [] 
 
-49. [] Fluxo de pagamento com stripe test
+49. [] Na landpage:
+    Quando já tem o plano que esta tentando ativo, no é só ntrar na sua conta tem que ter hyperlink na sua conta para logar.
+    Quando clicar no plano maior, ir direto pro stripe ou ter que logar?
+    Ao clicar para fazer upgrade do plano, quero que va para o stripe para realizar a nova compra. No momento ele ta fazendo automatico no proprio site, tem que ir direto la.
+
+
 
 50. [x] Limitar usuario por cpf. Acrescentar essa info em todo fluxo de compra.
     Uma conta = um CPF (`users.cpf` UNIQUE). Os botões da landing abrem um popup
@@ -169,3 +177,5 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     Assinatura com o plano escolhido em destaque, onde a troca cobra só a
     diferença. Não abre um segundo pagamento — duas assinaturas no mesmo CPF
     seriam cobrança dupla. A confirmação é sempre um clique da pessoa.
+
+54. []  Hoje quais emails sao enviados? Quais estao faltando?

@@ -82,7 +82,7 @@ const mock = {
   },
   async createGroup(userId, numberId, name, participants) {
     calls.createGroup.push({ userId, numberId, name, participants });
-    return { id: "fake-group", name, jid: "fake@g.us" };
+    return { id: "fake-group", name, jid: "fake@g.us", adminOnly: true };
   },
   async getInviteLink() { return "https://chat.whatsapp.com/fakeinvite"; },
   async revokeInvite() { return "https://chat.whatsapp.com/fakeinvite-revoked"; },

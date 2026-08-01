@@ -26,6 +26,7 @@ vi.mock("../data/api", () => ({
 }));
 
 import GroupDashboard from "../components/GroupDashboard.jsx";
+import { createWAGroup } from "../data/api";
 
 function makeGroup(overrides = {}) {
   return {
@@ -177,6 +178,44 @@ describe("GroupDashboard — desvincular grupo (aba Grupos)", () => {
     fireEvent.click(botoes[botoes.length - 1]); // o do modal
 
     expect(props.onUpdate).toHaveBeenCalledWith(1, { whatsappGroupIds: [] });
+  });
+});
+
+describe("GroupDashboard — criar grupo com envio só para admins", () => {
+  // Abre o fluxo "adicionar grupo" > "criar grupo novo" e preenche o nome.
+  async function abrirCriacao() {
+    const rendered = renderDashboard({
+      numbers: [{ id: "num-1", label: "Número 1", phone: "5511999999999", status: "connected" }],
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Grupos/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Adicionar primeiro grupo/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Criar grupo novo/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Próximo/ }));
+    fireEvent.change(screen.getByPlaceholderText(/Regional/), { target: { value: "Grupo Novo" } });
+    return rendered;
+  }
+
+  it("adminOnly=false mantém o modal aberto com aviso pra ajustar na mão", async () => {
+    createWAGroup.mockResolvedValue({
+      jid: "wg-novo@g.us", name: "Grupo Novo", inviteLink: null, adminOnly: false, participants: [],
+    });
+    await abrirCriacao();
+    fireEvent.click(screen.getByRole("button", { name: /Criar e vincular/ }));
+
+    await waitFor(() => expect(screen.getByText(/só para admins/i)).toBeInTheDocument());
+    // Modal continua aberto pro usuário ler o aviso
+    expect(screen.getByPlaceholderText(/Regional/)).toBeInTheDocument();
+  });
+
+  it("adminOnly=true fecha o modal sem aviso", async () => {
+    createWAGroup.mockResolvedValue({
+      jid: "wg-novo@g.us", name: "Grupo Novo", inviteLink: null, adminOnly: true, participants: [],
+    });
+    await abrirCriacao();
+    fireEvent.click(screen.getByRole("button", { name: /Criar e vincular/ }));
+
+    await waitFor(() => expect(screen.queryByPlaceholderText(/Regional/)).not.toBeInTheDocument());
+    expect(screen.queryByText(/só para admins/i)).not.toBeInTheDocument();
   });
 });
 

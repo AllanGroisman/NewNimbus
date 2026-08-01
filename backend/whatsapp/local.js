@@ -330,6 +330,18 @@ async function createGroup(userId, numberId, name, participantPhones) {
   const s = ensureConnected(userId, numberId);
   const jids = participantPhones.map(jidFromPhone);
   const result = await s.sock.groupCreate(name, jids);
+
+  // Grupo nasce restrito: só admins mandam mensagem ("announcement").
+  // O criador é admin automaticamente, então a sessão tem permissão. Se falhar,
+  // o grupo continua valendo — só avisamos quem chamou via adminOnly=false.
+  let adminOnly = true;
+  try {
+    await s.sock.groupSettingUpdate(result.id, "announcement");
+  } catch (err) {
+    adminOnly = false;
+    console.warn(`[whatsapp] falha ao restringir envio ao admin no grupo ${result.id}: ${err.message}`);
+  }
+
   let inviteLink = null;
   try {
     const code = await s.sock.groupInviteCode(result.id);
@@ -341,6 +353,7 @@ async function createGroup(userId, numberId, name, participantPhones) {
     jid: result.id,
     name,
     inviteLink,
+    adminOnly,
     participants: participantPhones.map(normalizePhone),
   };
 }
