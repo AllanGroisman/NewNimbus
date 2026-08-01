@@ -9,6 +9,7 @@ const jwt = require("jsonwebtoken");
 const { prisma } = require("../db");
 const appConfig = require("../config");
 const mailer = require("./mailer");
+const emails = require("../notifications/email");
 const { normalizeCpf, isValidCpf, maskCpf } = require("../utils/cpf");
 
 // Limites e regras de input padronizadas (compartilhadas com o frontend via copy).
@@ -26,6 +27,10 @@ const EMAIL_VERIFY_TTL_MS    = 24 * 60 * 60 * 1000; // 24h
 const PASSWORD_RESET_TTL_MS  = 60 * 60 * 1000;     // 1h
 const RESEND_COOLDOWN_MS     = 2 * 60 * 1000;       // 2 min entre reenvios
 const EMAIL_CHANGE_TTL_MS    = 60 * 60 * 1000;      // 1h — igual ao reset de senha
+
+// Janela de silêncio dos avisos de segurança: trocar a senha três vezes seguidas
+// não deve render três e-mails iguais. Vale por (usuário, tipo de aviso).
+const SECURITY_EMAIL_THROTTLE_MS = 10 * 60 * 1000;  // 10 min
 
 function validatePassword(password) {
   const s = String(password || "");
@@ -432,6 +437,11 @@ async function resetPassword({ token, newPassword }) {
   invalidateUser(user.id);
   await syncRole(updated);
   cacheUser(updated);
+  emails.sendAsync(
+    "password_reset_done",
+    { to: updated.email, name: updated.name, userId: updated.id },
+    { throttleMs: SECURITY_EMAIL_THROTTLE_MS },
+  );
   const jwtToken = signToken(updated);
   return { token: jwtToken, user: publicUser(updated) };
 }
@@ -733,6 +743,11 @@ async function changePassword(userId, { currentPassword, newPassword }) {
   });
   invalidateUser(userId);
   cacheUser(updated);
+  emails.sendAsync(
+    "password_changed",
+    { to: updated.email, name: updated.name, userId: updated.id },
+    { throttleMs: SECURITY_EMAIL_THROTTLE_MS },
+  );
   // Token novo pra quem trocou continuar logado — só as OUTRAS sessões caem.
   return { token: signToken(updated) };
 }
@@ -774,6 +789,13 @@ async function requestEmailChange(userId, { password, newEmail }) {
   });
   invalidateUser(userId);
   await mailer.sendEmailChangeEmail({ to: email, name: user.name, token, currentEmail: user.email });
+  // Aviso ao endereço ANTIGO: quem confirma é o novo, mas quem precisa ficar
+  // sabendo — e reagir, se não foi ele — é o dono do endereço atual.
+  emails.sendAsync(
+    "email_change_requested",
+    { to: user.email, name: user.name, userId, newEmail: email },
+    { dedupeKey: `email_change_requested:${userId}:${token}` },
+  );
   return { ok: true, pendingEmail: email };
 }
 
@@ -819,6 +841,11 @@ async function confirmEmailChange(token) {
   // ADMIN_EMAILS é por endereço — trocar de email pode dar (ou tirar) o admin.
   await syncRole(updated);
   cacheUser(updated);
+  emails.sendAsync(
+    "email_changed",
+    { to: user.email, name: updated.name, userId: user.id, newEmail: email },
+    { dedupeKey: `email_changed:${user.id}:${token}` },
+  );
   return { ok: true, user: publicUser(updated), previousEmail: user.email };
 }
 
@@ -879,7 +906,7 @@ async function deleteUser(userId) {
 
 async function adminSetPassword(userId, newPassword) {
   validatePassword(newPassword);
-  await prisma().user.update({
+  const updated = await prisma().user.update({
     where: { id: userId },
     // Admin resetando a senha de alguém encerra as sessões daquela pessoa —
     // é o caminho usado quando se suspeita que a conta foi comprometida.
@@ -892,6 +919,13 @@ async function adminSetPassword(userId, newPassword) {
     throw err;
   });
   invalidateUser(userId);
+  // O dono da conta precisa saber que a senha dele mudou sem ele ter pedido —
+  // é isso que separa um atendimento de suporte de um sequestro de conta.
+  emails.sendAsync(
+    "admin_password_set",
+    { to: updated.email, name: updated.name, userId },
+    { throttleMs: SECURITY_EMAIL_THROTTLE_MS },
+  );
   return true;
 }
 
@@ -933,6 +967,21 @@ async function adminSetSuspended(userId, suspended) {
     throw err;
   });
   invalidateUser(userId);
+  if (suspended) {
+    // suspendedAt na chave: uma segunda suspensão (depois de reativar) é outro
+    // evento e merece outro aviso; repetir a mesma suspensão não.
+    emails.sendAsync(
+      "account_suspended",
+      { to: user.email, name: user.name, userId },
+      { dedupeKey: `account_suspended:${userId}:${user.suspendedAt?.toISOString?.() || ""}` },
+    );
+  } else {
+    emails.sendAsync(
+      "account_reactivated",
+      { to: user.email, name: user.name, userId },
+      { throttleMs: SECURITY_EMAIL_THROTTLE_MS },
+    );
+  }
   return publicUser(user);
 }
 

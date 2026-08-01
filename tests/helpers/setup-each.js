@@ -12,6 +12,7 @@ import "./env.js";
 import { truncateAll, disconnectDb } from "./pg-helpers.js";
 import { reset as resetWa } from "./wa-mock.js";
 import { reset as resetStripe } from "./stripe-mock.js";
+import { reset as resetEmail } from "./email-mock.js";
 
 beforeAll(() => {
   // Reset do flag a cada arquivo — workers compartilham processo? Não, com
@@ -26,6 +27,9 @@ beforeEach(async () => {
   }
   resetWa();
   resetStripe();
+  // O mock do mailer NÃO é resetado aqui de propósito: testes de jornada com
+  // truncate manual contam com os envios acumulados entre os passos.
+  resetEmail();
 });
 
 afterAll(async () => {

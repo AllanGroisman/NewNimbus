@@ -48,6 +48,10 @@ const upgradeUrl = (planId) =>
   `${appBase}/assinatura?plano=${encodeURIComponent(planId || "")}`;
 // Entrada genérica do sistema, pra quem não tem opção de upgrade a oferecer.
 const loginUrl = `${appBase}/`;
+// Tela de Assinatura — destino dos e-mails de cobrança. É lá que mora o botão
+// do Customer Portal; a URL do portal em si não serve pra e-mail porque expira
+// em minutos e é gerada por cliente.
+const billingUrl = `${appBase}/assinatura`;
 
 // Allowlist de CORS: junta PUBLIC_BASE_URL com NIMBUS_CORS_ORIGINS (CSV).
 // Lista vazia = aceita tudo (comportamento de dev mantido em server.js).
@@ -66,5 +70,6 @@ module.exports = {
   subscribeUrl,
   upgradeUrl,
   loginUrl,
+  billingUrl,
   corsOrigins,
 };

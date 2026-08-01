@@ -143,14 +143,46 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 
 47. [] Pack 3meses ,6 meses e 1 ano nos planos
 
-48. [] 
+48. [x] Hoje quais emails sao enviados? Quais estao faltando?
+
+    ANTES existiam 4 e-mails, todos ligados a token: confirmar e-mail no cadastro
+    (mais reenvio manual e pelo admin), redefinir senha, "assinatura ativa — crie
+    sua senha" (compra pela landing) e confirmar novo e-mail na troca. Ficavam
+    todos em backend/auth/mailer.js.
+
+    FALTAVA tudo de cobranca e tudo de seguranca. `invoice.payment_failed` so
+    virava log: o cliente com cartao recusado perdia o acesso depois da carencia
+    de 3 dias sem nunca ter sido avisado. E nenhuma mexida sensivel na conta
+    (senha trocada, admin resetando senha, conta suspensa) avisava o dono.
+
+    AGORA foram acrescentados 16 e-mails, num modulo novo
+    (backend/notifications/email/):
+      Cobranca — pagamento falhou (com a data limite da carencia), pagamento
+      recuperado, plano alterado (dizendo o que foi pausado), cancelamento
+      agendado, cancelamento desfeito, assinatura encerrada, teste acabando
+      (3 dias antes), carencia acabando (24h antes) e acesso pausado.
+      Seguranca — senha alterada, senha redefinida por link, admin redefiniu sua
+      senha, conta suspensa, conta reativada, e dois avisos ao e-mail ANTIGO na
+      troca de e-mail (pedido e troca efetivada).
+
+    Como nao repete: os de cobranca saem so na TRANSICAO de estado da assinatura
+    (backend/billing/notify.js), e toda mensagem passa por uma chave unica na
+    tabela email_log — reentrega de webhook do Stripe e o job de lembretes
+    rodando 4x por dia nao geram e-mail duplicado.
+    Os avisos de "teste acabando" e "carencia acabando" vem de um job proprio
+    (backend/billing/reminders.js) que roda de 6 em 6 horas.
+    Recibo de pagamento nao foi feito de proposito — o Stripe ja manda.
+
+    FICOU DE FORA (vale virar task nova): e-mail de produto espelhando as
+    notificacoes de WhatsApp (sessao caiu, campanha pausada, limite do plano) —
+    hoje so por WhatsApp, e inutil quando o numero que caiu e o de destino; e
+    alertas de admin (backup falhou, erro de sistema) por e-mail como canal
+    reserva, ja que hoje dependem do proprio WhatsApp estar de pe.
 
 49. [] Na landpage:
     Quando já tem o plano que esta tentando ativo, no é só ntrar na sua conta tem que ter hyperlink na sua conta para logar.
     Quando clicar no plano maior, ir direto pro stripe ou ter que logar?
     Ao clicar para fazer upgrade do plano, quero que va para o stripe para realizar a nova compra. No momento ele ta fazendo automatico no proprio site, tem que ir direto la.
-
-
 
 50. [x] Limitar usuario por cpf. Acrescentar essa info em todo fluxo de compra.
     Uma conta = um CPF (`users.cpf` UNIQUE). Os botões da landing abrem um popup
@@ -178,4 +210,3 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     diferença. Não abre um segundo pagamento — duas assinaturas no mesmo CPF
     seriam cobrança dupla. A confirmação é sempre um clique da pessoa.
 
-54. []  Hoje quais emails sao enviados? Quais estao faltando?

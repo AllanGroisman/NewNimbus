@@ -1,34 +1,12 @@
-// Mailer — envia emails transacionais via SMTP (nodemailer).
-// Se SMTP_HOST não estiver configurado, cai em modo console (dev/teste).
+// Mailer — e-mails de TOKEN (verificação, reset, boas-vindas, troca de email).
+// Os avisos transacionais (cobrança, segurança) ficam em notifications/email/.
 //
-// Variáveis de ambiente:
-//   SMTP_HOST     — ex: mail.seudominio.com  (Hostgator: mail.seudominio.com)
-//   SMTP_PORT     — 587 (STARTTLS, default) ou 465 (SSL)
-//   SMTP_SECURE   — "true" para porta 465, omitir/false para 587
-//   SMTP_USER     — email de envio: noreply@seudominio.com
-//   SMTP_PASS     — senha do email
-//   MAIL_FROM     — remetente exibido: "Nimbus <noreply@seudominio.com>"
-//   APP_PUBLIC_URL — base dos links nos emails
-
-const nodemailer = require("nodemailer");
+// O transporte SMTP mora em notifications/email/transport.js — as variáveis de
+// ambiente (SMTP_HOST/PORT/SECURE/USER/PASS, MAIL_FROM) estão documentadas lá.
+// APP_PUBLIC_URL / PUBLIC_BASE_URL define a base dos links daqui.
 
 const { appPublicUrl: APP_PUBLIC_URL } = require("../config/publicUrl");
-const SMTP_CONFIGURED = !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
-
-let _transporter = null;
-function getTransporter() {
-  if (_transporter) return _transporter;
-  _transporter = nodemailer.createTransport({
-    host:   process.env.SMTP_HOST,
-    port:   parseInt(process.env.SMTP_PORT || "587", 10),
-    secure: process.env.SMTP_SECURE === "true",
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-  });
-  return _transporter;
-}
+const transport = require("../notifications/email/transport");
 
 function verifyUrl(token) {
   return `${APP_PUBLIC_URL}/?verify=${encodeURIComponent(token)}`;
@@ -42,33 +20,15 @@ function emailChangeUrl(token) {
   return `${APP_PUBLIC_URL}/?trocaemail=${encodeURIComponent(token)}`;
 }
 
-const MAIL_FROM = () => process.env.MAIL_FROM || `"Nimbus" <${process.env.SMTP_USER || "noreply@nimbus.app"}>`;
-
-// Fallback de quando não há SMTP: em dev imprime o link pra dar pra testar.
-// Em produção o link NÃO vai pro log — ele contém o token de reset, que dá
-// posse da conta, e os logs do PM2 ficam em disco legíveis por muito tempo.
-function logLinkFallback(assunto, to, name, url, validade) {
-  if (process.env.NODE_ENV === "production") {
-    console.warn(`[mailer] SMTP não configurado — ${assunto} para ${to} NÃO foi enviado. Configure SMTP_* no .env.`);
-    return;
-  }
-  console.log("\n────────────────────────────────────────────────────────────────");
-  console.log(`[mailer] ${assunto} → ${to} (${name || "—"})`);
-  console.log(`         Link: ${url}`);
-  console.log(`         (válido por ${validade})`);
-  console.log("────────────────────────────────────────────────────────────────\n");
-}
-
 async function sendVerificationEmail({ to, name, token }) {
   const url = verifyUrl(token);
 
-  if (!SMTP_CONFIGURED) {
-    logLinkFallback("VERIFICAÇÃO DE EMAIL", to, name, url, "24h");
+  if (!transport.smtpConfigured()) {
+    transport.logLinkFallback("VERIFICAÇÃO DE EMAIL", to, name, url, "24h");
     return { ok: true, url };
   }
 
-  await getTransporter().sendMail({
-    from:    MAIL_FROM(),
+  await transport.sendMail({
     to,
     subject: "Confirme seu email — Nimbus",
     html: `
@@ -92,13 +52,12 @@ async function sendVerificationEmail({ to, name, token }) {
 async function sendPasswordResetEmail({ to, name, token }) {
   const url = resetUrl(token);
 
-  if (!SMTP_CONFIGURED) {
-    logLinkFallback("RESET DE SENHA", to, name, url, "1h");
+  if (!transport.smtpConfigured()) {
+    transport.logLinkFallback("RESET DE SENHA", to, name, url, "1h");
     return { ok: true, url };
   }
 
-  await getTransporter().sendMail({
-    from:    MAIL_FROM(),
+  await transport.sendMail({
     to,
     subject: "Redefinir senha — Nimbus",
     html: `
@@ -128,13 +87,12 @@ async function sendWelcomeSetPasswordEmail({ to, name, token, planLabel }) {
   const url = resetUrl(token);
   const plano = planLabel ? ` do plano <strong>${planLabel}</strong>` : "";
 
-  if (!SMTP_CONFIGURED) {
-    logLinkFallback("BOAS-VINDAS / DEFINIR SENHA", to, name, url, "24h");
+  if (!transport.smtpConfigured()) {
+    transport.logLinkFallback("BOAS-VINDAS / DEFINIR SENHA", to, name, url, "24h");
     return { ok: true, url };
   }
 
-  await getTransporter().sendMail({
-    from:    MAIL_FROM(),
+  await transport.sendMail({
     to,
     subject: "Sua assinatura está ativa — crie sua senha | Nimbus",
     html: `
@@ -161,16 +119,17 @@ async function sendWelcomeSetPasswordEmail({ to, name, token, planLabel }) {
 // Confirmação de troca de email. Vai SEMPRE para o endereço novo: é ele que
 // precisa ser provado, e é o clique aqui que efetiva a troca. Se a pessoa
 // digitou errado, este email cai no vazio e a conta continua no email antigo.
+// O endereço ANTIGO recebe um aviso separado (notifications/email, kind
+// "email_change_requested") — ele não confirma nada, só denuncia se não foi ela.
 async function sendEmailChangeEmail({ to, name, token, currentEmail }) {
   const url = emailChangeUrl(token);
 
-  if (!SMTP_CONFIGURED) {
-    logLinkFallback("TROCA DE EMAIL", to, name, url, "1h");
+  if (!transport.smtpConfigured()) {
+    transport.logLinkFallback("TROCA DE EMAIL", to, name, url, "1h");
     return { ok: true, url };
   }
 
-  await getTransporter().sendMail({
-    from:    MAIL_FROM(),
+  await transport.sendMail({
     to,
     subject: "Confirme seu novo email — Nimbus",
     html: `

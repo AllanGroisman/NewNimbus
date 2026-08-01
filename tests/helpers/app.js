@@ -8,10 +8,12 @@ import "./env.js";
 import { installMock, calls as waCalls, reset as resetWa, connect as waConnect } from "./wa-mock.js";
 import { installMock as installStripeMock, calls as stripeCalls, reset as resetStripe, setMock as setStripeMock } from "./stripe-mock.js";
 import { installMock as installMailerMock, calls as mailerCalls, reset as resetMailer } from "./mailer-mock.js";
+import { installMock as installEmailMock, calls as emailCalls, reset as resetEmail, byKind as emailByKind } from "./email-mock.js";
 import { seedSubscription } from "./pg-helpers.js";
 const waMock = installMock();
 const stripeMock = installStripeMock();
 const mailerMock = installMailerMock();
+const emailMock = installEmailMock();
 
 import request from "supertest";
 import path from "path";
@@ -118,4 +120,8 @@ export {
   mailerMock,
   mailerCalls,
   resetMailer,
+  emailMock,
+  emailCalls,
+  resetEmail,
+  emailByKind,
 };

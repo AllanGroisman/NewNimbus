@@ -31,6 +31,28 @@ async function getByUserId(userId) {
   return maskCrossMode(await prisma().subscription.findUnique({ where: { userId } }));
 }
 
+// Linha crua, sem máscara de modo — usada pelos snapshots antes/depois do
+// webhook. Com a máscara, uma assinatura do outro modo apareceria como
+// "free/inactive" e o comparador enxergaria transições que nunca aconteceram
+// (ex.: mandaria "pagamento falhou" só porque o admin trocou o modo do Stripe).
+async function getRawByUserId(userId) {
+  if (!userId) return null;
+  return prisma().subscription.findUnique({ where: { userId } });
+}
+
+// Assinaturas que o job de lembretes precisa olhar: as em teste (pra avisar
+// antes de virar cobrança) e as em atraso (pra avisar antes de o acesso cair).
+// Sem máscara de modo — quem filtra por modo é o reminders.js, que sabe o modo
+// ativo. A tabela tem uma linha por usuário, então não há paginação.
+async function listForReminders() {
+  return prisma().subscription.findMany({
+    where: { status: { in: ["trialing", "past_due", "unpaid"] } },
+    include: {
+      user: { select: { id: true, email: true, name: true, role: true, suspended: true } },
+    },
+  });
+}
+
 async function getByCustomerId(stripeCustomerId) {
   if (!stripeCustomerId) return null;
   return prisma().subscription.findUnique({ where: { stripeCustomerId } });
@@ -149,6 +171,8 @@ async function markWebhookProcessed(eventId, type) {
 
 module.exports = {
   getByUserId,
+  getRawByUserId,
+  listForReminders,
   getByCustomerId,
   getBySubscriptionId,
   getByCheckoutSessionId,

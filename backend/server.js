@@ -28,6 +28,10 @@ const billing = require("./billing");
 const stripeMod = require("./billing/stripe");
 const backupApi = require("./backup/api");
 const backupMonitor = require("./backup/monitor");
+const billingReminders = require("./billing/reminders");
+// O log direto, e não notifications/email: a rota só lê o histórico, e assim
+// continua lendo o banco de verdade mesmo com o módulo de envio mockado.
+const emailLog = require("./notifications/email/log");
 const adminNotifier = require("./notifications/admin-notifier");
 const whatsnimbus = require("./notifications/whatsnimbus");
 
@@ -195,10 +199,21 @@ async function handleStripeEvent(event) {
         const existing = await billing.getByUserId(userId);
         if (!existing?.trialUsedAt) norm.trialUsedAt = new Date();
       }
+      // Snapshots crus antes/depois: é a diferença entre os dois que decide se
+      // o cliente recebe e-mail (cartão falhou, plano mudou, cancelou). Sem
+      // isso, cada reentrega do Stripe viraria um aviso repetido.
+      const before = await billing.getRawByUserId(userId);
       await billing.update(userId, norm);
+      const after = await billing.getRawByUserId(userId);
       // Plano mudou → recalcula o que fica ativo/pausado (downgrade pausa o
       // excedente, upgrade despausa). Nunca derruba o webhook se falhar.
-      await applyPlanLimits(userId);
+      const enforced = await applyPlanLimits(userId);
+      // Awaited, mas nunca lança: o notify engole os próprios erros e o envio
+      // do e-mail em si é fire-and-forget lá dentro. Assim o webhook não vira
+      // 500 (que geraria reentrega) por causa de um aviso.
+      await billing.notify.onSubscriptionChanged({
+        userId, before, after, livemode: event.livemode, planPaused: enforced?.planPaused,
+      });
       return;
     }
     case "customer.subscription.deleted": {
@@ -214,6 +229,11 @@ async function handleStripeEvent(event) {
         });
         // Sem plano = tudo pausado (nada é apagado; volta ao reassinar).
         await applyPlanLimits(existing.userId);
+        // `existing` é o estado ANTES do downgrade pra free — é dele que sai o
+        // nome do plano encerrado no e-mail.
+        await billing.notify.onSubscriptionDeleted({
+          userId: existing.userId, before: existing, livemode: event.livemode,
+        });
       }
       return;
     }
@@ -347,6 +367,10 @@ app.get("/healthz", async (req, res) => {
   // Backup: idade do último dump local/remoto (informativo, não afeta health —
   // o alerta ativo é do backup/monitor.js via WhatsApp de admin)
   checks.backup = backupMonitor.status();
+
+  // Lembretes de cobrança: última varredura (informativo). Se lastRunAt ficar
+  // velho, os avisos de "teste acabando"/"acesso vai cair" pararam de sair.
+  checks.billingReminders = billingReminders.status();
 
   // Admin scraper: status (informativo, não afeta health)
   checks.adminScraper = {
@@ -1732,6 +1756,18 @@ app.post("/api/admin/users/:id/resend-verification", auth.requireAuth, auth.requ
   }
 });
 
+// Histórico de e-mails transacionais de um usuário — responde ao "não recebi o
+// e-mail" do suporte sem precisar abrir o banco. Só metadado: assunto e corpo
+// não são guardados.
+app.get("/api/admin/users/:id/emails", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const items = await emailLog.listByUser(req.params.id, req.query.limit);
+    res.json({ items });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // ────────────────────────────────────────────────────────────────────────
 // Admin — Backups
 // ────────────────────────────────────────────────────────────────────────
@@ -2656,6 +2692,7 @@ async function boot() {
     adminScraper.start();
     scrapTester.start();
     backupMonitor.start();
+    billingReminders.start();
     // Fire-and-forget — falha silenciosa se sessão WA ainda não estiver conectada
     setTimeout(() => {
       adminNotifier.notifySystemOnline().catch(err =>
@@ -2670,6 +2707,7 @@ async function boot() {
     scheduler.stop();
     scrapTester.stop();
     backupMonitor.stop();
+    billingReminders.stop();
     appConfig.stopAutoRefresh();
     server.close(() => console.log("[server] HTTP fechado"));
     try { await appConfig.flush(); } catch {}

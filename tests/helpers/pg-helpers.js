@@ -20,6 +20,7 @@ const { prisma, disconnect } = require(path.join(backendDir, "db.js"));
 const TABLES = [
   "subscriptions",
   "webhook_events",
+  "email_log",
   "group_history",
   "group_queue",
   "group_pending",

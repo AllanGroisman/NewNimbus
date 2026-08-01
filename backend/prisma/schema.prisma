@@ -365,3 +365,25 @@ model WebhookEvent {
   @@index([type])
   @@map("webhook_events")
 }
+
+// Log dos e-mails transacionais (cobrança e segurança). Existe por dois
+// motivos: `dedupeKey` UNIQUE impede o mesmo aviso de sair duas vezes quando o
+// Stripe reentrega um evento ou o job de lembretes roda de novo, e o histórico
+// responde o "não recebi o e-mail" do suporte.
+//
+// Sem FK para User de propósito: apagar a conta apaga em cascade, e o registro
+// de que o e-mail foi enviado precisa sobreviver a isso.
+model EmailLog {
+  id        String    @id @default(uuid())
+  userId    String?
+  kind      String // "payment_failed" | "password_changed" | …
+  dedupeKey String    @unique
+  to        String
+  status    String    @default("pending") // pending | sent | skipped_* | error
+  error     String?
+  createdAt DateTime  @default(now())
+  sentAt    DateTime?
+
+  @@index([userId, kind, createdAt])
+  @@map("email_log")
+}

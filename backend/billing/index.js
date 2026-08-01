@@ -117,4 +117,6 @@ module.exports = {
   // require tardio: provision.js requer ../auth, que não conhece billing —
   // manter aqui embaixo evita surpresa de ordem de carregamento.
   get provision() { return require("./provision"); },
+  // Mesmo motivo do provision: notify.js requer ../auth.
+  get notify() { return require("./notify"); },
 };
