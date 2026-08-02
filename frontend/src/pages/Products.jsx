@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, categoryIcon } from "../data/constants";
-import { adminCatalog, adminScraperConfig, adminRunScraper, adminScraperStatus } from "../data/api";
+import { adminCatalog, adminScraperConfig, adminRunScraper, adminScraperStatus, errText} from "../data/api";
 import { ProductGridCard } from "../components/ui/ProductCard";
 
 const STATUS_POLL_MS = 4000;
@@ -29,7 +29,7 @@ export default function PageProducts() {
         const r = await adminScraperConfig();
         setAvailable(r.available || { categories: [], sources: [] });
       } catch (err) {
-        setError(err.message);
+        setError(errText(err, "Não foi possível carregar os produtos."));
       }
     })();
   }, []);
@@ -52,7 +52,7 @@ export default function PageProducts() {
       setProducts(items);
       setTotal(r.total || 0);
     } catch (err) {
-      setError(err.message);
+      setError(errText(err, "Não foi possível carregar os produtos."));
     } finally {
       setLoading(false);
     }
@@ -89,7 +89,7 @@ export default function PageProducts() {
       await adminRunScraper();
       await refreshStatus();
     } catch (err) {
-      setRunError(err.message);
+      setRunError(errText(err, "Não foi possível carregar os produtos."));
     }
   }
 

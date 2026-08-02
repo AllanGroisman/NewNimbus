@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, storeLockMessage, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, soldText, getGroupCategories, getGroupStats, computeQueueETA, formatETA, formatTimeBR, formatDateBR, isSameDayBR } from "../data/constants";
-import { createWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupQueue, saveGroupQueue, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue } from "../data/api";
+import { createWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupQueue, saveGroupQueue, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue, errText } from "../data/api";
 import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
 import { useUnsavedGuard, useRequestNavigation } from "../data/navGuard";
 import { TOUR_TAB_EVENT } from "../data/onboarding";
 import BusyOverlay from "./ui/BusyOverlay";
+import AlertBanner from "./ui/AlertBanner";
 
 // Persiste a aba aberta por campanha (sobrevive ao F5). Mapa { [groupId]: tabId }
 // num único item de localStorage. Validado contra VALID_TABS pra não restaurar
@@ -243,6 +244,10 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     window.addEventListener(TOUR_TAB_EVENT, onTourTab);
     return () => window.removeEventListener(TOUR_TAB_EVENT, onTourTab);
   }, []);
+  // Erros das ações da campanha (aprovar, rejeitar, limpar, atualizar link).
+  // Eram mostrados no popup nativo do navegador — bloqueante, fora do visual do
+  // resto do app e o pior lugar possível pra cair um "Failed to fetch".
+  const [actionError, setActionError] = useState(null);
   const [sched, setSched] = useState(group.schedule);
   const [scraping, setScraping] = useState(group.scraping);
   const [queue, setQueue] = useState(group.queue);
@@ -332,7 +337,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       });
       setConfirmClearHistory(false);
     } catch (err) {
-      alert(`Erro: ${err.message}`);
+      setActionError(errText(err, "Não foi possível limpar o histórico."));
     } finally {
       setClearingHistory(false);
     }
@@ -955,7 +960,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       const { inviteLink } = await revokeWAInvite(wg.numberId, wg.id);
       onUpdateWhatsappGroup?.(wg.id, { inviteLink });
     } catch (err) {
-      alert(`Erro ao atualizar link: ${err.message}`);
+      setActionError(errText(err, "Não foi possível atualizar o link do grupo."));
     }
   };
 
@@ -1029,7 +1034,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       await approvePendingItem(group.id, p.id ?? p.key);
       await refreshOps();
     } catch (err) {
-      alert(`Erro ao aprovar: ${err.message}`);
+      setActionError(errText(err, "Não foi possível aprovar o produto."));
       await refreshOps();
     }
   };
@@ -1041,7 +1046,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       await rejectPendingItem(group.id, p.id ?? p.key);
       await refreshOps();
     } catch (err) {
-      alert(`Erro ao rejeitar: ${err.message}`);
+      setActionError(errText(err, "Não foi possível rejeitar o produto."));
       await refreshOps();
     }
   };
@@ -1055,7 +1060,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       await approveAllPending(group.id);
       await refreshOps();
     } catch (err) {
-      alert(`Erro ao adicionar todos à fila: ${err.message}`);
+      setActionError(errText(err, "Não foi possível adicionar todos à fila."));
       await refreshOps();
     }
   };
@@ -1066,7 +1071,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       await rejectAllPending(group.id);
       await refreshOps();
     } catch (err) {
-      alert(`Erro ao rejeitar todos: ${err.message}`);
+      setActionError(errText(err, "Não foi possível rejeitar todos os pendentes."));
       await refreshOps();
     }
   };
@@ -1078,7 +1083,10 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     try {
       await saveGroupQueue(group.id, next);
     } catch (err) {
-      console.warn("[nimbus] falha ao salvar a fila:", err.message);
+      console.warn("[nimbus] falha ao salvar a fila:", err.raw || err.message);
+      // A tela já mostrou a fila reordenada — sem este aviso o usuário acredita
+      // que salvou e só descobre no próximo poll, quando a ordem "volta sozinha".
+      setActionError(errText(err, "Não foi possível salvar a ordem da fila. Recarregamos a fila do servidor."));
       try {
         const ops = await loadAppOps();
         const o = (ops.groups || []).find(g => g.id === group.id);
@@ -1226,6 +1234,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         />
       )}
       <button onClick={onBack} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 16, display: "flex", alignItems: "center", gap: 6 }}>&larr; Voltar</button>
+      <AlertBanner tone="error" message={actionError} onDismiss={() => setActionError(null)} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <div>
           <h2 style={{ fontSize: 18, fontWeight: 500, marginBottom: 6 }}>{groupInfo.name}</h2>
@@ -2986,7 +2995,10 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                   await clearGroupQueue(group.id);
                   onUpdate(group.id, { queue: [] });
                 } catch (err) {
-                  console.error("[limpar fila]", err.message);
+                  console.error("[limpar fila]", err.raw || err.message);
+                  // A fila já sumiu da tela; se o servidor recusou, o usuário
+                  // precisa saber — antes o clique não fazia nada visível.
+                  setActionError(errText(err, "Não foi possível limpar a fila no servidor."));
                 }
               }}
               style={{ padding: "8px 16px", borderRadius: 8, background: "#E24B4A", color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}

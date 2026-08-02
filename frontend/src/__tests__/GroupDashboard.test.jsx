@@ -7,6 +7,8 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 // Mock dos imports de api antes de importar o componente
 vi.mock("../data/api", () => ({
+  // errText é helper puro (não faz rede) — usa a implementação de verdade.
+  errText: (err, fallback) => err?.message || fallback,
   createWAGroup: vi.fn(),
   leaveWAGroup: vi.fn(),
   revokeWAInvite: vi.fn(),

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { PRIMARY } from "../data/constants";
 import AuthCard, { Alert } from "../components/ui/AuthCard";
 import { passwordChecks, passwordOk, MIN_PASSWORD, MAX_PASSWORD } from "../data/password";
-import { publicClaim, authSetInitialPassword, setToken } from "../data/api";
+import { publicClaim, authSetInitialPassword, setToken, errText} from "../data/api";
 
 // Volta do Stripe de quem assinou pela landing.
 //
@@ -58,7 +58,7 @@ export default function BemVindo({ onLogin }) {
         else onLogin(r.user);
       })
       .catch(err => {
-        setFatal(err.message || "Não foi possível concluir seu acesso.");
+        setFatal(errText(err, "Não foi possível concluir seu acesso."));
         setStep("error");
       });
   }, [onLogin]);
@@ -74,7 +74,7 @@ export default function BemVindo({ onLogin }) {
       const r = await authSetInitialPassword(password);
       onLogin(r.user || user);
     } catch (err) {
-      setError(err.message || "Falha ao salvar a senha");
+      setError(errText(err, "Falha ao salvar a senha"));
       setSaving(false);
     }
   }

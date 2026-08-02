@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
-import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, TEST_URLS } from "../data/constants";
+import { PRIMARY, TEST_URLS } from "../data/constants";
 import Badge from "../components/ui/Badge";
-import { getAffiliateStatus, saveShopeeAffiliate, clearShopeeAffiliate, testShopeeAffiliate } from "../data/api";
+import { getAffiliateStatus, saveShopeeAffiliate, clearShopeeAffiliate, testShopeeAffiliate, errText } from "../data/api";
+import AlertBanner from "../components/ui/AlertBanner";
 import { TUTORIAL_IDS } from "./Tutoriais";
 
 export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial }) {
@@ -14,14 +15,18 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
   const [testing, setTesting] = useState(false);
   const [testUrl, setTestUrl] = useState(TEST_URLS.shopee);
 
-  useEffect(() => {
+  const [loadError, setLoadError] = useState(null);
+
+  // Ver AffiliateML.jsx: em erro a tela avisa em vez de parecer "nada salvo".
+  const load = () => {
     getAffiliateStatus().then(s => {
+      setLoadError(null);
       setAffStatus(s);
       if (s.shopee?.appId) setAppId(s.shopee.appId);
       if (onAffiliateChange) onAffiliateChange(s);
-    }).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    }).catch(err => setLoadError(errText(err, "Não foi possível carregar sua configuração de afiliado.")));
+  };
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleSave() {
     setSaving(true);
@@ -33,7 +38,7 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
       setAppSecret("");
       setMsg({ type: "ok", text: "Salvo!" });
     } catch (err) {
-      setMsg({ type: "err", text: err.message });
+      setMsg({ type: "err", text: errText(err, "Não foi possível concluir. Tente novamente.") });
     } finally {
       setSaving(false);
     }
@@ -60,7 +65,7 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
       setAffStatus(s);
       if (onAffiliateChange) onAffiliateChange(s);
     } catch (err) {
-      setMsg({ type: "err", text: err.message });
+      setMsg({ type: "err", text: errText(err, "Não foi possível concluir. Tente novamente.") });
     } finally {
       setTesting(false);
     }
@@ -77,7 +82,7 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
       if (onAffiliateChange) onAffiliateChange(s);
       setMsg({ type: "ok", text: "Configuração apagada." });
     } catch (err) {
-      setMsg({ type: "err", text: err.message });
+      setMsg({ type: "err", text: errText(err, "Não foi possível concluir. Tente novamente.") });
     } finally {
       setSaving(false);
     }
@@ -99,6 +104,8 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
       <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 20 }}>
         Configure o programa de afiliados para gerar links curtos com sua tag nos envios.
       </div>
+
+      {loadError && <AlertBanner tone="error" message={loadError} onRetry={load} />}
 
       <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, gap: 8, flexWrap: "wrap" }}>
@@ -173,7 +180,11 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
         )}
 
         {msg && (
-          <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: msg.type === "ok" ? PRIMARY_LIGHT : "var(--danger-bg)", color: msg.type === "ok" ? PRIMARY_DARK : "var(--danger-text)", wordBreak: "break-all" }}>
+          <AlertBanner
+            tone={msg.type === "ok" ? "success" : "error"}
+            onDismiss={() => setMsg(null)}
+            style={{ marginTop: 10, marginBottom: 0, wordBreak: "break-all" }}
+          >
             {msg.text}
             {msg.link && (
               <>
@@ -182,13 +193,13 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
                   href={msg.link}
                   target="_blank"
                   rel="noreferrer"
-                  style={{ color: PRIMARY_DARK, textDecoration: "underline", fontFamily: "monospace" }}
+                  style={{ color: "inherit", textDecoration: "underline", fontFamily: "monospace" }}
                 >
                   {msg.link}
                 </a>
               </>
             )}
-          </div>
+          </AlertBanner>
         )}
 
         <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>

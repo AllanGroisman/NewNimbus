@@ -4,7 +4,7 @@ import Badge from "../components/ui/Badge";
 import Toggle from "../components/ui/Toggle";
 import Modal from "../components/ui/Modal";
 import LogoutConfirmModal from "../components/LogoutConfirmModal";
-import { authUpdate, authChangePassword, accountRequestEmailChange } from "../data/api";
+import { authUpdate, authChangePassword, accountRequestEmailChange, errText} from "../data/api";
 import { useUnsavedGuard } from "../data/navGuard";
 
 // Eventos que o WhatsNimbus (WhatsApp do sistema) pode avisar por DM.
@@ -65,7 +65,7 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
       if (setUser) setUser(r.user);
       setAccountMsg({ type: "ok", text: "Salvo!" });
     } catch (err) {
-      setAccountMsg({ type: "err", text: err.message });
+      setAccountMsg({ type: "err", text: errText(err, "Não foi possível salvar. Tente novamente.") });
     } finally {
       setAccountSaving(false);
     }
@@ -85,7 +85,7 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
       setEmailPwd("");
       setEmailMsg({ type: "ok", text: `Enviamos um link para ${alvo}. Abra o email e confirme — só depois disso o endereço muda.` });
     } catch (err) {
-      setEmailMsg({ type: "err", text: err.message });
+      setEmailMsg({ type: "err", text: errText(err, "Não foi possível salvar. Tente novamente.") });
     } finally {
       setEmailSaving(false);
     }
@@ -101,7 +101,7 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
       setPwd({ current: "", next: "", confirm: "" });
       setShowPasswordModal(false);
     } catch (err) {
-      setPwdMsg({ type: "err", text: err.message });
+      setPwdMsg({ type: "err", text: errText(err, "Não foi possível salvar. Tente novamente.") });
     } finally {
       setPwdSaving(false);
     }

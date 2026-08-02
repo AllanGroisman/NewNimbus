@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, PALETTES, DEFAULT_PALETTE } from "../data/constants";
-import { layoutGet, adminLayoutSave } from "../data/api";
+import { layoutGet, adminLayoutSave, errText} from "../data/api";
 
 const card = {
   background: "var(--color-background-primary)",
@@ -80,7 +80,7 @@ export default function PageAdminLayout() {
       setApplied(sel);
       setMsg({ type: "ok", text: "Paleta aplicada. Vale pra todos os usuários." });
     } catch (err) {
-      setMsg({ type: "err", text: err.message || "Não foi possível salvar." });
+      setMsg({ type: "err", text: errText(err, "Não foi possível salvar.") });
       // Some o que não foi gravado: volta a tela pro estado real do servidor.
       setSel(applied);
     } finally {

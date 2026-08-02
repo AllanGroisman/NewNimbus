@@ -8,6 +8,8 @@ import PageSubscription from "../pages/Subscription.jsx";
 
 // Mock dos módulos de api antes de importar o componente. Vitest hoist `vi.mock`.
 vi.mock("../data/api.js", () => ({
+  // errText é helper puro (não faz rede) — usa a implementação de verdade.
+  errText: (err, fallback) => err?.message || fallback,
   billingMe: vi.fn(),
   billingCheckout: vi.fn(),
   billingPortal: vi.fn(),

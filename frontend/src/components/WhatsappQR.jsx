@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { PRIMARY, PRIMARY_DARK } from "../data/constants";
-import { startWASession, getWASession, deleteWASession } from "../data/api";
+import { startWASession, getWASession, deleteWASession, errText} from "../data/api";
 import Spinner from "./ui/Spinner";
 
 // Inicia (ou retoma) a sessão Baileys do `sessionId` no backend e
@@ -32,7 +32,7 @@ export default function WhatsappQR({ sessionId, onConnected, onError, autoStart 
         if (autoStart) await startWASession(sessionId);
       } catch (err) {
         if (cancelled) return;
-        setState(s => ({ ...s, status: "error", error: err.message }));
+        setState(s => ({ ...s, status: "error", error: errText(err, "Não foi possível conectar o WhatsApp.") }));
         onErrorRef.current?.(err);
         return;
       }
@@ -49,7 +49,7 @@ export default function WhatsappQR({ sessionId, onConnected, onError, autoStart 
             return;
           }
         } catch (err) {
-          if (!cancelled) setState(s => ({ ...s, error: err.message }));
+          if (!cancelled) setState(s => ({ ...s, error: errText(err, "Não foi possível conectar o WhatsApp.") }));
         }
         pollRef.current = setTimeout(tick, 1500);
       };

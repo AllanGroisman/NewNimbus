@@ -17,6 +17,11 @@ module.exports = {
       autorestart: true,
       watch: false,            // não auto-reload em prod
       max_memory_restart: "1G",
+      // Se o boot falha por dependência fora (Redis/Postgres), o PM2 reinicia
+      // em loop. Sem espaçar as tentativas isso vira dezenas de restarts por
+      // segundo enchendo o log; com backoff, ele tenta de novo cada vez mais
+      // devagar (até 15s) e volta sozinho quando a dependência sobe.
+      exp_backoff_restart_delay: 200,
       kill_timeout: 5000,      // dá tempo do scheduler terminar tick atual
       env: {
         NODE_ENV: "production",
@@ -43,6 +48,7 @@ module.exports = {
       autorestart: true,
       watch: false,
       max_memory_restart: "1G",
+      exp_backoff_restart_delay: 200,   // idem: não martelar quando o Redis está fora
       kill_timeout: 8000,      // mais alto: drain do BullMQ Worker pode levar segundos
       env: {
         NODE_ENV: "production",

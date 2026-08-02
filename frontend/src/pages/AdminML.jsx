@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../data/constants";
-import { adminScraperMLFilters, adminScraperMLFiltersSave } from "../data/api";
+import { adminScraperMLFilters, adminScraperMLFiltersSave, errText } from "../data/api";
 import StoreLockCard from "../components/ui/StoreLockCard";
+import AlertBanner from "../components/ui/AlertBanner";
 
 export default function PageAdminML() {
   return (
@@ -18,17 +19,27 @@ export default function PageAdminML() {
   );
 }
 
+const RECOMENDADOS = { minRating: 4.0, minSales: 50, minPrice: 20, maxPrice: 0, maxDiscount: 95, minDiscount: 0 };
+
 function MLFiltersSection() {
   const [filters, setFilters] = useState(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [loadError, setLoadError] = useState(null);
 
-  useEffect(() => {
+  // Se o GET falha, o formulário NÃO é preenchido: antes ele caía nos valores
+  // recomendados, o admin via números plausíveis que não eram os do servidor e
+  // podia salvar por cima da configuração real.
+  const load = () => {
     adminScraperMLFilters()
-      .then(r => setFilters(r.filters))
-      .catch(() => setFilters({ minRating: 4.0, minSales: 50, minPrice: 20, maxPrice: 0, maxDiscount: 95, minDiscount: 0 }));
-  }, []);
+      .then(r => { setLoadError(null); setFilters(r.filters); })
+      .catch(err => setLoadError(errText(err, "Não foi possível carregar os filtros.")));
+  };
+  useEffect(() => { load(); }, []);
 
+  if (loadError) {
+    return <AlertBanner tone="error" message={loadError} onRetry={load} />;
+  }
   if (!filters) {
     return <div style={{ padding: 20, color: "var(--color-text-secondary)", fontSize: 13 }}>Carregando filtros...</div>;
   }
@@ -44,7 +55,7 @@ function MLFiltersSection() {
       setMsg({ type: "ok", text: "Filtros salvos! Próximo scraping vai aplicar." });
       setTimeout(() => setMsg(null), 3000);
     } catch (err) {
-      setMsg({ type: "err", text: err.message });
+      setMsg({ type: "err", text: errText(err, "Não foi possível salvar os filtros.") });
     } finally {
       setSaving(false);
     }
@@ -94,7 +105,7 @@ function MLFiltersSection() {
           {saving ? "Salvando..." : "Salvar filtros"}
         </button>
         <button
-          onClick={() => setFilters({ minRating: 4.0, minSales: 50, minPrice: 20, maxPrice: 0, maxDiscount: 95, minDiscount: 0 })}
+          onClick={() => setFilters({ ...RECOMENDADOS })}
           disabled={saving}
           style={{ padding: "8px 16px", borderRadius: 8, background: "transparent", border: "0.5px solid var(--color-border-secondary)", fontSize: 13, cursor: "pointer" }}
         >

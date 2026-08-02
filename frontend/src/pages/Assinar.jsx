@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { PRIMARY } from "../data/constants";
 import AuthCard, { Alert } from "../components/ui/AuthCard";
-import { publicPlans, publicCheckout } from "../data/api";
+import { publicPlans, publicCheckout, errText} from "../data/api";
 import { isValidCpf, maskCpfInput, normalizeCpf } from "../data/cpf";
 
 // Ponte entre a landing page e o Stripe.
@@ -67,12 +67,12 @@ export default function Assinar({ onGoToLogin }) {
       if (BLOCK_CODES.includes(err.code)) {
         setBlocked({
           code: err.code,
-          message: err.message,
+          message: errText(err, "Não foi possível concluir. Tente novamente."),
           upgrades: err.body?.upgrades || [],
           targetPlan: err.body?.targetPlan || null,
         });
       } else {
-        setError(err.message || "Não foi possível abrir o pagamento");
+        setError(errText(err, "Não foi possível abrir o pagamento"));
       }
       setLoading(false);
     }

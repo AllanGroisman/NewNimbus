@@ -8,6 +8,7 @@ import {
   adminScrapTesterRun,
   adminScrapTesterCancel,
   adminScrapTesterHistory,
+  errText,
 } from "../data/api";
 
 const STATUS_POLL_MS = 5000;
@@ -43,7 +44,7 @@ export default function PageAdminScrapTester() {
       setAvailable(r.available);
       setFieldSpecs(r.fieldSpecs || []);
     } catch (err) {
-      setError(err.message);
+      setError(errText(err, "Não foi possível concluir a ação no testador."));
     }
   }, []);
 
@@ -108,7 +109,7 @@ export default function PageAdminScrapTester() {
       setTimeout(() => setSavedMsg(null), 2000);
       await refreshStatus();
     } catch (err) {
-      setError(err.message);
+      setError(errText(err, "Não foi possível concluir a ação no testador."));
     } finally {
       setSaving(false);
     }
@@ -120,7 +121,7 @@ export default function PageAdminScrapTester() {
       await adminScrapTesterRun();
       await refreshStatus();
     } catch (err) {
-      setError(err.message);
+      setError(errText(err, "Não foi possível concluir a ação no testador."));
     }
   }
 
@@ -132,7 +133,7 @@ export default function PageAdminScrapTester() {
       await refreshStatus();
     } catch (err) {
       setCanceling(false);
-      setError(err.message);
+      setError(errText(err, "Não foi possível concluir a ação no testador."));
     }
   }
 

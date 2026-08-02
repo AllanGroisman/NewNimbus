@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { PRIMARY_DARK } from "../data/constants";
-import { adminRepasseLogs } from "../data/api";
+import { adminRepasseLogs, errText} from "../data/api";
 
 const POLL_MS = 5000;
 
@@ -44,7 +44,7 @@ export default function PageAdminRepasse() {
       setTotal(r.total || 0);
       setError(null);
     } catch (err) {
-      setError(err.message);
+      setError(errText(err, "Não foi possível carregar os repasses."));
     } finally {
       setLoading(false);
     }

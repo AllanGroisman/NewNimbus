@@ -1,3 +1,5 @@
+import { reportSuccess, reportFailure } from "./netStatus.js";
+
 const API_BASE = "";
 const TOKEN_KEY = "nimbus.token";
 const LAST_ACTIVITY_KEY = "nimbus.lastActivity";
@@ -23,7 +25,46 @@ export function setLastActivity(ts) {
   try { localStorage.setItem(LAST_ACTIVITY_KEY, String(ts)); } catch {}
 }
 
-async function http(method, path, body, { signal } = {}) {
+// ─── Erros ──────────────────────────────────────────────────────────────
+// Tudo que sai de http() é um NimbusError com `message` já em português e
+// pronto pra ir na tela. A mensagem técnica original (inglês, nome de host,
+// stack de biblioteca) fica em `raw` — console e Sentry, nunca a interface.
+
+export const MSG_OFFLINE  = "Não foi possível conectar ao Nimbus. Verifique sua conexão ou tente novamente em instantes.";
+export const MSG_INTERNAL = "Algo deu errado do nosso lado. Tente novamente em instantes.";
+export const MSG_REQUEST  = "Não foi possível concluir a ação. Tente novamente.";
+
+export class NimbusError extends Error {
+  constructor(message, { status = 0, code = null, body = {}, offline = false, raw = null, retryAfterSeconds = null } = {}) {
+    super(message);
+    this.name = "NimbusError";
+    this.status = status;
+    this.code = code;
+    // Corpo inteiro do erro: respostas como o 409 do checkout público mandam
+    // dados que a tela usa (planos maiores, links) além da mensagem.
+    this.body = body;
+    this.offline = offline;
+    this.raw = raw || message;
+    if (retryAfterSeconds) this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+// Helper pras telas: mensagem pronta pro usuário, com fallback contextual.
+export function errText(err, fallback = MSG_REQUEST) {
+  return err?.message || fallback;
+}
+
+function offlineError(raw, code = "server_offline", status = 0) {
+  return new NimbusError(MSG_OFFLINE, { status, code, offline: true, raw });
+}
+
+// Timeout do cliente. O nginx corta em 90s (proxy_read_timeout), então as
+// rotas lentas usam um teto maior que o dele — assim quem responde é o nginx,
+// com 504, e a mensagem sai igual à de queda.
+const DEFAULT_TIMEOUT_MS = 30_000;
+const SLOW_TIMEOUT_MS = 100_000;
+
+async function http(method, path, body, { signal, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   const opts = { method, headers: {} };
   const token = getToken();
   if (token) opts.headers["Authorization"] = `Bearer ${token}`;
@@ -31,28 +72,84 @@ async function http(method, path, body, { signal } = {}) {
     opts.headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
   }
-  if (signal) opts.signal = signal;
-  const res = await fetch(`${API_BASE}${path}`, opts);
+
+  // Um controller só, alimentado pelo timeout e pelo abort do chamador (o
+  // botão "cancelar busca" do GroupDashboard). AbortSignal.any não serve aqui
+  // porque precisamos saber *qual* dos dois disparou pra escolher a mensagem.
+  const ctrl = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, timeoutMs);
+  const onCallerAbort = () => ctrl.abort();
+  if (signal) {
+    if (signal.aborted) ctrl.abort();
+    else signal.addEventListener("abort", onCallerAbort);
+  }
+  opts.signal = ctrl.signal;
+
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, opts);
+  } catch (err) {
+    // Cancelamento pedido pela tela: repassa cru (o chamador trata AbortError).
+    if (signal?.aborted) throw err;
+    const failure = timedOut
+      ? offlineError(`timeout ${timeoutMs}ms em ${method} ${path}`, "timeout")
+      // fetch só rejeita com TypeError: backend fora, DNS, CORS, rede caída.
+      : offlineError(`${err?.name || "Error"}: ${err?.message || err} em ${method} ${path}`);
+    reportFailure(failure);
+    throw failure;
+  } finally {
+    clearTimeout(timer);
+    if (signal) signal.removeEventListener("abort", onCallerAbort);
+  }
+
   if (res.status === 401) {
     clearToken();
     // notifica a app que o token caiu
     window.dispatchEvent(new CustomEvent("nimbus:unauthorized"));
   }
+
   if (!res.ok) {
-    let detail = res.statusText;
-    let code = null;
-    let extra = {};
-    try { const j = await res.json(); detail = j.error || j.details || detail; code = j.code || null; extra = j; } catch {}
-    const err = new Error(detail || `Falha ${method} ${path}`);
-    if (code) err.code = code;
-    if (extra.retryAfterSeconds) err.retryAfterSeconds = extra.retryAfterSeconds;
-    // Corpo inteiro do erro: respostas como o 409 do checkout público mandam
-    // dados que a tela usa (planos maiores, links) além da mensagem.
-    err.body = extra;
-    err.status = res.status;
+    let payload = null;
+    try { payload = await res.json(); } catch { /* HTML do nginx ou corpo vazio */ }
+    const detail = payload && typeof payload === "object" ? (payload.error || payload.details) : null;
+    if (detail) {
+      // Erro do backend: a mensagem já vem em português e pronta pro usuário.
+      const err = new NimbusError(detail, {
+        status: res.status,
+        code: payload.code || null,
+        body: payload,
+        retryAfterSeconds: payload.retryAfterSeconds,
+        offline: payload.code === "server_offline",
+      });
+      if (err.offline) reportFailure(err); else reportSuccess();
+      throw err;
+    }
+    // Sem JSON aproveitável. É daqui que vinha o "Bad Gateway" em inglês:
+    // res.statusText nunca vai pra tela, a mensagem sai do status.
+    const offline = res.status === 502 || res.status === 503 || res.status === 504;
+    const message = offline ? MSG_OFFLINE : res.status >= 500 ? MSG_INTERNAL : MSG_REQUEST;
+    const err = new NimbusError(message, {
+      status: res.status,
+      code: offline ? "server_offline" : res.status >= 500 ? "internal" : "request_failed",
+      body: payload && typeof payload === "object" ? payload : {},
+      offline,
+      raw: `${method} ${path} → ${res.status} ${res.statusText || ""}`.trim(),
+    });
+    if (offline) reportFailure(err); else reportSuccess();
     throw err;
   }
-  return res.json();
+
+  reportSuccess();
+  try {
+    return await res.json();
+  } catch (err) {
+    // 2xx com corpo não-JSON (proxy mal configurado, resposta truncada).
+    throw new NimbusError(MSG_INTERNAL, {
+      status: res.status, code: "bad_response",
+      raw: `corpo não-JSON em ${method} ${path}: ${err?.message || err}`,
+    });
+  }
 }
 
 // ─── Auth ──────────────────────────────────────────────────────────────
@@ -126,11 +223,11 @@ export async function sendNextNow(groupId) {
 // Força refill da fila a partir do catálogo (consulta com filtros atuais da campanha).
 // Aceita { signal } pra suportar AbortController do chamador (UI cancelar).
 export async function refillQueueNow(groupId, overrides, { signal } = {}) {
-  return http("POST", `/api/state/groups/${groupId}/refill`, overrides || {}, { signal });
+  return http("POST", `/api/state/groups/${groupId}/refill`, overrides || {}, { signal, timeoutMs: SLOW_TIMEOUT_MS });
 }
 // Busca metadados de uma URL (scraping on-demand) — pré-preenche o form de manual add
 export async function fetchUrlMetadata(url) {
-  return http("POST", "/api/scraper/fetch-url", { url });
+  return http("POST", "/api/scraper/fetch-url", { url }, { timeoutMs: SLOW_TIMEOUT_MS });
 }
 // Adiciona um produto manualmente à fila/pending da campanha.
 // `payload` = { url, overrides: { name, price, originalPrice, discount, img, store, category }, force? }
@@ -262,17 +359,18 @@ export async function authSetInitialPassword(password) {
 export async function getAffiliateStatus()      { return http("GET",    "/api/affiliate"); }
 export async function saveAffiliate(payload)    { return http("PUT",    "/api/affiliate", payload); }
 export async function clearAffiliate()          { return http("DELETE", "/api/affiliate"); }
-export async function testAffiliate(url)        { return http("POST",   "/api/affiliate/test", url ? { url } : {}); }
+// Os testes de afiliado batem no site da loja — usam o teto maior.
+export async function testAffiliate(url)        { return http("POST",   "/api/affiliate/test", url ? { url } : {}, { timeoutMs: SLOW_TIMEOUT_MS }); }
 
 // ─── Afiliados Amazon ──────────────────────────────────────────────────
 export async function saveAmazonAffiliate(tag)  { return http("PUT",    "/api/affiliate/amazon", { tag }); }
 export async function clearAmazonAffiliate()    { return http("DELETE", "/api/affiliate/amazon"); }
-export async function testAmazonAffiliate(url)  { return http("POST",   "/api/affiliate/amazon/test", url ? { url } : {}); }
+export async function testAmazonAffiliate(url)  { return http("POST",   "/api/affiliate/amazon/test", url ? { url } : {}, { timeoutMs: SLOW_TIMEOUT_MS }); }
 
 // ─── Afiliados Shopee ──────────────────────────────────────────────────
 export async function saveShopeeAffiliate({ appId, appSecret }) { return http("PUT",    "/api/affiliate/shopee", { appId, appSecret }); }
 export async function clearShopeeAffiliate()                    { return http("DELETE", "/api/affiliate/shopee"); }
-export async function testShopeeAffiliate(url)                  { return http("POST",   "/api/affiliate/shopee/test", url ? { url } : {}); }
+export async function testShopeeAffiliate(url)                  { return http("POST",   "/api/affiliate/shopee/test", url ? { url } : {}, { timeoutMs: SLOW_TIMEOUT_MS }); }
 
 // ─── Scraping ──────────────────────────────────────────────────────────
 export async function fetchOfertas({ category, minDiscount = 0, minPrice = 0, maxPrice, limit = 50, refresh = false, sources } = {}) {
@@ -348,9 +446,10 @@ export async function adminStripeSetMode(mode)  { return http("PUT", "/api/admin
 // ─── Admin / Backups ───────────────────────────────────────────────────
 export async function adminBackupsLocal()              { return http("GET",    "/api/admin/backups/local"); }
 export async function adminBackupsRemote()             { return http("GET",    "/api/admin/backups/remote"); }
-export async function adminCreateLocalBackup()         { return http("POST",   "/api/admin/backups/local"); }
-export async function adminPushBackup(filename)        { return http("POST",   "/api/admin/backups/push", { filename }); }
-export async function adminRestoreBackup(source, filename) { return http("POST", "/api/admin/backups/restore", { source, filename }); }
+// Dump, upload pro B2 e restore levam minutos — teto maior.
+export async function adminCreateLocalBackup()         { return http("POST",   "/api/admin/backups/local", undefined, { timeoutMs: SLOW_TIMEOUT_MS }); }
+export async function adminPushBackup(filename)        { return http("POST",   "/api/admin/backups/push", { filename }, { timeoutMs: SLOW_TIMEOUT_MS }); }
+export async function adminRestoreBackup(source, filename) { return http("POST", "/api/admin/backups/restore", { source, filename }, { timeoutMs: SLOW_TIMEOUT_MS }); }
 export async function adminDeleteLocalBackup(filename) { return http("DELETE", `/api/admin/backups/local/${encodeURIComponent(filename)}`); }
 export async function adminDeleteRemoteBackup(filename){ return http("DELETE", `/api/admin/backups/remote/${encodeURIComponent(filename)}`); }
 
@@ -363,7 +462,7 @@ export async function adminScraperStatus()       { return http("GET",  "/api/adm
 export async function adminScraperShopee()           { return http("GET",    "/api/admin/scraper/shopee"); }
 export async function adminScraperShopeeSave(body)   { return http("PUT",    "/api/admin/scraper/shopee", body); }
 export async function adminScraperShopeeClear()      { return http("DELETE", "/api/admin/scraper/shopee"); }
-export async function adminScraperShopeeTest(url)    { return http("POST",   "/api/admin/scraper/shopee/test", { url }); }
+export async function adminScraperShopeeTest(url)    { return http("POST",   "/api/admin/scraper/shopee/test", { url }, { timeoutMs: SLOW_TIMEOUT_MS }); }
 export async function adminScraperShopeeFilters()        { return http("GET", "/api/admin/scraper/shopee/filters"); }
 export async function adminScraperShopeeFiltersSave(f)   { return http("PUT", "/api/admin/scraper/shopee/filters", f); }
 export async function adminScraperMLFilters()            { return http("GET", "/api/admin/scraper/ml/filters"); }
@@ -380,7 +479,7 @@ export async function storeLocks()                       { return http("GET", "/
 export async function adminScrapTesterConfig()       { return http("GET",  "/api/admin/scrap-tester/config"); }
 export async function adminScrapTesterSave(cfg)      { return http("PUT",  "/api/admin/scrap-tester/config", cfg); }
 export async function adminScrapTesterStatus()       { return http("GET",  "/api/admin/scrap-tester/status"); }
-export async function adminScrapTesterRun()          { return http("POST", "/api/admin/scrap-tester/run"); }
+export async function adminScrapTesterRun()          { return http("POST", "/api/admin/scrap-tester/run", undefined, { timeoutMs: SLOW_TIMEOUT_MS }); }
 export async function adminScrapTesterCancel()       { return http("POST", "/api/admin/scrap-tester/cancel"); }
 export async function adminScrapTesterHistory()      { return http("GET",  "/api/admin/scrap-tester/history"); }
 export async function adminCatalog({ page = 1, pageSize = 50, category, source, q, sortBy } = {}) {

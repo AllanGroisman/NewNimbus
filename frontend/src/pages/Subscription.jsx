@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, popQueryParam } from "../data/constants";
 import Modal from "../components/ui/Modal";
-import { billingMe, billingCheckout, billingPortal, billingDetails, billingReactivate, billingChangePlan } from "../data/api";
+import { billingMe, billingCheckout, billingPortal, billingDetails, billingReactivate, billingChangePlan, errText} from "../data/api";
 
 const BILLING_POLL_MS = 20 * 1000;
 
@@ -110,7 +110,7 @@ export default function PageSubscription() {
         const data = await billingMe(fresh);
         if (!cancelled) { setMe(data); setError(""); }
       } catch (err) {
-        if (!cancelled) setError(err.message);
+        if (!cancelled) setError(errText(err, "Não foi possível concluir a ação na assinatura."));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -154,7 +154,7 @@ export default function PageSubscription() {
       else window.location.assign(url); // popup bloqueado → segue na mesma aba
     } catch (err) {
       if (win) win.close();
-      setError(err.message);
+      setError(errText(err, "Não foi possível concluir a ação na assinatura."));
     } finally {
       setBusy(null);
     }
@@ -172,7 +172,7 @@ export default function PageSubscription() {
       setNotice(`Plano alterado para ${planName}. A diferença proporcional foi cobrada no cartão cadastrado.`);
       billingDetails().then(setDetails).catch(() => {});
     } catch (err) {
-      setError(err.message);
+      setError(errText(err, "Não foi possível concluir a ação na assinatura."));
     } finally {
       setBusy(null);
     }
@@ -189,7 +189,7 @@ export default function PageSubscription() {
       // Recarrega detalhes — a próxima fatura volta a existir após reativar.
       billingDetails().then(setDetails).catch(() => {});
     } catch (err) {
-      setError(err.message);
+      setError(errText(err, "Não foi possível concluir a ação na assinatura."));
     } finally {
       setBusy(null);
     }
@@ -206,7 +206,7 @@ export default function PageSubscription() {
       else window.location.assign(url); // popup bloqueado → segue na mesma aba
     } catch (err) {
       if (win) win.close();
-      setError(err.message);
+      setError(errText(err, "Não foi possível concluir a ação na assinatura."));
     } finally {
       setBusy(null);
     }

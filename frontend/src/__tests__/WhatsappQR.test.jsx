@@ -8,6 +8,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, act, screen } from "@testing-library/react";
 
 vi.mock("../data/api", () => ({
+  // errText é helper puro (não faz rede) — usa a implementação de verdade.
+  errText: (err, fallback) => err?.message || fallback,
   startWASession: vi.fn().mockResolvedValue({ ok: true }),
   getWASession: vi.fn(),
   deleteWASession: vi.fn().mockResolvedValue({ ok: true }),

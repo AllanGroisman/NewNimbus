@@ -24,6 +24,7 @@ const queueMod = require("./infra/queue");
 const logger = require("./infra/logger");
 const metrics = require("./infra/metrics");
 const sentry = require("./infra/sentry");
+const httpErrors = require("./infra/httpErrors");
 const billing = require("./billing");
 const stripeMod = require("./billing/stripe");
 const backupApi = require("./backup/api");
@@ -153,7 +154,7 @@ app.post(
       metrics.recordWebhook?.(event.type, "error");
       // 500 faz o Stripe reentregar — mas como já marcamos como processed,
       // não vai re-processar. Aceitamos a perda em troca de não loopar.
-      res.status(500).json({ error: err.message });
+      httpErrors.serverError(res, err, { req, ctx: "POST /api/billing/webhook" });
     }
   }
 );
@@ -328,9 +329,17 @@ app.get("/healthz", async (req, res) => {
   }
 
   // Scheduler: ticou recentemente?
-  const sched = scheduler.status();
-  checks.scheduler = sched;
-  if (!sched.healthy && sched.running) healthy = false;
+  // Os .status() abaixo são síncronos, mas se um deles estourar o handler
+  // inteiro cairia no error handler global e viraria um 500 genérico — e quem
+  // monitora precisa do 503 com diagnóstico. Por isso cada um é isolado.
+  try {
+    const sched = scheduler.status();
+    checks.scheduler = sched;
+    if (!sched.healthy && sched.running) healthy = false;
+  } catch (err) {
+    healthy = false;
+    checks.scheduler = { ok: false, error: err.message };
+  }
 
   // WhatsApp: contagem de sessões (não falha health se 0 — válido em deploy novo).
   // Em redis mode, lê do cache de session-status; em memory, lê direto da memória.
@@ -371,18 +380,19 @@ app.get("/healthz", async (req, res) => {
 
   // Backup: idade do último dump local/remoto (informativo, não afeta health —
   // o alerta ativo é do backup/monitor.js via WhatsApp de admin)
-  checks.backup = backupMonitor.status();
+  try { checks.backup = backupMonitor.status(); } catch (err) { checks.backup = { ok: false, error: err.message }; }
 
   // Lembretes de cobrança: última varredura (informativo). Se lastRunAt ficar
   // velho, os avisos de "teste acabando"/"acesso vai cair" pararam de sair.
-  checks.billingReminders = billingReminders.status();
+  try { checks.billingReminders = billingReminders.status(); } catch (err) { checks.billingReminders = { ok: false, error: err.message }; }
 
   // Admin scraper: status (informativo, não afeta health)
-  checks.adminScraper = {
-    running: adminScraper.status().running,
-    lastRun: adminScraper.status().lastRun,
-    lastError: adminScraper.status().lastError,
-  };
+  try {
+    const st = adminScraper.status();
+    checks.adminScraper = { running: st.running, lastRun: st.lastRun, lastError: st.lastError };
+  } catch (err) {
+    checks.adminScraper = { ok: false, error: err.message };
+  }
 
   // /healthz é público (o monitoramento externo precisa alcançar). O detalhe dos
   // checks fica só pra quem chama de dentro: as mensagens de erro do Postgres e
@@ -488,7 +498,7 @@ app.get("/api/public/plans", async (req, res) => {
     res.json({ plans: await billing.publicPlans(), stripeEnabled: stripeMod.enabled() });
   } catch (err) {
     logger.error({ err: err.message }, "[public] plans falhou");
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/public/plans" });
   }
 });
 
@@ -517,7 +527,7 @@ app.post("/api/public/plan-check", publicCheckoutLimiter, async (req, res) => {
     });
   } catch (err) {
     logger.error({ err: err.message }, "[public] plan-check falhou");
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/public/plan-check" });
   }
 });
 
@@ -605,7 +615,7 @@ app.post("/api/public/checkout", publicCheckoutLimiter, async (req, res) => {
   } catch (err) {
     metrics.recordCheckout?.(String(req.body?.planId || "unknown"), "error");
     logger.error({ err: err.message }, "[public] checkout falhou");
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/public/checkout" });
   }
 });
 
@@ -677,7 +687,7 @@ app.post("/api/public/claim", publicCheckoutLimiter, async (req, res) => {
     res.json({ ...issued, needsPassword: !!user.passwordResetToken });
   } catch (err) {
     logger.error({ err: err.message }, "[public] claim falhou");
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/public/claim" });
   }
 });
 
@@ -895,7 +905,7 @@ app.get("/api/state", auth.requireAuth, async (req, res) => {
     }
     res.json(state);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/state" });
   }
 });
 
@@ -960,7 +970,7 @@ app.get("/api/state/ops", auth.requireAuth, async (req, res) => {
   try {
     res.json(await storage.loadOps(req.user.id));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/state/ops" });
   }
 });
 
@@ -1098,7 +1108,7 @@ app.get("/api/billing/me", auth.requireAuth, async (req, res) => {
     }
     res.json({ ...status, usage, stripeEnabled: stripeMod.enabled() });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/billing/me" });
   }
 });
 
@@ -1123,7 +1133,7 @@ app.put("/api/billing/active-selection", auth.requireAuth, async (req, res) => {
     res.json({ ok: true, planPaused: result.planPaused, usage });
   } catch (err) {
     logger.error({ err: err.message }, "[billing] active-selection falhou");
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "PUT /api/billing/active-selection" });
   }
 });
 
@@ -1153,7 +1163,7 @@ app.get("/api/billing/details", auth.requireAuth, async (req, res) => {
     });
   } catch (err) {
     logger.error({ err: err.message }, "[billing] details falhou");
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/billing/details" });
   }
 });
 
@@ -1221,7 +1231,7 @@ app.post("/api/billing/checkout", auth.requireAuth, async (req, res) => {
   } catch (err) {
     metrics.recordCheckout?.(String(req.body?.planId || "unknown"), "error");
     logger.error({ err: err.message }, "[billing] checkout falhou");
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/billing/checkout" });
   }
 });
 
@@ -1255,7 +1265,7 @@ app.post("/api/billing/change-plan", auth.requireAuth, async (req, res) => {
     res.json({ ...status, stripeEnabled: true });
   } catch (err) {
     logger.error({ err: err.message }, "[billing] change-plan falhou");
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/billing/change-plan" });
   }
 });
 
@@ -1272,7 +1282,7 @@ app.post("/api/billing/portal", auth.requireAuth, async (req, res) => {
     res.json({ url: session.url });
   } catch (err) {
     logger.error({ err: err.message }, "[billing] portal falhou");
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/billing/portal" });
   }
 });
 
@@ -1287,7 +1297,7 @@ app.post("/api/billing/sync", auth.requireAuth, async (req, res) => {
     res.json({ ...status, stripeEnabled: true, synced });
   } catch (err) {
     logger.error({ err: err.message }, "[billing] sync falhou");
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/billing/sync" });
   }
 });
 
@@ -1309,7 +1319,7 @@ app.post("/api/billing/reactivate", auth.requireAuth, async (req, res) => {
     res.json({ ...status, stripeEnabled: true });
   } catch (err) {
     logger.error({ err: err.message }, "[billing] reactivate falhou");
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/billing/reactivate" });
   }
 });
 
@@ -1366,7 +1376,7 @@ app.post("/api/affiliate/test", auth.requireAuth, requireStoreUnlocked("ml"), as
     }
     res.json({ ok: true, shortUrl: short });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/affiliate/test", expose: true });
   }
 });
 
@@ -1406,7 +1416,7 @@ app.post("/api/affiliate/amazon/test", auth.requireAuth, requireStoreUnlocked("a
     }
     res.json({ ok: true, shortUrl: short });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/affiliate/amazon/test", expose: true });
   }
 });
 
@@ -1446,7 +1456,7 @@ app.post("/api/affiliate/shopee/test", auth.requireAuth, requireStoreUnlocked("s
     }
     res.json({ ok: true, shortUrl: short });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/affiliate/shopee/test", expose: true });
   }
 });
 
@@ -1678,7 +1688,7 @@ app.get("/api/status", async (req, res) => {
       adminScraper: adminScraper.status(),
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/status" });
   }
 });
 
@@ -1690,7 +1700,7 @@ app.get("/api/admin/users", auth.requireAuth, auth.requireAdmin, async (req, res
   try {
     res.json({ users: await auth.listUsers() });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/users" });
   }
 });
 
@@ -1782,7 +1792,7 @@ app.get("/api/admin/backups/local", auth.requireAuth, auth.requireAdmin, async (
     const items = await backupApi.listLocal();
     res.json({ items });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/backups/local", expose: true });
   }
 });
 
@@ -1791,7 +1801,7 @@ app.get("/api/admin/backups/remote", auth.requireAuth, auth.requireAdmin, async 
     const result = await backupApi.listRemote();
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/backups/remote", expose: true });
   }
 });
 
@@ -1801,7 +1811,7 @@ app.post("/api/admin/backups/local", auth.requireAuth, auth.requireAdmin, async 
     const info = await backupApi.createLocalDump();
     res.json({ ok: true, backup: { name: info.name, size: info.size } });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/admin/backups/local", expose: true });
   }
 });
 
@@ -1813,7 +1823,7 @@ app.post("/api/admin/backups/push", auth.requireAuth, auth.requireAdmin, async (
     await backupApi.uploadToRemote(filename);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/admin/backups/push", expose: true });
   }
 });
 
@@ -1836,7 +1846,7 @@ app.post("/api/admin/backups/restore", auth.requireAuth, auth.requireAdmin, asyn
       catch {}
     }, 1500);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/admin/backups/restore", expose: true });
   }
 });
 
@@ -2137,7 +2147,7 @@ app.get("/api/admin/stores/locks", auth.requireAuth, auth.requireAdmin, async (r
     }
     res.json({ locks, usage });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/stores/locks" });
   }
 });
 
@@ -2200,7 +2210,7 @@ app.post("/api/admin/scraper/shopee/test", auth.requireAuth, auth.requireAdmin, 
     if (!short) return res.status(502).json({ error: "Sem shortLink na resposta — URL pode não ser de produto válido." });
     res.json({ ok: true, shortUrl: short });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/admin/scraper/shopee/test", expose: true });
   }
 });
 
@@ -2233,7 +2243,7 @@ app.get("/api/admin/catalog", auth.requireAuth, auth.requireAdmin, async (req, r
       stats: await catalog.getStats(),
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/catalog" });
   }
 });
 
@@ -2295,7 +2305,7 @@ app.get("/api/admin/repasse/logs", auth.requireAuth, auth.requireAdmin, async (r
 
     res.json({ page, pageSize, total, items });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/repasse/logs" });
   }
 });
 
@@ -2305,7 +2315,7 @@ app.delete("/api/admin/catalog", auth.requireAuth, auth.requireAdmin, async (req
     const r = await catalog.clearAll();
     res.json({ ok: true, removed: r.removed });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "DELETE /api/admin/catalog" });
   }
 });
 
@@ -2322,7 +2332,7 @@ app.get("/api/admin/queue/failed", auth.requireAuth, auth.requireAdmin, async (r
     const items = await queueMod.listFailed({ queue, start, end });
     res.json({ queue, start, end, items });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/queue/failed" });
   }
 });
 
@@ -2483,7 +2493,7 @@ app.get("/api/admin/whatsnimbus", auth.requireAuth, auth.requireAdmin, async (re
   try {
     res.json(await whatsNimbusSnapshot());
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/whatsnimbus" });
   }
 });
 
@@ -2499,7 +2509,7 @@ app.post("/api/admin/whatsnimbus/connect", auth.requireAuth, auth.requireAdmin, 
     res.json(await whatsNimbusSnapshot());
   } catch (err) {
     console.error("[whatsnimbus] connect:", err);
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/admin/whatsnimbus/connect" });
   }
 });
 
@@ -2513,7 +2523,7 @@ app.post("/api/admin/whatsnimbus/finalize", auth.requireAuth, auth.requireAdmin,
     whatsnimbus.writeConfig({ numberId: canonical, phone: canonical, name: name || null, connectedAt: new Date().toISOString() });
     res.json(await whatsNimbusSnapshot());
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/admin/whatsnimbus/finalize" });
   }
 });
 
@@ -2526,7 +2536,7 @@ app.post("/api/admin/whatsnimbus/disconnect", auth.requireAuth, auth.requireAdmi
     whatsnimbus.clearConfig();
     res.json(await whatsNimbusSnapshot());
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/admin/whatsnimbus/disconnect" });
   }
 });
 
@@ -2537,7 +2547,7 @@ app.get("/api/admin/whatsnimbus/groups", auth.requireAuth, auth.requireAdmin, as
     const groups = await wa.listGroups(whatsnimbus.WHATSNIMBUS_USER_ID, cfg.numberId);
     res.json(groups);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/whatsnimbus/groups" });
   }
 });
 
@@ -2550,7 +2560,7 @@ app.get("/api/whatsapp/sessions", auth.requireAuth, async (req, res) => {
   try {
     res.json(await wa.listSessions(req.user.id));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/whatsapp/sessions" });
   }
 });
 
@@ -2579,7 +2589,7 @@ app.post("/api/whatsapp/sessions/:id", auth.requireAuth, async (req, res) => {
     res.json({ ok: true, id: req.params.id, status: s?.status });
   } catch (err) {
     console.error("[whatsapp] startSession:", err);
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/whatsapp/sessions/:id" });
   }
 });
 
@@ -2595,7 +2605,7 @@ app.get("/api/whatsapp/sessions/:id", auth.requireAuth, async (req, res) => {
       lastError: s.lastError || null,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/whatsapp/sessions/:id" });
   }
 });
 
@@ -2604,7 +2614,7 @@ app.delete("/api/whatsapp/sessions/:id", auth.requireAuth, async (req, res) => {
     await wa.deleteSession(req.user.id, req.params.id);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "DELETE /api/whatsapp/sessions/:id" });
   }
 });
 
@@ -2613,7 +2623,7 @@ app.get("/api/whatsapp/sessions/:id/groups", auth.requireAuth, async (req, res) 
     const groups = await wa.listGroups(req.user.id, req.params.id);
     res.json(groups);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/whatsapp/sessions/:id/groups" });
   }
 });
 
@@ -2636,7 +2646,7 @@ app.post("/api/whatsapp/sessions/:id/groups", auth.requireAuth, async (req, res)
     res.json(group);
   } catch (err) {
     console.error("[whatsapp] createGroup:", err);
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/whatsapp/sessions/:id/groups" });
   }
 });
 
@@ -2645,7 +2655,7 @@ app.get("/api/whatsapp/sessions/:id/groups/:jid/invite", auth.requireAuth, async
     const inviteLink = await wa.getInviteLink(req.user.id, req.params.id, req.params.jid);
     res.json({ inviteLink });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/whatsapp/sessions/:id/groups/:jid/invite" });
   }
 });
 
@@ -2654,7 +2664,7 @@ app.post("/api/whatsapp/sessions/:id/groups/:jid/invite/revoke", auth.requireAut
     const inviteLink = await wa.revokeInvite(req.user.id, req.params.id, req.params.jid);
     res.json({ inviteLink });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/whatsapp/sessions/:id/groups/:jid/invite/revoke" });
   }
 });
 
@@ -2663,7 +2673,7 @@ app.delete("/api/whatsapp/sessions/:id/groups/:jid", auth.requireAuth, async (re
     await wa.leaveGroup(req.user.id, req.params.id, req.params.jid);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "DELETE /api/whatsapp/sessions/:id/groups/:jid" });
   }
 });
 
@@ -2680,7 +2690,7 @@ app.post("/api/whatsapp/sessions/:id/send", auth.requireAuth, requireActiveSubsc
     res.json({ ok: true });
   } catch (err) {
     console.error("[whatsapp] send:", err.message);
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/whatsapp/sessions/:id/send" });
   }
 });
 
@@ -2710,9 +2720,16 @@ app.post("/api/whatsapp/sessions/:id/broadcast", auth.requireAuth, requireActive
     res.json({ ok: true, results });
   } catch (err) {
     console.error("[whatsapp] broadcast:", err.message);
-    res.status(500).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/whatsapp/sessions/:id/broadcast" });
   }
 });
+
+// ────────────────────────────────────────────────────────────────────────
+// 404 e tratador de erro global. Precisam vir DEPOIS de todas as rotas.
+// Sem eles, uma rota async que rejeitasse fora de try/catch caía no handler
+// default do Express, que responde HTML — e o frontend, esperando JSON,
+// mostrava "Bad Gateway"/stack trace pro usuário.
+httpErrors.install(app);
 
 // ────────────────────────────────────────────────────────────────────────
 

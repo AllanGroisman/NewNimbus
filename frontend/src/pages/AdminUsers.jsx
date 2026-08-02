@@ -12,6 +12,7 @@ import {
   adminResendUserVerification,
   adminGetRegistration,
   adminSetRegistration,
+  errText,
 } from "../data/api";
 
 const USERS_POLL_MS = 20 * 1000;
@@ -60,7 +61,7 @@ export default function PageAdminUsers({ currentUser }) {
       setUsers(r.users || []);
       setRegBlocked(!!reg.blocked);
     } catch (err) {
-      setError(err.message);
+      setError(errText(err, "Não foi possível concluir a ação. Tente novamente."));
     } finally {
       setLoading(false);
     }
@@ -100,7 +101,7 @@ export default function PageAdminUsers({ currentUser }) {
       const r = await adminSetRegistration(next);
       setRegBlocked(!!r.blocked);
     } catch (err) {
-      setError(err.message);
+      setError(errText(err, "Não foi possível concluir a ação. Tente novamente."));
     } finally {
       setRegBusy(false);
     }
@@ -109,7 +110,7 @@ export default function PageAdminUsers({ currentUser }) {
   async function withBusy(userId, fn) {
     setBusy(b => ({ ...b, [userId]: true }));
     try { await fn(); await refresh(); }
-    catch (err) { setError(err.message); }
+    catch (err) { setError(errText(err, "Não foi possível concluir a ação. Tente novamente.")); }
     finally { setBusy(b => ({ ...b, [userId]: false })); }
   }
 
@@ -128,7 +129,7 @@ export default function PageAdminUsers({ currentUser }) {
       setPwdUser(null);
       setNewPwd("");
     } catch (err) {
-      setPwdError(err.message);
+      setPwdError(errText(err, "Não foi possível concluir a ação. Tente novamente."));
     } finally {
       setSavingPwd(false);
     }

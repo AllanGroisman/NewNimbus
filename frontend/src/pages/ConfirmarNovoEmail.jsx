@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { PRIMARY } from "../data/constants";
 import AuthCard, { Alert } from "../components/ui/AuthCard";
-import { accountConfirmEmailChange } from "../data/api";
+import { accountConfirmEmailChange, errText} from "../data/api";
 
 // Destino do link "confirmar novo email". Roda solta, antes de qualquer gate do
 // painel: a pessoa pode abrir o email em outro navegador, ou estar logada aqui
@@ -18,7 +18,7 @@ export default function ConfirmarNovoEmail({ token, onDone }) {
     enviado.current = true;
     accountConfirmEmailChange(token)
       .then(r => setState({ status: "ok", email: r.user?.email }))
-      .catch(err => setState({ status: "erro", text: err.message || "Não foi possível confirmar o email" }));
+      .catch(err => setState({ status: "erro", text: errText(err, "Não foi possível confirmar o email") }));
   }, [token]);
 
   return (

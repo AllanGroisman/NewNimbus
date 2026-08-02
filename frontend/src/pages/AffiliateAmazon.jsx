@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
-import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, TEST_URLS } from "../data/constants";
+import { PRIMARY, TEST_URLS } from "../data/constants";
 import Badge from "../components/ui/Badge";
-import { getAffiliateStatus, saveAmazonAffiliate, clearAmazonAffiliate, testAmazonAffiliate } from "../data/api";
+import { getAffiliateStatus, saveAmazonAffiliate, clearAmazonAffiliate, testAmazonAffiliate, errText } from "../data/api";
+import AlertBanner from "../components/ui/AlertBanner";
 import { TUTORIAL_IDS } from "./Tutoriais";
 
 export default function PageAffiliateAmazon({ onAffiliateChange, onOpenTutorial }) {
@@ -12,14 +13,18 @@ export default function PageAffiliateAmazon({ onAffiliateChange, onOpenTutorial 
   const [amzTesting, setAmzTesting] = useState(false);
   const [amzTestUrl, setAmzTestUrl] = useState(TEST_URLS.amazon);
 
-  useEffect(() => {
+  const [loadError, setLoadError] = useState(null);
+
+  // Ver AffiliateML.jsx: em erro a tela avisa em vez de parecer "nada salvo".
+  const load = () => {
     getAffiliateStatus().then(s => {
+      setLoadError(null);
       setAffStatus(s);
       if (s.amazon?.tag) setAmzTag(s.amazon.tag);
       if (onAffiliateChange) onAffiliateChange(s);
-    }).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    }).catch(err => setLoadError(errText(err, "Não foi possível carregar sua configuração de afiliado.")));
+  };
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleSave() {
     setAmzSaving(true);
@@ -30,7 +35,7 @@ export default function PageAffiliateAmazon({ onAffiliateChange, onOpenTutorial 
       if (onAffiliateChange) onAffiliateChange(s);
       setAmzMsg({ type: "ok", text: "Salvo!" });
     } catch (err) {
-      setAmzMsg({ type: "err", text: err.message });
+      setAmzMsg({ type: "err", text: errText(err, "Não foi possível concluir. Tente novamente.") });
     } finally {
       setAmzSaving(false);
     }
@@ -57,7 +62,7 @@ export default function PageAffiliateAmazon({ onAffiliateChange, onOpenTutorial 
       setAffStatus(s);
       if (onAffiliateChange) onAffiliateChange(s);
     } catch (err) {
-      setAmzMsg({ type: "err", text: err.message });
+      setAmzMsg({ type: "err", text: errText(err, "Não foi possível concluir. Tente novamente.") });
     } finally {
       setAmzTesting(false);
     }
@@ -73,7 +78,7 @@ export default function PageAffiliateAmazon({ onAffiliateChange, onOpenTutorial 
       if (onAffiliateChange) onAffiliateChange(s);
       setAmzMsg({ type: "ok", text: "Configuração apagada." });
     } catch (err) {
-      setAmzMsg({ type: "err", text: err.message });
+      setAmzMsg({ type: "err", text: errText(err, "Não foi possível concluir. Tente novamente.") });
     } finally {
       setAmzSaving(false);
     }
@@ -95,6 +100,8 @@ export default function PageAffiliateAmazon({ onAffiliateChange, onOpenTutorial 
       <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 20 }}>
         Configure o programa de afiliados para gerar links curtos com sua TAG nos envios.
       </div>
+
+      {loadError && <AlertBanner tone="error" message={loadError} onRetry={load} />}
 
       <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, gap: 8, flexWrap: "wrap" }}>
@@ -143,7 +150,11 @@ export default function PageAffiliateAmazon({ onAffiliateChange, onOpenTutorial 
         )}
 
         {amzMsg && (
-          <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: amzMsg.type === "ok" ? PRIMARY_LIGHT : "var(--danger-bg)", color: amzMsg.type === "ok" ? PRIMARY_DARK : "var(--danger-text)", wordBreak: "break-all" }}>
+          <AlertBanner
+            tone={amzMsg.type === "ok" ? "success" : "error"}
+            onDismiss={() => setAmzMsg(null)}
+            style={{ marginTop: 10, marginBottom: 0, wordBreak: "break-all" }}
+          >
             {amzMsg.text}
             {amzMsg.link && (
               <>
@@ -152,13 +163,13 @@ export default function PageAffiliateAmazon({ onAffiliateChange, onOpenTutorial 
                   href={amzMsg.link}
                   target="_blank"
                   rel="noreferrer"
-                  style={{ color: PRIMARY_DARK, textDecoration: "underline", fontFamily: "monospace" }}
+                  style={{ color: "inherit", textDecoration: "underline", fontFamily: "monospace" }}
                 >
                   {amzMsg.link}
                 </a>
               </>
             )}
-          </div>
+          </AlertBanner>
         )}
 
         <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>

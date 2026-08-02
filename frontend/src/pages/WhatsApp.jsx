@@ -5,7 +5,7 @@ import UsageBadge from "../components/ui/UsageBadge";
 import Modal from "../components/ui/Modal";
 import Spinner from "../components/ui/Spinner";
 import WhatsappQR from "../components/WhatsappQR";
-import { deleteWASession, listWASessions } from "../data/api";
+import { deleteWASession, listWASessions, errText} from "../data/api";
 
 const STATUS_POLL_MS = 8000;
 
@@ -110,7 +110,7 @@ export default function PageWhatsApp({
     try {
       await deleteWASession(id);
     } catch (err) {
-      setActionError(err.message || "Não foi possível desconectar no servidor. Tente novamente.");
+      setActionError(errText(err, "Não foi possível desconectar no servidor. Tente novamente."));
       return;
     }
     setNumbers(ns => ns.map(n => n.id === id ? { ...n, status: "disconnected", lastActivity: "—" } : n));
@@ -124,7 +124,7 @@ export default function PageWhatsApp({
     try {
       await deleteWASession(id);
     } catch (err) {
-      setActionError(err.message || "Não foi possível remover a sessão no servidor. Tente novamente.");
+      setActionError(errText(err, "Não foi possível remover a sessão no servidor. Tente novamente."));
       return;
     }
     onRemoveNumber?.(id);
@@ -142,7 +142,7 @@ export default function PageWhatsApp({
     try {
       await deleteWASession(id);
     } catch (err) {
-      setActionError(err.message || "Não foi possível limpar a sessão anterior no servidor. Tente novamente.");
+      setActionError(errText(err, "Não foi possível limpar a sessão anterior no servidor. Tente novamente."));
       return;
     }
     setPendingNumberId(id);
@@ -199,7 +199,7 @@ export default function PageWhatsApp({
       try {
         await deleteWASession(pendingNumberId);
       } catch (err) {
-        setActionError((err.message || "Não foi possível limpar a sessão pendente no servidor.") + " Pode ter sobrado uma sessão pendente — verifique antes de tentar de novo.");
+        setActionError((errText(err, "Não foi possível limpar a sessão pendente no servidor.")) + " Pode ter sobrado uma sessão pendente — verifique antes de tentar de novo.");
       }
     }
     setShowQR(null);

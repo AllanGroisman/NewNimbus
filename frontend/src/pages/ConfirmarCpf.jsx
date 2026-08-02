@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { PRIMARY } from "../data/constants";
 import AuthCard, { Alert } from "../components/ui/AuthCard";
-import { accountSetCpf } from "../data/api";
+import { accountSetCpf, errText} from "../data/api";
 import { isValidCpf, maskCpfInput, normalizeCpf } from "../data/cpf";
 
 // Uma conta = um CPF. Quem assina pela landing informa o documento antes de
@@ -23,7 +23,7 @@ export default function ConfirmarCpf({ user, onDone, onLogout }) {
       const r = await accountSetCpf(clean);
       onDone(r.user);
     } catch (err) {
-      setError(err.message || "Não foi possível salvar o CPF");
+      setError(errText(err, "Não foi possível salvar o CPF"));
       setLoading(false);
     }
   }

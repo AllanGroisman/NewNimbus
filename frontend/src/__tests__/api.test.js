@@ -12,6 +12,8 @@ import {
   adminScraperAmazonFilters, adminScraperAmazonFiltersSave,
   adminScraperShopeeFilters, adminScraperShopeeFiltersSave,
   getAffiliateStatus, saveAffiliate, clearAffiliate,
+  refillQueueNow,
+  NimbusError, errText, MSG_OFFLINE, MSG_INTERNAL,
 } from "../data/api.js";
 
 function makeResponse({ status = 200, body = {}, ok } = {}) {
@@ -87,12 +89,16 @@ describe("http() — tratamento de erros", () => {
     await expect(authMe()).rejects.toThrow(/bad request msg/);
   });
 
-  it("4xx sem body.error joga Error com statusText", async () => {
+  it("500 sem body.error vira mensagem genérica em português (nunca o statusText)", async () => {
     fetch.mockResolvedValueOnce({
-      status: 500, statusText: "Internal", ok: false,
+      status: 500, statusText: "Internal Server Error", ok: false,
       json: async () => { throw new Error("invalid json"); },
     });
-    await expect(authMe()).rejects.toThrow(/Internal|Falha/);
+    const err = await authMe().catch((e) => e);
+    expect(err.message).toBe(MSG_INTERNAL);
+    expect(err.message).not.toMatch(/Internal Server Error/);
+    expect(err.code).toBe("internal");
+    expect(err.offline).toBe(false);
   });
 
   it("402 (plan-gating) também joga Error", async () => {
@@ -100,6 +106,98 @@ describe("http() — tratamento de erros", () => {
       status: 402, body: { error: "limite", limit: 1, current: 2, planRequired: "pro" }
     }));
     await expect(saveAppState({})).rejects.toThrow(/limite/);
+  });
+
+  it("402/409 preservam body e code pras telas que dependem deles", async () => {
+    fetch.mockResolvedValueOnce(makeResponse({
+      status: 402, body: { error: "limite", code: "plan_limit", limit: 1, current: 2, planRequired: "pro" }
+    }));
+    const err = await saveAppState({}).catch((e) => e);
+    expect(err.status).toBe(402);
+    expect(err.code).toBe("plan_limit");
+    expect(err.body.planRequired).toBe("pro");
+  });
+
+  it("retryAfterSeconds continua chegando na tela (cooldown de reenvio)", async () => {
+    fetch.mockResolvedValueOnce(makeResponse({
+      status: 429, body: { error: "Aguarde", code: "resend_cooldown", retryAfterSeconds: 42 }
+    }));
+    const err = await authMe().catch((e) => e);
+    expect(err.retryAfterSeconds).toBe(42);
+  });
+});
+
+describe("http() — sistema fora do ar", () => {
+  it("backend caído (fetch rejeita com TypeError) vira mensagem de conexão", async () => {
+    fetch.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const err = await authMe().catch((e) => e);
+    expect(err).toBeInstanceOf(NimbusError);
+    expect(err.message).toBe(MSG_OFFLINE);
+    expect(err.offline).toBe(true);
+    expect(err.code).toBe("server_offline");
+    // A mensagem técnica fica guardada, mas fora da tela.
+    expect(err.raw).toMatch(/Failed to fetch/);
+    expect(err.message).not.toMatch(/fetch/);
+  });
+
+  it('502 com HTML do nginx NÃO mostra "Bad Gateway" ao usuário', async () => {
+    fetch.mockResolvedValueOnce({
+      status: 502, statusText: "Bad Gateway", ok: false,
+      json: async () => { throw new SyntaxError("Unexpected token '<'"); },
+    });
+    const err = await loadAppState().catch((e) => e);
+    expect(err.message).toBe(MSG_OFFLINE);
+    expect(err.message).not.toMatch(/Bad Gateway/i);
+    expect(err.offline).toBe(true);
+  });
+
+  it("503 do error_page do nginx (JSON com code server_offline) é tratado como offline", async () => {
+    fetch.mockResolvedValueOnce(makeResponse({
+      status: 503, body: { error: "O Nimbus está temporariamente indisponível.", code: "server_offline" }
+    }));
+    const err = await loadAppState().catch((e) => e);
+    expect(err.offline).toBe(true);
+    expect(err.code).toBe("server_offline");
+  });
+
+  it("504 (gateway timeout) também vira mensagem de conexão", async () => {
+    fetch.mockResolvedValueOnce({
+      status: 504, statusText: "Gateway Time-out", ok: false,
+      json: async () => { throw new SyntaxError("html"); },
+    });
+    const err = await loadAppState().catch((e) => e);
+    expect(err.message).toBe(MSG_OFFLINE);
+    expect(err.message).not.toMatch(/Time-out/i);
+  });
+
+  it("200 com corpo não-JSON não estoura SyntaxError cru", async () => {
+    fetch.mockResolvedValueOnce({
+      status: 200, statusText: "OK", ok: true,
+      json: async () => { throw new SyntaxError("Unexpected token '<'"); },
+    });
+    const err = await loadAppState().catch((e) => e);
+    expect(err).toBeInstanceOf(NimbusError);
+    expect(err.code).toBe("bad_response");
+    expect(err.message).toBe(MSG_INTERNAL);
+  });
+
+  it("cancelamento do chamador (AbortController da tela) é repassado cru", async () => {
+    const ctrl = new AbortController();
+    fetch.mockImplementationOnce(() => {
+      ctrl.abort();
+      const e = new Error("aborted");
+      e.name = "AbortError";
+      return Promise.reject(e);
+    });
+    const err = await refillQueueNow("g1", {}, { signal: ctrl.signal }).catch((e) => e);
+    expect(err.name).toBe("AbortError");
+    expect(err).not.toBeInstanceOf(NimbusError);
+  });
+
+  it("errText devolve fallback quando o erro não tem mensagem", () => {
+    expect(errText(new NimbusError("erro do backend"), "fallback")).toBe("erro do backend");
+    expect(errText(null, "fallback")).toBe("fallback");
+    expect(errText({}, "fallback")).toBe("fallback");
   });
 });
 

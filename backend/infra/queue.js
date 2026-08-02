@@ -56,7 +56,35 @@ async function init({ producer = true, consumer = false } = {}) {
   }
   const { Queue, QueueEvents } = require("bullmq");
   _connection = makeConnection();
-  await _connection.ping();
+  // maxRetriesPerRequest: null faz o ioredis segurar o comando pra sempre
+  // enquanto reconecta — então este ping nunca rejeitava. Com o Redis fora, o
+  // boot ficava pendurado aqui: o processo subia, o app.listen nunca acontecia,
+  // e o nginx respondia 502 eternamente sem o PM2 perceber nada de errado.
+  //
+  // Não degradamos pra memory: em redis mode quem é dono das sessões Baileys é
+  // o worker, e um server em memory começaria a abrir sessão por conta própria
+  // (foi o que derrubou os números uma vez). Melhor falhar rápido e deixar o
+  // PM2 reiniciar até o Redis voltar.
+  const PING_TIMEOUT_MS = 5000;
+  let pingTimer = null;
+  try {
+    await Promise.race([
+      _connection.ping(),
+      new Promise((_, reject) => {
+        pingTimer = setTimeout(
+          () => reject(new Error(`Redis não respondeu em ${PING_TIMEOUT_MS}ms (${REDIS_URL.replace(/:\/\/.*@/, "://***@")})`)),
+          PING_TIMEOUT_MS
+        );
+      }),
+    ]);
+  } catch (err) {
+    log.error({ err: err.message }, "[queue] Redis indisponível no boot");
+    try { _connection.disconnect(); } catch {}
+    _connection = null;
+    throw err;
+  } finally {
+    clearTimeout(pingTimer);
+  }
 
   if (producer) {
     _sendQueue = new Queue(SEND_QUEUE, { connection: _connection });

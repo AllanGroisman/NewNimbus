@@ -11,6 +11,7 @@ import {
   adminScraperStatus,
   adminCatalog,
   adminClearCatalog,
+  errText,
 } from "../data/api";
 
 const STATUS_POLL_MS = 5000;
@@ -43,7 +44,7 @@ export default function PageAdminScraper() {
       setConfig(r.config);
       setAvailable(r.available);
     } catch (err) {
-      setError(err.message);
+      setError(errText(err, "Não foi possível concluir a ação no scraping."));
     }
   }, []);
 
@@ -64,7 +65,7 @@ export default function PageAdminScraper() {
       setCatTotal(r.total || 0);
       if (r.stats) setCatStats(r.stats);
     } catch (err) {
-      setError(err.message);
+      setError(errText(err, "Não foi possível concluir a ação no scraping."));
     } finally {
       setCatLoading(false);
     }
@@ -122,7 +123,7 @@ export default function PageAdminScraper() {
       setTimeout(() => setSavedMsg(null), 2000);
       await refreshStatus();
     } catch (err) {
-      setError(err.message);
+      setError(errText(err, "Não foi possível concluir a ação no scraping."));
     } finally {
       setSaving(false);
     }
@@ -139,7 +140,7 @@ export default function PageAdminScraper() {
       setTimeout(() => setSavedMsg(null), 2000);
       await refreshStatus();
     } catch (err) {
-      setError(err.message);
+      setError(errText(err, "Não foi possível concluir a ação no scraping."));
     } finally {
       setSaving(false);
     }
@@ -152,7 +153,7 @@ export default function PageAdminScraper() {
       setRunning(true);
       await refreshStatus();
     } catch (err) {
-      setError(err.message);
+      setError(errText(err, "Não foi possível concluir a ação no scraping."));
     }
   }
 
@@ -164,7 +165,7 @@ export default function PageAdminScraper() {
       await refreshStatus();
     } catch (err) {
       setCanceling(false);
-      setError(err.message);
+      setError(errText(err, "Não foi possível concluir a ação no scraping."));
     }
   }
 
@@ -177,7 +178,7 @@ export default function PageAdminScraper() {
       setCatPage(1);
       await refreshCatalog();
     } catch (err) {
-      setError(err.message);
+      setError(errText(err, "Não foi possível concluir a ação no scraping."));
     } finally {
       setClearing(false);
     }

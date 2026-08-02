@@ -15,6 +15,7 @@ import {
   adminEmailTemplatesSave,
   adminEmailPreview,
   adminEmailTest,
+  errText,
 } from "../data/api";
 
 // Tokens de cor do index.css. Atenção: --color-surface / --color-border NÃO
@@ -105,7 +106,7 @@ export default function PageAdminEmails() {
         setDrafts(r.templates || {});
         setSel((r.meta || [])[0]?.key || null);
       } catch (err) {
-        setError(err.message);
+        setError(errText(err, "Não foi possível concluir a ação. Tente novamente."));
       } finally {
         setLoading(false);
       }
@@ -150,7 +151,7 @@ export default function PageAdminEmails() {
       setAviso("Salvo!");
       setTimeout(() => setAviso(null), 2500);
     } catch (err) {
-      setError(err.message);
+      setError(errText(err, "Não foi possível concluir a ação. Tente novamente."));
       throw err;
     } finally {
       setSaving(false);
@@ -169,7 +170,7 @@ export default function PageAdminEmails() {
       setAviso(`Teste enviado para ${r.to}.`);
       setTimeout(() => setAviso(null), 4000);
     } catch (err) {
-      setError(err.message);
+      setError(errText(err, "Não foi possível concluir a ação. Tente novamente."));
     } finally {
       setTestando(false);
     }

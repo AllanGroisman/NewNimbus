@@ -6,6 +6,8 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { storeLockMessage, unlockedSources, allSources } from "../data/constants";
 
 vi.mock("../data/api", () => ({
+  // errText é helper puro (não faz rede) — usa a implementação de verdade.
+  errText: (err, fallback) => err?.message || fallback,
   createWAGroup: vi.fn(),
   leaveWAGroup: vi.fn(),
   revokeWAInvite: vi.fn(),

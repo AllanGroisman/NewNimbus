@@ -4,6 +4,7 @@ import {
   adminNotifTemplates,
   adminNotifTemplatesSave,
   adminNotifTemplatePreview,
+  errText,
 } from "../data/api";
 
 const cardStyle = { background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10, padding: "20px 24px", marginBottom: 16 };
@@ -103,7 +104,7 @@ export default function PageAdminNotifTemplates() {
         setDefaults(r.defaults || {});
         setTemplates(r.templates || {});
       } catch (err) {
-        setError(err.message);
+        setError(errText(err, "Não foi possível salvar os modelos."));
       } finally {
         setLoading(false);
       }
@@ -124,7 +125,7 @@ export default function PageAdminNotifTemplates() {
       setSavedMsg("Salvo!");
       setTimeout(() => setSavedMsg(null), 2500);
     } catch (err) {
-      setError(err.message);
+      setError(errText(err, "Não foi possível salvar os modelos."));
     } finally {
       setSaving(false);
     }

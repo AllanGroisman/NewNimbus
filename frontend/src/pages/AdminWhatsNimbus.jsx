@@ -5,6 +5,7 @@ import {
   whatsNimbusConnect,
   whatsNimbusFinalize,
   whatsNimbusDisconnect,
+  errText,
 } from "../data/api";
 
 const cardStyle = { background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10, padding: "20px 24px", marginBottom: 16 };
@@ -36,7 +37,7 @@ export default function PageAdminWhatsNimbus() {
       setSnap(s);
       return s;
     } catch (err) {
-      setError(err.message);
+      setError(errText(err, "Não foi possível concluir a ação. Tente novamente."));
       return null;
     }
   }
@@ -98,7 +99,7 @@ export default function PageAdminWhatsNimbus() {
       setSnap(s);
       startPolling();
     } catch (err) {
-      setError(err.message);
+      setError(errText(err, "Não foi possível concluir a ação. Tente novamente."));
     } finally {
       setBusy(false);
     }
@@ -110,7 +111,7 @@ export default function PageAdminWhatsNimbus() {
       const s = await whatsNimbusDisconnect();
       setSnap(s);
     } catch (err) {
-      setError(err.message);
+      setError(errText(err, "Não foi possível concluir a ação. Tente novamente."));
     } finally {
       setBusy(false);
     }

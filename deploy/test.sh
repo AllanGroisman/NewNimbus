@@ -195,6 +195,24 @@ else
   bad "nginx :80/ NÃO serve o frontend (404? permissão? dist faltando?)"
 fi
 
+# Resposta de indisponibilidade da API (task 43). O nginx precisa ter o
+# error_page @api_offline: sem ele, com o backend fora, uma chamada de /api/
+# devolve a página HTML "502 Bad Gateway" do nginx e o texto em inglês vaza
+# pra tela do usuário. Aqui só conferimos que a regra está carregada — o
+# comportamento em si é testado derrubando o backend.
+if nginx -T 2>/dev/null | grep -q "api_offline"; then
+  ok "nginx tem a resposta JSON de indisponibilidade (@api_offline)"
+else
+  bad "nginx SEM @api_offline — com o backend fora, o usuário vê 'Bad Gateway' em inglês (rode deploy/update.sh)"
+fi
+
+# Página estática de fallback: servida quando nem o index.html existe.
+if [[ -f "$REPO_DIR/frontend/dist/offline.html" ]]; then
+  ok "offline.html presente no build do frontend"
+else
+  bad "offline.html faltando no dist (rode o build do frontend)"
+fi
+
 # Metrics endpoint
 if curl -fsS --max-time 5 http://127.0.0.1:3001/metrics 2>/dev/null | grep -q "^nimbus_"; then
   ok "/metrics retorna formato Prometheus"

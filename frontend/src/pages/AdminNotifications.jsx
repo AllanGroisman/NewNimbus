@@ -7,6 +7,7 @@ import {
   adminNotifTest,
   adminNotifGroups,
   whatsNimbusStatus,
+  errText,
 } from "../data/api";
 
 const labelStyle = { fontSize: 12, fontWeight: 600, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 };
@@ -44,7 +45,7 @@ export default function PageAdminNotifications({ onGoToWhatsNimbus }) {
         setConfig(cfg);
         setWhatsNimbus(wn);
       } catch (err) {
-        setError(err.message);
+        setError(errText(err, "Não foi possível salvar as notificações."));
       } finally {
         setLoading(false);
       }
@@ -59,7 +60,7 @@ export default function PageAdminNotifications({ onGoToWhatsNimbus }) {
         const r = await adminNotifGroups();
         setGroups(Array.isArray(r) ? r : []);
       } catch (err) {
-        setError(err.message);
+        setError(errText(err, "Não foi possível salvar as notificações."));
       } finally {
         setLoadingGroups(false);
       }
@@ -76,7 +77,7 @@ export default function PageAdminNotifications({ onGoToWhatsNimbus }) {
       setSavedMsg("Salvo!");
       setTimeout(() => setSavedMsg(null), 2500);
     } catch (err) {
-      setError(err.message);
+      setError(errText(err, "Não foi possível salvar as notificações."));
     } finally {
       setSaving(false);
     }
@@ -95,7 +96,7 @@ export default function PageAdminNotifications({ onGoToWhatsNimbus }) {
       setTestMsg("Mensagem de teste enviada!");
       setTimeout(() => setTestMsg(null), 4000);
     } catch (err) {
-      setError(err.message);
+      setError(errText(err, "Não foi possível salvar as notificações."));
     } finally {
       setTesting(false);
     }

@@ -8,6 +8,7 @@ import {
   authVerifyEmail, authResendVerification,
   authForgotPassword, authResetPassword,
   authRegistrationStatus,
+  errText,
 } from "../data/api";
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
@@ -68,7 +69,7 @@ export default function Login({ onLogin }) {
           if (r.user) onLogin(r.user);
         })
         .catch(err => {
-          setError(err.message || "Falha ao verificar email");
+          setError(errText(err, "Falha ao verificar email"));
           setMode("login");
         })
         .finally(() => setLoading(false));
@@ -133,11 +134,11 @@ export default function Login({ onLogin }) {
       }
     } catch (err) {
       if (err.code === "email_not_verified") {
-        setError(err.message);
+        setError(errText(err, "Não foi possível entrar. Tente novamente."));
         setMode("registered");
         setInfo(email.trim().toLowerCase());
       } else {
-        setError(err.message || "Falha ao processar");
+        setError(errText(err, "Falha ao processar"));
       }
     } finally {
       setLoading(false);
@@ -157,7 +158,7 @@ export default function Login({ onLogin }) {
         setResendCooldown(err.retryAfterSeconds);
         setError(null);
       } else {
-        setError(err.message || "Falha ao reenviar");
+        setError(errText(err, "Falha ao reenviar"));
       }
     } finally {
       setLoading(false);
@@ -179,7 +180,7 @@ export default function Login({ onLogin }) {
         const r = await authGoogle(resp.credential);
         onLogin(r.user);
       } catch (err) {
-        setError(err.message || "Falha no login Google");
+        setError(errText(err, "Falha no login Google"));
       } finally {
         setLoading(false);
       }

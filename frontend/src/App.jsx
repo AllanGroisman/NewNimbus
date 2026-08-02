@@ -13,7 +13,7 @@ const DEFAULT_SETTINGS = {
   // assim segue a conta, não o navegador.
   onboarding: DEFAULT_ONBOARDING,
 };
-import { authMe, authLogout, authRefresh, loadAppState, saveAppState, loadAppOps, getToken, clearToken, getLastActivity, setLastActivity, IDLE_TIMEOUT_MS, getAffiliateStatus, billingMe, billingSync, billingActiveSelection, listWASessions, storeLocks as fetchStoreLocks, layoutGet, PALETTE_CACHE_KEY } from "./data/api";
+import { authMe, authLogout, authRefresh, loadAppState, saveAppState, loadAppOps, getToken, clearToken, getLastActivity, setLastActivity, IDLE_TIMEOUT_MS, getAffiliateStatus, billingMe, billingSync, billingActiveSelection, listWASessions, storeLocks as fetchStoreLocks, layoutGet, PALETTE_CACHE_KEY, errText } from "./data/api";
 import Sidebar from "./components/Sidebar";
 import GroupDashboard from "./components/GroupDashboard";
 import UnsavedChangesModal from "./components/UnsavedChangesModal";
@@ -21,6 +21,8 @@ import LogoutConfirmModal from "./components/LogoutConfirmModal";
 import PlanSwapModal from "./components/PlanSwapModal";
 import StoreLockedNotice from "./components/ui/StoreLockedNotice";
 import { NavGuardContext } from "./data/navGuard";
+import { useNetStatus, subscribe as subscribeNetStatus } from "./data/netStatus";
+import AlertBanner from "./components/ui/AlertBanner";
 import { mergeGroupOps, mergeGroupsOps } from "./data/opsMerge";
 import PageDashboard from "./pages/Dashboard";
 import PageProducts from "./pages/Products";
@@ -111,6 +113,9 @@ export default function App() {
   const openTutorial = (id) => requestNavigation(() => { setTutorialTarget(id); setSelectedGroup(null); setPage("tutorials"); });
   const [user, setUser] = useState(null);
   const [bootstrapping, setBootstrapping] = useState(true);
+  // Boot que falhou por falta de conexão (≠ token inválido) — mostra a tela de
+  // "sem conexão" em vez de mandar pro login com a sessão ainda válida.
+  const [bootOffline, setBootOffline] = useState(false);
   // Rota pública (/assinar, /bem-vindo): o caminho de quem veio da landing e
   // ainda não tem conta. Vem da URL de entrada e só sai daqui quando a pessoa
   // entra no sistema — inclusive por cima de um token antigo no navegador, que
@@ -184,6 +189,15 @@ export default function App() {
       return next;
     });
   };
+  // Conexão com o servidor — alimentada pelo http() do api.js.
+  const net = useNetStatus();
+  // Boot que morreu por falta de conexão: assim que a sonda do netStatus achar
+  // o servidor de novo, recarrega sozinho (o usuário não precisa dar F5).
+  useEffect(() => {
+    if (!bootOffline) return;
+    return subscribeNetStatus((online) => { if (online) window.location.reload(); });
+  }, [bootOffline]);
+
   const affiliateConfigured = !!affiliateStatus.ml;
   const applyAffiliateStatus = (s) => {
     setAffiliateStatus({
@@ -260,8 +274,12 @@ export default function App() {
         billingMe().then(b => !cancelled && setBilling(b)).catch(() => {});
         // Travas de loja — idem: se falhar, nada fica trancado na UI.
         fetchStoreLocks().then(r => !cancelled && setStoreLocks(r.locks || {})).catch(() => {});
-      } catch {
-        // token inválido — segue para tela de login
+      } catch (err) {
+        // Backend fora não é sessão expirada: sem essa distinção o usuário era
+        // jogado na tela de login (e tomava outro erro ao tentar entrar).
+        // O token fica onde está e o boot é refeito quando a conexão volta.
+        if (err?.offline) { if (!cancelled) setBootOffline(true); }
+        // 401: o http() já limpou o token — segue para a tela de login.
       } finally {
         if (!cancelled) setBootstrapping(false);
       }
@@ -352,7 +370,7 @@ export default function App() {
         // o caminho é pausar/remover algo ou assinar um plano maior.
         lastFailedSaveRef.current = null;
         setSaveError({
-          message: err.message || "Limite do plano excedido.",
+          message: errText(err, "Limite do plano excedido."),
           retryable: false,
           showPlans: err.code === "plan_limit",
         });
@@ -507,6 +525,10 @@ export default function App() {
         if (err?.status === 429) {
           backoffMult = Math.min(backoffMult * 2, MAX_BACKOFF_MULT);
           markPollDegraded("ops", true);
+        } else if (err?.offline) {
+          // Servidor fora: martelar de 3 em 3s não adianta. Quem avisa o usuário
+          // é o banner de conexão (netStatus), não o de rate-limit.
+          backoffMult = Math.min(backoffMult * 2, MAX_BACKOFF_MULT);
         }
       }
       if (!cancelled) timer = setTimeout(pull, OPS_POLL_MS * backoffMult);
@@ -548,6 +570,8 @@ export default function App() {
         if (err?.status === 429) {
           backoffMult = Math.min(backoffMult * 2, MAX_BACKOFF_MULT);
           markPollDegraded("session", true);
+        } else if (err?.offline) {
+          backoffMult = Math.min(backoffMult * 2, MAX_BACKOFF_MULT);
         }
         // demais erros: silencioso — mantém o último status conhecido
       }
@@ -640,6 +664,8 @@ export default function App() {
         if (err?.status === 429) {
           backoffMult = Math.min(backoffMult * 2, MAX_BACKOFF_MULT);
           markPollDegraded("affiliate", true);
+        } else if (err?.offline) {
+          backoffMult = Math.min(backoffMult * 2, MAX_BACKOFF_MULT);
         }
       }
       if (!cancelled) timer = setTimeout(pull, AFFILIATE_POLL_MS * backoffMult);
@@ -673,7 +699,7 @@ export default function App() {
         backoffMult = 1;
         setStoreLocks(r.locks || {});
       } catch (err) {
-        if (err?.status === 429) backoffMult = Math.min(backoffMult * 2, MAX_BACKOFF_MULT);
+        if (err?.status === 429 || err?.offline) backoffMult = Math.min(backoffMult * 2, MAX_BACKOFF_MULT);
         // demais erros: silencioso — mantém as travas conhecidas
       }
       if (!cancelled) timer = setTimeout(pull, STORE_LOCKS_POLL_MS * backoffMult);
@@ -896,7 +922,7 @@ export default function App() {
     try {
       await applyActiveSelection(selection);
     } catch (err) {
-      setSaveError({ message: err.message, retryable: false, showPlans: err.code === "plan_limit" });
+      setSaveError({ message: errText(err, "Não foi possível ativar. Tente novamente."), retryable: false, showPlans: err.code === "plan_limit" });
     }
   };
 
@@ -912,7 +938,7 @@ export default function App() {
       await applyActiveSelection(selection);
       setPlanSwap(null);
     } catch (err) {
-      setPlanSwapError(err.message || "Não conseguimos fazer a troca agora.");
+      setPlanSwapError(errText(err, "Não conseguimos fazer a troca agora."));
     } finally {
       setPlanSwapBusy(false);
     }
@@ -948,6 +974,31 @@ export default function App() {
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-text-secondary)", fontSize: 13 }}>
         Carregando...
+      </div>
+    );
+  }
+
+  // Não conseguimos falar com o servidor na abertura. A sessão continua válida
+  // — o que faltou foi conexão, então nada de mandar pro login.
+  if (bootOffline) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <div style={{ maxWidth: 420, textAlign: "center" }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>📡</div>
+          <h1 style={{ fontSize: 18, margin: "0 0 8px", color: "var(--color-text-primary)" }}>
+            Sem conexão com o Nimbus
+          </h1>
+          <p style={{ fontSize: 14, lineHeight: 1.5, margin: "0 0 20px", color: "var(--color-text-secondary)" }}>
+            Não foi possível falar com o servidor agora. Sua conta está segura — continuamos tentando e a página volta sozinha assim que a conexão voltar.
+          </p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            style={{ padding: "9px 18px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 500, background: "var(--color-primary)", color: "#fff" }}
+          >
+            Tentar de novo
+          </button>
+        </div>
       </div>
     );
   }
@@ -1068,25 +1119,34 @@ export default function App() {
         onToggleMobile={setMobileMenu}
       />
       <div className="main-content" style={{ flex: 1, padding: "20px 24px", minWidth: 0, overflowY: "auto" }}>
-        {saveError && (
-          <div role="alert" style={{ background: "var(--danger-bg)", border: "0.5px solid var(--danger-border)", color: "var(--danger-text)", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <span style={{ flex: 1, minWidth: 200 }}>{saveError.message}</span>
-            {saveError.retryable && (
-              <button onClick={retrySave} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--danger-text)", color: "var(--color-background-primary)", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
-                Tentar agora
-              </button>
-            )}
-            {saveError.showPlans && (
-              <button onClick={() => requestNavigation(() => { setSaveError(null); setSelectedGroup(null); setPage("subscription"); })} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--danger-text)", color: "var(--color-background-primary)", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
-                Ver planos
-              </button>
-            )}
-          </div>
+        {/* Sem conexão tem precedência: com o servidor fora, os outros avisos
+            (falha de save, poll lento) são só sintoma da mesma causa. */}
+        {!net.online && (
+          <AlertBanner
+            tone="warn"
+            message="Sem conexão com o Nimbus. Tentando reconectar — o que estiver na tela pode estar desatualizado."
+          />
         )}
-        {degradedPolls.size > 0 && (
-          <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", color: "var(--warn-text)", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
-            Atualização automática mais lenta no momento (muitas requisições) — tentando novamente. Se algo parecer desatualizado, recarregue a página.
-          </div>
+        {net.online && net.recovered && (
+          <AlertBanner tone="success" message="Conexão restabelecida." />
+        )}
+        {net.online && saveError && (
+          <AlertBanner
+            tone="error"
+            message={saveError.message}
+            onRetry={saveError.retryable ? retrySave : undefined}
+            retryLabel="Tentar agora"
+            actions={saveError.showPlans ? [{
+              label: "Ver planos",
+              onClick: () => requestNavigation(() => { setSaveError(null); setSelectedGroup(null); setPage("subscription"); }),
+            }] : undefined}
+          />
+        )}
+        {net.online && degradedPolls.size > 0 && (
+          <AlertBanner
+            tone="warn"
+            message="Atualização automática mais lenta no momento (muitas requisições) — tentando novamente. Se algo parecer desatualizado, recarregue a página."
+          />
         )}
         {/* Pausado pelo plano: nada foi apagado — só parou de enviar. O cliente
             escolhe quem volta a ficar ativo na própria lista (botão "Ativar"). */}

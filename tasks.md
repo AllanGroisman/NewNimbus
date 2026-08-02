@@ -129,7 +129,21 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     outro modo. Fecha tambem a task 44. PENDENTE: preencher STRIPE_*_LIVE no .env da VPS e validar a
     troca no navegador depois do deploy.
 
-43. [] Todos os erros estao sendo tratados e mostrados ao usuario de maneira apropriada? Por exemplo, quando sistema ta off e o usuario ta em uma pagina fica aparecendo bad gateway ou algo do tipo, preferiria que aparecesse uma mensagem de offline, tente mais tarde ou algo do tipo. Revise bem o sistema.
+43. [x] Todos os erros estao sendo tratados e mostrados ao usuario de maneira apropriada? Por exemplo, quando sistema ta off e o usuario ta em uma pagina fica aparecendo bad gateway ou algo do tipo, preferiria que aparecesse uma mensagem de offline, tente mais tarde ou algo do tipo. Revise bem o sistema.
+    Erro agora passa por 4 camadas e todas devolvem português: o nginx responde JSON
+    ({error, code:"server_offline"}) no lugar da página "502 Bad Gateway"; o Express ganhou
+    tratador global + 404 JSON e os 47 `res.status(500).json({error: err.message})` viraram
+    mensagem genérica + requestId (não vaza mais "Can't reach database server at localhost:5432");
+    o http() do api.js normaliza tudo num NimbusError com mensagem pronta pra tela e ganhou
+    timeout; e apareceu a faixa "Sem conexão com o Nimbus. Tentando reconectar", que some sozinha
+    quando o servidor volta (sonda no /healthz, sem F5). Também: ErrorBoundary (fim da tela
+    branca), offline.html quando nem o build carrega, os 6 alert() do navegador viraram faixa
+    padrão (AlertBanner), fila que falhava calada agora avisa, form de filtros do ADMIN não
+    carrega mais defaults falsos quando o GET falha, e backend fora no boot não joga mais o
+    usuário no login. Infra: Redis fora não pendura mais o boot (timeout de 5s + backoff no PM2)
+    e o update.sh passou a aplicar o nginx.conf (preservando o HTTPS do certbot).
+    PENDENTE: rodar deploy/update.sh na VPS e validar o roteiro manual (pm2 stop nimbus-backend
+    com a tela aberta).
 
 44. [x] Quero uma maneira facil de trocar entre os produtos do modo teste do stripe e os produto de producao. Ja criei os produtos na producao do stripe.
     Feito junto com a task 42: botao na aba ADMIN > Stripe.
@@ -222,3 +236,4 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     boas-vindas, trocar e-mail) não, senão ninguém consegue entrar. De brinde,
     esses 4 deixaram de montar HTML na mão e agora escapam o nome do usuário.
 
+55. [] Quero limpar a pasta deploy. so uso start.sh, restart.sh, stop.sh e ngrok_start.sh. O resto nao uso, tem algo dos outros que preciso guardar? Se nao quero apagar.

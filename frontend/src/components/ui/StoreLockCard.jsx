@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../../data/constants";
 import Toggle from "./Toggle";
-import { adminStoreLocks, adminStoreLockSave } from "../../data/api";
+import { adminStoreLocks, adminStoreLockSave, errText} from "../../data/api";
 
 // Card de trava usado nas três abas de loja do admin (ML, Amazon, Shopee).
 // Trancar esconde a loja dos usuários (aba + escolha nas campanhas) mostrando a
@@ -28,7 +28,7 @@ export default function StoreLockCard({ store, storeLabel }) {
         setDraft(cur.message || "");
         setUsage(r.usage?.[store] ?? 0);
       })
-      .catch(err => !cancelled && setMsg({ type: "err", text: err.message }));
+      .catch(err => !cancelled && setMsg({ type: "err", text: errText(err, "Não foi possível atualizar a trava da loja.") }));
     return () => { cancelled = true; };
   }, [store]);
 
@@ -47,7 +47,7 @@ export default function StoreLockCard({ store, storeLabel }) {
       setDraft(r.lock.message || "");
       flash({ type: "ok", text: r.lock.locked ? "Loja trancada para os clientes." : "Loja liberada para os clientes." });
     } catch (err) {
-      flash({ type: "err", text: err.message });
+      flash({ type: "err", text: errText(err, "Não foi possível atualizar a trava da loja.") });
     } finally {
       setSaving(false);
     }

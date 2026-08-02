@@ -9,6 +9,7 @@ import {
   adminRestoreBackup,
   adminDeleteLocalBackup,
   adminDeleteRemoteBackup,
+  errText,
 } from "../data/api";
 
 const BACKUPS_POLL_MS = 20 * 1000;
@@ -109,7 +110,7 @@ export default function PageAdminBackups() {
       setRemoteWritable(rem.writable !== false);
       setRemote(rem.items || []);
     } catch (err) {
-      setError(err.message);
+      setError(errText(err, "Não foi possível concluir a ação de backup."));
     } finally {
       setLoading(false);
     }
@@ -152,7 +153,7 @@ export default function PageAdminBackups() {
     setBusy(b => ({ ...b, [key]: true }));
     return fn().then(
       () => { setBusy(b => ({ ...b, [key]: false })); refresh(); },
-      (err) => { setBusy(b => ({ ...b, [key]: false })); showToast(err.message, true); }
+      (err) => { setBusy(b => ({ ...b, [key]: false })); showToast(errText(err, "Não foi possível concluir a ação de backup."), true); }
     );
   }
 
@@ -164,7 +165,7 @@ export default function PageAdminBackups() {
       showToast(`Backup criado: ${r.backup?.name || "OK"}`);
       await refresh();
     } catch (err) {
-      showToast(err.message, true);
+      showToast(errText(err, "Não foi possível concluir a ação de backup."), true);
     } finally {
       setCreating(false);
     }
@@ -195,7 +196,7 @@ export default function PageAdminBackups() {
         showToast("Banco restaurado! Backend reiniciando...");
         setRestartCountdown(8);
       } catch (err) {
-        showToast(err.message, true);
+        showToast(errText(err, "Não foi possível concluir a ação de backup."), true);
       } finally {
         setBusy(b => ({ ...b, [key]: false }));
       }

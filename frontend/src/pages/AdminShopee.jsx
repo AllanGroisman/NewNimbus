@@ -9,6 +9,7 @@ import {
   adminScraperShopeeTest,
   adminScraperShopeeFilters,
   adminScraperShopeeFiltersSave,
+  errText,
 } from "../data/api";
 
 // Página admin dedicada à Shopee.
@@ -44,7 +45,7 @@ export default function PageAdminShopee() {
       setMsg({ type: "ok", text: "Salvo!" });
       refresh();
     } catch (err) {
-      setMsg({ type: "err", text: err.message });
+      setMsg({ type: "err", text: errText(err, "Não foi possível concluir a ação. Tente novamente.") });
     } finally {
       setSaving(false);
     }
@@ -61,7 +62,7 @@ export default function PageAdminShopee() {
       setMsg({ type: "ok", text: "Credenciais apagadas." });
       refresh();
     } catch (err) {
-      setMsg({ type: "err", text: err.message });
+      setMsg({ type: "err", text: errText(err, "Não foi possível concluir a ação. Tente novamente.") });
     } finally {
       setSaving(false);
     }
@@ -74,7 +75,7 @@ export default function PageAdminShopee() {
       const r = await adminScraperShopeeTest(testUrl.trim());
       setMsg({ type: "ok", text: "Funcionou! Link gerado:", link: r.shortUrl });
     } catch (err) {
-      setMsg({ type: "err", text: err.message });
+      setMsg({ type: "err", text: errText(err, "Não foi possível concluir a ação. Tente novamente.") });
     } finally {
       setTesting(false);
     }
@@ -240,7 +241,7 @@ function ShopeeFiltersSection() {
       setMsg({ type: "ok", text: "Filtros salvos! Próximo scraping vai aplicar." });
       setTimeout(() => setMsg(null), 3000);
     } catch (err) {
-      setMsg({ type: "err", text: err.message });
+      setMsg({ type: "err", text: errText(err, "Não foi possível concluir a ação. Tente novamente.") });
     } finally {
       setSaving(false);
     }

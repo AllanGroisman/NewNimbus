@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { PRIMARY } from "../data/constants";
-import { adminStripeGet, adminStripeSetMode } from "../data/api";
+import { adminStripeGet, adminStripeSetMode, errText} from "../data/api";
 
 const card = {
   background: "var(--color-background-primary)",
@@ -55,7 +55,7 @@ export default function PageAdminStripe() {
       setData(await adminStripeGet());
       setLoadError(null);
     } catch (err) {
-      setLoadError(err.message || "Não foi possível carregar.");
+      setLoadError(errText(err, "Não foi possível carregar."));
     }
   };
 
@@ -68,7 +68,7 @@ export default function PageAdminStripe() {
         const next = await adminStripeGet();
         if (alive) { setData(next); setLoadError(null); }
       } catch (err) {
-        if (alive) setLoadError(err.message || "Não foi possível carregar.");
+        if (alive) setLoadError(errText(err, "Não foi possível carregar."));
       }
     })();
     return () => { alive = false; };
@@ -99,7 +99,7 @@ export default function PageAdminStripe() {
         text: `Agora o sistema está em modo ${MODE_META[target].label}. Recarregue a página de Assinatura pra ver os produtos deste modo.`,
       });
     } catch (err) {
-      setMsg({ type: "err", text: err.message || "Não foi possível trocar de modo." });
+      setMsg({ type: "err", text: errText(err, "Não foi possível trocar de modo.") });
     } finally {
       setSaving(false);
     }

@@ -21,7 +21,6 @@
   "type": "commonjs",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1045.0",
-    "@hapi/boom": "^10.0.1",
     "@prisma/client": "^6.19.3",
     "@sentry/node": "^10.52.0",
     "@whiskeysockets/baileys": "^6.7.9",
