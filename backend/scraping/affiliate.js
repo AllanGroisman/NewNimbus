@@ -6,6 +6,13 @@ const appConfig = require("../config");
 // Sobrescreve "primeiro usuário com config" como fallback do admin-scraper.
 const SCRAPER_SHOPEE_ADMIN_KEY = "scraper-shopee-admin";
 
+// Sessão do Mercado Livre DO SISTEMA (conta própria, colada no Admin › Mercado Livre).
+// Serve pra abrir páginas que só existem logado — hoje o Hub de Afiliados.
+// NÃO tem relação com o cookie que cada cliente cola na aba dele (affiliate_config.ml.cookie,
+// usado só pra gerar link de afiliado com a TAG daquele cliente). São dois cookies
+// independentes de propósito: nunca use o de um usuário pra raspar em nome do sistema.
+const SCRAPER_ML_ADMIN_KEY = "scraper-ml-admin";
+
 // Filtros de qualidade aplicados aos resultados da Shopee. Ajustáveis no admin.
 const SHOPEE_FILTERS_KEY = "shopee-scraper-filters";
 const SHOPEE_FILTERS_DEFAULTS = {
@@ -550,6 +557,96 @@ function clearScraperShopeeAdminCreds() {
 }
 
 // ────────────────────────────────────────────────────────────────────────
+// Sessão ML do sistema (conta própria — Hub de Afiliados)
+// ────────────────────────────────────────────────────────────────────────
+
+function readScraperMLAdminSession() {
+  const raw = appConfig.get(SCRAPER_ML_ADMIN_KEY);
+  if (!raw || typeof raw !== "object") {
+    return { cookie: null, hubEnabled: true, updatedAt: null, lastCheckAt: null, lastCheckOk: null, lastCheckReason: null };
+  }
+  return {
+    cookie: raw.cookie || null,
+    // Coletar as ofertas do Hub junto com as da vitrine pública. Default ligado:
+    // quem colou a sessão do sistema quis o Hub.
+    hubEnabled: raw.hubEnabled === false ? false : true,
+    updatedAt: raw.updatedAt || null,
+    lastCheckAt: raw.lastCheckAt || null,
+    lastCheckOk: typeof raw.lastCheckOk === "boolean" ? raw.lastCheckOk : null,
+    lastCheckReason: raw.lastCheckReason || null,
+  };
+}
+
+// Cookie no formato de header ("k=v; k2=v2"). Validação frouxa de propósito:
+// só o suficiente pra pegar cola errada (URL, JSON, texto solto) sem palpitar
+// sobre quais cookies o ML usa hoje.
+function writeScraperMLAdminSession({ cookie }) {
+  const clean = String(cookie || "").trim();
+  if (!clean) throw new Error("Cole o cookie de sessão da conta do sistema.");
+  if (!clean.includes("=") || clean.length < 20) {
+    throw new Error("Isso não parece um cookie — esperado algo como \"nome=valor; outro=valor\".");
+  }
+  const next = {
+    cookie: clean,
+    // Trocar o cookie não mexe na escolha de coletar (ou não) o Hub.
+    hubEnabled: readScraperMLAdminSession().hubEnabled,
+    updatedAt: new Date().toISOString(),
+    // Cookie novo → o resultado do teste anterior não vale mais.
+    lastCheckAt: null,
+    lastCheckOk: null,
+    lastCheckReason: null,
+  };
+  appConfig.set(SCRAPER_ML_ADMIN_KEY, next);
+  return next;
+}
+
+// Liga/desliga a coleta do Hub. Guardado junto da sessão porque um não serve sem
+// o outro: sem cookie do sistema o Hub não abre, com a flag desligada não é lido.
+function writeScraperMLHubEnabled(enabled) {
+  const next = { ...readScraperMLAdminSession(), hubEnabled: !!enabled };
+  appConfig.set(SCRAPER_ML_ADMIN_KEY, next);
+  return next;
+}
+
+function clearScraperMLAdminSession() {
+  appConfig.del(SCRAPER_ML_ADMIN_KEY);
+}
+
+// Guarda o resultado do último "Testar acesso ao Hub" junto do cookie.
+// Não faz nada se a sessão vem de env (não há o que atualizar em appConfig).
+function recordMLHubCheck({ ok, reason }) {
+  const cur = readScraperMLAdminSession();
+  if (!cur.cookie) return cur;
+  const next = {
+    ...cur,
+    lastCheckAt: new Date().toISOString(),
+    lastCheckOk: !!ok,
+    lastCheckReason: reason || null,
+  };
+  appConfig.set(SCRAPER_ML_ADMIN_KEY, next);
+  return next;
+}
+
+// Sessão que o scraper usa pra abrir o Hub. Prioridade: env → admin → nada.
+// De propósito NÃO cai no cookie de nenhum usuário: raspar com a conta de um
+// cliente sem ele saber não é aceitável (o Shopee tem esse fallback por herança).
+function getScraperMLSession() {
+  if (process.env.ML_SCRAPER_COOKIE) {
+    return { cookie: process.env.ML_SCRAPER_COOKIE.trim(), source: "env" };
+  }
+  const admin = readScraperMLAdminSession();
+  if (admin.cookie) return { cookie: admin.cookie, source: "admin" };
+  return null;
+}
+
+// O scraper do ML deve coletar também o Hub? Só se houver sessão do sistema E o
+// admin não tiver desmarcado a opção.
+function mlHubEnabled() {
+  if (!getScraperMLSession()) return false;
+  return readScraperMLAdminSession().hubEnabled !== false;
+}
+
+// ────────────────────────────────────────────────────────────────────────
 // Filtros de qualidade do Mercado Livre (admin-only)
 // ────────────────────────────────────────────────────────────────────────
 
@@ -831,6 +928,14 @@ module.exports = {
   readMLConfig,
   writeMLConfig,
   clearMLConfig,
+  // Sessão ML do sistema (Hub de Afiliados) — separada do cookie de cada usuário
+  readScraperMLAdminSession,
+  writeScraperMLAdminSession,
+  clearScraperMLAdminSession,
+  recordMLHubCheck,
+  getScraperMLSession,
+  writeScraperMLHubEnabled,
+  mlHubEnabled,
   // Amazon
   gerarLinkAfiliadoAmazon,
   readAmazonConfig,

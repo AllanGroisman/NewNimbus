@@ -241,6 +241,23 @@ async function harvestMLCards(page, category) {
   });
 }
 
+// Quais produtos do Hub ainda não estão na coleta da vitrine. Deduplica pela CHAVE
+// DO CATÁLOGO (o MLB do produto), não pelo link: o mesmo item aparece nos dois
+// lugares com URLs diferentes. Pura → testável sem navegador.
+function mergeHubProducts(existentes, doHub) {
+  const { productKey } = require("../catalog/product-key");
+  const keys = new Set((existentes || []).map(productKey));
+  const novos = [];
+  for (const p of doHub || []) {
+    if (!p || !p.link) continue;
+    const k = productKey(p);
+    if (keys.has(k)) continue;
+    keys.add(k);
+    novos.push(p);
+  }
+  return novos;
+}
+
 async function scrapeML({ category, limit = 200 } = {}) {
   const cat = CATEGORIES[category];
   const baseUrl = cat
@@ -287,6 +304,20 @@ async function scrapeML({ category, limit = 200 } = {}) {
     // Filtros de qualidade do admin (rating/vendas/preço/desconto máximo).
     // Lazy require evita ciclo no boot. Defaults (tudo 0) = passa tudo.
     const affiliate = require("./affiliate");
+
+    // Ofertas do Hub de Afiliados (só existem logado, com a conta do sistema).
+    // Entram no mesmo balaio da vitrine pública e são deduplicadas pelo link.
+    // Hub fora do ar / sessão expirada NÃO derruba a coleta pública.
+    if (affiliate.mlHubEnabled()) {
+      try {
+        const hub = await require("./ml-hub").scrapeHub({ category, limit });
+        const novos = mergeHubProducts(raw, hub);
+        for (const p of novos) { seen.add(p.link); raw.push(p); }
+        console.log(`[scraper ML] ${tag}: +${novos.length} do Hub de Afiliados (${hub.length} vistos)`);
+      } catch (err) {
+        console.error(`[scraper ML] ${tag}: Hub de Afiliados falhou — ${err.message}`);
+      }
+    }
     const filters = affiliate.readMLScraperFilters();
     const filtered = raw.filter(p => affiliate.passesMLFilters(p, filters));
     if (filtered.length < raw.length) {
@@ -1396,4 +1427,6 @@ async function autoScroll(page) {
   await new Promise(r => setTimeout(r, 1000));
 }
 
-module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, upgradeMLImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, extractShopeeIds, parseMLReviewCompacted, parseAmazonSold, parseRatingText, parseReviewsCount, reconcilePricing, normalizeSoldText, CATEGORIES, STORES };
+module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, upgradeMLImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, extractShopeeIds, parseMLReviewCompacted, mergeHubProducts, parseAmazonSold, parseRatingText, parseReviewsCount, reconcilePricing, normalizeSoldText, CATEGORIES, STORES,
+  // Reusados por ml-hub.js (navegar logado em páginas do ML)
+  launchAmazonBrowser, applyAmazonStealth, parseMLCookies, autoScroll, detectBlockPage, UA };

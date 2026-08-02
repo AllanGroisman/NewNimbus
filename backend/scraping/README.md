@@ -10,6 +10,7 @@ Tudo relacionado a **pegar produtos das lojas** e **transformar links em links d
   - **Mercado Livre**: API oficial de short link da ML (tag + cookie autenticado). Cache de 7 dias por (userId, link).
   - **Amazon**: anexa `?tag=<sua-tag>` na URL canônica `/dp/ASIN`. Extrai o ASIN com regex.
   - **Shopee**: GraphQL `open-api.affiliate.shopee.com.br` (App ID + App Secret). Cache de 7 dias.
+- **`ml-hub.js`** — **Hub de Afiliados** do ML (`mercadolivre.com.br/afiliados/hub`), página que só existe logado. Confirma o acesso (`checkHubAccess`), coleta as ofertas (`scrapeHub`) e salva a página em disco (`dumpHub`). Usa a **sessão da conta do sistema** (ver abaixo), nunca o cookie de um usuário.
 - **`affiliate-store/`** — façade (`index.js` + `pg.js`) pro storage per-user das configs de afiliado. Persiste em `affiliate_config` (Prisma) com cache em memória write-through. Expõe `getRaw(userId)`, `setRaw(userId, value)`, `clear(userId)`, `listShopeeConfigs()`, `warmup()`.
 
 ## Gating por afiliado
@@ -29,3 +30,55 @@ No frontend, `groupUsesML()` em `data/constants.js` ajuda a renderizar o banner 
 As envs `ML_AFFILIATE_TAG` + `ML_AFFILIATE_COOKIE`, `AMAZON_AFFILIATE_TAG`, `SHOPEE_AFFILIATE_APP_ID` + `SHOPEE_AFFILIATE_APP_SECRET` continuam funcionando como **override GLOBAL** (sobrescrevem qualquer config persistida). Quando setadas, o `affiliate.writeXxxConfig` rejeita escritas — pra mexer pela UI é preciso desligar as envs.
 
 O admin-scraper (que roda fora de userId) usa env vars OU pega creds Shopee do primeiro usuário configurado via `affiliate.getScraperShopeeCreds()` → `affiliate-store.listShopeeConfigs()`.
+
+## Sessão ML da conta do sistema (Hub de Afiliados)
+
+**Duas coisas diferentes, de donos diferentes — não misture:**
+
+| | onde fica | de quem é | pra que serve |
+|---|---|---|---|
+| cookie do cliente | `affiliate_config.ml.cookie` (por usuário) | do cliente | gerar link curto com a TAG dele |
+| sessão do sistema | `app_config` chave `scraper-ml-admin` | nossa | abrir páginas que só existem logado (Hub) |
+
+`affiliate.getScraperMLSession()` resolve a sessão do sistema: env **`ML_SCRAPER_COOKIE`** → sessão salva no admin → `null`. **De propósito não existe fallback pro cookie de nenhum usuário** — raspar com a conta de um cliente sem ele saber não é aceitável (o Shopee tem esse fallback por herança).
+
+Onde se mexe: **Admin › Mercado Livre**, card "Conta do Mercado Livre do sistema" (salvar / testar acesso / apagar). Rotas: `GET|PUT|DELETE /api/admin/scraper/ml/session` e `POST /api/admin/scraper/ml/session/test`. O cookie nunca sai da API inteiro — só tamanho e prévia.
+
+### Como a coleta do Hub funciona
+
+O Hub **não é raspado do HTML**. A própria página busca as ofertas numa API interna
+(`/affiliate-program/api/hub/search`) que devolve os cards prontos em JSON (formato
+"polycard"): MLB do produto, URL, título, imagem, preço, preço anterior, "60% OFF",
+`alt_text` de nota/vendas no mesmo formato da vitrine (por isso `polycardToProduct`
+reusa `parseMLReviewCompacted`), selo "MAIS VENDIDO" e a comissão ("GANHOS 12%").
+
+Chamar essa API por fora **não funciona** (GET → 404, POST → 403: falta o CSRF e os
+cabeçalhos que o ML monta no navegador). Então `scrapeHub` abre o Hub no Chrome com
+a sessão do sistema e **escuta as respostas** que a página busca sozinha, rolando
+pra carregar mais (18 cards por resposta, teto de 15 rolagens).
+
+O filtro por categoria é aplicado **clicando na interface** (o ML não aceita filtro
+por URL): `HUB_CATEGORIES` mapeia as nossas 10 categorias para o `{ id, label }` do
+menu do Hub. Se o clique não pegar, a coleta segue sem filtro e o log avisa —
+degrada, não quebra.
+
+O Hub **não é uma loja nova**: os produtos saem como `store: "Mercado Livre"` e o
+`scrapeML` junta os dois conjuntos com `mergeHubProducts`, deduplicando pela chave
+do catálogo (o MLB), porque o mesmo item aparece nos dois lugares com URLs
+diferentes. Extras do Hub (`hub`, `commission`, `extraCommission`, `bestSeller`,
+`mlItemId`) vão pro `payload` jsonb do catálogo. Hub fora do ar não derruba a coleta
+da vitrine pública.
+
+Liga/desliga: checkbox no mesmo card do admin (`hubEnabled`, default ligado).
+
+Pra inspecionar o Hub quando algo parecer errado:
+
+```
+node scripts/ml-hub-dump.js                    # → backend/logs/ml-hub/<timestamp>/
+node scripts/ml-hub-dump.js --category casa    # aplica o filtro antes de capturar
+```
+
+Grava `hub.html`, `hub.png`, `hub-xhr.json` (as respostas cruas da API),
+`hub-cards.json` (os produtos já convertidos — é o que mostra na hora se o formato
+mudou) e `hub-meta.json` (inclui as categorias que o Hub oferece hoje, pra conferir
+o `HUB_CATEGORIES`). O cookie não vai pros arquivos.

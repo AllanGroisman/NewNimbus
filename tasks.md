@@ -236,4 +236,29 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     boas-vindas, trocar e-mail) não, senão ninguém consegue entrar. De brinde,
     esses 4 deixaram de montar HTML na mão e agora escapam o nome do usuário.
 
-55. [] Quero limpar a pasta deploy. so uso start.sh, restart.sh, stop.sh e ngrok_start.sh. O resto nao uso, tem algo dos outros que preciso guardar? Se nao quero apagar.
+55. [x] Quero buscar itens e fazer scraping tb na pagina de ofertas para afiliados do mercado livre em https://www.mercadolivre.com.br/afiliados/hub. Quero que tenha na aba Mercado livre opcoes para por minhas credenciais e fazer login para que seja possivel acessar a pagina. Caso seja necessario logar para ti ter acesso e ver como fazer o scraping, podemos dividir essa tarefa em 2, primeiro logar e te dar acesso utilizando essa aba do MErcado livre e depois uma outra tarefa para implementar o scraping da pagina!
+    Esta é a parte 1 — o acesso. Admin › Mercado Livre ganhou o card "Conta do
+    Mercado Livre do sistema": você cola o cookie de uma conta ML nossa e clica
+    em "Testar acesso ao Hub", que abre a página num navegador de verdade e diz
+    se entrou, se pediu login de novo ou se caiu num CAPTCHA. Esse cookie fica
+    guardado em lugar separado do cookie que cada cliente cola na aba dele — um
+    não enxerga o outro, e o robô nunca raspa usando a conta de um cliente. Sem
+    usuário/senha de propósito: login automático no ML esbarra em CAPTCHA e
+    código de verificação. Junto veio o comando `node scripts/ml-hub-dump.js`,
+    que salva o HTML, um print e as chamadas de dados da página numa pasta —
+    é o que me deixa escrever o scraping olhando a página real (tarefa 56).
+
+56. [x] Fazer o scraping das ofertas do Hub de Afiliados do Mercado Livre e mandar
+    pro catálogo, usando a sessão da conta do sistema já configurada na 55.
+    Feito: o robô agora coleta também as ofertas do Hub e joga no mesmo catálogo,
+    junto com as da vitrine pública, sem repetir produto (quem aparece nos dois
+    lugares entra uma vez só). A captura da página mostrou que o Hub serve as
+    ofertas por uma API interna em JSON — então em vez de "ler a tela" a gente lê
+    os dados prontos: preço, preço antigo, desconto, nota, vendas e até a comissão
+    que aquele produto paga ("GANHOS 12%"), que fica guardada junto do produto.
+    A separação por categoria funciona porque o Hub usa os mesmos códigos de
+    categoria do Mercado Livre que a gente já usava. No card da conta do sistema
+    tem um checkbox pra desligar isso; e se a sessão expirar, o robô segue
+    coletando a vitrine normalmente em vez de parar.
+
+57. [] Adicione um marcador assim como o "incluir ofertas do HUB no scraping do Mercado Livre" para incluir ofertas da pagina de ofertas padrao que ja existe, assim consigo desativat tb o scraping antigo. Alem disso queria alterar tb a prioridade ali nas configuracoes do ML, se hoje busco 1000 produtos, quero que comece por um ou por outro dando prioridade e o resto é preenchido pelo segundo na priorirdade.

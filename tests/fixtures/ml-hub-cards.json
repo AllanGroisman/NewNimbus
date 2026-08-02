@@ -1,0 +1,470 @@
+{
+  "context": {
+    "contract_version": "1.3.0",
+    "picture_template": "https://http2.mlstatic.com/D_{square}_NP{2x}_{id}-{size}{sanitized_title}.webp",
+    "picture_size_default": "AB",
+    "url_prefix": "https://",
+    "type": "grid-card",
+    "card_size": "large",
+    "checkbox": false,
+    "thousand_separator": ".",
+    "decimal_separator": ",",
+    "styles_default": [],
+    "picture_overlay_default": true,
+    "picture_square_default": "Q",
+    "url_fragments_default": "#polycard_client=affiliates"
+  },
+  "cards": [
+    {
+      "unique_id": "d2fa9d7719fc3b7317a",
+      "metadata": {
+        "id": "MLB3225819794",
+        "product_id": "MLB21814751",
+        "user_product_id": "MLBU1095924588",
+        "url": "www.mercadolivre.com.br/balanca-digital-corporal-bioimpedancia-aplicativo-bluetooth-relaxmedic/p/MLB21814751",
+        "url_fragments": "#polycard_client=affiliates&wid=MLB3225819794&sid=affiliates",
+        "url_params": "?pdp_filters=item_id%3AMLB3225819794&extra_comm=true&brand_comm=false",
+        "card_type": "grid-card",
+        "vertical": "",
+        "extra_commission": "true",
+        "brand_commission": "false",
+        "type": "product"
+      },
+      "pictures": {
+        "scale": "FILL",
+        "pictures": [
+          {
+            "id": "669691-MLA106901751604_022026"
+          }
+        ],
+        "square": "Q",
+        "alt_text": "Imagem",
+        "overlay": true
+      },
+      "components": [
+        {
+          "type": "highlight",
+          "id": "highlight",
+          "highlight": {
+            "text": "MAIS VENDIDO",
+            "styles": {
+              "color_hex": "#FFFFFF",
+              "background_color_hex": "#FF7733"
+            }
+          }
+        },
+        {
+          "type": "title",
+          "id": "title",
+          "title": {
+            "text": "Balança Digital Corporal Bioimpedância Aplicativo Bluetooth Relaxmedic",
+            "long_title": false
+          }
+        },
+        {
+          "type": "review_compacted",
+          "id": "review_compacted",
+          "review_compacted": {
+            "text": "{icon_star_fill} {label} {label2}",
+            "alt_text": "Classificação 4.9 de 5 estrelas. Mais de 100mil produtos vendidos.",
+            "values": [
+              {
+                "key": "icon_star_fill",
+                "type": "icon",
+                "icon": {
+                  "key": "icon_star_fill",
+                  "icon_id": "icon_star_fill"
+                }
+              },
+              {
+                "key": "label",
+                "type": "label",
+                "label": {
+                  "text": "4.9"
+                },
+                "styles": {
+                  "color_hex": "#000000",
+                  "font_size": "xs",
+                  "font_weight": "regular"
+                }
+              },
+              {
+                "key": "label2",
+                "type": "label",
+                "label": {
+                  "text": "| +100mil vendidos"
+                },
+                "styles": {
+                  "color_hex": "#737373",
+                  "font_size": "xs"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "chip",
+          "id": "affiliates_commission_chip",
+          "chip": {
+            "type": "composite",
+            "inverted": false,
+            "inline": true,
+            "pill": {
+              "text": "{ganancia} {extra}",
+              "values": [
+                {
+                  "key": "ganancia",
+                  "type": "label",
+                  "label": {
+                    "text": "GANHOS"
+                  }
+                },
+                {
+                  "key": "extra",
+                  "type": "label",
+                  "label": {
+                    "text": "EXTRAS"
+                  },
+                  "styles": {
+                    "font_style": "italic"
+                  }
+                }
+              ],
+              "styles": {
+                "font_weight": "semibold",
+                "background_color_hex": "#A5F8F2"
+              }
+            },
+            "label": {
+              "text": "22%",
+              "styles": {
+                "font_weight": "semibold",
+                "background_color_hex": "#E3F6F5"
+              }
+            }
+          }
+        },
+        {
+          "type": "price",
+          "id": "price",
+          "price": {
+            "previous_price": {
+              "value": 279.9,
+              "currency": "BRL",
+              "decimal_style": "normal"
+            },
+            "current_price": {
+              "value": 110.54,
+              "currency": "BRL",
+              "decimal_style": "superscript"
+            },
+            "discount_label": {
+              "text": "60% OFF",
+              "styles": {
+                "color_hex": "#FFFFFF",
+                "background_color_hex": "#00A650"
+              }
+            }
+          }
+        },
+        {
+          "type": "action_links",
+          "id": "action_links",
+          "action_links": [
+            {
+              "id": "share_action",
+              "type": "button",
+              "hierarchy": "quiet",
+              "size": "medium",
+              "text": "Compartilhar"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "unique_id": "3164d1e619fc3b7317a",
+      "metadata": {
+        "id": "MLB4516087361",
+        "product_id": "MLB51161616",
+        "user_product_id": "MLBU3837879070",
+        "url": "www.mercadolivre.com.br/panela-pipoca-pipoqueira-n20-preto-liso-com-tampa-de-vidro-cor-vermelho/p/MLB51161616",
+        "url_fragments": "#polycard_client=affiliates&wid=MLB4516087361&sid=affiliates",
+        "url_params": "?pdp_filters=deal%3AMLB1578289-1&extra_comm=false&brand_comm=false",
+        "card_type": "grid-card",
+        "vertical": "",
+        "extra_commission": "false",
+        "brand_commission": "false",
+        "type": "product"
+      },
+      "pictures": {
+        "scale": "FILL",
+        "pictures": [
+          {
+            "id": "830601-MLA108417312831_032026"
+          }
+        ],
+        "square": "Q",
+        "alt_text": "Imagem",
+        "overlay": true
+      },
+      "components": [
+        {
+          "type": "highlight",
+          "id": "highlight",
+          "highlight": {
+            "text": "MAIS VENDIDO",
+            "styles": {
+              "color_hex": "#FFFFFF",
+              "background_color_hex": "#FF7733"
+            }
+          }
+        },
+        {
+          "type": "title",
+          "id": "title",
+          "title": {
+            "text": "Panela Pipoca Pipoqueira N°20 Preto Liso Com Tampa De Vidro Cor Vermelho",
+            "long_title": false
+          }
+        },
+        {
+          "type": "review_compacted",
+          "id": "review_compacted",
+          "review_compacted": {
+            "text": "{icon_star_fill} {label} {label2}",
+            "alt_text": "Classificação 4.5 de 5 estrelas. Mais de 5mil produtos vendidos.",
+            "values": [
+              {
+                "key": "icon_star_fill",
+                "type": "icon",
+                "icon": {
+                  "key": "icon_star_fill",
+                  "icon_id": "icon_star_fill"
+                }
+              },
+              {
+                "key": "label",
+                "type": "label",
+                "label": {
+                  "text": "4.5"
+                },
+                "styles": {
+                  "color_hex": "#000000",
+                  "font_size": "xs",
+                  "font_weight": "regular"
+                }
+              },
+              {
+                "key": "label2",
+                "type": "label",
+                "label": {
+                  "text": "| +5mil vendidos"
+                },
+                "styles": {
+                  "color_hex": "#737373",
+                  "font_size": "xs"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "chip",
+          "id": "affiliates_commission_chip",
+          "chip": {
+            "type": "composite",
+            "inverted": false,
+            "inline": true,
+            "pill": {
+              "text": "GANHOS 12%",
+              "styles": {
+                "font_weight": "semibold",
+                "background_color_hex": "#E3F6F5"
+              }
+            }
+          }
+        },
+        {
+          "type": "price",
+          "id": "price",
+          "price": {
+            "current_price": {
+              "value": 56.99,
+              "currency": "BRL",
+              "decimal_style": "superscript"
+            },
+            "installments": {
+              "text": "2x {price} sem juros",
+              "no_interest": true,
+              "values": [
+                {
+                  "key": "price",
+                  "type": "price",
+                  "price": {
+                    "value": 28.5,
+                    "currency": "BRL"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "action_links",
+          "id": "action_links",
+          "action_links": [
+            {
+              "id": "share_action",
+              "type": "button",
+              "hierarchy": "quiet",
+              "size": "medium",
+              "text": "Compartilhar"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "unique_id": "5f5ba07c19fc3b7317a",
+      "metadata": {
+        "id": "MLB6188452714",
+        "product_id": "MLB64635935",
+        "user_product_id": "MLBU3742760549",
+        "url": "www.mercadolivre.com.br/colchao-inflavel-casal-garag-azul-fole-embutido-casa-camping-trilha-barraca-multiuso-portatil-leve/p/MLB64635935",
+        "url_fragments": "#polycard_client=affiliates&wid=MLB6188452714&sid=affiliates",
+        "url_params": "?pdp_filters=deal%3AMLB1578289-1&extra_comm=false&brand_comm=false",
+        "card_type": "grid-card",
+        "vertical": "",
+        "extra_commission": "false",
+        "brand_commission": "false",
+        "type": "product"
+      },
+      "pictures": {
+        "scale": "FILL",
+        "pictures": [
+          {
+            "id": "622893-MLA104874822544_012026"
+          }
+        ],
+        "square": "Q",
+        "alt_text": "Imagem",
+        "overlay": true
+      },
+      "components": [
+        {
+          "type": "highlight",
+          "id": "highlight",
+          "highlight": {
+            "text": "MAIS BUSCADO",
+            "styles": {
+              "color_hex": "#FFFFFF",
+              "background_color_hex": "#635BF5"
+            }
+          }
+        },
+        {
+          "type": "title",
+          "id": "title",
+          "title": {
+            "text": "Colchão Inflável Casal GARAG Azul Fole Embutido Casa Camping Trilha Barraca Multiuso Portátil Leve",
+            "long_title": false
+          }
+        },
+        {
+          "type": "review_compacted",
+          "id": "review_compacted",
+          "review_compacted": {
+            "text": "{icon_star_fill} {label} {label2}",
+            "alt_text": "Classificação 4.7 de 5 estrelas. Mais de 1000 produtos vendidos.",
+            "values": [
+              {
+                "key": "icon_star_fill",
+                "type": "icon",
+                "icon": {
+                  "key": "icon_star_fill",
+                  "icon_id": "icon_star_fill"
+                }
+              },
+              {
+                "key": "label",
+                "type": "label",
+                "label": {
+                  "text": "4.7"
+                },
+                "styles": {
+                  "color_hex": "#000000",
+                  "font_size": "xs",
+                  "font_weight": "regular"
+                }
+              },
+              {
+                "key": "label2",
+                "type": "label",
+                "label": {
+                  "text": "| +1000 vendidos"
+                },
+                "styles": {
+                  "color_hex": "#737373",
+                  "font_size": "xs"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "chip",
+          "id": "affiliates_commission_chip",
+          "chip": {
+            "type": "composite",
+            "inverted": false,
+            "inline": true,
+            "pill": {
+              "text": "GANHOS 16%",
+              "styles": {
+                "font_weight": "semibold",
+                "background_color_hex": "#E3F6F5"
+              }
+            }
+          }
+        },
+        {
+          "type": "price",
+          "id": "price",
+          "price": {
+            "previous_price": {
+              "value": 125,
+              "currency": "BRL",
+              "decimal_style": "normal"
+            },
+            "current_price": {
+              "value": 107.67,
+              "currency": "BRL",
+              "decimal_style": "superscript"
+            },
+            "discount_label": {
+              "text": "13% OFF",
+              "styles": {
+                "color_hex": "#FFFFFF",
+                "background_color_hex": "#00A650"
+              }
+            }
+          }
+        },
+        {
+          "type": "action_links",
+          "id": "action_links",
+          "action_links": [
+            {
+              "id": "share_action",
+              "type": "button",
+              "hierarchy": "quiet",
+              "size": "medium",
+              "text": "Compartilhar"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

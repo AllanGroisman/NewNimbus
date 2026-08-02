@@ -17,6 +17,7 @@ const affiliate = require("./scraping/affiliate");
 const catalog = require("./catalog");
 const adminScraper = require("./scraping/admin");
 const storeLocks = require("./scraping/store-locks");
+const mlHub = require("./scraping/ml-hub");
 const scrapTester = require("./scraping/tester");
 const appConfig = require("./config");
 const cpfUtil = require("./utils/cpf");
@@ -2093,6 +2094,64 @@ app.put("/api/admin/scraper/shopee/filters", auth.requireAuth, auth.requireAdmin
     res.json({ ok: true, filters: saved });
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+// Sessão do Mercado Livre DA CONTA DO SISTEMA — abre páginas que só existem
+// logado (Hub de Afiliados). Nada a ver com o cookie que cada usuário cola na
+// aba dele: aquele continua servindo só pra gerar link de afiliado com a TAG dele.
+// O cookie nunca sai daqui inteiro — só tamanho e prévia.
+function mlSessionPayload() {
+  const admin = affiliate.readScraperMLAdminSession();
+  const active = affiliate.getScraperMLSession();
+  return {
+    configured: !!(active && active.cookie),
+    source: active ? active.source : null,
+    cookieLength: active?.cookie ? active.cookie.length : 0,
+    cookiePreview: active?.cookie ? active.cookie.slice(0, 30) : null,
+    hubEnabled: admin.hubEnabled !== false,
+    updatedAt: admin.updatedAt,
+    lastCheckAt: admin.lastCheckAt,
+    lastCheckOk: admin.lastCheckOk,
+    lastCheckReason: admin.lastCheckReason,
+  };
+}
+
+app.get("/api/admin/scraper/ml/session", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json(mlSessionPayload());
+});
+
+app.put("/api/admin/scraper/ml/session", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const body = req.body || {};
+    // Só o checkbox mudou? Não exige recolar o cookie.
+    if (body.cookie !== undefined) affiliate.writeScraperMLAdminSession({ cookie: body.cookie });
+    if (body.hubEnabled !== undefined) affiliate.writeScraperMLHubEnabled(!!body.hubEnabled);
+    if (!await confirmConfigSaved(res)) return;
+    res.json({ ok: true, ...mlSessionPayload() });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete("/api/admin/scraper/ml/session", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  affiliate.clearScraperMLAdminSession();
+  if (!await confirmConfigSaved(res)) return;
+  res.json({ ok: true, ...mlSessionPayload() });
+});
+
+// Abre o Hub num navegador de verdade e diz se a sessão entrou. Demora (~30s).
+app.post("/api/admin/scraper/ml/session/test", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  const session = affiliate.getScraperMLSession();
+  if (!session) return res.status(400).json({ error: "Nenhuma sessão salva — cole o cookie da conta do sistema primeiro." });
+  try {
+    const r = await mlHub.checkHubAccess(session.cookie);
+    affiliate.recordMLHubCheck({ ok: r.ok, reason: r.reason });
+    if (!await confirmConfigSaved(res)) return;
+    res.json({ ...r, session: mlSessionPayload() });
+  } catch (err) {
+    affiliate.recordMLHubCheck({ ok: false, reason: err.message });
+    res.status(502).json({ error: err.message });
   }
 });
 

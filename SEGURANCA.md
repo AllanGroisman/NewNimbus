@@ -169,6 +169,7 @@ Todos os achados da auditoria foram corrigidos, com três exceções, que ficam 
 | `protobufjs` com falha crítica conhecida | Média | Chega junto com a biblioteca do WhatsApp e **não existe versão corrigida publicada**. Sair disso exigiria a versão 7 do Baileys, que ainda é versão de testes — decisão sua, não faria isso sem combinar. |
 | Chromium roda sem isolamento (`--no-sandbox`) e como root | Média | O risco caiu bastante com o buscador de links agora restrito a domínios de loja. Corrigir de verdade significa rodar o sistema com um usuário comum em vez de root, que é uma mudança de infraestrutura maior. |
 | Backup para o Google Drive enviaria sem criptografia | Baixa | **Não está ativo** (rclone não instalado). Deixei aviso no script com a instrução de como ligar com criptografia. |
+| Cookies e chaves de loja ficam em texto puro no banco | Média | Vale tanto para o cookie de cada cliente (`affiliate_config`) quanto para a senha da Shopee e a nova sessão do Mercado Livre do sistema (`app_config`). Quem tiver acesso ao banco lê tudo. A API nunca devolve esses valores inteiros (só tamanho e prévia) e os dumps do Hub não os gravam, mas criptografar de verdade exige uma chave e um utilitário próprios para esse caminho — hoje o único uso de criptografia no repo é o das sessões do WhatsApp. *(Registrado em 02/08/2026, task 55.)* |
 
 Fora da segurança, notei duas coisas que valem atenção quando sobrar tempo:
 
