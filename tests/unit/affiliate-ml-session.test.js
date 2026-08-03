@@ -121,33 +121,5 @@ describe("isolamento entre a sessão do sistema e o cookie do usuário", () => {
   });
 });
 
-// Coletar (ou não) as ofertas do Hub junto com as da vitrine pública.
-describe("hubEnabled", () => {
-  it("nasce ligado quando a sessão é salva", () => {
-    affiliate.writeScraperMLAdminSession({ cookie: SYSTEM_COOKIE });
-    expect(affiliate.readScraperMLAdminSession().hubEnabled).toBe(true);
-    expect(affiliate.mlHubEnabled()).toBe(true);
-  });
-
-  it("desligar persiste e desliga a coleta", () => {
-    affiliate.writeScraperMLAdminSession({ cookie: SYSTEM_COOKIE });
-    affiliate.writeScraperMLHubEnabled(false);
-    expect(affiliate.readScraperMLAdminSession().hubEnabled).toBe(false);
-    expect(affiliate.mlHubEnabled()).toBe(false);
-
-    affiliate.writeScraperMLHubEnabled(true);
-    expect(affiliate.mlHubEnabled()).toBe(true);
-  });
-
-  it("trocar o cookie não religa o Hub sozinho", () => {
-    affiliate.writeScraperMLAdminSession({ cookie: SYSTEM_COOKIE });
-    affiliate.writeScraperMLHubEnabled(false);
-
-    affiliate.writeScraperMLAdminSession({ cookie: `${SYSTEM_COOKIE}; novo=1` });
-    expect(affiliate.readScraperMLAdminSession().hubEnabled).toBe(false);
-  });
-
-  it("sem sessão do sistema não coleta, mesmo com a opção ligada", () => {
-    expect(affiliate.mlHubEnabled()).toBe(false);
-  });
-});
+// O liga/desliga do Hub e a prioridade entre as fontes moram em
+// tests/unit/ml-scraper-sources.test.js (chave própria desde a tarefa 57).

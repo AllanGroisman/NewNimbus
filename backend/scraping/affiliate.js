@@ -563,13 +563,10 @@ function clearScraperShopeeAdminCreds() {
 function readScraperMLAdminSession() {
   const raw = appConfig.get(SCRAPER_ML_ADMIN_KEY);
   if (!raw || typeof raw !== "object") {
-    return { cookie: null, hubEnabled: true, updatedAt: null, lastCheckAt: null, lastCheckOk: null, lastCheckReason: null };
+    return { cookie: null, updatedAt: null, lastCheckAt: null, lastCheckOk: null, lastCheckReason: null };
   }
   return {
     cookie: raw.cookie || null,
-    // Coletar as ofertas do Hub junto com as da vitrine pública. Default ligado:
-    // quem colou a sessão do sistema quis o Hub.
-    hubEnabled: raw.hubEnabled === false ? false : true,
     updatedAt: raw.updatedAt || null,
     lastCheckAt: raw.lastCheckAt || null,
     lastCheckOk: typeof raw.lastCheckOk === "boolean" ? raw.lastCheckOk : null,
@@ -588,22 +585,12 @@ function writeScraperMLAdminSession({ cookie }) {
   }
   const next = {
     cookie: clean,
-    // Trocar o cookie não mexe na escolha de coletar (ou não) o Hub.
-    hubEnabled: readScraperMLAdminSession().hubEnabled,
     updatedAt: new Date().toISOString(),
     // Cookie novo → o resultado do teste anterior não vale mais.
     lastCheckAt: null,
     lastCheckOk: null,
     lastCheckReason: null,
   };
-  appConfig.set(SCRAPER_ML_ADMIN_KEY, next);
-  return next;
-}
-
-// Liga/desliga a coleta do Hub. Guardado junto da sessão porque um não serve sem
-// o outro: sem cookie do sistema o Hub não abre, com a flag desligada não é lido.
-function writeScraperMLHubEnabled(enabled) {
-  const next = { ...readScraperMLAdminSession(), hubEnabled: !!enabled };
   appConfig.set(SCRAPER_ML_ADMIN_KEY, next);
   return next;
 }
@@ -639,11 +626,68 @@ function getScraperMLSession() {
   return null;
 }
 
+// ────────────────────────────────────────────────────────────────────────
+// Fontes de ofertas do Mercado Livre (vitrine pública × Hub de Afiliados)
+// ────────────────────────────────────────────────────────────────────────
+//
+// Mora em chave própria, e não junto da sessão do sistema, porque a vitrine
+// pública não depende de conta nenhuma — apagar o cookie do sistema não pode
+// apagar junto a preferência de coletar (ou não) a vitrine.
+
+const ML_SOURCES_KEY = "ml-scraper-sources";
+const ML_SOURCES_DEFAULTS = { vitrine: true, hub: true, priority: "hub" };
+
+function readMLScraperSources() {
+  const raw = appConfig.get(ML_SOURCES_KEY);
+  if (!raw || typeof raw !== "object") {
+    // Antes da tarefa 57 o liga/desliga do Hub morava dentro da chave da sessão.
+    // Herda uma vez, pra quem já tinha desligado não ver o Hub voltar sozinho.
+    const legacy = appConfig.get(SCRAPER_ML_ADMIN_KEY);
+    const hub = legacy && typeof legacy === "object" && legacy.hubEnabled === false ? false : true;
+    return { ...ML_SOURCES_DEFAULTS, hub };
+  }
+  return {
+    vitrine: raw.vitrine === false ? false : true,
+    hub:     raw.hub === false ? false : true,
+    priority: raw.priority === "vitrine" ? "vitrine" : "hub",
+  };
+}
+
+// Patch parcial (a interface manda só o que o admin mexeu). Desligar as duas
+// deixaria o ML sem fonte nenhuma — pra isso existe desligar o ML inteiro no
+// admin-scraper, então aqui é erro.
+function writeMLScraperSources(patch) {
+  const cur = readMLScraperSources();
+  const bool = (v, def) => (typeof v === "boolean" ? v : def);
+  const next = {
+    vitrine: bool(patch?.vitrine, cur.vitrine),
+    hub:     bool(patch?.hub,     cur.hub),
+    priority: patch?.priority === "vitrine" || patch?.priority === "hub" ? patch.priority : cur.priority,
+  };
+  if (!next.vitrine && !next.hub) {
+    throw new Error("Deixe pelo menos uma fonte de ofertas ligada.");
+  }
+  appConfig.set(ML_SOURCES_KEY, next);
+  return next;
+}
+
+// De quais fontes coletar e em que ordem. Puro → testável sem navegador.
+// A prioritária enche a cota primeiro; a outra completa o que faltar.
+function orderedMLSources(sources) {
+  const s = sources || readMLScraperSources();
+  const ordem = s.priority === "vitrine" ? ["vitrine", "hub"] : ["hub", "vitrine"];
+  return ordem.filter(src => s[src] !== false);
+}
+
 // O scraper do ML deve coletar também o Hub? Só se houver sessão do sistema E o
-// admin não tiver desmarcado a opção.
+// admin não tiver desmarcado a fonte.
 function mlHubEnabled() {
   if (!getScraperMLSession()) return false;
-  return readScraperMLAdminSession().hubEnabled !== false;
+  return readMLScraperSources().hub !== false;
+}
+
+function mlVitrineEnabled() {
+  return readMLScraperSources().vitrine !== false;
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -934,8 +978,13 @@ module.exports = {
   clearScraperMLAdminSession,
   recordMLHubCheck,
   getScraperMLSession,
-  writeScraperMLHubEnabled,
+  // Fontes de ofertas do ML (vitrine pública × Hub) e a ordem entre elas
+  readMLScraperSources,
+  writeMLScraperSources,
+  orderedMLSources,
   mlHubEnabled,
+  mlVitrineEnabled,
+  ML_SOURCES_DEFAULTS,
   // Amazon
   gerarLinkAfiliadoAmazon,
   readAmazonConfig,

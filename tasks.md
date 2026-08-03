@@ -261,4 +261,19 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     tem um checkbox pra desligar isso; e se a sessão expirar, o robô segue
     coletando a vitrine normalmente em vez de parar.
 
-57. [] Adicione um marcador assim como o "incluir ofertas do HUB no scraping do Mercado Livre" para incluir ofertas da pagina de ofertas padrao que ja existe, assim consigo desativat tb o scraping antigo. Alem disso queria alterar tb a prioridade ali nas configuracoes do ML, se hoje busco 1000 produtos, quero que comece por um ou por outro dando prioridade e o resto é preenchido pelo segundo na priorirdade.
+57. [x] Adicione um marcador assim como o "incluir ofertas do HUB no scraping do Mercado Livre" para incluir ofertas da pagina de ofertas padrao que ja existe, assim consigo desativar tb o scraping antigo. Alem disso queria alterar tb a prioridade ali nas configuracoes do ML, se hoje busco 1000 produtos, quero que comece por um ou por outro dando prioridade e o resto é preenchido pelo segundo na prioridade.
+    Admin › Mercado Livre ganhou o card "De onde vêm as ofertas": um marcador
+    para a vitrine pública (a coleta de sempre) e outro para o Hub, mais a
+    escolha de por qual começar. A fonte escolhida enche a cota primeiro — se o
+    limite é 1000 e ela trouxe 400, a outra completa os 600 que faltam, sem
+    repetir produto. Se a primeira já encher, a segunda nem chega a abrir o
+    navegador (economia na VPS). Desligar as duas é barrado: sem fonte o Mercado
+    Livre não teria o que coletar — pra isso existe desligar a loja no
+    admin-scraper. Uma fonte que falhar (sessão expirada, por exemplo) é pulada
+    com aviso no log e a outra segue normalmente.
+
+58. [] Inclui no teste do scraper, teste para os produtos que vem do hub e tb um teste de qualidade da foto do produto, tem algumas campanhas de repasse aqui que estao enviando fotos de baixa qualidade.
+
+59. [] Quero poder escolher horarios especificos para fazer scraping inves de colocar um intervalo.
+
+60. [] Quero um botão para buscar quantos GB ainda estão sobrando no computador que esta rodando o sistema.

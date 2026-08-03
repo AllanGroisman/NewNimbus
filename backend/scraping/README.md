@@ -4,7 +4,7 @@ Tudo relacionado a **pegar produtos das lojas** e **transformar links em links d
 
 ## Arquivos
 
-- **`scraper.js`** — usa Puppeteer pra navegar nas páginas de ofertas de Mercado Livre, Amazon e Shopee e extrair os produtos. Define as constantes `CATEGORIES` (eletrônicos, casa, etc) e `STORES` (`ml`, `amazon`, `shopee`).
+- **`scraper.js`** — usa Puppeteer pra navegar nas páginas de ofertas de Mercado Livre, Amazon e Shopee e extrair os produtos. Define as constantes `CATEGORIES` (eletrônicos, casa, etc) e `STORES` (`ml`, `amazon`, `shopee`). No ML, `scrapeML` combina duas fontes — vitrine pública (`harvestMLVitrine`) e Hub de Afiliados — na ordem escolhida pelo admin.
 - **`admin.js`** — o "admin-scraper": roda o `scraper.js` em loop, no intervalo configurado pelo admin, e dá `upsert` dos produtos no `catalog/`. Tem rotas `/api/admin/scraper/*` pra ligar, desligar e ver status.
 - **`affiliate.js`** — converte URLs cruas em links de afiliado per-user e mantém cache + telemetria (último sucesso/falha por loja). Suporta:
   - **Mercado Livre**: API oficial de short link da ML (tag + cookie autenticado). Cache de 7 dias por (userId, link).
@@ -63,13 +63,31 @@ menu do Hub. Se o clique não pegar, a coleta segue sem filtro e o log avisa —
 degrada, não quebra.
 
 O Hub **não é uma loja nova**: os produtos saem como `store: "Mercado Livre"` e o
-`scrapeML` junta os dois conjuntos com `mergeHubProducts`, deduplicando pela chave
+`scrapeML` junta os dois conjuntos com `mergeNewProducts`, deduplicando pela chave
 do catálogo (o MLB), porque o mesmo item aparece nos dois lugares com URLs
 diferentes. Extras do Hub (`hub`, `commission`, `extraCommission`, `bestSeller`,
 `mlItemId`) vão pro `payload` jsonb do catálogo. Hub fora do ar não derruba a coleta
 da vitrine pública.
 
-Liga/desliga: checkbox no mesmo card do admin (`hubEnabled`, default ligado).
+### As duas fontes e a ordem entre elas
+
+O ML tem **duas fontes**: a vitrine pública (`harvestMLVitrine`, a coleta de
+sempre) e o Hub. Quais estão ligadas e qual vem primeiro ficam em `app_config`
+chave **`ml-scraper-sources`** = `{ vitrine, hub, priority }` (default: as duas
+ligadas, prioridade `hub`) — chave separada da sessão do sistema de propósito,
+senão apagar o cookie apagaria junto a preferência da vitrine. Quem tinha o
+`hubEnabled` antigo (que morava dentro de `scraper-ml-admin`) herda o valor na
+primeira leitura.
+
+`affiliate.orderedMLSources()` devolve as fontes ativas já na ordem. O `scrapeML`
+percorre essa ordem: a primeira coleta com alvo `limit`, filtra, ordena por
+desconto e entra; a segunda só é chamada com o que **faltar** — se a primeira já
+encheu a cota, a segunda nem abre navegador. Uma fonte que falhar (sessão
+expirada, layout mudado) é logada e pulada; a outra segue.
+
+Liga/desliga e prioridade: card "De onde vêm as ofertas" em Admin › Mercado Livre
+(`GET|PUT /api/admin/scraper/ml/sources`). Desligar as duas é recusado — pra parar
+o ML inteiro, use o admin-scraper.
 
 Pra inspecionar o Hub quando algo parecer errado:
 

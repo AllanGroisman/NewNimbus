@@ -2109,7 +2109,6 @@ function mlSessionPayload() {
     source: active ? active.source : null,
     cookieLength: active?.cookie ? active.cookie.length : 0,
     cookiePreview: active?.cookie ? active.cookie.slice(0, 30) : null,
-    hubEnabled: admin.hubEnabled !== false,
     updatedAt: admin.updatedAt,
     lastCheckAt: admin.lastCheckAt,
     lastCheckOk: admin.lastCheckOk,
@@ -2123,10 +2122,7 @@ app.get("/api/admin/scraper/ml/session", auth.requireAuth, auth.requireAdmin, (r
 
 app.put("/api/admin/scraper/ml/session", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
-    const body = req.body || {};
-    // Só o checkbox mudou? Não exige recolar o cookie.
-    if (body.cookie !== undefined) affiliate.writeScraperMLAdminSession({ cookie: body.cookie });
-    if (body.hubEnabled !== undefined) affiliate.writeScraperMLHubEnabled(!!body.hubEnabled);
+    affiliate.writeScraperMLAdminSession({ cookie: (req.body || {}).cookie });
     if (!await confirmConfigSaved(res)) return;
     res.json({ ok: true, ...mlSessionPayload() });
   } catch (err) {
@@ -2152,6 +2148,31 @@ app.post("/api/admin/scraper/ml/session/test", auth.requireAuth, auth.requireAdm
   } catch (err) {
     affiliate.recordMLHubCheck({ ok: false, reason: err.message });
     res.status(502).json({ error: err.message });
+  }
+});
+
+// De onde o robô tira as ofertas do ML: vitrine pública, Hub de Afiliados, ou as
+// duas — e qual delas enche a cota primeiro. `hubAvailable` diz se existe sessão
+// do sistema; sem ela o Hub não abre, por mais que esteja marcado.
+function mlSourcesPayload() {
+  return {
+    sources: affiliate.readMLScraperSources(),
+    hubAvailable: !!affiliate.getScraperMLSession(),
+    defaults: affiliate.ML_SOURCES_DEFAULTS,
+  };
+}
+
+app.get("/api/admin/scraper/ml/sources", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json(mlSourcesPayload());
+});
+
+app.put("/api/admin/scraper/ml/sources", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    affiliate.writeMLScraperSources(req.body || {});
+    if (!await confirmConfigSaved(res)) return;
+    res.json({ ok: true, ...mlSourcesPayload() });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 

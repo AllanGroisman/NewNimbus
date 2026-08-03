@@ -241,14 +241,14 @@ async function harvestMLCards(page, category) {
   });
 }
 
-// Quais produtos do Hub ainda não estão na coleta da vitrine. Deduplica pela CHAVE
-// DO CATÁLOGO (o MLB do produto), não pelo link: o mesmo item aparece nos dois
-// lugares com URLs diferentes. Pura → testável sem navegador.
-function mergeHubProducts(existentes, doHub) {
+// Quais destes produtos ainda não estão na coleta. Deduplica pela CHAVE DO
+// CATÁLOGO (o MLB do produto), não pelo link: o mesmo item aparece na vitrine e
+// no Hub com URLs diferentes. Pura → testável sem navegador.
+function mergeNewProducts(existentes, candidatos) {
   const { productKey } = require("../catalog/product-key");
   const keys = new Set((existentes || []).map(productKey));
   const novos = [];
-  for (const p of doHub || []) {
+  for (const p of candidatos || []) {
     if (!p || !p.link) continue;
     const k = productKey(p);
     if (keys.has(k)) continue;
@@ -258,76 +258,99 @@ function mergeHubProducts(existentes, doHub) {
   return novos;
 }
 
-async function scrapeML({ category, limit = 200 } = {}) {
+// Vitrine pública de ofertas (mercadolivre.com.br/ofertas) — a fonte de sempre.
+// A página mostra ~48 cards; paginamos via &page=N (1-indexed; sem o param =
+// página 1) acumulando e DEDUPLICANDO por link até bater o limite, esgotar as
+// páginas ou atingir o teto de segurança.
+async function harvestMLVitrine(browser, { category, limit }) {
   const cat = CATEGORIES[category];
   const baseUrl = cat
     ? `https://www.mercadolivre.com.br/ofertas?category=${cat.mlCode}`
     : "https://www.mercadolivre.com.br/ofertas";
+
+  const seen = new Set();
+  const raw = [];
+  for (let pageNum = 1; pageNum <= ML_MAX_PAGES && raw.length < limit; pageNum++) {
+    const url = pageNum === 1 ? baseUrl : `${baseUrl}&page=${pageNum}`;
+    const page = await browser.newPage();
+    try {
+      await page.setUserAgent(UA);
+      await page.goto(url, { waitUntil: "networkidle2", timeout: 30000 });
+      await autoScroll(page);
+      const cards = await harvestMLCards(page, category);
+      if (cards.length === 0) break;   // passou da última página
+      let added = 0;
+      for (const p of cards) {
+        if (!p.link || seen.has(p.link)) continue;
+        seen.add(p.link);
+        p.img = upgradeMLImageUrl(p.img);
+        raw.push(p);
+        added++;
+      }
+      // Nenhum item novo nesta página → o ML começou a repetir, encerra.
+      if (added === 0) break;
+    } finally {
+      await page.close();
+    }
+    await sleep(300 + Math.floor(Math.random() * 400));   // educado entre páginas
+  }
+  return raw;
+}
+
+// Duas fontes: a vitrine pública e o Hub de Afiliados (só existe logado, com a
+// conta do sistema). O admin liga/desliga cada uma e escolhe qual vem primeiro:
+// a prioritária enche a cota, a outra completa o que faltar — e nem chega a abrir
+// navegador se já não faltar nada.
+async function scrapeML({ category, limit = 200 } = {}) {
   const tag = category || "geral";
+  // Lazy require evita ciclo no boot. Filtros default (tudo 0) = passa tudo.
+  const affiliate = require("./affiliate");
+  const filters = affiliate.readMLScraperFilters();
 
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-blink-features=AutomationControlled"],
-  });
+  const fontes = affiliate.orderedMLSources().filter(src => src !== "hub" || affiliate.mlHubEnabled());
+  if (fontes.length === 0) {
+    console.warn(`[scraper ML] ${tag}: nenhuma fonte de ofertas ativa — nada a coletar`);
+    return [];
+  }
+
+  let browser = null;   // só sobe o Chrome se a vitrine for realmente usada
   try {
-    // A página de ofertas mostra ~48 cards por página; paginamos via &page=N
-    // (1-indexed; sem o param = página 1) acumulando e DEDUPLICANDO por link até
-    // bater o limite, esgotar as páginas ou atingir o teto de segurança.
-    const seen = new Set();
-    const raw = [];
-    for (let pageNum = 1; pageNum <= ML_MAX_PAGES && raw.length < limit; pageNum++) {
-      const url = pageNum === 1 ? baseUrl : `${baseUrl}&page=${pageNum}`;
-      const page = await browser.newPage();
+    const aprovados = [];
+    for (const fonte of fontes) {
+      const faltam = limit - aprovados.length;
+      if (faltam <= 0) break;
+
+      let vistos = [];
       try {
-        await page.setUserAgent(UA);
-        await page.goto(url, { waitUntil: "networkidle2", timeout: 30000 });
-        await autoScroll(page);
-        const cards = await harvestMLCards(page, category);
-        if (cards.length === 0) break;   // passou da última página
-        let added = 0;
-        for (const p of cards) {
-          if (!p.link || seen.has(p.link)) continue;
-          seen.add(p.link);
-          p.img = upgradeMLImageUrl(p.img);
-          raw.push(p);
-          added++;
+        if (fonte === "vitrine") {
+          if (!browser) {
+            browser = await puppeteer.launch({
+              headless: true,
+              args: ["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+            });
+          }
+          vistos = await harvestMLVitrine(browser, { category, limit: faltam });
+        } else {
+          vistos = await require("./ml-hub").scrapeHub({ category, limit: faltam });
         }
-        // Nenhum item novo nesta página → o ML começou a repetir, encerra.
-        if (added === 0) break;
-      } finally {
-        await page.close();
-      }
-      await sleep(300 + Math.floor(Math.random() * 400));   // educado entre páginas
-    }
-    console.log(`[scraper ML] ${tag}: ${raw.length} produtos coletados em até ${ML_MAX_PAGES} páginas`);
-
-    // Filtros de qualidade do admin (rating/vendas/preço/desconto máximo).
-    // Lazy require evita ciclo no boot. Defaults (tudo 0) = passa tudo.
-    const affiliate = require("./affiliate");
-
-    // Ofertas do Hub de Afiliados (só existem logado, com a conta do sistema).
-    // Entram no mesmo balaio da vitrine pública e são deduplicadas pelo link.
-    // Hub fora do ar / sessão expirada NÃO derruba a coleta pública.
-    if (affiliate.mlHubEnabled()) {
-      try {
-        const hub = await require("./ml-hub").scrapeHub({ category, limit });
-        const novos = mergeHubProducts(raw, hub);
-        for (const p of novos) { seen.add(p.link); raw.push(p); }
-        console.log(`[scraper ML] ${tag}: +${novos.length} do Hub de Afiliados (${hub.length} vistos)`);
       } catch (err) {
-        console.error(`[scraper ML] ${tag}: Hub de Afiliados falhou — ${err.message}`);
+        // Uma fonte fora do ar (sessão expirada, layout mudado) não derruba a outra.
+        console.error(`[scraper ML] ${tag}: fonte "${fonte}" falhou — ${err.message}`);
+        continue;
       }
-    }
-    const filters = affiliate.readMLScraperFilters();
-    const filtered = raw.filter(p => affiliate.passesMLFilters(p, filters));
-    if (filtered.length < raw.length) {
-      console.log(`[scraper ML] ${tag}: ${raw.length} vistos, ${raw.length - filtered.length} filtrados, ${filtered.length} aprovados`);
+
+      // Os filtros de qualidade cortam parte do que foi visto, então a segunda
+      // fonte pode entregar menos que `faltam` — igual acontecia antes da 57.
+      const passaram = vistos.filter(p => affiliate.passesMLFilters(p, filters));
+      passaram.sort((a, b) => (b.discount || 0) - (a.discount || 0));
+      const novos = mergeNewProducts(aprovados, passaram).slice(0, faltam);
+      aprovados.push(...novos);
+      console.log(`[scraper ML] ${tag}: ${fonte} — ${vistos.length} vistos, ${passaram.length} aprovados, +${novos.length} (faltavam ${faltam})`);
     }
 
-    filtered.sort((a, b) => (b.discount || 0) - (a.discount || 0));
-    return filtered.slice(0, limit);
+    return aprovados.slice(0, limit);
   } finally {
-    await browser.close();
+    if (browser) await browser.close();
   }
 }
 
@@ -1427,6 +1450,6 @@ async function autoScroll(page) {
   await new Promise(r => setTimeout(r, 1000));
 }
 
-module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, upgradeMLImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, extractShopeeIds, parseMLReviewCompacted, mergeHubProducts, parseAmazonSold, parseRatingText, parseReviewsCount, reconcilePricing, normalizeSoldText, CATEGORIES, STORES,
+module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, upgradeMLImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, extractShopeeIds, parseMLReviewCompacted, mergeNewProducts, parseAmazonSold, parseRatingText, parseReviewsCount, reconcilePricing, normalizeSoldText, CATEGORIES, STORES,
   // Reusados por ml-hub.js (navegar logado em páginas do ML)
   launchAmazonBrowser, applyAmazonStealth, parseMLCookies, autoScroll, detectBlockPage, UA };

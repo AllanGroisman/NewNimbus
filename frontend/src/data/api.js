@@ -467,11 +467,12 @@ export async function adminScraperShopeeFilters()        { return http("GET", "/
 export async function adminScraperShopeeFiltersSave(f)   { return http("PUT", "/api/admin/scraper/shopee/filters", f); }
 // Sessão do ML da conta do sistema (Hub de Afiliados) — não é o cookie de nenhum usuário.
 export async function adminScraperMLSession()            { return http("GET",    "/api/admin/scraper/ml/session"); }
-// Aceita { cookie } e/ou { hubEnabled } — manda só o que veio (trocar o checkbox
-// não exige recolar o cookie).
 export async function adminScraperMLSessionSave(patch)   { return http("PUT",    "/api/admin/scraper/ml/session", patch); }
 export async function adminScraperMLSessionClear()       { return http("DELETE", "/api/admin/scraper/ml/session"); }
 export async function adminScraperMLSessionTest()        { return http("POST",   "/api/admin/scraper/ml/session/test", {}, { timeoutMs: SLOW_TIMEOUT_MS }); }
+// Fontes de ofertas do ML: { vitrine, hub, priority }. O PUT aceita patch parcial.
+export async function adminScraperMLSources()            { return http("GET", "/api/admin/scraper/ml/sources"); }
+export async function adminScraperMLSourcesSave(patch)   { return http("PUT", "/api/admin/scraper/ml/sources", patch); }
 export async function adminScraperMLFilters()            { return http("GET", "/api/admin/scraper/ml/filters"); }
 export async function adminScraperMLFiltersSave(f)       { return http("PUT", "/api/admin/scraper/ml/filters", f); }
 export async function adminScraperAmazonFilters()        { return http("GET", "/api/admin/scraper/amazon/filters"); }
