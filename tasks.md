@@ -272,7 +272,28 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     admin-scraper. Uma fonte que falhar (sessão expirada, por exemplo) é pulada
     com aviso no log e a outra segue normalmente.
 
-58. [] Inclui no teste do scraper, teste para os produtos que vem do hub e tb um teste de qualidade da foto do produto, tem algumas campanhas de repasse aqui que estao enviando fotos de baixa qualidade.
+58. [x] Inclui no teste do scraper, teste para os produtos que vem do hub e tb um teste de qualidade da foto do produto, tem algumas campanhas de repasse aqui que estao enviando fotos de baixa qualidade.
+
+    O ScrapTester agora tem uma coluna só do Hub, ao lado de Mercado Livre,
+    Amazon e Shopee (liga/desliga no chip "Fontes testadas"). Ela testa o Hub
+    direto, mesmo que ele esteja desligado no admin — se a sessão do sistema
+    caiu, a coluna fica vermelha dizendo o motivo. Como o card do Hub não traz
+    vendedor, nº de avaliações nem frete, esses campos não são cobrados dele; em
+    compensação entrou a linha "Comissão", que é o dado que só existe no Hub.
+    Entrou também a linha "Qualidade da foto": o teste baixa cada foto da amostra
+    e mede a resolução de verdade — abaixo do mínimo (500px por padrão, editável)
+    vira alerta amarelo, e aparece um resumo tipo "8 de 10 fotos boas · 1 pequena
+    · 1 que não abriu" com as piores lado a lado pra clicar e conferir. Dá pra
+    desligar a conferência se quiser o teste mais rápido.
+    Tem também um card separado "Testar um link": cola o endereço de um produto
+    (ML, Amazon ou Shopee), clica em Testar link e na hora aparece o que o
+    scraper conseguiu tirar dele — campo por campo com ✓ ou ✕, a foto com o
+    tamanho real em pixels e os dados crus pra conferir. É avulso: não mexe no
+    teste de amostra e não grava nada no catálogo.
+    Sobre a foto ruim no repasse: a Shopee e os links de loja genérica vinham com
+    a miniatura crua (o `_tn` da CDN), enquanto ML e Amazon já subiam pra alta.
+    Agora todos passam pelo mesmo ajuste, inclusive na hora de enviar pro
+    WhatsApp — então item antigo que já estava no catálogo também sai nítido.
 
 59. [] Quero poder escolher horarios especificos para fazer scraping inves de colocar um intervalo.
 

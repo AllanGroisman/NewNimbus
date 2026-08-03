@@ -490,6 +490,7 @@ export async function adminScrapTesterStatus()       { return http("GET",  "/api
 export async function adminScrapTesterRun()          { return http("POST", "/api/admin/scrap-tester/run", undefined, { timeoutMs: SLOW_TIMEOUT_MS }); }
 export async function adminScrapTesterCancel()       { return http("POST", "/api/admin/scrap-tester/cancel"); }
 export async function adminScrapTesterHistory()      { return http("GET",  "/api/admin/scrap-tester/history"); }
+export async function adminScrapTesterLink(url)      { return http("POST", "/api/admin/scrap-tester/link", { url }, { timeoutMs: SLOW_TIMEOUT_MS }); }
 export async function adminCatalog({ page = 1, pageSize = 50, category, source, q, sortBy } = {}) {
   const params = new URLSearchParams();
   params.set("page", page);

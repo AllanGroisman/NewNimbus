@@ -62,6 +62,23 @@ function upgradeMLImageUrl(url) {
   return url.replace(/-[A-Z](?=\.(?:jpg|jpeg|png|webp)(?:\?|$))/i, "-F");
 }
 
+// A Shopee serve as fotos da CDN com sufixo de miniatura no fim do caminho
+// (`_tn`, às vezes com extensão junto). Sem o sufixo a CDN devolve a imagem
+// original — a mesma foto que aparece na página do produto.
+function upgradeShopeeImageUrl(url) {
+  if (!url || typeof url !== "string") return url;
+  if (!/(susercontent\.com|shopee\.com\.br)/i.test(url)) return url;
+  return url.replace(/_tn(?=(\.(?:jpg|jpeg|png|webp))?(?:\?|$))/i, "");
+}
+
+// Ponto único: aplica a regra da loja certa olhando o domínio da imagem. Usado
+// onde a origem do produto não é conhecida na hora (repasse de link único, itens
+// que já estavam no catálogo/fila).
+function upgradeImageUrl(url) {
+  if (!url || typeof url !== "string") return url;
+  return upgradeShopeeImageUrl(upgradeMLImageUrl(upgradeAmazonImageUrl(url)));
+}
+
 // Categorias suportadas. Cada categoria mapeia pra um identificador por loja.
 // - mlCode: ID da categoria do Mercado Livre (na URL de ofertas)
 // - amzDept: ID do departamento na página de ofertas da Amazon (/deals). Usado no
@@ -766,7 +783,8 @@ function shopeeNodeToProduct(node, category) {
   return {
     name: String(node.productName || "").trim(),
     link: String(node.offerLink || node.productLink || ""),
-    img: node.imageUrl || null,
+    // A API de afiliados devolve a miniatura (`_tn`) — sobe pra original.
+    img: upgradeShopeeImageUrl(node.imageUrl) || null,
     store: "Shopee",
     category: category || null,
     price,
@@ -1299,9 +1317,11 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
       sold,
       rating: parseRatingText(data.ratingTxt),
       reviewsCount: parseReviewsCount(data.reviewTxt),
+      // Shopee e lojas genéricas caem no og:image, que costuma ser miniatura —
+      // upgradeImageUrl decide a regra pelo domínio da imagem.
       img: store === "Amazon" ? upgradeAmazonImageUrl(data.img)
          : store === "Mercado Livre" ? upgradeMLImageUrl(data.img)
-         : (data.img || null),
+         : (upgradeImageUrl(data.img) || null),
       store: store || null,
       scrapedAt: new Date().toISOString(),
     };
@@ -1450,6 +1470,6 @@ async function autoScroll(page) {
   await new Promise(r => setTimeout(r, 1000));
 }
 
-module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, upgradeMLImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, extractShopeeIds, parseMLReviewCompacted, mergeNewProducts, parseAmazonSold, parseRatingText, parseReviewsCount, reconcilePricing, normalizeSoldText, CATEGORIES, STORES,
+module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, upgradeMLImageUrl, upgradeShopeeImageUrl, upgradeImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, extractShopeeIds, parseMLReviewCompacted, mergeNewProducts, parseAmazonSold, parseRatingText, parseReviewsCount, reconcilePricing, normalizeSoldText, CATEGORIES, STORES,
   // Reusados por ml-hub.js (navegar logado em páginas do ML)
   launchAmazonBrowser, applyAmazonStealth, parseMLCookies, autoScroll, detectBlockPage, UA };

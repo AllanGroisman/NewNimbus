@@ -8,6 +8,7 @@ import {
   adminScrapTesterRun,
   adminScrapTesterCancel,
   adminScrapTesterHistory,
+  adminScrapTesterLink,
   errText,
 } from "../data/api";
 
@@ -17,6 +18,13 @@ const OVERALL = {
   ok:   { label: "✅ Tudo certo", color: PRIMARY_DARK },
   warn: { label: "⚠️ Campos faltando", color: "var(--warn-text)" },
   fail: { label: "❌ Scraping quebrado", color: "var(--danger-text)" },
+};
+
+// Mesmo semáforo, texto adaptado pro teste de um link só.
+const LINK_OVERALL = {
+  ok:   { label: "✅ Veio tudo", color: PRIMARY_DARK },
+  warn: { label: "⚠️ Faltou alguma informação", color: "var(--warn-text)" },
+  fail: { label: "❌ Faltou informação essencial", color: "var(--danger-text)" },
 };
 
 const CELL = {
@@ -36,6 +44,11 @@ export default function PageAdminScrapTester() {
   const [canceling, setCanceling] = useState(false);
   const [error, setError] = useState(null);
   const [savedMsg, setSavedMsg] = useState(null);
+  // Teste avulso de um link — independente do teste de amostra
+  const [linkUrl, setLinkUrl] = useState("");
+  const [linkRunning, setLinkRunning] = useState(false);
+  const [linkResult, setLinkResult] = useState(null);
+  const [linkError, setLinkError] = useState(null);
 
   const refreshConfig = useCallback(async () => {
     try {
@@ -137,6 +150,22 @@ export default function PageAdminScrapTester() {
     }
   }
 
+  async function testLink() {
+    const url = linkUrl.trim();
+    if (!url) return;
+    setLinkRunning(true);
+    setLinkError(null);
+    setLinkResult(null);
+    try {
+      const r = await adminScrapTesterLink(url);
+      setLinkResult(r.result);
+    } catch (err) {
+      setLinkError(errText(err, "Não foi possível testar esse link."));
+    } finally {
+      setLinkRunning(false);
+    }
+  }
+
   // Muda o limiar de um campo numa loja e salva
   function setThreshold(source, field, value) {
     const thresholds = { ...(config.thresholds || {}) };
@@ -154,14 +183,18 @@ export default function PageAdminScrapTester() {
   const perSource = status?.perSource || {};
   const testedSources = available.sources.filter(s => perSource[s.id]);
   const overall = OVERALL[status?.overall] || { label: "— nunca executado", color: "var(--color-text-secondary)" };
+  // A linha "Qualidade da foto" só faz sentido com a conferência de fotos ligada.
+  const visibleSpecs = fieldSpecs.filter(spec => config.checkImages !== false || !spec.needsImages);
+  const statsSources = testedSources.filter(s => perSource[s.id].imageStats?.checked);
 
   return (
     <div>
       <div style={{ marginBottom: 16 }}>
         <h2 style={{ fontSize: 18, fontWeight: 500 }}>ScrapTester</h2>
         <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 4 }}>
-          Puxa uma amostra de produtos de cada loja no intervalo configurado e confere, campo a campo,
-          o que o scraper está conseguindo extrair. O resultado é enviado nas notificações de admin.
+          Puxa uma amostra de produtos de cada fonte no intervalo configurado e confere, campo a campo,
+          o que o scraper está conseguindo extrair — inclusive a resolução das fotos.
+          O resultado é enviado nas notificações de admin.
         </div>
       </div>
 
@@ -180,7 +213,7 @@ export default function PageAdminScrapTester() {
         />
         <StatBox label="Último teste" value={fmtDate(status?.lastRun)} sub={status?.lastDuration ? `${(status.lastDuration / 1000).toFixed(1)}s` : null} />
         <StatBox label="Próximo teste" value={config.enabled ? fmtDate(status?.nextRunAt) : "—"} />
-        <StatBox label="Amostra" value={status?.sampleSize ? `${status.sampleSize} por loja` : "—"} sub={status?.categoryLabel || null} />
+        <StatBox label="Amostra" value={status?.sampleSize ? `${status.sampleSize} por fonte` : "—"} sub={status?.categoryLabel || null} />
       </div>
 
       {/* Tabela campo × loja */}
@@ -213,7 +246,7 @@ export default function PageAdminScrapTester() {
                 </tr>
               </thead>
               <tbody>
-                {fieldSpecs.map(spec => (
+                {visibleSpecs.map(spec => (
                   <tr key={spec.key}>
                     <td style={{ ...tdStyle, fontWeight: 500 }}>
                       {spec.label}
@@ -250,12 +283,49 @@ export default function PageAdminScrapTester() {
           </div>
         )}
 
-        {/* Lojas que falharam por completo */}
+        {/* Fontes que falharam por completo */}
         {testedSources.filter(s => !perSource[s.id].ok).map(s => (
           <div key={s.id} style={{ marginTop: 10, background: "var(--danger-bg)", color: "var(--danger-text)", padding: "8px 10px", borderRadius: 8, fontSize: 12 }}>
             <strong>{s.label}:</strong> {perSource[s.id].error}
           </div>
         ))}
+
+        {/* Qualidade das fotos: resolução medida baixando cada imagem da amostra */}
+        {statsSources.length > 0 && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 6 }}>Qualidade das fotos</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {statsSources.map(s => {
+                const st = perSource[s.id].imageStats;
+                const ruim = st.small + st.broken;
+                return (
+                  <div key={s.id} style={{ background: ruim ? "#FCF3E4" : "var(--color-background-secondary)", borderRadius: 8, padding: "8px 10px", fontSize: 12 }}>
+                    <div>
+                      <strong>{s.label}:</strong> {st.good} de {st.checked} fotos boas
+                      {st.small > 0 && ` · ${st.small} pequena${st.small > 1 ? "s" : ""}`}
+                      {st.broken > 0 && ` · ${st.broken} que não abriu${st.broken > 1 ? "ram" : ""}`}
+                      <span style={{ color: "var(--color-text-secondary)" }}> (mínimo {st.minPx}px)</span>
+                    </div>
+                    {(st.worst || []).length > 0 && (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 8 }}>
+                        {st.worst.map((w, i) => (
+                          <a key={i} href={w.link || w.img || "#"} target="_blank" rel="noreferrer"
+                            style={{ display: "flex", gap: 6, alignItems: "center", textDecoration: "none", color: "inherit", maxWidth: 260 }}>
+                            {w.img && <img src={w.img} alt="" style={{ width: 34, height: 34, objectFit: "cover", borderRadius: 6, background: "var(--color-background-primary)" }} />}
+                            <span style={{ fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {w.width ? `${w.width}×${w.height}px` : (w.error || "não abriu")}
+                              <div style={{ color: "var(--color-text-secondary)", overflow: "hidden", textOverflow: "ellipsis" }}>{w.name || ""}</div>
+                            </span>
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Amostra crua pra conferir na mão */}
         {testedSources.some(s => (perSource[s.id].sample || []).length > 0) && (
@@ -275,6 +345,90 @@ export default function PageAdminScrapTester() {
             </div>
           </details>
         )}
+      </div>
+
+      {/* Teste de um link avulso — separado do teste de amostra */}
+      <div style={cardStyle}>
+        <div style={{ fontWeight: 500, marginBottom: 4 }}>Testar um link</div>
+        <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
+          Cole o link de um produto (Mercado Livre, Amazon ou Shopee) pra ver na hora o que o scraper
+          consegue tirar dele — inclusive o tamanho real da foto. Não mexe no teste de amostra e não
+          grava nada no catálogo.
+        </div>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <input
+            type="url"
+            placeholder="https://..."
+            value={linkUrl}
+            onChange={e => setLinkUrl(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && !linkRunning) testLink(); }}
+            style={{ ...inputStyle, flex: "1 1 260px", width: "auto" }}
+          />
+          <button onClick={testLink} disabled={linkRunning || !linkUrl.trim()}
+            style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, fontWeight: 500, cursor: linkRunning || !linkUrl.trim() ? "not-allowed" : "pointer", opacity: linkRunning || !linkUrl.trim() ? 0.6 : 1 }}>
+            {linkRunning ? "⟳ Testando..." : "Testar link"}
+          </button>
+        </div>
+
+        {linkError && (
+          <div style={{ marginTop: 10, background: "var(--danger-bg)", color: "var(--danger-text)", padding: "8px 10px", borderRadius: 8, fontSize: 12 }}>
+            {linkError}
+          </div>
+        )}
+
+        {linkResult && (() => {
+          const ov = LINK_OVERALL[linkResult.status] || { label: linkResult.status, color: "var(--color-text-secondary)" };
+          return (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+                <span style={{ fontWeight: 500, color: ov.color }}>{ov.label}</span>
+                <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                  {linkResult.sourceLabel || linkResult.store || "loja desconhecida"} · {((linkResult.durationMs || 0) / 1000).toFixed(1)}s
+                </span>
+              </div>
+
+              <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                {linkResult.product?.img && (
+                  <a href={linkResult.product.img} target="_blank" rel="noreferrer">
+                    <img src={linkResult.product.img} alt="" style={{ width: 110, height: 110, objectFit: "contain", borderRadius: 8, background: "var(--color-background-secondary)" }} />
+                  </a>
+                )}
+                <div style={{ flex: "1 1 260px", minWidth: 240 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <tbody>
+                      {(linkResult.checks || []).map(c => (
+                        <tr key={c.key}>
+                          <td style={{ ...tdStyle, width: 130, color: "var(--color-text-secondary)" }}>
+                            {c.label}{c.critical && <span style={{ color: "var(--danger-text)", marginLeft: 3 }}>*</span>}
+                          </td>
+                          <td style={{ ...tdStyle, color: c.ok ? "var(--color-text-primary)" : (c.critical ? "var(--danger-text)" : "var(--warn-text)") }}>
+                            {c.ok ? "✓ " : "✕ "}
+                            {c.value === null || c.value === "" ? "não veio" : String(c.value).slice(0, 90)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {linkResult.image && (
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 6 }}>
+                      Foto: {linkResult.image.ok
+                        ? `${linkResult.image.width}×${linkResult.image.height}px · ${linkResult.image.bytes ? Math.round(linkResult.image.bytes / 1024) + " KB" : "tamanho desconhecido"} · mínimo ${linkResult.imageMinPx}px`
+                        : `não deu pra medir (${linkResult.image.error})`}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <details style={{ marginTop: 12 }}>
+                <summary style={{ cursor: "pointer", fontSize: 12, color: "var(--color-text-secondary)" }}>Ver os dados crus</summary>
+                <pre style={{ fontSize: 10, background: "var(--color-background-secondary)", padding: 10, borderRadius: 8, overflowX: "auto", marginTop: 8 }}>
+                  {JSON.stringify(linkResult.product, null, 2)}
+                </pre>
+              </details>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Configuração */}
@@ -299,13 +453,25 @@ export default function PageAdminScrapTester() {
               {config.intervalMinutes >= 60 ? `≈ ${Math.round(config.intervalMinutes / 60)}h` : " "}
             </div>
           </Field>
-          <Field label="Produtos por loja">
+          <Field label="Produtos por fonte">
             <input
               type="number" min={3} max={50}
               value={config.sampleSize ?? ""}
               onChange={e => updateConfig({ sampleSize: e.target.value === "" ? "" : parseInt(e.target.value) })}
               style={inputStyle}
             />
+          </Field>
+          <Field label="Resolução mínima da foto (px)">
+            <input
+              type="number" min={100} max={4000} step={50}
+              disabled={config.checkImages === false}
+              value={config.imageMinPx ?? ""}
+              onChange={e => updateConfig({ imageMinPx: e.target.value === "" ? "" : parseInt(e.target.value) })}
+              style={{ ...inputStyle, opacity: config.checkImages === false ? 0.5 : 1 }}
+            />
+            <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4 }}>
+              Largura e altura mínimas
+            </div>
           </Field>
           <Field label="Categoria testada">
             <select value={config.category} onChange={e => updateConfig({ category: e.target.value })} style={inputStyle}>
@@ -314,7 +480,18 @@ export default function PageAdminScrapTester() {
           </Field>
         </div>
 
-        <Field label="Lojas testadas">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <div>
+            <div style={{ fontWeight: 500 }}>Conferir a qualidade das fotos</div>
+            <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+              Baixa cada foto da amostra e mede a resolução de verdade — pega miniatura ruim e foto quebrada.
+              Deixa o teste alguns segundos mais lento.
+            </div>
+          </div>
+          <Toggle value={config.checkImages !== false} onChange={v => save({ checkImages: v })} />
+        </div>
+
+        <Field label="Fontes testadas">
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {available.sources.map(s => {
               const active = (config.sources || []).includes(s.id);

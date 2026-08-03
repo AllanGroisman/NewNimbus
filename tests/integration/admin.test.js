@@ -141,6 +141,52 @@ describe("Admin — scraper config + run", () => {
   });
 });
 
+describe("Admin — ScrapTester", () => {
+  it("GET /scrap-tester/config lista o Hub como fonte testável", async () => {
+    const admin = await makeAdmin();
+    const r = await admin.auth("get", "/api/admin/scrap-tester/config");
+    expect(r.status).toBe(200);
+    expect(r.body.available.sources.map(s => s.id)).toContain("ml-hub");
+    expect(r.body.fieldSpecs.map(s => s.key)).toContain("imgQuality");
+  });
+
+  it("PUT /scrap-tester/config persiste fonte do Hub e conferência de fotos", async () => {
+    const admin = await makeAdmin();
+    const payload = { sources: ["ml", "ml-hub"], checkImages: true, imageMinPx: 800, thresholds: { "ml-hub.commission": 60 } };
+    const r = await admin.auth("put", "/api/admin/scrap-tester/config").send(payload);
+    expect(r.status).toBe(200);
+    expect(r.body.config.sources).toEqual(["ml", "ml-hub"]);
+    expect(r.body.config.imageMinPx).toBe(800);
+    expect(r.body.config.thresholds).toEqual({ "ml-hub.commission": 60 });
+
+    const get = await admin.auth("get", "/api/admin/scrap-tester/config");
+    expect(get.body.config.sources).toEqual(["ml", "ml-hub"]);
+    expect(get.body.config.checkImages).toBe(true);
+  });
+
+  it("POST /scrap-tester/link recusa link vazio ou de domínio desconhecido", async () => {
+    const admin = await makeAdmin();
+    const vazio = await admin.auth("post", "/api/admin/scrap-tester/link").send({ url: "  " });
+    expect(vazio.status).toBe(400);
+
+    const estranho = await admin.auth("post", "/api/admin/scrap-tester/link").send({ url: "https://exemplo.com/produto" });
+    expect(estranho.status).toBe(400);
+  });
+
+  it("rotas do ScrapTester são só de admin", async () => {
+    const { auth } = await createTestUser();
+    for (const [method, url] of [
+      ["get", "/api/admin/scrap-tester/config"],
+      ["put", "/api/admin/scrap-tester/config"],
+      ["post", "/api/admin/scrap-tester/link"],
+      ["get", "/api/admin/scrap-tester/history"],
+    ]) {
+      const res = await auth(method, url).send({});
+      expect(res.status).toBe(403);
+    }
+  });
+});
+
 describe("Admin — Stripe (modo teste ↔ produção)", () => {
   // O mock guarda o modo em memória; volta pro default entre casos.
   beforeEach(() => setStripeMock({ mode: "test" }));

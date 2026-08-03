@@ -1,4 +1,4 @@
-const { normalizeSource, upgradeAmazonImageUrl } = require("./scraping/scraper");
+const { normalizeSource, upgradeImageUrl } = require("./scraping/scraper");
 const wa = require("./whatsapp");
 const storage = require("./storage");
 const catalog = require("./catalog");
@@ -421,10 +421,11 @@ async function sendItem(userId, group, whatsappGroups, item) {
       throw new Error(`Afiliado Shopee falhou pra "${item.name?.slice(0, 40)}" — item descartado (sem link com comissão).`);
     }
   }
-  // Defesa: itens já no catálogo/fila podem ter URL de thumb da Amazon — sobe pra
-  // resolução nativa antes de mandar pro WhatsApp pra a prévia ficar enquadrada.
+  // Defesa: itens já no catálogo/fila podem ter URL de thumb (Amazon, ML ou
+  // Shopee) — sobe pra resolução nativa antes de mandar pro WhatsApp pra a
+  // prévia ficar enquadrada e nítida.
   if (itemForSend.img) {
-    const upgraded = upgradeAmazonImageUrl(itemForSend.img);
+    const upgraded = upgradeImageUrl(itemForSend.img);
     if (upgraded !== itemForSend.img) itemForSend = { ...itemForSend, img: upgraded };
   }
 

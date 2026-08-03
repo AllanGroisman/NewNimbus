@@ -2033,6 +2033,19 @@ app.post("/api/admin/scrap-tester/cancel", auth.requireAuth, auth.requireAdmin, 
   res.json(r);
 });
 
+// Teste avulso de UM link: raspa a página do produto na hora e devolve campo a
+// campo o que veio, mais a medição da foto. Não mexe no teste de amostra nem no
+// catálogo. Body: { url }.
+app.post("/api/admin/scrap-tester/link", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const result = await scrapTester.testLink(req.body?.url, { userId: req.user.id });
+    res.json({ result });
+  } catch (err) {
+    console.error("[scrap-tester.link]", err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.get("/api/admin/scrap-tester/history", auth.requireAuth, auth.requireAdmin, (req, res) => {
   res.json({ history: scrapTester.readHistory() });
 });
