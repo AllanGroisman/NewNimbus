@@ -542,3 +542,5 @@ export async function whatsNimbusStatus()         { return http("GET",  "/api/ad
 export async function whatsNimbusConnect()        { return http("POST", "/api/admin/whatsnimbus/connect"); }
 export async function whatsNimbusFinalize(info)   { return http("POST", "/api/admin/whatsnimbus/finalize", info); }
 export async function whatsNimbusDisconnect()     { return http("POST", "/api/admin/whatsnimbus/disconnect"); }
+export async function whatsNimbusGroups()         { return http("GET",  "/api/admin/whatsnimbus/groups"); }
+export async function whatsNimbusSend(payload)    { return http("POST", "/api/admin/whatsnimbus/send", payload); }

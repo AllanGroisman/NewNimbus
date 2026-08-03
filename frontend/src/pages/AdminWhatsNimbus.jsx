@@ -5,12 +5,16 @@ import {
   whatsNimbusConnect,
   whatsNimbusFinalize,
   whatsNimbusDisconnect,
+  whatsNimbusGroups,
+  whatsNimbusSend,
   errText,
 } from "../data/api";
 
 const cardStyle = { background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10, padding: "20px 24px", marginBottom: 16 };
 const btnPrimary = { background: PRIMARY, color: "#fff", border: "none", borderRadius: 6, padding: "9px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer" };
 const btnDanger = { background: "transparent", color: "var(--danger-text)", border: "1px solid var(--danger-text)", borderRadius: 6, padding: "9px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer" };
+const fieldStyle = { width: "100%", background: "var(--color-background-primary)", color: "var(--color-text-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 6, padding: "9px 10px", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box" };
+const labelStyle = { fontSize: 12, fontWeight: 600, color: "var(--color-text-secondary)", display: "block", marginBottom: 6 };
 
 const STATUS_META = {
   connected:   { color: "#15803D", label: "Conectado" },
@@ -30,6 +34,15 @@ export default function PageAdminWhatsNimbus() {
   const [error, setError] = useState(null);
   const pollRef = useRef(null);
   const finalizedRef = useRef(false);
+
+  // Envio manual (grupo + texto)
+  const [groups, setGroups] = useState([]);
+  const [groupsLoading, setGroupsLoading] = useState(false);
+  const [groupsError, setGroupsError] = useState(null);
+  const [sendJid, setSendJid] = useState("");
+  const [sendText, setSendText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sendMsg, setSendMsg] = useState(null);
 
   async function refresh() {
     try {
@@ -117,6 +130,40 @@ export default function PageAdminWhatsNimbus() {
     }
   }
 
+  // Grupos só existem com a sessão de pé; recarrega quando (re)conecta.
+  async function loadGroups() {
+    setGroupsLoading(true); setGroupsError(null);
+    try {
+      const list = await whatsNimbusGroups();
+      setGroups(Array.isArray(list) ? list : []);
+    } catch (err) {
+      setGroups([]);
+      setGroupsError(errText(err, "Não foi possível carregar os grupos."));
+    } finally {
+      setGroupsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (snap?.status === "connected") loadGroups();
+    else { setGroups([]); setSendJid(""); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snap?.status]);
+
+  async function send() {
+    if (!sendJid || !sendText.trim()) return;
+    setSending(true); setSendMsg(null);
+    try {
+      await whatsNimbusSend({ jid: sendJid, text: sendText.trim() });
+      setSendText("");
+      setSendMsg({ ok: true, text: "Mensagem enviada." });
+    } catch (err) {
+      setSendMsg({ ok: false, text: errText(err, "Não foi possível enviar a mensagem.") });
+    } finally {
+      setSending(false);
+    }
+  }
+
   if (loading || !snap) {
     return <div style={{ padding: 40, textAlign: "center", color: "var(--color-text-secondary)" }}>Carregando...</div>;
   }
@@ -186,6 +233,59 @@ export default function PageAdminWhatsNimbus() {
           </button>
         )}
       </div>
+
+      {isConnected && (
+        <div style={{ ...cardStyle, marginTop: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--color-text-primary)" }}>Enviar mensagem</div>
+            <button
+              onClick={loadGroups}
+              disabled={groupsLoading}
+              style={{ background: "transparent", border: "none", color: PRIMARY, fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+            >
+              {groupsLoading ? "Carregando..." : "Atualizar grupos"}
+            </button>
+          </div>
+
+          {groupsError && (
+            <div style={{ background: "var(--danger-bg)", color: "var(--danger-text)", borderRadius: 8, padding: "10px 14px", marginBottom: 12, fontSize: 13 }}>
+              {groupsError}
+            </div>
+          )}
+
+          <div style={{ marginBottom: 12 }}>
+            <label style={labelStyle}>Grupo</label>
+            <select style={fieldStyle} value={sendJid} onChange={e => setSendJid(e.target.value)} disabled={groupsLoading || sending}>
+              <option value="">
+                {groupsLoading ? "Carregando grupos..." : (groups.length ? "Selecione um grupo" : "Nenhum grupo encontrado")}
+              </option>
+              {groups.map(g => (
+                <option key={g.jid} value={g.jid}>{g.name || g.jid}{g.members ? ` (${g.members})` : ""}</option>
+              ))}
+            </select>
+          </div>
+
+          <div style={{ marginBottom: 12 }}>
+            <label style={labelStyle}>Mensagem</label>
+            <textarea
+              style={{ ...fieldStyle, minHeight: 100, resize: "vertical" }}
+              value={sendText}
+              onChange={e => setSendText(e.target.value)}
+              placeholder="Escreva a mensagem..."
+              disabled={sending}
+            />
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <button style={{ ...btnPrimary, opacity: (!sendJid || !sendText.trim() || sending) ? 0.5 : 1 }} onClick={send} disabled={!sendJid || !sendText.trim() || sending}>
+              {sending ? "Enviando..." : "Enviar"}
+            </button>
+            {sendMsg && (
+              <span style={{ fontSize: 13, color: sendMsg.ok ? "#15803D" : "var(--danger-text)" }}>{sendMsg.text}</span>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

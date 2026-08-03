@@ -277,3 +277,12 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 59. [] Quero poder escolher horarios especificos para fazer scraping inves de colocar um intervalo.
 
 60. [] Quero um botão para buscar quantos GB ainda estão sobrando no computador que esta rodando o sistema.
+
+61. [x] Quero na aba WhatsNimbus que seja possivel mandar msg. Bem simples, escolhe um grupo, escreve a mensagem e botao enviar.
+
+    Feito. Com o WhatsNimbus conectado, aparece na aba um card "Enviar
+    mensagem": lista dos grupos do número (com botão pra atualizar a lista),
+    caixa de texto e botão Enviar. O botão só habilita com grupo escolhido e
+    texto escrito; depois do envio aparece "Mensagem enviada" e o campo limpa.
+    Se der erro (sessão caída, por exemplo) a mensagem de erro aparece ali
+    mesmo. Rota nova no backend: POST /api/admin/whatsnimbus/send (só admin).

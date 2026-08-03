@@ -2631,6 +2631,22 @@ app.get("/api/admin/whatsnimbus/groups", auth.requireAuth, auth.requireAdmin, as
   }
 });
 
+// Envio manual pelo admin: escolhe um grupo do WhatsNimbus e manda um texto.
+app.post("/api/admin/whatsnimbus/send", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const { jid, text } = req.body || {};
+    if (!jid) return res.status(400).json({ error: "jid obrigatório" });
+    if (!text || !String(text).trim()) return res.status(400).json({ error: "text obrigatório" });
+    const cfg = whatsnimbus.readConfig();
+    if (!cfg.numberId) return res.status(400).json({ error: "WhatsNimbus não está conectado." });
+    await wa.sendText(whatsnimbus.WHATSNIMBUS_USER_ID, cfg.numberId, jid, String(text).trim());
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[whatsnimbus] send:", err.message);
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/admin/whatsnimbus/send" });
+  }
+});
+
 
 // ────────────────────────────────────────────────────────────────────────
 // WhatsApp (Baileys)
