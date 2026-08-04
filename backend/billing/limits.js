@@ -6,6 +6,7 @@
 //   groups                      — CAMPANHAS (model Group; cada Group tem fila própria)
 //   whatsappGroupsPerCampaign   — grupos do WhatsApp anexados a UMA campanha
 //   categoriesPerGroup          — categorias selecionadas em UMA campanha
+//   leadersPerCampaign          — grupos líderes de UMA campanha de repasse
 //
 // Quando o plano não tem assinatura paga (status diferente de active/trialing),
 // o usuário cai em "free" — sem acesso a criar campanhas/números nem rodar scheduler.
@@ -19,6 +20,7 @@ const PLANS = {
       groups: 0,
       whatsappGroupsPerCampaign: 0,
       categoriesPerGroup: 0,
+      leadersPerCampaign: 0,
     },
   },
   basic: {
@@ -29,6 +31,7 @@ const PLANS = {
       groups: 1,
       whatsappGroupsPerCampaign: 3,
       categoriesPerGroup: 2,
+      leadersPerCampaign: 1,
     },
   },
   pro: {
@@ -39,6 +42,7 @@ const PLANS = {
       groups: 5,
       whatsappGroupsPerCampaign: 15,
       categoriesPerGroup: 99,
+      leadersPerCampaign: 3,
     },
   },
   business: {
@@ -49,6 +53,7 @@ const PLANS = {
       groups: 999,
       whatsappGroupsPerCampaign: 999,
       categoriesPerGroup: 99,
+      leadersPerCampaign: 5,
     },
   },
 };
@@ -125,6 +130,10 @@ const LABELS = {
   categoriesPerGroup: {
     one: "categoria por campanha", many: "categorias por campanha",
     fix: "Remova categorias desta campanha",
+  },
+  leadersPerCampaign: {
+    one: "grupo líder por campanha", many: "grupos líderes por campanha",
+    fix: "Remova um grupo líder desta campanha",
   },
 };
 

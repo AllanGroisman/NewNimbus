@@ -101,7 +101,7 @@ export default function PageAdminRepasse() {
       <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
         {items.length === 0 ? (
           <div style={{ textAlign: "center", padding: 40, color: "var(--color-text-secondary)", fontSize: 13 }}>
-            {loading ? "Carregando..." : "Nenhum link capturado ainda. Poste um link no grupo líder de uma campanha de repasse."}
+            {loading ? "Carregando..." : "Nenhum link capturado ainda. Poste um link num grupo líder de uma campanha de repasse."}
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>

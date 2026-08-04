@@ -59,7 +59,7 @@ export const TOURS = {
 
   // Tour da campanha: entra em cada aba e ilumina as partes principais dela.
   // Serve pras duas famílias de campanha — os passos que só existem na busca
-  // (pesquisa, filtros) ou só no repasse (grupo líder) se pulam sozinhos.
+  // (pesquisa, filtros) ou só no repasse (grupos líderes) se pulam sozinhos.
   campaign: {
     id: "campaign",
     title: "Tour da campanha",
@@ -78,8 +78,8 @@ export const TOURS = {
       { tab: "manage", anchor: "mg-save", title: "Salvar", text: "O que você mudou nesta aba só passa a valer depois de clicar aqui. O botão acende quando tem algo pra salvar." },
 
       // ── Busca de produtos / Repasse
-      { tab: "products", anchor: "tab-products", title: "De onde vêm os produtos", text: "Numa campanha de busca, é aqui que você diz o que procurar no catálogo. Numa de repasse, é onde escolhe o grupo líder que vai ser copiado. Colar um link na mão não é aqui — isso fica na aba Fila." },
-      { tab: "products", anchor: "pr-leader", title: "Grupo líder", text: "O grupo que o sistema fica escutando: todo link de produto postado nele é capturado e re-afiliado com a sua tag." },
+      { tab: "products", anchor: "tab-products", title: "De onde vêm os produtos", text: "Numa campanha de busca, é aqui que você diz o que procurar no catálogo. Numa de repasse, é onde escolhe os grupos líderes que vão ser copiados. Colar um link na mão não é aqui — isso fica na aba Fila." },
+      { tab: "products", anchor: "pr-leader", title: "Grupos líderes", text: "Os grupos que o sistema fica escutando: todo link de produto postado neles é capturado e re-afiliado com a sua tag. Quantos você pode ter depende do seu plano." },
       { tab: "products", anchor: "pr-search", title: "O que buscar", text: "As palavras que o produto precisa ter no nome. Vários termos separados por vírgula; vazio traz tudo da categoria." },
       { tab: "products", anchor: "pr-filters", title: "Filtros avançados", text: "Abre faixa de preço, desconto mínimo, avaliação e vendas. Produto que não passa em todos é ignorado." },
       { tab: "products", anchor: "pr-auto", title: "Aprovar sozinho ou revisar", text: "Ligado, o que for encontrado entra direto na fila. Desligado, cada produto espera a sua aprovação." },

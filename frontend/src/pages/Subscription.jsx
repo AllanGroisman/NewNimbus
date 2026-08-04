@@ -15,6 +15,7 @@ const PLAN_META = {
       "1 campanha",
       "3 grupos por campanha",
       "2 categorias de produtos",
+      "1 grupo líder por campanha de repasse",
     ],
   },
   pro: {
@@ -27,6 +28,7 @@ const PLAN_META = {
       "5 campanhas",
       "15 grupos por campanha",
       "Todas as categorias de produtos",
+      "3 grupos líderes por campanha de repasse",
     ],
   },
   business: {
@@ -38,6 +40,7 @@ const PLAN_META = {
       "Campanhas ilimitadas",
       "Grupos ilimitados por campanha",
       "Todas as categorias de produtos",
+      "5 grupos líderes por campanha de repasse",
       "Suporte prioritário",
     ],
   },
@@ -359,6 +362,7 @@ export default function PageSubscription() {
                 )}
                 <UsageRow label="Grupos por campanha (máx.)" used={me.usage?.maxWhatsappGroupsPerCampaign} limit={me.limits?.whatsappGroupsPerCampaign} />
                 <UsageRow label="Categorias de produtos por campanha (máx.)" used={me.usage?.maxCategoriesPerGroup} limit={me.limits?.categoriesPerGroup} />
+                <UsageRow label="Grupos líderes por campanha de repasse (máx.)" used={me.usage?.maxLeadersPerCampaign} limit={me.limits?.leadersPerCampaign} />
               </div>
             </div>
 

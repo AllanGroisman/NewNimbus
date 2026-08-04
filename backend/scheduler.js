@@ -200,7 +200,7 @@ function isAutoApprove(group) {
   return v === undefined ? true : !!v;
 }
 
-// Campanha de repasse: a fila é populada pelos links capturados no grupo líder,
+// Campanha de repasse: a fila é populada pelos links capturados nos grupos líderes,
 // não pelo scraping do catálogo. Guarda usada pra pular refill/scraping.
 function isRepasse(group) {
   return group?.scraping?.kind === "repasse";
@@ -627,7 +627,7 @@ async function sendNextNow(userId, groupId) {
   }
 
   if (!queue.length) {
-    if (isRepasse(group)) throw new Error("Fila vazia — nenhum produto capturado do grupo líder ainda. Aprove os pendentes ou aguarde novos links no grupo líder.");
+    if (isRepasse(group)) throw new Error("Fila vazia — nenhum produto capturado dos grupos líderes ainda. Aprove os pendentes ou aguarde novos links nos grupos líderes.");
     throw new Error("Fila vazia — sem produtos no catálogo que passem nos filtros desta campanha. Peça pro admin atualizar o catálogo (página Scraping) ou afrouxe os filtros.");
   }
 
@@ -700,7 +700,7 @@ async function processGroup(userId, group, whatsappGroups, numbers, planPaused) 
   const queueLen = (group.queue || []).length;
   const pendingLen = (group.pending || []).length;
   const inWindow = !!activeWindow(now, group.schedule);
-  // Repasse não puxa do catálogo — a fila é alimentada só pelo grupo líder.
+  // Repasse não puxa do catálogo — a fila é alimentada só pelos grupos líderes.
   if (!isRepasse(group) && (queueLen + pendingLen < REFILL_THRESHOLD) && inWindow) {
     const { cleanedQueue, cleanedPending, newItems, target, removedFromQueue } = await refillQueue(userId, group);
     if (newItems.length || removedFromQueue > 0 || cleanedPending.length !== (group.pending || []).length) {
@@ -828,7 +828,7 @@ async function refillNow(userId, groupId, overrides = {}) {
   const state = await storage.loadState(userId);
   const group = (state.groups || []).find(g => g.id === groupId);
   if (!group) throw new Error("Campanha não encontrada");
-  if (isRepasse(group)) throw new Error("Campanha de repasse não busca no catálogo — a fila é alimentada pelos links do grupo líder.");
+  if (isRepasse(group)) throw new Error("Campanha de repasse não busca no catálogo — a fila é alimentada pelos links dos grupos líderes.");
 
   const merged = { ...group };
   if (overrides && (overrides.filters || overrides.sources || overrides.categories)) {

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, storeLockMessage, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, soldText, getGroupCategories, getGroupStats, computeQueueETA, formatETA, formatTimeBR, formatDateBR, isSameDayBR } from "../data/constants";
 import { createWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupQueue, saveGroupQueue, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue, errText } from "../data/api";
 import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
+import { leadersOf, withLeaders } from "../data/repasseLeaders";
 import { useUnsavedGuard, useRequestNavigation } from "../data/navGuard";
 import { TOUR_TAB_EVENT } from "../data/onboarding";
 import BusyOverlay from "./ui/BusyOverlay";
@@ -1499,7 +1500,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             <div style={{ fontWeight: 500, marginBottom: 4 }}>Fontes de busca</div>
             <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
               {isRepasse
-                ? "Escolha de quais lojas os links postados no grupo líder podem ser repassados. Links de outras lojas são ignorados."
+                ? "Escolha de quais lojas os links postados nos grupos líderes podem ser repassados. Links de outras lojas são ignorados."
                 : "Selecione as lojas onde a campanha vai procurar ofertas."}
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -1523,7 +1524,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
           {isRepasse && (
             <div style={{ fontSize: 12, color: "var(--color-text-secondary)", padding: "0 2px" }}>
-              O grupo líder, a aprovação automática e a revisão dos links capturados ficam na aba <strong>Repasse</strong>.
+              Os grupos líderes, a aprovação automática e a revisão dos links capturados ficam na aba <strong>Repasse</strong>.
             </div>
           )}
 
@@ -2264,7 +2265,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           {showRepasseIntro ? (
             <div style={{ display: "flex", alignItems: "flex-start", gap: 10, background: PRIMARY_LIGHT, color: PRIMARY_DARK, padding: "10px 14px", borderRadius: 10, fontSize: 12, lineHeight: 1.5 }}>
               <div style={{ flex: 1 }}>
-                🔁 O sistema escuta o <strong>grupo líder</strong> abaixo e captura os links de produto (Mercado Livre, Shopee e Amazon) postados nele, re-afiliando com a sua TAG.
+                🔁 O sistema escuta os <strong>grupos líderes</strong> abaixo e captura os links de produto (Mercado Livre, Shopee e Amazon) postados neles, re-afiliando com a sua TAG.
               </div>
               <button onClick={dismissRepasseIntro} style={{ padding: "4px 10px", borderRadius: 7, border: `0.5px solid ${PRIMARY_DARK}`, background: "transparent", color: PRIMARY_DARK, fontSize: 12, cursor: "pointer", fontWeight: 500, whiteSpace: "nowrap" }}>Entendi</button>
             </div>
@@ -2277,26 +2278,53 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             </button>
           )}
 
-          {/* Grupo líder */}
+          {/* Grupos líderes */}
+          {(() => {
+            const leaders = leadersOf(scraping);
+            const leaderLimit = limits?.leadersPerCampaign;
+            const leaderFull = leaderLimit != null && leaders.length >= leaderLimit;
+            const addLeader = wg => setScraping(s => {
+              const cur = leadersOf(s);
+              if (cur.some(l => l.jid === wg.jid && l.numberId === addExistingNumberId)) return s;
+              return withLeaders(s, [...cur, { numberId: addExistingNumberId, jid: wg.jid, name: wg.name }]);
+            });
+            const removeLeader = l => setScraping(s =>
+              withLeaders(s, leadersOf(s).filter(x => !(x.jid === l.jid && x.numberId === l.numberId)))
+            );
+            return (
           <div data-tour="pr-leader" style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-            <div style={{ fontWeight: 500, marginBottom: 4 }}>Grupo líder</div>
-            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
-              O grupo de onde os links serão capturados. Só um grupo pode ser líder.
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
+              <div style={{ fontWeight: 500 }}>Grupos líderes</div>
+              <UsageBadge current={leaders.length} limit={leaderLimit} label="grupos líderes" />
             </div>
-            {scraping.repasse?.leaderJid ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, background: "var(--color-background-secondary)", border: `0.5px solid ${PRIMARY}` }}>
-                <span style={{ fontSize: 18 }}>👑</span>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, fontWeight: 500 }}>{scraping.repasse.leaderName || scraping.repasse.leaderJid}</div>
-                  <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
-                    {(numbers.find(n => n.id === scraping.repasse.leaderNumberId)?.label) || `Número ${scraping.repasse.leaderNumberId}`}
+            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
+              Os grupos de onde os links serão capturados. Tudo que eles postarem cai na fila desta campanha.
+            </div>
+
+            {leaders.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+                {leaders.map(l => (
+                  <div key={`${l.numberId}::${l.jid}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, background: "var(--color-background-secondary)", border: `0.5px solid ${PRIMARY}` }}>
+                    <span style={{ fontSize: 18 }}>👑</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 500 }}>{l.name || l.jid}</div>
+                      <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                        {(numbers.find(n => n.id === l.numberId)?.label) || `Número ${l.numberId}`}
+                      </div>
+                    </div>
+                    <button onClick={() => removeLeader(l)} style={{ padding: "5px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 12, cursor: "pointer" }}>Remover</button>
                   </div>
-                </div>
-                <button onClick={() => setScraping(s => ({ ...s, repasse: { leaderNumberId: null, leaderJid: null, leaderName: null } }))} style={{ padding: "5px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 12, cursor: "pointer" }}>Trocar</button>
+                ))}
               </div>
-            ) : numbers.length === 0 ? (
+            )}
+
+            {numbers.length === 0 ? (
               <div style={{ fontSize: 12, color: "var(--warn-text)", background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", padding: "10px 12px", borderRadius: 8 }}>
-                Nenhum número de WhatsApp conectado. Conecte um número na página WhatsApp para escolher o grupo líder.
+                Nenhum número de WhatsApp conectado. Conecte um número na página WhatsApp para escolher os grupos líderes.
+              </div>
+            ) : leaderFull ? (
+              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", background: "var(--color-background-secondary)", padding: "10px 12px", borderRadius: 8 }}>
+                Você chegou no limite de {leaderLimit} {leaderLimit === 1 ? "grupo líder" : "grupos líderes"} do seu plano. Remova um da lista para trocar, ou suba de plano para escutar mais grupos.
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -2333,20 +2361,24 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                         {rawLeaderGroups.length === 0 ? "Nenhum grupo encontrado neste número." : `Nenhum grupo bate com "${addExistingSearch}".`}
                       </div>
                     ) : (
-                      filteredLeaderGroups.map(wg => (
+                      filteredLeaderGroups.map(wg => {
+                        const already = leaders.some(l => l.jid === wg.jid && l.numberId === addExistingNumberId);
+                        return (
                         <div key={wg.jid} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)" }}>
                           <div style={{ flex: 1 }}>
                             <div style={{ fontSize: 13, fontWeight: 500 }}>{wg.name}</div>
                             <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{wg.members || 0} membros</div>
                           </div>
                           <button
-                            onClick={() => setScraping(s => ({ ...s, repasse: { leaderNumberId: addExistingNumberId, leaderJid: wg.jid, leaderName: wg.name } }))}
-                            style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY, color: "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}
+                            onClick={() => addLeader(wg)}
+                            disabled={already}
+                            style={{ padding: "5px 12px", borderRadius: 7, background: already ? "transparent" : PRIMARY, color: already ? "var(--color-text-secondary)" : "#fff", border: already ? "0.5px solid var(--color-border-tertiary)" : "none", fontSize: 12, cursor: already ? "default" : "pointer", fontWeight: 500 }}
                           >
-                            Selecionar
+                            {already ? "Já é líder" : "Selecionar"}
                           </button>
                         </div>
-                      ))
+                        );
+                      })
                     )}
                   </div>
                   );
@@ -2354,6 +2386,8 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               </div>
             )}
           </div>
+            );
+          })()}
 
           {/* Aprovação automática */}
           <div data-tour="pr-auto" style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
@@ -2362,7 +2396,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 <div style={{ fontWeight: 500, marginBottom: 4 }}>Aprovação automática</div>
                 <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
                   {scraping.auto !== false
-                    ? "Links capturados no grupo líder entram direto na fila de envio."
+                    ? "Links capturados nos grupos líderes entram direto na fila de envio."
                     : "Links capturados ficam aguardando revisão. Você aprova cada um antes do envio."}
                 </div>
               </div>
@@ -2401,7 +2435,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 500 }}>Aguardando revisão</div>
-                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>Links capturados do grupo líder que precisam de aprovação</div>
+                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>Links capturados dos grupos líderes que precisam de aprovação</div>
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
                   <button onClick={approveAllProducts} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY_LIGHT, color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Adicionar todos à fila</button>
@@ -2663,7 +2697,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Fila vazia</div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>
                 {isRepasse ? (
-                  <>A fila é reabastecida com os links capturados do grupo líder. Confira a configuração de captura na aba <strong>Repasse</strong>.</>
+                  <>A fila é reabastecida com os links capturados dos grupos líderes. Confira a configuração de captura na aba <strong>Repasse</strong>.</>
                 ) : (
                   <>A fila é reabastecida automaticamente do catálogo nos horários de envio.
                   Para buscar produtos do catálogo agora, use a aba <strong>Busca de Produtos</strong>.</>
@@ -2814,7 +2848,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       {showRepasseHelpModal && (
         <Modal title="Campanha de repasse" onClose={() => setShowRepasseHelpModal(false)}>
           <div style={{ fontSize: 13, lineHeight: 1.6, color: "var(--color-text-primary)" }}>
-            🔁 Esta é uma campanha de <strong>repasse</strong>. O sistema escuta o grupo líder abaixo e captura os links de produto (Mercado Livre, Shopee e Amazon) postados nele, re-afiliando com a sua TAG. A busca no catálogo fica desabilitada.
+            🔁 Esta é uma campanha de <strong>repasse</strong>. O sistema escuta os grupos líderes abaixo e captura os links de produto (Mercado Livre, Shopee e Amazon) postados neles, re-afiliando com a sua TAG. A busca no catálogo fica desabilitada.
           </div>
         </Modal>
       )}

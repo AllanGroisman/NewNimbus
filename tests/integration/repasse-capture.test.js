@@ -1,4 +1,4 @@
-// Captura de links do grupo líder (campanhas de repasse).
+// Captura de links dos grupos líderes (campanhas de repasse).
 // Cobre: índice de líderes (query jsonb), extração de URL, filtro por loja/afiliado,
 // enriquecimento (scrapeSingleProduct mockado), inserção em pending/queue, dedup.
 
@@ -11,6 +11,7 @@ const scraper = require(path.join(backendDir, "scraping", "scraper.js"));
 const capture = require(path.join(backendDir, "repasse", "capture.js"));
 
 const LEADER_JID = "120363999999@g.us";
+const LEADER_2_JID = "120363888888@g.us";
 const NUMBER_ID = "num-1";
 
 function msgWithText(text, { jid = LEADER_JID, fromMe = false } = {}) {
@@ -123,6 +124,42 @@ describe("repasse capture — grupo líder", () => {
     await capture.onUpsert(user.id, NUMBER_ID, [msgWithText("https://www.mercadolivre.com.br/p/MLB777")]);
 
     const g = (await storage.loadState(user.id)).groups.find(x => x.id === 5005);
+    expect(g.queue.length).toBe(1);
+  });
+
+  it("campanha com 2 líderes: cada grupo alimenta a mesma fila; link repetido não duplica", async () => {
+    const { user } = await createTestUser();
+    affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
+    const g = repasseGroup(5007, { auto: true });
+    g.scraping.repasse = { leaders: [
+      { numberId: NUMBER_ID, jid: LEADER_JID, name: "Líder 1" },
+      { numberId: NUMBER_ID, jid: LEADER_2_JID, name: "Líder 2" },
+    ] };
+    await storage.saveState(user.id, { groups: [g] });
+    await capture.rebuildLeaderIndex();
+
+    await capture.onUpsert(user.id, NUMBER_ID, [msgWithText("https://www.mercadolivre.com.br/p/MLB111")]);
+    await capture.onUpsert(user.id, NUMBER_ID, [msgWithText("https://www.mercadolivre.com.br/p/MLB222", { jid: LEADER_2_JID })]);
+    // Mesmo link nos dois líderes → duplicata silenciosa.
+    await capture.onUpsert(user.id, NUMBER_ID, [msgWithText("https://www.mercadolivre.com.br/p/MLB111", { jid: LEADER_2_JID })]);
+
+    const saved = (await storage.loadState(user.id)).groups.find(x => x.id === 5007);
+    expect(saved.queue.length).toBe(2);
+  });
+
+  it("líder no formato antigo (um só) continua capturando após o save", async () => {
+    const { user } = await createTestUser();
+    affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
+    // repasseGroup() usa o formato legado {leaderNumberId, leaderJid} de propósito.
+    await storage.saveState(user.id, { groups: [repasseGroup(5008, { auto: true })] });
+    const stored = (await storage.loadState(user.id)).groups.find(x => x.id === 5008);
+    expect(stored.scraping.repasse.leaders).toEqual([
+      { numberId: NUMBER_ID, jid: LEADER_JID, name: "Grupo Líder" },
+    ]);
+    await capture.rebuildLeaderIndex();
+
+    await capture.onUpsert(user.id, NUMBER_ID, [msgWithText("https://www.mercadolivre.com.br/p/MLB888")]);
+    const g = (await storage.loadState(user.id)).groups.find(x => x.id === 5008);
     expect(g.queue.length).toBe(1);
   });
 

@@ -228,8 +228,54 @@ describe("GroupDashboard — fila vazia no modo repasse", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /Fila/ })); // aba Fila
 
-    expect(screen.getByText(/grupo líder/i)).toBeInTheDocument();
+    expect(screen.getByText(/grupos líderes/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Ir para Repasse/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Ir para Busca de Produtos/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("GroupDashboard — grupos líderes do repasse", () => {
+  function abrirRepasse(overrides) {
+    const r = renderDashboard(overrides);
+    fireEvent.click(screen.getByRole("button", { name: /^Repasse/ })); // aba Repasse
+    return r;
+  }
+
+  function renderRepasse(leaders, limitLeaders = 3) {
+    return abrirRepasse({
+      group: { scraping: { kind: "repasse", sources: [], filters: {}, repasse: { leaders } } },
+      numbers: [{ id: "n1", label: "Número 1" }],
+      limits: { leadersPerCampaign: limitLeaders },
+    });
+  }
+
+  it("lista todos os líderes da campanha", () => {
+    renderRepasse([
+      { numberId: "n1", jid: "111@g.us", name: "Ofertas A" },
+      { numberId: "n1", jid: "222@g.us", name: "Ofertas B" },
+    ]);
+    expect(screen.getByText("Ofertas A")).toBeInTheDocument();
+    expect(screen.getByText("Ofertas B")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Remover/ })).toHaveLength(2);
+  });
+
+  it("entende o formato antigo de líder único", () => {
+    abrirRepasse({
+      group: { scraping: { kind: "repasse", sources: [], filters: {}, repasse: { leaderNumberId: "n1", leaderJid: "111@g.us", leaderName: "Ofertas Antigas" } } },
+      numbers: [{ id: "n1", label: "Número 1" }],
+      limits: { leadersPerCampaign: 3 },
+    });
+    expect(screen.getByText("Ofertas Antigas")).toBeInTheDocument();
+  });
+
+  it("no limite do plano, esconde o seletor e explica o porquê", () => {
+    renderRepasse([{ numberId: "n1", jid: "111@g.us", name: "Ofertas A" }], 1);
+    expect(screen.getByText(/limite de 1 grupo líder do seu plano/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Número 1/ })).not.toBeInTheDocument();
+  });
+
+  it("com vaga sobrando, o seletor de número fica disponível", () => {
+    renderRepasse([{ numberId: "n1", jid: "111@g.us", name: "Ofertas A" }], 3);
+    expect(screen.getByRole("button", { name: /Número 1/ })).toBeInTheDocument();
   });
 });

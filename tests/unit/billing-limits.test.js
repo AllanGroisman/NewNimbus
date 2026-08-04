@@ -105,6 +105,18 @@ describe("billing/limits — checkLimit", () => {
     expect(limits.checkLimit({ planId: "business", status: "active" }, "whatsappGroupsPerCampaign", 100).ok).toBe(true);
   });
 
+  it("leadersPerCampaign: basic=1, pro=3, business=5", () => {
+    expect(limits.checkLimit(basicSub, "leadersPerCampaign", 1).ok).toBe(true);
+    const r = limits.checkLimit(basicSub, "leadersPerCampaign", 2);
+    expect(r.ok).toBe(false);
+    expect(r.planRequired).toBe("pro");
+    expect(limits.checkLimit(proSub, "leadersPerCampaign", 3).ok).toBe(true);
+    expect(limits.checkLimit(proSub, "leadersPerCampaign", 4).planRequired).toBe("business");
+    const business = { planId: "business", status: "active" };
+    expect(limits.checkLimit(business, "leadersPerCampaign", 5).ok).toBe(true);
+    expect(limits.checkLimit(business, "leadersPerCampaign", 6).ok).toBe(false);
+  });
+
   it("admin sempre passa, mesmo extrapolando", () => {
     const r = limits.checkLimit(null, "groups", 9999, "admin");
     expect(r.ok).toBe(true);

@@ -307,3 +307,23 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     texto escrito; depois do envio aparece "Mensagem enviada" e o campo limpa.
     Se der erro (sessão caída, por exemplo) a mensagem de erro aparece ali
     mesmo. Rota nova no backend: POST /api/admin/whatsnimbus/send (só admin).
+
+
+62. [x] Quero que os grupos de repasse tenham ate 5 líderes
+
+    Feito. A campanha de repasse deixou de ter um líder só: na aba Repasse o
+    card virou "Grupos líderes", com a lista de todos os grupos escutados, um
+    botão Remover em cada linha e o seletor de número/grupo continuando
+    disponível enquanto sobrar vaga. Grupo que já é líder aparece marcado como
+    "Já é líder" e não dá pra escolher duas vezes. Os líderes podem ser de
+    números diferentes.
+    Quantos cabem depende do plano: Básico 1, Pro 3, Business 5. O contador
+    aparece ao lado do título e também na tela de Assinatura ("Grupos líderes
+    por campanha de repasse"); ao bater no teto o seletor some e explica que é
+    preciso remover um ou subir de plano. Quem estiver acima do limite depois de
+    um downgrade não perde nada — a campanha fica pausada pelo plano, igual já
+    acontece com grupos e categorias.
+    Na captura, uma mensagem postada em qualquer um dos líderes cai na mesma
+    fila da campanha; o mesmo link vindo de dois líderes entra uma vez só.
+    Campanha antiga não precisa de nada: o líder único que já estava salvo
+    continua funcionando e é convertido pro formato novo no primeiro salvamento.

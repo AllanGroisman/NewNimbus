@@ -21,6 +21,7 @@ const mlHub = require("./scraping/ml-hub");
 const scrapTester = require("./scraping/tester");
 const appConfig = require("./config");
 const cpfUtil = require("./utils/cpf");
+const repasseLeaders = require("./repasse/leaders");
 const queueMod = require("./infra/queue");
 const logger = require("./infra/logger");
 const metrics = require("./infra/metrics");
@@ -950,6 +951,14 @@ app.put("/api/state", auth.requireAuth, async (req, res) => {
       if (worstWaGroups > 0) {
         checks.push(billing.limits.checkLimit(sub, "whatsappGroupsPerCampaign", worstWaGroups, req.user.role));
       }
+      // leadersPerCampaign — grupos líderes de uma campanha de repasse.
+      const worstLeaders = activeGroups.reduce((max, g) => {
+        const n = repasseLeaders.leadersOf(g.scraping).length;
+        return n > max ? n : max;
+      }, 0);
+      if (worstLeaders > 0) {
+        checks.push(billing.limits.checkLimit(sub, "leadersPerCampaign", worstLeaders, req.user.role));
+      }
       const failed = checks.find(c => !c.ok);
       if (failed) return res.status(402).json(failed);
     }
@@ -1073,6 +1082,10 @@ async function computeUsage(userId) {
     pausedNumbers: (planPaused.numbers || []).length,
     maxWhatsappGroupsPerCampaign: groups.reduce((max, g) => {
       const n = Array.isArray(g?.whatsappGroupIds) ? g.whatsappGroupIds.length : 0;
+      return n > max ? n : max;
+    }, 0),
+    maxLeadersPerCampaign: groups.reduce((max, g) => {
+      const n = repasseLeaders.leadersOf(g?.scraping).length;
       return n > max ? n : max;
     }, 0),
     maxCategoriesPerGroup: groups.reduce((max, g) => {

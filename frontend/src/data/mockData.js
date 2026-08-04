@@ -38,8 +38,8 @@ export const makeEmptyGroup = ({ id, name, categories, template, type, repasse, 
       cooldownUnit: "dias",
     },
     scraping: {
-      // kind="repasse" desliga o scraping do catálogo — a fila é alimentada pelo
-      // grupo líder. `auto` é reaproveitado como "aprovação automática".
+      // kind="repasse" desliga o scraping do catálogo — a fila é alimentada
+      // pelos grupos líderes. `auto` é reaproveitado como "aprovação automática".
       kind: isRepasse ? "repasse" : "scraping",
       auto: isRepasse ? !!repasse?.autoApprove : true,
       times: ["08:00", "14:00"],
@@ -48,8 +48,8 @@ export const makeEmptyGroup = ({ id, name, categories, template, type, repasse, 
       // a lista liberada); sem isso ela apontaria pra uma loja indisponível.
       sources: sources && sources.length ? sources : ["Mercado Livre", "Amazon", "Shopee"],
       filters: { minDiscount: 25, minPrice: 0, maxPrice: 3000, minRating: 4.0, minSales: 50, keywords: "" },
-      // { leaderNumberId, leaderJid, leaderName } — preenchido na aba Repasse.
-      repasse: isRepasse ? { leaderNumberId: null, leaderJid: null, leaderName: null } : undefined,
+      // { leaders: [{ numberId, jid, name }] } — preenchido na aba Repasse.
+      repasse: isRepasse ? { leaders: [] } : undefined,
     },
     queue: [],
     pending: [],

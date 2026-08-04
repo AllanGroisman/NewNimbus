@@ -4,6 +4,7 @@
 // colunas dedicadas). O hack OPS_FIELDS deixa de ser necessário internamente,
 // mas mantemos a constante exportada pra compat com o frontend.
 const { prisma } = require("../db");
+const { normalizeRepasse } = require("../repasse/leaders");
 
 const OPS_FIELDS = ["queue", "pending", "history", "sentToday", "sentWeek", "weekData", "lastSend", "avgDiscount"];
 
@@ -229,7 +230,9 @@ async function saveState(userId, incoming) {
       categories: g.categories ?? [],
       whatsappGroupIds: g.whatsappGroupIds ?? [],
       schedule: g.schedule ?? {},
-      scraping: g.scraping ?? {},
+      // normalizeRepasse converte o líder único do formato antigo pro array
+      // `repasse.leaders` — campanha antiga migra sozinha no primeiro save.
+      scraping: normalizeRepasse(g.scraping ?? {}),
     };
     tx.push(prisma().group.upsert({
       where: { id },

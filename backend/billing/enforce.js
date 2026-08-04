@@ -10,6 +10,7 @@
 
 const storage = require("../storage");
 const limitsMod = require("./limits");
+const { leadersOf } = require("../repasse/leaders");
 
 // Campanha "conforme" = cabe nos limites POR campanha do plano. Uma campanha
 // com 15 grupos de WhatsApp não pode ficar ativa no Básico (limite 3), mesmo
@@ -17,7 +18,10 @@ const limitsMod = require("./limits");
 function groupConforms(group, planLimits) {
   const cats = Array.isArray(group?.categories) ? group.categories.length : 0;
   const waGroups = Array.isArray(group?.whatsappGroupIds) ? group.whatsappGroupIds.length : 0;
-  return cats <= planLimits.categoriesPerGroup && waGroups <= planLimits.whatsappGroupsPerCampaign;
+  const leaders = leadersOf(group?.scraping).length;
+  return cats <= planLimits.categoriesPerGroup
+    && waGroups <= planLimits.whatsappGroupsPerCampaign
+    && leaders <= planLimits.leadersPerCampaign;
 }
 
 // Ordem de preferência: mais antigo primeiro. Ids são Date.now() do frontend,
@@ -167,6 +171,8 @@ async function setActiveSelection(userId, sub, userRole, selection) {
     if (!cats.ok) return { ok: false, status: 402, ...cats, groupId: id, groupName: g.name };
     const waGroups = limitsMod.checkLimit(sub, "whatsappGroupsPerCampaign", (g.whatsappGroupIds || []).length, userRole);
     if (!waGroups.ok) return { ok: false, status: 402, ...waGroups, groupId: id, groupName: g.name };
+    const leaders = limitsMod.checkLimit(sub, "leadersPerCampaign", leadersOf(g.scraping).length, userRole);
+    if (!leaders.ok) return { ok: false, status: 402, ...leaders, groupId: id, groupName: g.name };
   }
 
   const paused = {

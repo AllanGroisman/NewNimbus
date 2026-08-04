@@ -1,4 +1,4 @@
-// Captura de links do grupo LÍDER de campanhas de repasse.
+// Captura de links dos grupos LÍDERES de campanhas de repasse.
 //
 // Roda dentro do worker (é acionado pelo listener messages.upsert em
 // whatsapp/local.js). Para cada mensagem de um grupo que seja líder de alguma
@@ -15,6 +15,7 @@ const urlGuard = require("../scraping/urlGuard");
 const affiliate = require("../scraping/affiliate");
 const storage = require("../storage");
 const userNotifier = require("../notifications/user-notifier");
+const { leadersOf } = require("./leaders");
 
 // Best-effort: registra uma tentativa de captura (link, campanha) pro painel
 // admin. Nunca deve quebrar o pipeline — qualquer falha é engolida.
@@ -81,12 +82,14 @@ async function rebuildLeaderIndex() {
   for (const r of rows) {
     const sc = r.scraping || {};
     if (sc.kind !== "repasse") continue;
-    const rp = sc.repasse || {};
-    if (!rp.leaderNumberId || !rp.leaderJid) continue;
-    const key = `${rp.leaderNumberId}::${rp.leaderJid}`;
-    const entry = { userId: r.userId, groupId: Number(r.id) };
-    if (map.has(key)) map.get(key).push(entry);
-    else map.set(key, [entry]);
+    // Uma campanha pode ter vários líderes — cada um vira uma chave apontando
+    // pra mesma campanha.
+    for (const l of leadersOf(sc)) {
+      const key = `${l.numberId}::${l.jid}`;
+      const entry = { userId: r.userId, groupId: Number(r.id) };
+      if (map.has(key)) map.get(key).push(entry);
+      else map.set(key, [entry]);
+    }
   }
   _leaderIndex = map;
   _leaderIndexAt = Date.now();
