@@ -468,10 +468,25 @@ export default function App() {
     } catch { /* ignora (modo privado/quota) */ }
   }, [user, page, selectedGroup, syncUrl]);
 
+  // Tela nova começa no topo. Sem isso, abrir uma campanha estando no meio da
+  // página anterior deixa a nova já rolada para baixo. Depende do id da campanha
+  // (não do objeto): o poll recria o objeto e dispararia scroll sem troca de tela.
+  // A subida é suave; quem pediu menos animação no sistema recebe o pulo direto.
+  const mainRef = useRef(null);
+  useEffect(() => {
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const behavior = reduce ? "auto" : "smooth";
+    window.scrollTo({ top: 0, left: 0, behavior });
+    mainRef.current?.scrollTo?.({ top: 0, behavior });
+  }, [page, selectedGroup?.id]);
+
   // Botão voltar/avançar do navegador. Passa pelo guard, então alterações não
   // salvas continuam pedindo confirmação — inclusive no voltar.
   useEffect(() => {
     if (!user) return;
+    // Desliga a restauração de rolagem do navegador pra ela não competir com o
+    // scroll-to-top acima no voltar/avançar.
+    if ("scrollRestoration" in window.history) window.history.scrollRestoration = "manual";
     const onPop = () => {
       const nav = pathToNav(window.location.pathname);
       requestNavigation(() => {
@@ -1118,7 +1133,7 @@ export default function App() {
         mobileOpen={mobileMenu}
         onToggleMobile={setMobileMenu}
       />
-      <div className="main-content" style={{ flex: 1, padding: "20px 24px", minWidth: 0, overflowY: "auto" }}>
+      <div className="main-content" ref={mainRef} style={{ flex: 1, padding: "20px 24px", minWidth: 0, overflowY: "auto" }}>
         {/* Sem conexão tem precedência: com o servidor fora, os outros avisos
             (falha de save, poll lento) são só sintoma da mesma causa. */}
         {!net.online && (

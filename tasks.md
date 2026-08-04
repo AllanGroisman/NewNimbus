@@ -355,4 +355,4 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     Efeito colateral esperado: quem está sem plano ativo agora vê aviso de
     assinatura ao tentar mexer na fila — antes conseguia mexer, só não enviava.
 
-67. [] Quando clico em uma campanha la no menu da esquerda para abrir direto sua pagina, quero que suba ate o topo da pagina.
+67. [x] Quando clico em uma campanha la no menu da esquerda para abrir direto sua pagina, quero que suba ate o topo da pagina.
