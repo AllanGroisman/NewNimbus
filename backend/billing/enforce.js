@@ -127,16 +127,6 @@ async function reconcileLimits(userId, sub, userRole, opts = {}) {
   return { planPaused: next, changed };
 }
 
-// Versão "não explode": usada em caminhos onde falhar não pode derrubar a
-// resposta (webhook do Stripe, GET /billing/me).
-async function reconcileLimitsSafe(userId, sub, userRole, opts = {}) {
-  try {
-    return await reconcileLimits(userId, sub, userRole, opts);
-  } catch (err) {
-    return { planPaused: null, changed: false, error: err.message };
-  }
-}
-
 // Aplica a escolha do cliente ("quais ficam ativos"). Recebe as listas de
 // ATIVOS; grava o complemento como pausado. Valida antes: quantidade dentro do
 // limite e campanha conforme. Depois de gravar, roda o reconcile pra preencher
@@ -197,7 +187,6 @@ module.exports = {
   groupConforms,
   computePlanPaused,
   reconcileLimits,
-  reconcileLimitsSafe,
   setActiveSelection,
   isGroupPlanPaused,
   isNumberPlanPaused,

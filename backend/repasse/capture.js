@@ -250,6 +250,26 @@ async function onUpsert(userId, numberId, messages) {
 
 async function processMessage(userId, leaders, urls, waJid) {
   const scheduler = require("../scheduler");
+
+  // Gating de plano. A captura é acionada pelo listener do Baileys, fora de
+  // qualquer rota HTTP — sem esta checagem, uma conta cancelada seguia rodando
+  // o scraper em todo link que aparecesse nos grupos líderes, indefinidamente.
+  // (O envio já era barrado pelo scheduler; o que vazava era o custo.)
+  // Lazy-require: auth/billing puxam prisma, e este módulo só carrega no worker.
+  try {
+    const auth = require("../auth");
+    const billing = require("../billing");
+    const user = await auth.findById(userId);
+    const sub = await billing.getByUserId(userId);
+    if (!billing.isActive(sub, user?.role)) {
+      console.log(`[repasse] captura ignorada — assinatura inativa (user ${userId})`);
+      return;
+    }
+  } catch (err) {
+    console.error(`[repasse] checagem de assinatura falhou (user ${userId}): ${err.message}`);
+    return;
+  }
+
   const affStatus = affiliate.status(userId);
 
   // Resolve + valida + enriquece cada URL uma vez; reaproveita entre campanhas.
@@ -357,6 +377,12 @@ async function processMessage(userId, leaders, urls, waJid) {
     const state = await storage.loadState(userId);
     let group = (state.groups || []).find(g => g.id === groupId);
     if (!group) continue;
+    // Campanha pausada pelo plano (downgrade/cancelamento) não recebe item —
+    // ela não envia mesmo, e enfileirar aqui só engordaria a fila em silêncio.
+    if (group.planPaused) {
+      console.log(`[repasse] campanha ${groupId} pausada pelo plano → captura ignorada`);
+      continue;
+    }
 
     // activeSources (e não resolveSources): loja trancada pelo admin não repassa.
     const allowedSources = scheduler.activeSources(group.scraping?.sources);

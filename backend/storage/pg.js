@@ -241,10 +241,23 @@ async function saveState(userId, incoming) {
     }));
   }
 
-  // whatsapp_groups: replace-all (frontend manda lista completa)
+  // whatsapp_groups: replace-all (frontend manda lista completa).
+  // Descarta grupo cujo número não está na lista de `numbers` deste mesmo save:
+  // referência órfã não é pausável pelo plano (enforce.js só marca id conhecido)
+  // e o scheduler acabaria enviando por um número fora do limite.
+  const incomingNumberIds = new Set(
+    (Array.isArray(incoming.numbers) ? incoming.numbers : []).map(n => String(n?.id)),
+  );
   tx.push(prisma().whatsappGroup.deleteMany({ where: { userId } }));
   for (const w of (incoming.whatsappGroups || [])) {
     if (!w.id) continue;
+    if (!incomingNumberIds.has(String(w.numberId))) {
+      // Não deve acontecer no fluxo normal — o frontend remove os grupos junto
+      // com o número (removeNumberAndGroups) e remapeia na canonicalização
+      // (relinkNumber). Loga pra não sumir dado em silêncio.
+      console.warn(`[storage] grupo WA ${w.id} descartado: número ${w.numberId} não está no estado (user ${userId})`);
+      continue;
+    }
     const { id, numberId, jid, name, ...rest } = w;
     tx.push(prisma().whatsappGroup.create({
       data: {

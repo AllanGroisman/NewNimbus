@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import path from "path";
-import { createTestUser, storage, affiliate } from "../helpers/app.js";
+import { createTestUser, storage, affiliate, billing } from "../helpers/app.js";
 
 const backendDir = path.resolve(__dirname, "..", "..", "backend");
 const scraper = require(path.join(backendDir, "scraping", "scraper.js"));
@@ -52,7 +52,7 @@ describe("repasse capture — grupo líder", () => {
   });
 
   it("captura link de ML do líder e envia pra pending (auto=false)", async () => {
-    const { user } = await createTestUser();
+    const { user } = await createTestUser({ plan: "pro" });
     affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" }); // ML afiliado ok
     await storage.saveState(user.id, { groups: [repasseGroup(5001, { auto: false })] });
     await capture.rebuildLeaderIndex();
@@ -71,7 +71,7 @@ describe("repasse capture — grupo líder", () => {
   });
 
   it("auto=true → link vai direto pra fila", async () => {
-    const { user } = await createTestUser();
+    const { user } = await createTestUser({ plan: "pro" });
     affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
     await storage.saveState(user.id, { groups: [repasseGroup(5002, { auto: true })] });
     await capture.rebuildLeaderIndex();
@@ -86,7 +86,7 @@ describe("repasse capture — grupo líder", () => {
   });
 
   it("ignora link de loja sem afiliado configurado", async () => {
-    const { user } = await createTestUser();
+    const { user } = await createTestUser({ plan: "pro" });
     // NÃO configura afiliado ML.
     await storage.saveState(user.id, { groups: [repasseGroup(5003, { auto: true })] });
     await capture.rebuildLeaderIndex();
@@ -101,7 +101,7 @@ describe("repasse capture — grupo líder", () => {
   });
 
   it("ignora link de loja não suportada (Magalu)", async () => {
-    const { user } = await createTestUser();
+    const { user } = await createTestUser({ plan: "pro" });
     affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
     await storage.saveState(user.id, { groups: [repasseGroup(5004, { auto: true })] });
     await capture.rebuildLeaderIndex();
@@ -115,7 +115,7 @@ describe("repasse capture — grupo líder", () => {
   });
 
   it("dedup — mesmo produto postado 2x gera 1 item", async () => {
-    const { user } = await createTestUser();
+    const { user } = await createTestUser({ plan: "pro" });
     affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
     await storage.saveState(user.id, { groups: [repasseGroup(5005, { auto: true })] });
     await capture.rebuildLeaderIndex();
@@ -128,7 +128,7 @@ describe("repasse capture — grupo líder", () => {
   });
 
   it("campanha com 2 líderes: cada grupo alimenta a mesma fila; link repetido não duplica", async () => {
-    const { user } = await createTestUser();
+    const { user } = await createTestUser({ plan: "pro" });
     affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
     const g = repasseGroup(5007, { auto: true });
     g.scraping.repasse = { leaders: [
@@ -148,7 +148,7 @@ describe("repasse capture — grupo líder", () => {
   });
 
   it("líder no formato antigo (um só) continua capturando após o save", async () => {
-    const { user } = await createTestUser();
+    const { user } = await createTestUser({ plan: "pro" });
     affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
     // repasseGroup() usa o formato legado {leaderNumberId, leaderJid} de propósito.
     await storage.saveState(user.id, { groups: [repasseGroup(5008, { auto: true })] });
@@ -164,7 +164,7 @@ describe("repasse capture — grupo líder", () => {
   });
 
   it("ignora mensagem de grupo que não é líder", async () => {
-    const { user } = await createTestUser();
+    const { user } = await createTestUser({ plan: "pro" });
     affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
     await storage.saveState(user.id, { groups: [repasseGroup(5006, { auto: true })] });
     await capture.rebuildLeaderIndex();
@@ -174,6 +174,37 @@ describe("repasse capture — grupo líder", () => {
     ]);
 
     const g = (await storage.loadState(user.id)).groups.find(x => x.id === 5006);
+    expect(g.queue.length + g.pending.length).toBe(0);
+  });
+
+  // A captura roda no listener do Baileys, fora de rota HTTP — não passava por
+  // gating nenhum. Conta cancelada seguia rodando o scraper indefinidamente.
+  it("assinatura inativa não captura nem chama o scraper", async () => {
+    const { user } = await createTestUser({ plan: "pro" });
+    affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
+    await storage.saveState(user.id, { groups: [repasseGroup(5009, { auto: true })] });
+    await capture.rebuildLeaderIndex();
+    await billing.update(user.id, { planId: "pro", status: "canceled" });
+
+    await capture.onUpsert(user.id, NUMBER_ID, [msgWithText("https://www.mercadolivre.com.br/p/MLB999")]);
+
+    const g = (await storage.loadState(user.id)).groups.find(x => x.id === 5009);
+    expect(g.queue.length + g.pending.length).toBe(0);
+    expect(scraper.scrapeSingleProduct).not.toHaveBeenCalled();
+  });
+
+  // Campanha pausada pelo plano não envia — enfileirar nela só engordaria a
+  // fila em silêncio.
+  it("campanha pausada pelo plano não recebe captura", async () => {
+    const { user } = await createTestUser({ plan: "pro" });
+    affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
+    await storage.saveState(user.id, { groups: [repasseGroup(5010, { auto: true })] });
+    await storage.savePlanPaused(user.id, { groups: [5010], numbers: [] });
+    await capture.rebuildLeaderIndex();
+
+    await capture.onUpsert(user.id, NUMBER_ID, [msgWithText("https://www.mercadolivre.com.br/p/MLB777")]);
+
+    const g = (await storage.loadState(user.id)).groups.find(x => x.id === 5010);
     expect(g.queue.length + g.pending.length).toBe(0);
   });
 });

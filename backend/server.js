@@ -1007,13 +1007,29 @@ async function requireActiveSubscription(req, res, next) {
   }
 }
 
-// Gate por número: número pausado pelo plano continua conectado (não perde o
-// pareamento), mas não envia nada até o cliente ativá-lo de volta.
-async function requireNumberNotPlanPaused(req, res, next) {
+// Gate por número — whitelist: só envia por número que está CADASTRADO no
+// estado e não pausado pelo plano.
+//
+// O cadastro importa porque a pausa por plano só consegue marcar ids que
+// existem em `state.numbers` (enforce.js descarta id desconhecido). Um número
+// removido do estado com a sessão ainda de pé ficava impausável por construção
+// — quem caía de Pro pra Básico apagava os números pausados da lista e seguia
+// enviando pelos três. Sem cadastro, não envia.
+//
+// Número pausado continua conectado (não perde o pareamento), mas não envia
+// nada até o cliente ativá-lo de volta.
+async function requireUsableNumber(req, res, next) {
   try {
     if (req.user.role === "admin") return next();
-    const planPaused = await storage.loadPlanPaused(req.user.id);
-    if (billing.enforce.isNumberPlanPaused(planPaused, req.params.id)) {
+    const state = await storage.loadState(req.user.id);
+    const known = (state.numbers || []).some(n => String(n.id) === String(req.params.id));
+    if (!known) {
+      return res.status(402).json({
+        error: "Este número não está cadastrado no seu plano. Adicione-o na página WhatsApp para poder enviar por ele.",
+        code: "number_not_registered",
+      });
+    }
+    if (billing.enforce.isNumberPlanPaused(state.planPaused, req.params.id)) {
       return res.status(402).json({
         error: "Este número está pausado pelo seu plano. Ative-o na página WhatsApp (trocando com outro) ou assine um plano maior.",
         code: "number_plan_paused",
@@ -1487,7 +1503,7 @@ app.post("/api/state/groups/:gid/send-now", auth.requireAuth, requireActiveSubsc
 });
 
 // Aprovar item pendente: move de pending pra queue (final).
-app.post("/api/state/groups/:gid/pending/:pid/approve", auth.requireAuth, async (req, res) => {
+app.post("/api/state/groups/:gid/pending/:pid/approve", auth.requireAuth, requireActiveSubscription, async (req, res) => {
   try {
     const groupId = isNaN(Number(req.params.gid)) ? req.params.gid : Number(req.params.gid);
     const pid = req.params.pid;
@@ -1528,7 +1544,7 @@ app.delete("/api/state/groups/:gid/pending/:pid", auth.requireAuth, async (req, 
 // Aprovar TODOS os pendentes de uma vez: move tudo pra queue numa única escrita.
 // Evita o race de disparar N aprovações em paralelo (cada uma fazia replace-all
 // do pending/queue, colidindo no unique [groupId, productKey]).
-app.post("/api/state/groups/:gid/pending/approve-all", auth.requireAuth, async (req, res) => {
+app.post("/api/state/groups/:gid/pending/approve-all", auth.requireAuth, requireActiveSubscription, async (req, res) => {
   try {
     const groupId = isNaN(Number(req.params.gid)) ? req.params.gid : Number(req.params.gid);
     const state = await storage.loadState(req.user.id);
@@ -1560,7 +1576,7 @@ app.delete("/api/state/groups/:gid/pending", auth.requireAuth, async (req, res) 
 // (GET /api/state/ops, ordenado por position asc) reverteria qualquer mudança
 // local em segundos. updateGroupOps faz replace-all regravando as posições na
 // ordem do array recebido.
-app.put("/api/state/groups/:gid/queue", auth.requireAuth, async (req, res) => {
+app.put("/api/state/groups/:gid/queue", auth.requireAuth, requireActiveSubscription, async (req, res) => {
   try {
     const groupId = isNaN(Number(req.params.gid)) ? req.params.gid : Number(req.params.gid);
     const queue = Array.isArray(req.body?.queue) ? req.body.queue : null;
@@ -1604,7 +1620,7 @@ app.delete("/api/state/groups/:gid/history", auth.requireAuth, async (req, res) 
 
 // Busca metadados de uma URL única (Puppeteer) — usado pelo "Adicionar link".
 // Não bloqueia em erro: devolve campos null pra UI deixar editar manualmente.
-app.post("/api/scraper/fetch-url", auth.requireAuth, async (req, res) => {
+app.post("/api/scraper/fetch-url", auth.requireAuth, requireActiveSubscription, async (req, res) => {
   try {
     const url = req.body?.url;
     if (!url || typeof url !== "string" || !url.trim()) {
@@ -1624,7 +1640,7 @@ app.post("/api/scraper/fetch-url", auth.requireAuth, async (req, res) => {
 //  - { ok: true, target, item, ... } quando adicionado
 //  - { inCooldown: true, lastSentAt, cooldownMinutes, cooldownLabel } pedindo confirmação (UI manda force=true depois)
 //  - 400 com error em duplicata na fila/pending ou validação
-app.post("/api/state/groups/:gid/manual-add", auth.requireAuth, async (req, res) => {
+app.post("/api/state/groups/:gid/manual-add", auth.requireAuth, requireActiveSubscription, async (req, res) => {
   try {
     const groupId = isNaN(Number(req.params.gid)) ? req.params.gid : Number(req.params.gid);
     const r = await scheduler.manualAdd(req.user.id, groupId, req.body || {});
@@ -1637,7 +1653,7 @@ app.post("/api/state/groups/:gid/manual-add", auth.requireAuth, async (req, res)
 
 // Força refill da fila a partir do catálogo (aplica filtros da campanha).
 // Aceita body opcional { filters, sources, categories } com overrides ainda não persistidos.
-app.post("/api/state/groups/:gid/refill", auth.requireAuth, async (req, res) => {
+app.post("/api/state/groups/:gid/refill", auth.requireAuth, requireActiveSubscription, async (req, res) => {
   try {
     const groupId = isNaN(Number(req.params.gid)) ? req.params.gid : Number(req.params.gid);
     const r = await scheduler.refillNow(req.user.id, groupId, req.body || {});
@@ -2734,6 +2750,9 @@ app.get("/api/whatsapp/sessions/:id", auth.requireAuth, async (req, res) => {
 app.delete("/api/whatsapp/sessions/:id", auth.requireAuth, async (req, res) => {
   try {
     await wa.deleteSession(req.user.id, req.params.id);
+    // Apagar número libera vaga — despausa na hora quem estava travado pelo
+    // plano, em vez de esperar o próximo GET/PUT /api/state.
+    await applyPlanLimits(req.user.id, { role: req.user.role });
     res.json({ ok: true });
   } catch (err) {
     httpErrors.serverError(res, err, { req, ctx: "DELETE /api/whatsapp/sessions/:id" });
@@ -2753,6 +2772,28 @@ app.post("/api/whatsapp/sessions/:id/groups", auth.requireAuth, async (req, res)
   try {
     const { name, participants = [] } = req.body || {};
     if (!name || !String(name).trim()) return res.status(400).json({ error: "name obrigatório" });
+
+    // Teto global de grupos de WhatsApp derivado do plano: nenhuma conta precisa
+    // de mais que "campanhas × grupos por campanha". Sem isto, criar grupo real
+    // no WhatsApp não passava por gating nenhum — o limite por campanha só é
+    // cobrado quando a campanha é salva (PUT /api/state), e quem chamasse a API
+    // direto criava quantos quisesse.
+    if (req.user.role !== "admin") {
+      const sub = await billing.getByUserId(req.user.id);
+      const planLimits = billing.limits.getLimits(sub, req.user.role);
+      const max = planLimits.groups * planLimits.whatsappGroupsPerCampaign;
+      const state = await storage.loadState(req.user.id);
+      const current = (state.whatsappGroups || []).length;
+      if (current + 1 > max) {
+        return res.status(402).json({
+          code: "plan_limit",
+          key: "whatsappGroupsPerCampaign",
+          error: `Seu plano comporta no máximo ${max} grupos de WhatsApp e você já tem ${current}. Apague um grupo ou assine um plano maior.`,
+          limit: max,
+          current: current + 1,
+        });
+      }
+    }
 
     let parts = Array.isArray(participants) ? participants.slice() : [];
     parts = [...new Set(parts.map(p => String(p).trim()).filter(Boolean))];
@@ -2799,7 +2840,7 @@ app.delete("/api/whatsapp/sessions/:id/groups/:jid", auth.requireAuth, async (re
   }
 });
 
-app.post("/api/whatsapp/sessions/:id/send", auth.requireAuth, requireActiveSubscription, requireNumberNotPlanPaused, async (req, res) => {
+app.post("/api/whatsapp/sessions/:id/send", auth.requireAuth, requireActiveSubscription, requireUsableNumber, async (req, res) => {
   try {
     const { jid, text, imageUrl } = req.body || {};
     if (!jid) return res.status(400).json({ error: "jid obrigatório" });
@@ -2816,11 +2857,36 @@ app.post("/api/whatsapp/sessions/:id/send", auth.requireAuth, requireActiveSubsc
   }
 });
 
-app.post("/api/whatsapp/sessions/:id/broadcast", auth.requireAuth, requireActiveSubscription, requireNumberNotPlanPaused, async (req, res) => {
+app.post("/api/whatsapp/sessions/:id/broadcast", auth.requireAuth, requireActiveSubscription, requireUsableNumber, async (req, res) => {
   try {
     const { jids = [], text, imageUrl, intervalMs = 4000 } = req.body || {};
     if (!Array.isArray(jids) || jids.length === 0) return res.status(400).json({ error: "jids obrigatório (array)" });
     if (!text && !imageUrl) return res.status(400).json({ error: "text ou imageUrl obrigatório" });
+
+    // Sem isto o broadcast era um caminho paralelo sem plano nenhum: aceitava
+    // qualquer lista de jids, de qualquer tamanho, sem relação com os grupos
+    // vinculados às campanhas — furava `whatsappGroupsPerCampaign` inteiro.
+    // Agora só dispara pra grupo REGISTRADO neste número e respeita o teto.
+    if (req.user.role !== "admin") {
+      const state = await storage.loadState(req.user.id);
+      const allowed = new Set();
+      for (const w of (state.whatsappGroups || [])) {
+        if (String(w.numberId) !== String(req.params.id)) continue;
+        allowed.add(String(w.jid || w.id));
+        allowed.add(String(w.id));
+      }
+      const unknown = jids.find(j => !allowed.has(String(j)));
+      if (unknown !== undefined) {
+        return res.status(400).json({
+          error: "Só é possível disparar para grupos de WhatsApp cadastrados neste número.",
+          code: "unknown_jid",
+          jid: String(unknown),
+        });
+      }
+      const sub = await billing.getByUserId(req.user.id);
+      const check = billing.limits.checkLimit(sub, "whatsappGroupsPerCampaign", jids.length, req.user.role);
+      if (!check.ok) return res.status(402).json(check);
+    }
 
     const results = [];
     for (let i = 0; i < jids.length; i++) {

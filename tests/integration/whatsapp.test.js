@@ -15,6 +15,19 @@ async function userOnPlan(planId) {
   return u;
 }
 
+// Registra números (e opcionalmente grupos de WhatsApp) no estado do usuário.
+// As rotas de envio direto viraram whitelist: só despacham por número que está
+// em `state.numbers` — número com sessão viva mas fora do estado não é pausável
+// pelo plano, e era por aí que dava pra furar o limite depois de um downgrade.
+async function registerNumbers(auth, ids, whatsappGroups = []) {
+  const r = await auth("put", "/api/state").send({
+    groups: [],
+    numbers: ids.map(id => ({ id, phone: `5511${id}` })),
+    whatsappGroups,
+  });
+  expect(r.status, "registro de números no estado").toBe(200);
+}
+
 describe("WhatsApp — sessões (gating + auth)", () => {
   it("sem token retorna 401 em todas as rotas", async () => {
     const rotas = [
@@ -126,18 +139,31 @@ describe("WhatsApp — grupos", () => {
     expect(waCalls.listGroups).toHaveLength(1);
   });
 
-  it("POST /groups exige name + participants", async () => {
-    const { auth } = await createTestUser();
+  it("POST /groups exige name", async () => {
+    const { auth } = await userOnPlan("pro");
     await auth("post", "/api/whatsapp/sessions/num-1");
     const sem = await auth("post", "/api/whatsapp/sessions/num-1/groups").send({});
     expect(sem.status).toBe(400);
+  });
 
-    const semPart = await auth("post", "/api/whatsapp/sessions/num-1/groups").send({ name: "G", participants: [] });
-    expect(semPart.status).toBe(400);
+  // Sem participantes o backend usa o próprio número do criador (o WhatsApp
+  // exige ao menos 1 além dele). Só dá 400 quando não há sessão pra consultar.
+  it("POST /groups sem participants cria com o próprio número", async () => {
+    const { auth } = await userOnPlan("pro");
+    await auth("post", "/api/whatsapp/sessions/num-1");
+    const r = await auth("post", "/api/whatsapp/sessions/num-1/groups").send({ name: "G", participants: [] });
+    expect(r.status).toBe(200);
+    expect(waCalls.createGroup[0].participants).toEqual(["5511999999999"]);
+  });
+
+  it("POST /groups sem sessão retorna 400", async () => {
+    const { auth } = await userOnPlan("pro");
+    const r = await auth("post", "/api/whatsapp/sessions/num-sem-sessao/groups").send({ name: "G", participants: [] });
+    expect(r.status).toBe(400);
   });
 
   it("POST /groups cria com sucesso", async () => {
-    const { auth } = await createTestUser();
+    const { auth } = await userOnPlan("pro");
     await auth("post", "/api/whatsapp/sessions/num-1");
     const r = await auth("post", "/api/whatsapp/sessions/num-1/groups").send({
       name: "Promos Teste",
@@ -147,12 +173,31 @@ describe("WhatsApp — grupos", () => {
     expect(r.body.name).toBe("Promos Teste");
     expect(waCalls.createGroup).toHaveLength(1);
   });
+
+  // Criar grupo real no WhatsApp não passava por gating nenhum — o limite por
+  // campanha só é cobrado no PUT /api/state. Teto global = campanhas × grupos
+  // por campanha (basic = 1 × 3).
+  it("POST /groups respeita o teto global do plano (basic = 3)", async () => {
+    const { auth } = await userOnPlan("basic");
+    await auth("post", "/api/whatsapp/sessions/num-1");
+    const wgs = ["a@g.us", "b@g.us", "c@g.us"].map((jid, i) => ({
+      id: jid, jid, numberId: "num-1", name: `G${i + 1}`,
+    }));
+    await registerNumbers(auth, ["num-1"], wgs);
+    const r = await auth("post", "/api/whatsapp/sessions/num-1/groups")
+      .send({ name: "Quarto", participants: ["5511999999999"] });
+    expect(r.status).toBe(402);
+    expect(r.body.code).toBe("plan_limit");
+    expect(r.body.limit).toBe(3);
+    expect(waCalls.createGroup).toHaveLength(0);
+  });
 });
 
 describe("WhatsApp — envio direto via /send", () => {
   it("rejeita sem jid", async () => {
     const { auth } = await userOnPlan("pro");
     await auth("post", "/api/whatsapp/sessions/num-1");
+    await registerNumbers(auth, ["num-1"]);
     const r = await auth("post", "/api/whatsapp/sessions/num-1/send").send({ text: "oi" });
     expect(r.status).toBe(400);
     expect(r.body.error).toMatch(/jid/);
@@ -161,6 +206,7 @@ describe("WhatsApp — envio direto via /send", () => {
   it("rejeita sem text e sem imageUrl", async () => {
     const { auth } = await userOnPlan("pro");
     await auth("post", "/api/whatsapp/sessions/num-1");
+    await registerNumbers(auth, ["num-1"]);
     const r = await auth("post", "/api/whatsapp/sessions/num-1/send").send({ jid: "x@g.us" });
     expect(r.status).toBe(400);
   });
@@ -168,6 +214,7 @@ describe("WhatsApp — envio direto via /send", () => {
   it("envia texto puro", async () => {
     const { auth } = await userOnPlan("pro");
     await auth("post", "/api/whatsapp/sessions/num-1");
+    await registerNumbers(auth, ["num-1"]);
     const r = await auth("post", "/api/whatsapp/sessions/num-1/send").send({ jid: "x@g.us", text: "olá" });
     expect(r.status).toBe(200);
     expect(waCalls.sendText).toHaveLength(1);
@@ -177,6 +224,7 @@ describe("WhatsApp — envio direto via /send", () => {
   it("envia imagem quando imageUrl presente (text vira caption)", async () => {
     const { auth } = await userOnPlan("pro");
     await auth("post", "/api/whatsapp/sessions/num-1");
+    await registerNumbers(auth, ["num-1"]);
     const r = await auth("post", "/api/whatsapp/sessions/num-1/send").send({
       jid: "x@g.us", text: "legenda", imageUrl: "https://img.test/a.jpg",
     });
@@ -189,9 +237,14 @@ describe("WhatsApp — envio direto via /send", () => {
 });
 
 describe("WhatsApp — broadcast", () => {
+  const wgs = ["a@g.us", "b@g.us", "c@g.us"].map((jid, i) => ({
+    id: jid, jid, numberId: "num-1", name: `G${i + 1}`,
+  }));
+
   it("envia pra múltiplos jids", async () => {
     const { auth } = await userOnPlan("pro");
     await auth("post", "/api/whatsapp/sessions/num-1");
+    await registerNumbers(auth, ["num-1"], wgs);
     const r = await auth("post", "/api/whatsapp/sessions/num-1/broadcast").send({
       jids: ["a@g.us", "b@g.us", "c@g.us"],
       text: "promoção",
@@ -199,6 +252,75 @@ describe("WhatsApp — broadcast", () => {
     });
     expect(r.status).toBe(200);
     expect(waCalls.sendText.length).toBeGreaterThanOrEqual(3);
+  });
+
+  // O broadcast era um caminho paralelo sem plano nenhum: aceitava qualquer
+  // lista de jids, de qualquer tamanho. Dava pra criar 50 grupos pela API e
+  // disparar pra todos no Básico (limite 3 por campanha).
+  it("recusa jid que não está cadastrado neste número", async () => {
+    const { auth } = await userOnPlan("pro");
+    await auth("post", "/api/whatsapp/sessions/num-1");
+    await registerNumbers(auth, ["num-1"], wgs);
+    const r = await auth("post", "/api/whatsapp/sessions/num-1/broadcast").send({
+      jids: ["a@g.us", "intruso@g.us"], text: "promoção", intervalMs: 0,
+    });
+    expect(r.status).toBe(400);
+    expect(r.body.code).toBe("unknown_jid");
+    expect(waCalls.sendText).toHaveLength(0);
+  });
+
+  it("recusa mais jids que o limite do plano (basic = 3)", async () => {
+    const { auth } = await userOnPlan("basic");
+    await auth("post", "/api/whatsapp/sessions/num-1");
+    const quatro = ["a@g.us", "b@g.us", "c@g.us", "d@g.us"].map((jid, i) => ({
+      id: jid, jid, numberId: "num-1", name: `G${i + 1}`,
+    }));
+    await registerNumbers(auth, ["num-1"], quatro);
+    const r = await auth("post", "/api/whatsapp/sessions/num-1/broadcast").send({
+      jids: quatro.map(w => w.jid), text: "promoção", intervalMs: 0,
+    });
+    expect(r.status).toBe(402);
+    expect(r.body.code).toBe("plan_limit");
+    expect(r.body.key).toBe("whatsappGroupsPerCampaign");
+    expect(waCalls.sendText).toHaveLength(0);
+  });
+});
+
+// Furo fechado: a pausa por plano só marca número que existe em `state.numbers`
+// (enforce.js descarta id desconhecido). Quem caía de Pro pra Básico apagava os
+// números pausados da lista, mantinha as sessões vivas e seguia enviando pelos
+// três — o número virava impausável por construção. Agora é whitelist.
+describe("WhatsApp — número fora do estado não envia", () => {
+  it("/send responde 402 quando o número não está cadastrado no estado", async () => {
+    const { auth } = await userOnPlan("pro");
+    await auth("post", "/api/whatsapp/sessions/num-1");
+    await auth("post", "/api/whatsapp/sessions/num-2");
+    // Só num-1 fica no estado; num-2 continua com a sessão viva.
+    await registerNumbers(auth, ["num-1"]);
+    const r = await auth("post", "/api/whatsapp/sessions/num-2/send")
+      .send({ jid: "x@g.us", text: "olá" });
+    expect(r.status).toBe(402);
+    expect(r.body.code).toBe("number_not_registered");
+    expect(waCalls.sendText).toHaveLength(0);
+  });
+
+  it("downgrade Pro→Básico: apagar o número pausado do estado não libera o envio", async () => {
+    const { auth, user } = await userOnPlan("pro");
+    for (const id of ["num-1", "num-2", "num-3"]) {
+      await auth("post", `/api/whatsapp/sessions/${id}`);
+    }
+    await registerNumbers(auth, ["num-1", "num-2", "num-3"]);
+    await billing.update(user.id, { planId: "basic", status: "active" });
+    // Reconcilia (pausa 2) e depois "limpa a lista" deixando só num-1.
+    await auth("get", "/api/state");
+    await registerNumbers(auth, ["num-1"]);
+
+    for (const id of ["num-2", "num-3"]) {
+      const r = await auth("post", `/api/whatsapp/sessions/${id}/send`)
+        .send({ jid: "x@g.us", text: "olá" });
+      expect(r.status, `envio por ${id}`).toBe(402);
+    }
+    expect(waCalls.sendText).toHaveLength(0);
   });
 });
 

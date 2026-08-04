@@ -327,3 +327,32 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     fila da campanha; o mesmo link vindo de dois líderes entra uma vez só.
     Campanha antiga não precisa de nada: o líder único que já estava salvo
     continua funcionando e é convertido pro formato novo no primeiro salvamento.
+
+63. [] Verificar brechas de segurança pelos endpoints do site.
+
+64. [] Como funcionam os cupons no ML e na Shopee? Como poderia buscar e integrar eles no sistema? Tem algums grupos de whats que enviam o produto com o cupom a ser utilizado.
+
+65. [] Como tu acha que dava pra melhorar as abas das campanhas, para simplificar a utilizacao por parte do usuario? Por exemplo, a busca dos produtos podia ser parecida com a aba produtos que tenho no ADMIN, onde eu consigo filtrar e ver todos os produtos ali, ordenando como eu quero, se eu quiser pegar automaticamente, apenas deixo salvo esses filtros e ordem e adiciono o numero de produto que quero buscar e ele vai buscar na ordem que deixei ate completar este numero.
+
+66. [x] Conferir se dá pra furar os limites da assinatura (campanhas, WhatsApps, grupos, líderes) usando o próprio sistema.
+
+    A base estava certa: o plano vem do Stripe (ninguém consegue se promover
+    sozinho) e quem passa do limite fica pausado em vez de perder as coisas.
+    Mas achei três brechas e fechei todas.
+    A pior: quem baixava de Pro pra Básico e "limpava a lista de números"
+    continuava enviando pelos três WhatsApps. O sistema só conseguia pausar
+    número que estava na lista — apagou da lista, virou intocável. Agora é o
+    contrário: só envia por número que está cadastrado na lista e não pausado.
+    A segunda: dava pra criar grupos de WhatsApp sem limite nenhum e disparar
+    pra todos eles de uma vez, ignorando o limite de grupos por campanha. Agora
+    a criação tem teto conforme o plano e o disparo em massa só aceita grupos
+    que estão cadastrados no número.
+    A terceira: conta cancelada continuava rodando a busca de produtos (o pior
+    caso era a captura dos grupos líderes, que ficava buscando cada link para
+    sempre). Não chegava a enviar nada, mas gastava máquina à toa. Agora
+    "Adicionar link", "Reabastecer fila", aprovar pendentes e a captura de
+    repasse pedem assinatura ativa.
+    Efeito colateral esperado: quem está sem plano ativo agora vê aviso de
+    assinatura ao tentar mexer na fila — antes conseguia mexer, só não enviava.
+
+67. [] Quando clico em uma campanha la no menu da esquerda para abrir direto sua pagina, quero que suba ate o topo da pagina.

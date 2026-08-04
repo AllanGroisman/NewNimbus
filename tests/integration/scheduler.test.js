@@ -272,7 +272,11 @@ describe("scheduler.sendNextNow — envia primeiro item da queue", () => {
     const { user, auth } = await createUserWithMLAffiliate();
     const waGroups = [makeWhatsAppGroup({ id: "wa-2", numberId: "num-2", jid: "fake2@g.us" })];
     const group = makeGroup({ id: 301, whatsappGroupIds: ["wa-2"], sources: ["amazon"] });
-    await auth("put", "/api/state").send({ groups: [group], whatsappGroups: waGroups });
+    await auth("put", "/api/state").send({
+      groups: [group],
+      numbers: [{ id: "num-2", phone: "5511num-2" }],
+      whatsappGroups: waGroups,
+    });
     waConnect(user.id, "num-2"); // simula QR escaneado
     await storage.updateGroupOps(user.id, 301, {
       queue: [{ id: "i", key: "i", name: "Sem Imagem", link: "https://x.com/a", img: null, price: 10, discount: 10, store: "Amazon", category: "gamer" }],
@@ -326,7 +330,11 @@ describe("scheduler.tick — loop periodico", () => {
       whatsappGroupIds: ["wa-tick"],
       schedule: { windows: [{ from: "00:00", to: "23:59", interval: 0 }], cooldownValue: 24, cooldownUnit: "horas" },
     });
-    await auth("put", "/api/state").send({ groups: [group], whatsappGroups: waGroups });
+    await auth("put", "/api/state").send({
+      groups: [group],
+      numbers: [{ id: "num-tick", phone: "5511num-tick" }],
+      whatsappGroups: waGroups,
+    });
     waConnect(user.id, "num-tick"); // simula QR escaneado
 
     await scheduler.tick();
@@ -347,7 +355,11 @@ describe("scheduler.tick — loop periodico", () => {
       schedule: { windows: [], cooldownValue: 24, cooldownUnit: "horas" },
     });
     group.scraping.autoSend = true;
-    await auth("put", "/api/state").send({ groups: [group], whatsappGroups: waGroups });
+    await auth("put", "/api/state").send({
+      groups: [group],
+      numbers: [{ id: "num-auto", phone: "5511num-auto" }],
+      whatsappGroups: waGroups,
+    });
     waConnect(user.id, "num-auto");
     await storage.updateGroupOps(user.id, 1001, {
       queue: [{ id: "a", key: "a", name: "Auto Envio", link: "https://www.amazon.com.br/dp/B0CAUTO0001", img: null, price: 10, discount: 50, store: "Amazon", category: "gamer" }],
@@ -369,7 +381,11 @@ describe("scheduler.tick — loop periodico", () => {
       sources: ["amazon"],
       schedule: { windows: [], cooldownValue: 24, cooldownUnit: "horas" },
     });
-    await auth("put", "/api/state").send({ groups: [group], whatsappGroups: waGroups });
+    await auth("put", "/api/state").send({
+      groups: [group],
+      numbers: [{ id: "num-noauto", phone: "5511num-noauto" }],
+      whatsappGroups: waGroups,
+    });
     waConnect(user.id, "num-noauto");
     await storage.updateGroupOps(user.id, 1002, {
       queue: [{ id: "b", key: "b", name: "Sem Auto", link: "https://www.amazon.com.br/dp/B0CNOAUTO01", img: null, price: 10, discount: 50, store: "Amazon", category: "gamer" }],
@@ -416,7 +432,11 @@ describe("POST /api/state/groups/:gid/send-now — endpoint HTTP", () => {
     const { user, auth } = await createUserWithMLAffiliate();
     const waGroups = [makeWhatsAppGroup({ id: "wa-sn", numberId: "num-sn", jid: "sn@g.us" })];
     const group = makeGroup({ id: 600, whatsappGroupIds: ["wa-sn"], sources: ["amazon"] });
-    await auth("put", "/api/state").send({ groups: [group], whatsappGroups: waGroups });
+    await auth("put", "/api/state").send({
+      groups: [group],
+      numbers: [{ id: "num-sn", phone: "5511num-sn" }],
+      whatsappGroups: waGroups,
+    });
     waConnect(user.id, "num-sn"); // simula QR escaneado
     await storage.updateGroupOps(user.id, 600, {
       queue: [{ id: "x", key: "x", name: "Manual Send", link: "https://x.com/a", img: null, price: 10, discount: 50, store: "Amazon", category: "gamer" }],
