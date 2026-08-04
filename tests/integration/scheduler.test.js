@@ -198,6 +198,37 @@ describe("scheduler.sendNextNow — envia primeiro item da queue", () => {
     expect(g.sentWeek).toBe(1);
   });
 
+  // Regressão: o upgrade de resolução era calculado mas o envio usava a URL
+  // ORIGINAL (thumb), então a foto chegava borrada no grupo. A URL que vai pro
+  // WhatsApp — e a que fica no histórico — tem que ser a de resolução alta.
+  it("manda a foto em resolução alta, não a thumb que estava na fila", async () => {
+    const { user, auth } = await createUserWithMLAffiliate();
+    const numbers = [{ id: "num-3", phone: "5511..." }];
+    const waGroups = [makeWhatsAppGroup({ id: "wa-3", numberId: "num-3", jid: "fake3@g.us" })];
+    const group = makeGroup({ id: 302, whatsappGroupIds: ["wa-3"], sources: ["amazon"] });
+    await auth("put", "/api/state").send({ groups: [group], numbers, whatsappGroups: waGroups });
+    waConnect(user.id, "num-3");
+
+    await storage.updateGroupOps(user.id, 302, {
+      queue: [{
+        id: "i2", key: "i2", name: "Produto Thumb",
+        link: "https://www.amazon.com.br/dp/B0CTHUMB123",
+        img: "https://m.media-amazon.com/images/I/71abc._AC_UY218_QL90_.jpg",
+        price: 100, originalPrice: 200, discount: 50, store: "Amazon", category: "gamer",
+      }],
+    });
+
+    await scheduler.sendNextNow(user.id, 302);
+
+    const big = "https://m.media-amazon.com/images/I/71abc.jpg";
+    expect(waCalls.sendImage.length).toBe(1);
+    expect(waCalls.sendImage[0].imageUrl).toBe(big);
+
+    const st = await storage.loadState(user.id);
+    const g = st.groups.find(g => g.id === 302);
+    expect(g.history[0].img).toBe(big);
+  });
+
   // Task 34: campanha pausada por cancelamento/downgrade não envia, nem no
   // "Enviar agora" — mas continua existindo com fila e tudo.
   it("campanha pausada pelo plano não envia e explica o motivo", async () => {

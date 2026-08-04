@@ -2,7 +2,7 @@
 // Função pura, sem rede — os buffers são montados na mão.
 
 import "../helpers/env.js";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
@@ -10,7 +10,7 @@ import { createRequire } from "module";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
-const { parseImageHeader } = require(path.resolve(__dirname, "..", "..", "backend", "scraping", "image-quality.js"));
+const { parseImageHeader, pickBestImage } = require(path.resolve(__dirname, "..", "..", "backend", "scraping", "image-quality.js"));
 
 function pngHeader(width, height) {
   const buf = Buffer.alloc(24);
@@ -113,5 +113,63 @@ describe("parseImageHeader", () => {
 
   it("devolve null quando as dimensões não fazem sentido", () => {
     expect(parseImageHeader(pngHeader(0, 100))).toBe(null);
+  });
+});
+
+// Escolha entre a foto da página e a versão "em alta" montada por reescrita da
+// URL. Aqui tem rede — o fetch global é mockado com respostas por URL.
+describe("pickBestImage", () => {
+  const THUMB = "https://http2.mlstatic.com/D_NQ_NP_682596-MLB112404223609_052026-O.webp";
+  const BIG = "https://http2.mlstatic.com/D_NQ_NP_682596-MLB112404223609_052026-F.webp";
+
+  // Resposta mínima no formato que o inspectImage consome (Range → 206 + body).
+  function imageResponse(buffer) {
+    return {
+      ok: true,
+      status: 206,
+      headers: new Headers({ "content-range": `bytes 0-${buffer.length - 1}/${buffer.length}` }),
+      body: null,
+      arrayBuffer: async () => buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.length),
+    };
+  }
+
+  function mockFetch(byUrl) {
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      const entry = byUrl[url];
+      if (!entry) return { ok: false, status: 404, headers: new Headers(), body: null, arrayBuffer: async () => new ArrayBuffer(0) };
+      if (entry === "throw") throw new Error("socket hang up");
+      return imageResponse(entry);
+    }));
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("fica com a candidata quando ela é maior (o caso do -O → -F)", async () => {
+    mockFetch({ [THUMB]: webpVp8(428, 500), [BIG]: webpVp8(810, 947) });
+    expect(await pickBestImage(THUMB, BIG)).toBe(BIG);
+  });
+
+  it("volta pra original quando a candidata é MENOR (banner do ML)", async () => {
+    mockFetch({ [THUMB]: webpVp8(1368, 164), [BIG]: webpVp8(1201, 144) });
+    expect(await pickBestImage(THUMB, BIG)).toBe(THUMB);
+  });
+
+  it("volta pra original quando a candidata dá 404", async () => {
+    mockFetch({ [THUMB]: webpVp8(428, 500) });
+    expect(await pickBestImage(THUMB, BIG)).toBe(THUMB);
+  });
+
+  it("volta pra original quando as duas falham", async () => {
+    mockFetch({ [THUMB]: "throw", [BIG]: "throw" });
+    expect(await pickBestImage(THUMB, BIG)).toBe(THUMB);
+  });
+
+  it("não gasta rede quando não há o que comparar", async () => {
+    const spy = vi.fn();
+    vi.stubGlobal("fetch", spy);
+    expect(await pickBestImage(THUMB, THUMB)).toBe(THUMB);
+    expect(await pickBestImage(THUMB, null)).toBe(THUMB);
+    expect(await pickBestImage(null, BIG)).toBe(BIG);
+    expect(spy).not.toHaveBeenCalled();
   });
 });

@@ -1,5 +1,6 @@
 const puppeteer = require("puppeteer");
 const urlGuard = require("./urlGuard");
+const { pickBestImage } = require("./image-quality");
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -52,14 +53,37 @@ function upgradeAmazonImageUrl(url) {
   return url.replace(/\._[A-Za-z0-9_,]+_(?=\.(?:jpg|jpeg|png|webp|gif)(?:\?|$))/i, "");
 }
 
-// URLs de imagem do ML (mlstatic.com) terminam com um sufixo de tamanho antes
-// da extensão: "-O" (~500x280, usado nos cards de listagem e como thumbnail
-// da galeria da PDP) e "-F" (1920x1076, resolução alta). Trocando o sufixo
-// pra "-F" a CDN serve a versão em alta — fica nítida no WhatsApp.
+// Toda foto de produto do ML carrega um id no nome do arquivo:
+// "https://http2.mlstatic.com/D_NQ_NP_2X_682596-MLB112404223609_052026-F.webp"
+//                                        └──────── id ────────────┘└ tamanho
+const ML_PICTURE_ID = /(\d{5,7}-[A-Z]{2,4}\d+_\d+)/;
+
+// URLs de imagem do ML (mlstatic.com) codificam o TAMANHO no nome do arquivo:
+// prefixo ("D_NQ_NP_", "D_Q_NP_2X_"…) + id da foto + sufixo ("-O", "-R", "-T",
+// "-OO"…). São dezenas de combinações, e a página serve uma diferente em cada
+// lugar — o og:image dá "-O" (~500px), a tira de miniaturas da galeria da PDP dá
+// "-R" (70×70). Em vez de adivinhar o formato que veio, a gente REMONTA a URL a
+// partir do id, sempre na maior versão que a CDN oferece ("D_NQ_NP_2X_…-F",
+// lado maior 1200px, sem recorte quadrado). Funciona pra qualquer variante,
+// inclusive as sem extensão. Quem confere se a remontagem melhorou mesmo é o
+// pickBestImage — em foto de banner, por exemplo, o "-F" é menor que a original.
 function upgradeMLImageUrl(url) {
   if (!url || typeof url !== "string") return url;
   if (!/mlstatic\.com/i.test(url)) return url;
-  return url.replace(/-[A-Z](?=\.(?:jpg|jpeg|png|webp)(?:\?|$))/i, "-F");
+  const m = ML_PICTURE_ID.exec(url);
+  if (m) {
+    try {
+      const u = new URL(url);
+      u.pathname = `/D_NQ_NP_2X_${m[1]}-F.webp`;
+      u.search = "";
+      u.hash = "";
+      return u.toString();
+    } catch { /* URL malformada — cai na troca de sufixo abaixo */ }
+  }
+  // Sem id reconhecível (asset do site, CDN nova): troca só o sufixo de tamanho.
+  // Ele é sempre MAIÚSCULO — casar minúscula faria a última letra do título
+  // saneado ("...-notebook-i.webp") virar sufixo e quebrar a URL.
+  return url.replace(/-[A-Z]{1,2}(?=\.(?:jpg|jpeg|png|webp)(?:\?|$))/, "-F");
 }
 
 // A Shopee serve as fotos da CDN com sufixo de miniatura no fim do caminho
@@ -1119,6 +1143,13 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
       // ser clicado pra chegar na PDP real (nome/preço só existem lá).
       if (/\/social\//i.test(page.url())) {
         page = await clickGoToProductML(browser, page);
+        // Se o botão não estava lá (landing renderizada por JS, forceInApp=true),
+        // ficamos na landing: sem galeria da PDP, a foto sai do og:image — que é
+        // a MINIATURA (~500px). O pickBestImage ainda sobe a resolução, mas o
+        // aviso aqui é o que denuncia esse caminho no log de produção.
+        if (/\/social\//i.test(page.url())) {
+          console.warn(`[scraper ML] "Ir para o produto" não abriu a PDP — dados vindos da landing de afiliado (${page.url().slice(0, 120)})`);
+        }
       }
       try { await page.waitForSelector(".ui-pdp-title, h1", { timeout: 5000 }); } catch {}
     } else if (store === "Amazon") {
@@ -1229,8 +1260,15 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
           const m = discEl.textContent.match(/(\d+)%/);
           if (m) discount = parseInt(m[1], 10);
         }
+        // Ordem importa. O `data-zoom` da galeria é a foto grande do produto
+        // principal — é a melhor. Depois vem o og:image, que a página garante ser
+        // do produto principal. O `src` do elemento fica por ÚLTIMO porque
+        // ".ui-pdp-gallery__figure img" também casa a tira de miniaturas da
+        // lateral, cujo src é um quadradinho de 70×70 (e nem sempre do mesmo
+        // produto). Tamanho quem resolve é o upgradeMLImageUrl; aqui a briga é
+        // por pegar a foto CERTA.
         const imgEl = document.querySelector(".ui-pdp-gallery__figure img, figure.ui-pdp-gallery__figure img, .ui-pdp-image");
-        img = imgEl?.getAttribute("data-zoom") || imgEl?.getAttribute("src") || ogImage;
+        img = imgEl?.getAttribute("data-zoom") || ogImage || imgEl?.getAttribute("src");
         // Best-effort: não há seletor confirmado pra "vendidos" na PDP — tenta achar
         // o texto em qualquer lugar da página (ex. "+500 vendidos", "2 mil vendidos").
         // Devolve o TEXTO cru; quem normaliza é o normalizeSoldText lá no Node.
@@ -1306,6 +1344,15 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
     // promoção sai com original e desconto nulos (hasPromo=false), sem inventar nada.
     const pricing = reconcilePricing({ price: data.price, originalPrice: data.originalPrice, discount: data.discount });
 
+    // Shopee e lojas genéricas caem no og:image, que costuma ser miniatura —
+    // upgradeImageUrl decide a regra pelo domínio da imagem. Aqui (link único,
+    // 1 produto por chamada) dá pra pagar 2 requisições de 64 KB e CONFERIR que
+    // a versão em alta existe mesmo, em vez de confiar na reescrita da URL.
+    const upgradedImg = store === "Amazon" ? upgradeAmazonImageUrl(data.img)
+                      : store === "Mercado Livre" ? upgradeMLImageUrl(data.img)
+                      : (upgradeImageUrl(data.img) || null);
+    const img = await pickBestImage(data.img || null, upgradedImg);
+
     return {
       name: name || null,
       link: cleanUrl,
@@ -1317,11 +1364,7 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
       sold,
       rating: parseRatingText(data.ratingTxt),
       reviewsCount: parseReviewsCount(data.reviewTxt),
-      // Shopee e lojas genéricas caem no og:image, que costuma ser miniatura —
-      // upgradeImageUrl decide a regra pelo domínio da imagem.
-      img: store === "Amazon" ? upgradeAmazonImageUrl(data.img)
-         : store === "Mercado Livre" ? upgradeMLImageUrl(data.img)
-         : (upgradeImageUrl(data.img) || null),
+      img: img || null,
       store: store || null,
       scrapedAt: new Date().toISOString(),
     };

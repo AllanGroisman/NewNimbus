@@ -184,9 +184,30 @@ async function inspectImages(urls, { concurrency = 4, timeoutMs = DEFAULT_TIMEOU
   return out;
 }
 
+// Escolhe entre a foto que veio da página e a versão "em alta" montada por
+// reescrita de URL (upgradeImageUrl). A reescrita é um palpite: o sufixo grande
+// pode não existir naquela CDN, ou — em imagens de banner do ML — ser MENOR que
+// a original. Aqui a gente mede as duas de verdade (64 KB de cabeçalho cada) e
+// fica com a de maior área. Qualquer falha (404/timeout/formato estranho) na
+// candidata cai de volta na original. NUNCA lança: no pior caso devolve a original.
+async function pickBestImage(originalUrl, candidateUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  if (!candidateUrl || candidateUrl === originalUrl) return originalUrl;
+  if (!originalUrl) return candidateUrl;
+  try {
+    const [orig, cand] = await inspectImages([originalUrl, candidateUrl], { timeoutMs });
+    const area = (r) => (r?.ok && r.width > 0 && r.height > 0 ? r.width * r.height : 0);
+    const candArea = area(cand);
+    if (!candArea) return originalUrl;
+    return candArea > area(orig) ? candidateUrl : originalUrl;
+  } catch {
+    return originalUrl;
+  }
+}
+
 module.exports = {
   inspectImage,
   inspectImages,
+  pickBestImage,
   parseImageHeader,
   MAX_HEADER_BYTES,
 };

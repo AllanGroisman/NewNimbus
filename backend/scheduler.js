@@ -447,8 +447,8 @@ async function sendItem(userId, group, whatsappGroups, item) {
   for (const [numberId, ws] of byNumber.entries()) {
     for (const w of ws) {
       try {
-        if (item.img) {
-          await wa.sendImage(userId, numberId, w.jid, item.img, text);
+        if (itemForSend.img) {
+          await wa.sendImage(userId, numberId, w.jid, itemForSend.img, text);
         } else {
           await wa.sendText(userId, numberId, w.jid, text);
         }
@@ -471,7 +471,9 @@ async function sendItem(userId, group, whatsappGroups, item) {
     key: item.key,
     name: item.name,
     link: item.link,
-    img: item.img || null,
+    // Grava a MESMA foto que foi pro grupo (já em resolução alta), não a thumb
+    // que estava na fila — o histórico é o que a UI mostra como "o que enviei".
+    img: itemForSend.img || null,
     store: item.store || null,
     price: item.price,
     originalPrice: item.originalPrice ?? null,
