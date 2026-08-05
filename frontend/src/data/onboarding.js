@@ -82,10 +82,10 @@ export const TOURS = {
       { tab: "products", anchor: "pr-leader", title: "Grupos líderes", text: "Os grupos que o sistema fica escutando: todo link de produto postado neles é capturado e re-afiliado com a sua tag. Quantos você pode ter depende do seu plano." },
       { tab: "products", anchor: "pr-where", title: "Onde buscar", text: "As lojas e as categorias que esta campanha vasculha. Aparecem só as categorias ligadas; o botão \"Adicionar categoria\" abre a lista pra marcar mais, até o limite do seu plano." },
       { tab: "products", anchor: "pr-queue", title: "Preenchimento automático", text: "A chave liga e desliga o preenchimento sozinho. Em \"Configurar\" você escolhe quando ele acontece — quando a fila estiver acabando ou em horários fixos do dia —, quantos produtos entram por vez e em que ordem." },
-      { tab: "products", anchor: "pr-run", title: "Preencher fila agora", text: "Salva as escolhas e completa a fila na hora, sem esperar o horário. Bom pra testar se os filtros não ficaram apertados demais." },
       { tab: "products", anchor: "pr-search", title: "Busca por palavras-chave", text: "As palavras que o produto precisa ter no nome. Vários termos separados por vírgula; vazio traz tudo das categorias marcadas." },
       { tab: "products", anchor: "pr-filters", title: "Filtros", text: "Este botão abre faixa de preço, desconto mínimo, avaliação e vendas. Produto que não passa em todos é ignorado." },
       { tab: "products", anchor: "pr-results", title: "Os produtos encontrados", text: "A lista que os filtros trazem, na mesma ordem que o preenchimento usa. Dá pra mandar um produto específico pra fila pelo botão do card, e as duas chaves escondem o que já foi enviado há pouco e o que já está na fila." },
+      { tab: "products", anchor: "pr-run", title: "Preencher fila agora", text: "Logo acima da lista: salva as escolhas e completa a fila na hora, sem esperar o horário. Bom pra testar se os filtros não ficaram apertados demais." },
       { tab: "products", anchor: "pr-pending", title: "Aguardando revisão", text: "No repasse, os links capturados param aqui até você aprovar ou rejeitar. Numa campanha de busca isso só aparece se sobrou algo da revisão antiga." },
 
       // ── Fila

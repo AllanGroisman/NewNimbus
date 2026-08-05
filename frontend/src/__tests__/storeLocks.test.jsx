@@ -132,6 +132,10 @@ describe("GroupDashboard — fonte de loja trancada", () => {
     };
     const utils = render(<GroupDashboard {...props} />);
     fireEvent.click(screen.getByRole("button", { name: /Busca de Produtos/i }));
+    // Os chips de loja moram no painel "Onde buscar", que abre num botão — e
+    // guarda aberto/fechado no localStorage entre um teste e outro.
+    const onde = screen.getByRole("button", { name: /Escolher lojas e categorias/ });
+    if (onde.getAttribute("aria-expanded") !== "true") fireEvent.click(onde);
     return { props, ...utils };
   }
 

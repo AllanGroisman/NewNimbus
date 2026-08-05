@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources,
   CATEGORIES, categoryLabel, categoryIcon, formatPrice,
@@ -60,15 +60,15 @@ function itemKeys(item) {
 
 const num = (v) => (v === "" || v == null ? null : Number(v));
 
-// Painéis que abrem num botão: os filtros (ao lado da busca) e os ajustes do
-// preenchimento automático (no "Configurar"). Fechados por padrão — o que
-// importa no dia a dia fica sempre à vista fora deles.
+// Painéis que abrem num botão: onde buscar (lojas/categorias), os filtros (ao
+// lado da busca) e os ajustes do preenchimento automático. Fechados por padrão —
+// a busca e a lista de produtos são o que importa no dia a dia, e ficam no topo.
 function loadSections() {
   try {
     const raw = JSON.parse(localStorage.getItem(SECTIONS_KEY) || "{}");
-    return { queue: raw.queue === true, filters: raw.filters === true };
+    return { where: raw.where === true, queue: raw.queue === true, filters: raw.filters === true };
   } catch {
-    return { queue: false, filters: false };
+    return { where: false, queue: false, filters: false };
   }
 }
 
@@ -91,7 +91,7 @@ export default function ProductSearchTab({
   save, dirty, saved, saveBtnStyle,
   pending = [], queue = [], history = [], cooldownMinutes = 0, cooldownLabel,
   onApprove, onReject, onApproveAll, onRejectAll,
-  onAddCatalogProduct,
+  onAddCatalogProduct, onAddCatalogProducts,
 }) {
   const filters = scraping.filters || {};
   const sortBy = SORT_OPTIONS.some(o => o.id === scraping.sortBy) ? scraping.sortBy : DEFAULT_SORT;
@@ -110,8 +110,12 @@ export default function ProductSearchTab({
   // que a chave "Já na fila" esteja desligada — senão o card sumiria no clique.
   const [justAdded, setJustAdded] = useState(() => new Set());
 
+  // "Onde buscar" e "Preenchimento" abrem no mesmo lugar, logo abaixo da faixa:
+  // abrir um fecha o outro, pra a página não crescer duas vezes.
   const toggleSection = (id) => setSections(s => {
     const next = { ...s, [id]: !s[id] };
+    if (id === "where" && next.where) next.queue = false;
+    if (id === "queue" && next.queue) next.where = false;
     try { localStorage.setItem(SECTIONS_KEY, JSON.stringify(next)); } catch { /* modo privado */ }
     return next;
   });
@@ -123,9 +127,15 @@ export default function ProductSearchTab({
   const [preview, setPreview] = useState({ items: [], total: 0, approximate: false });
   const [loadingPreview, setLoadingPreview] = useState(true);
   const [previewError, setPreviewError] = useState(null);
-  const [addingKey, setAddingKey] = useState(null);
-  const [addMsg, setAddMsg] = useState(null);           // { key, type, text }
-  const [cooldownAsk, setCooldownAsk] = useState(null); // { key, product, info }
+  // Vários produtos podem estar sendo adicionados ao mesmo tempo: cada card
+  // guarda o próprio "adicionando" e a própria mensagem.
+  const [addingKeys, setAddingKeys] = useState(() => new Set());
+  const [addMsgs, setAddMsgs] = useState(() => new Map()); // key -> { type, text }
+  const [cooldownAsk, setCooldownAsk] = useState(null);    // { key, product, info }
+  // Seleção múltipla da lista.
+  const [selected, setSelected] = useState(() => new Set());
+  const [bulk, setBulk] = useState(null); // { running, done, total } | { done: resumo }
+  const [bulkCooldown, setBulkCooldown] = useState([]);
 
   // Lojas que a busca realmente usa: as escolhidas menos as trancadas pelo admin.
   const usableSources = useMemo(
@@ -136,6 +146,12 @@ export default function ProductSearchTab({
   // com lista vazia (lá isso significa "todas as lojas").
   const noSources = usableSources.length === 0;
   const hasLockedSelected = selectedSources.some(s => lockMessageFor(s));
+
+  // Sem loja não há o que listar: o painel de "Onde buscar" abre sozinho, que é
+  // onde está a correção.
+  const whereOpen = sections.where || noSources;
+  // Um painel por vez: se "Onde buscar" abriu sozinho, o de preenchimento espera.
+  const queueOpen = sections.queue && !whereOpen;
 
   const catLimitReached = categoryLimit != null && categoryLimit < 99 && categories.length >= categoryLimit;
   // Quantas ainda cabem no plano (null = sem limite prático).
@@ -172,37 +188,57 @@ export default function ProductSearchTab({
     minRating: Number(filters.minRating) || 0,
     minSales: Number(filters.minSales) || 0,
   });
-  useEffect(() => { setPage(1); }, [paramsSig]);
+  // Busca nova: volta pra primeira página e esquece o que era daquela busca —
+  // seleção, adicionados e mensagens não valem pra outra lista.
+  useEffect(() => {
+    setPage(1);
+    setSelected(new Set());
+    setJustAdded(new Set());
+    setAddMsgs(new Map());
+    setBulk(null);
+    setBulkCooldown([]);
+  }, [paramsSig]);
 
   const abortRef = useRef(null);
+  // A lista cresce com o "Carregar mais": a página 1 substitui, as seguintes
+  // acumulam. Assim as chaves que escondem itens filtram um conjunto cada vez
+  // maior, em vez de esvaziar uma página.
+  const runSearch = useCallback(async () => {
+    if (abortRef.current) abortRef.current.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    setLoadingPreview(true);
+    setPreviewError(null);
+    const p = JSON.parse(paramsSig);
+    try {
+      const r = await browseCatalog({ ...p, page, pageSize: PAGE_SIZE }, { signal: ctrl.signal });
+      setPreview(prev => ({
+        items: page > 1 ? [...prev.items, ...(r.items || [])] : (r.items || []),
+        total: r.total || 0,
+        approximate: !!r.approximateTotal,
+      }));
+    } catch (err) {
+      if (err.name === "AbortError") return;
+      setPreviewError(errText(err, "Não foi possível carregar a prévia do catálogo."));
+    } finally {
+      if (abortRef.current === ctrl) {
+        abortRef.current = null;
+        setLoadingPreview(false);
+      }
+    }
+  }, [paramsSig, page]);
+
   useEffect(() => {
     if (noSources) {
       setPreview({ items: [], total: 0, approximate: false });
       setLoadingPreview(false);
       return;
     }
-    const p = JSON.parse(paramsSig);
-    const timer = setTimeout(async () => {
-      if (abortRef.current) abortRef.current.abort();
-      const ctrl = new AbortController();
-      abortRef.current = ctrl;
-      setLoadingPreview(true);
-      setPreviewError(null);
-      try {
-        const r = await browseCatalog({ ...p, page, pageSize: PAGE_SIZE }, { signal: ctrl.signal });
-        setPreview({ items: r.items || [], total: r.total || 0, approximate: !!r.approximateTotal });
-      } catch (err) {
-        if (err.name === "AbortError") return;
-        setPreviewError(errText(err, "Não foi possível carregar a prévia do catálogo."));
-      } finally {
-        if (abortRef.current === ctrl) {
-          abortRef.current = null;
-          setLoadingPreview(false);
-        }
-      }
-    }, DEBOUNCE_MS);
+    // O debounce existe pra não disparar uma request por tecla digitada; o
+    // "Carregar mais" é um clique só, e esperar meio segundo por ele incomoda.
+    const timer = setTimeout(runSearch, page > 1 ? 0 : DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [paramsSig, page, noSources]);
+  }, [runSearch, noSources, page]);
 
   useEffect(() => () => { if (abortRef.current) abortRef.current.abort(); }, []);
 
@@ -241,11 +277,20 @@ export default function ProductSearchTab({
 
   const cardKey = (p) => p.key || p.link;
 
+  const markAdded = (ck) => setJustAdded(s => new Set(s).add(ck));
+  const setAddMsg = (ck, msg) => setAddMsgs(m => {
+    const next = new Map(m);
+    if (msg) next.set(ck, msg); else next.delete(ck);
+    return next;
+  });
+
   const addProduct = async (product, force = false) => {
-    if (addingKey) return;
     const ck = cardKey(product);
-    setAddingKey(ck);
-    setAddMsg(null);
+    if (addingKeys.has(ck)) return;
+    // Uma pergunta de reenvio por vez: clicar em outro card fecha a anterior.
+    setCooldownAsk(a => (a && a.key !== ck ? null : a));
+    setAddingKeys(s => new Set(s).add(ck));
+    setAddMsg(ck, null);
     try {
       const r = await onAddCatalogProduct(product, force);
       if (r?.inCooldown) {
@@ -253,14 +298,58 @@ export default function ProductSearchTab({
         return;
       }
       setCooldownAsk(null);
-      setJustAdded(s => new Set(s).add(ck));
+      markAdded(ck);
       const alvo = r?.target === "pending" ? "aguardando revisão" : "fila";
-      setAddMsg({ key: ck, type: "ok", text: `Foi pra ${alvo}.` });
-      setTimeout(() => setAddMsg(m => (m && m.key === ck ? null : m)), 4000);
+      setAddMsg(ck, { type: "ok", text: `Foi pra ${alvo}.` });
+      setTimeout(() => setAddMsg(ck, null), 4000);
     } catch (err) {
-      setAddMsg({ key: ck, type: "err", text: errText(err, "Não foi possível adicionar.") });
+      setAddMsg(ck, { type: "err", text: errText(err, "Não foi possível adicionar.") });
     } finally {
-      setAddingKey(null);
+      setAddingKeys(s => {
+        const next = new Set(s);
+        next.delete(ck);
+        return next;
+      });
+    }
+  };
+
+  // ── Seleção múltipla ────────────────────────────────────────────────
+  const toggleSelected = (ck) => setSelected(s => {
+    const next = new Set(s);
+    if (next.has(ck)) next.delete(ck); else next.add(ck);
+    return next;
+  });
+
+  const runBulkAdd = async (products, force = false) => {
+    if (!products.length || bulk?.running) return;
+    setBulk({ running: true, done: 0, total: products.length });
+    setBulkCooldown([]);
+    const adder = onAddCatalogProducts
+      // Sem o handler de lote (uso antigo do componente), cai no de um só.
+      || (async (list, f) => {
+        const out = { added: 0, duplicates: 0, cooldown: [], errors: [] };
+        for (const p of list) {
+          const r = await onAddCatalogProduct(p, f);
+          if (r?.inCooldown) out.cooldown.push(p); else out.added++;
+        }
+        return out;
+      });
+    try {
+      const r = await adder(products, force, (done, total) => setBulk({ running: true, done, total }));
+      // O que ficou em cooldown não entrou em lugar nenhum: continua marcado e
+      // visível, à espera do "adicionar assim mesmo".
+      const pendingCooldown = new Set((r.cooldown || []).map(cardKey));
+      const resolved = products.filter(p => !pendingCooldown.has(cardKey(p)));
+      for (const p of resolved) markAdded(cardKey(p));
+      setSelected(s => {
+        const next = new Set(s);
+        for (const p of resolved) next.delete(cardKey(p));
+        return next;
+      });
+      setBulkCooldown(r.cooldown || []);
+      setBulk({ running: false, result: r });
+    } catch (err) {
+      setBulk({ running: false, error: errText(err, "Não foi possível adicionar os produtos.") });
     }
   };
 
@@ -288,8 +377,9 @@ export default function ProductSearchTab({
   // A palavra-chave já aparece no campo de busca — o resumo abaixo dele mostra
   // só o que está escondido dentro do botão "Filtros".
   const otherChips = activeChips.filter(c => c.kind !== "keywords");
-
-  const totalPages = Math.max(1, Math.ceil(preview.total / PAGE_SIZE));
+  const hasAnyFilter = activeChips.length > 0;
+  const priceInverted = Number(filters.minPrice) > 0 && Number(filters.maxPrice) > 0
+    && Number(filters.minPrice) > Number(filters.maxPrice);
 
   // Resumo do preenchimento, mostrado embaixo do título do bloco.
   const timesSummary = refillTimes.length ? refillTimes.join(", ") : "nenhum horário escolhido";
@@ -298,6 +388,13 @@ export default function ProductSearchTab({
     : refillMode === "schedule"
       ? `Automático às ${timesSummary} · ${batch} por vez`
       : `Automático quando faltarem ${refillThreshold} na fila · ${batch} por vez`;
+
+  // Resumo do "Onde buscar", pra o painel fechado ainda dizer onde a campanha
+  // está procurando.
+  const whereSummary = [
+    usableSources.length ? usableSources.join(", ") : "nenhuma loja ativa",
+    `${categories.length} ${categories.length === 1 ? "categoria" : "categorias"}`,
+  ].join(" · ");
 
   // Duas chaves independentes escondem linhas da lista. O que acabou de ser
   // adicionado escapa das duas, pra não sumir debaixo do clique.
@@ -311,15 +408,70 @@ export default function ProductSearchTab({
     return true;
   });
 
+  // Só entra na seleção o que dá pra adicionar: o que já está na fila ou
+  // aguardando revisão não tem pra onde ir.
+  const selectableItems = visibleItems.filter(p => {
+    const st = statusOf(p);
+    return st !== "queue" && st !== "pending";
+  });
+  const selectedProducts = selectableItems.filter(p => selected.has(cardKey(p)));
+  const allSelected = selectableItems.length > 0 && selectedProducts.length === selectableItems.length;
+
+  const hasMore = preview.items.length < preview.total;
+  const showSkeleton = loadingPreview && preview.items.length === 0 && !noSources;
+
   return (
     <div>
-      {/* ── 1. Onde buscar: lojas + categorias (sempre à vista) ───────── */}
-      <div data-tour="pr-where" style={{ ...cardStyle, marginBottom: 14 }}>
-        <div style={{ fontWeight: 500, marginBottom: 2 }}>Onde buscar</div>
-        <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>
-          As lojas e as categorias de produto que esta campanha vasculha.
+      {/* ── 1. Faixa de contexto: o que a campanha busca e como preenche a
+             fila. Compacta de propósito — resumo de uma linha e um botão que
+             abre o painel inteiro logo abaixo, sem empurrar a lista pra longe. */}
+      <div className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
+        <div data-tour="pr-where" style={{ ...cardStyle, marginBottom: 0, display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 2 }}>🏪 Onde buscar</div>
+            <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>{whereSummary}</div>
+          </div>
+          <button
+            type="button"
+            onClick={() => toggleSection("where")}
+            aria-expanded={whereOpen}
+            aria-controls="sec-where"
+            aria-label="Escolher lojas e categorias"
+            title="As lojas e as categorias de produto que esta campanha vasculha"
+            style={{ ...chipStyle({ active: false }), padding: "7px 12px", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 6 }}
+          >
+            Alterar <span style={{ fontSize: 10 }}>{whereOpen ? "▲" : "▼"}</span>
+          </button>
         </div>
 
+        <div data-tour="pr-queue" style={{ ...cardStyle, marginBottom: 0, display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 2 }}>🔄 Preenchimento automático</div>
+            <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>{queueSummary}</div>
+          </div>
+          <button
+            type="button"
+            onClick={() => toggleSection("queue")}
+            aria-expanded={queueOpen}
+            aria-controls="sec-queue"
+            title="Quando preencher, quantos produtos por vez e em que ordem"
+            style={{ ...chipStyle({ active: false }), padding: "7px 12px", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 6 }}
+          >
+            Configurar <span style={{ fontSize: 10 }}>{queueOpen ? "▲" : "▼"}</span>
+          </button>
+          {/* A chave fica na faixa: ligar e desligar é um clique, não precisa
+              abrir painel nenhum. */}
+          <span data-tour="pr-auto" style={{ display: "inline-flex" }}>
+            <Toggle label="Preencher a fila automaticamente" value={autoRefill} onChange={v => setScraping(s => ({ ...s, autoRefill: v }))} />
+          </span>
+        </div>
+      </div>
+
+      {/* ── 2. Painéis da faixa: abrem aqui, em largura inteira, um por vez —
+             chips de loja e campos do preenchimento não cabem em meia coluna. */}
+      {whereOpen && (
+        <div id="sec-where" style={{ ...cardStyle, marginBottom: 14 }}>
+        <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 12 }}>Onde buscar</div>
         <label style={fieldLabelStyle}>Lojas</label>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
           {allSources.map(src => {
@@ -449,39 +601,17 @@ export default function ProductSearchTab({
             Tire uma para trocar, ou suba de plano para buscar em mais categorias.
           </div>
         )}
-      </div>
-
-      {/* ── 2. Preenchimento automático ───────────────────────────────── */}
-      <div data-tour="pr-queue" style={{ ...cardStyle, marginBottom: 14 }}>
-        <div style={{ fontWeight: 500, marginBottom: 2 }}>Preenchimento automático</div>
-        <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>{queueSummary}</div>
-
-        {/* A chave de ligar/desligar e o botão Configurar ficam sempre à vista;
-            só os ajustes finos entram no painel. */}
-        <div data-tour="pr-auto" style={{ display: "flex", alignItems: "center", gap: 12, paddingBottom: 14, borderBottom: "0.5px solid var(--color-border-tertiary)" }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 2 }}>Preencher a fila automaticamente</div>
-            <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
-              {autoRefill
-                ? "O sistema faz sozinho o mesmo que o botão \"Preencher fila agora\": busca os produtos e joga direto na fila."
-                : "Desligado: a fila só recebe produtos quando você clicar em \"Preencher fila agora\" ou adicionar um produto da lista abaixo."}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => toggleSection("queue")}
-            aria-expanded={sections.queue}
-            aria-controls="sec-queue"
-            title="Quando preencher, quantos produtos por vez e em que ordem"
-            style={{ ...chipStyle({ active: false }), padding: "7px 12px", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 6 }}
-          >
-            Configurar <span style={{ fontSize: 10 }}>{sections.queue ? "▲" : "▼"}</span>
-          </button>
-          <Toggle label="Preencher a fila automaticamente" value={autoRefill} onChange={v => setScraping(s => ({ ...s, autoRefill: v }))} />
         </div>
+      )}
 
-        {sections.queue && (
-        <div id="sec-queue">
+      {queueOpen && (
+        <div id="sec-queue" style={{ ...cardStyle, marginBottom: 14 }}>
+        <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 2 }}>Preenchimento automático</div>
+        <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 4 }}>
+          {autoRefill
+            ? "Ligado: o sistema faz sozinho o mesmo que o botão \"Preencher fila agora\" — busca os produtos e joga direto na fila."
+            : "Desligado: a fila só recebe produtos quando você clicar em \"Preencher fila agora\" ou adicionar um produto da lista."}
+        </div>
         {autoRefill && (
           <div style={{ padding: "14px 0", borderBottom: "0.5px solid var(--color-border-tertiary)" }}>
             <label style={fieldLabelStyle}>Quando preencher</label>
@@ -593,41 +723,11 @@ export default function ProductSearchTab({
             >
               {SORT_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
             </select>
-            <div style={hintStyle}>Pega de cima pra baixo da lista, nesta ordem.</div>
+            <div style={hintStyle}>Pega de cima pra baixo da lista, nesta ordem — é a mesma ordem da lista de produtos.</div>
           </div>
         </div>
         </div>
-        )}
-
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginTop: 16 }}>
-          <button
-            data-tour="pr-run"
-            onClick={triggerRefill}
-            disabled={refilling || noSources}
-            title={noSources ? "Escolha ao menos uma loja disponível" : "Salva a configuração e completa a fila agora, sem esperar o horário"}
-            style={{ padding: "9px 20px", borderRadius: 8, border: "none", background: PRIMARY, color: "#fff", fontSize: 13, cursor: refilling ? "wait" : (noSources ? "not-allowed" : "pointer"), fontWeight: 500, opacity: refilling || noSources ? 0.6 : 1 }}
-          >
-            {refilling ? "⟳ Preenchendo..." : `Preencher fila agora (até ${batch})`}
-          </button>
-          <button
-            onClick={save}
-            disabled={!dirty && !saved}
-            title={dirty ? "Salvar as configurações desta aba" : "Sem alterações pra salvar"}
-            style={saveBtnStyle(dirty)}
-          >
-            {saved ? "✓ Salvo!" : "Salvar configurações"}
-          </button>
-          {refillMsg && (
-            <span style={{ fontSize: 12, color: refillMsg.type === "err" ? "var(--danger-text)" : refillMsg.type === "warn" ? "var(--warn-text)" : PRIMARY_DARK }}>
-              {refillMsg.text}
-            </span>
-          )}
-        </div>
-        <div style={hintStyle}>
-          Preencher já salva as escolhas desta aba. Produtos que já estão na fila, ou enviados há pouco
-          (tempo de espera para reenvio), são pulados — por isso às vezes vêm menos que o número pedido.
-        </div>
-      </div>
+      )}
 
       {/* ── 3. Busca por palavras-chave (+ filtros no botão ao lado) ──── */}
       <div data-tour="pr-search" style={{ ...cardStyle, marginBottom: 14 }}>
@@ -672,23 +772,29 @@ export default function ProductSearchTab({
         <div className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
           <div>
             <label style={fieldLabelStyle} htmlFor="pr-min-price">Preço mínimo</label>
-            <input
-              id="pr-min-price" type="number" min={0} step={10}
-              value={filters.minPrice || ""}
-              onChange={e => setFilter("minPrice", num(e.target.value) ?? 0)}
-              placeholder="Sem mínimo"
-              style={inputStyle}
-            />
+            <div style={{ position: "relative" }}>
+              <span style={prefixStyle}>R$</span>
+              <input
+                id="pr-min-price" type="number" min={0} step={10}
+                value={filters.minPrice || ""}
+                onChange={e => setFilter("minPrice", num(e.target.value) ?? 0)}
+                placeholder="Sem mínimo"
+                style={{ ...inputStyle, paddingLeft: 36 }}
+              />
+            </div>
           </div>
           <div>
             <label style={fieldLabelStyle} htmlFor="pr-max-price">Preço máximo</label>
-            <input
-              id="pr-max-price" type="number" min={0} step={10}
-              value={filters.maxPrice ?? ""}
-              onChange={e => setFilter("maxPrice", num(e.target.value))}
-              placeholder="Sem máximo"
-              style={inputStyle}
-            />
+            <div style={{ position: "relative" }}>
+              <span style={prefixStyle}>R$</span>
+              <input
+                id="pr-max-price" type="number" min={0} step={10}
+                value={filters.maxPrice ?? ""}
+                onChange={e => setFilter("maxPrice", num(e.target.value))}
+                placeholder="Sem máximo"
+                style={{ ...inputStyle, paddingLeft: 36 }}
+              />
+            </div>
           </div>
           <div>
             <label style={fieldLabelStyle} htmlFor="pr-min-discount">Desconto mínimo</label>
@@ -722,6 +828,12 @@ export default function ProductSearchTab({
           </div>
         </div>
 
+        {priceInverted && (
+          <div style={{ ...noteStyle("warn"), marginTop: 12 }}>
+            O preço mínimo está maior que o máximo — desse jeito nenhum produto passa.
+          </div>
+        )}
+
         {(Number(filters.minRating) > 0 || Number(filters.minSales) > 0) && (
           <div style={{ ...noteStyle("warn"), marginTop: 12 }}>
             Avaliação e vendas excluem produtos sem essa informação — parte dos produtos da Amazon não traz nota.
@@ -751,7 +863,7 @@ export default function ProductSearchTab({
             <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>
               {noSources
                 ? "Nenhuma loja ativa nesta campanha."
-                : loadingPreview
+                : loadingPreview && preview.items.length === 0
                   ? "Carregando..."
                   : `${preview.approximate ? "~" : ""}${preview.total.toLocaleString("pt-BR")} no catálogo · o preenchimento pega os primeiros desta lista`}
             </div>
@@ -765,37 +877,63 @@ export default function ProductSearchTab({
               <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Já na fila</span>
               <Toggle label="Mostrar os que já estão na fila" value={view.queued} onChange={v => setViewFlag("queued", v)} />
             </div>
-            <select
-              aria-label="Ordenar a lista"
-              value={sortBy}
-              onChange={e => setScraping(s => ({ ...s, sortBy: e.target.value }))}
-              style={{ ...inputStyle, width: "auto", padding: "7px 10px" }}
-            >
-              {SORT_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-            </select>
-            {totalPages > 1 && (
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1} style={pagBtnStyle(page <= 1)}>←</button>
-                <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>{page} / {totalPages}</span>
-                <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages} style={pagBtnStyle(page >= totalPages)}>→</button>
+            <div>
+              <select
+                aria-label="Ordenar a lista"
+                value={sortBy}
+                onChange={e => setScraping(s => ({ ...s, sortBy: e.target.value }))}
+                style={{ ...inputStyle, width: "auto", padding: "7px 10px" }}
+              >
+                {SORT_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+              </select>
+              <div style={{ ...hintStyle, marginTop: 4, textAlign: "right" }}>
+                Também é a ordem que o preenchimento usa
               </div>
-            )}
+            </div>
           </div>
         </div>
 
+        {/* Preencher agora age sobre esta lista, e precisa ficar acessível com
+            o painel de preenchimento fechado. */}
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+          <button
+            data-tour="pr-run"
+            onClick={triggerRefill}
+            disabled={refilling || noSources}
+            title={noSources ? "Escolha ao menos uma loja disponível" : "Salva a configuração e completa a fila agora, sem esperar o horário"}
+            style={{ padding: "9px 20px", borderRadius: 8, border: "none", background: PRIMARY, color: "#fff", fontSize: 13, cursor: refilling ? "wait" : (noSources ? "not-allowed" : "pointer"), fontWeight: 500, opacity: refilling || noSources ? 0.6 : 1 }}
+          >
+            {refilling ? "⟳ Preenchendo..." : `Preencher fila agora (até ${batch})`}
+          </button>
+          <span style={{ ...hintStyle, marginTop: 0, flex: 1, minWidth: 220 }}>
+            Pega os primeiros desta lista e salva as escolhas da aba. Pula o que já está na fila
+            ou foi enviado há pouco.
+          </span>
+          {refillMsg && (
+            <span style={{ fontSize: 12, color: refillMsg.type === "err" ? "var(--danger-text)" : refillMsg.type === "warn" ? "var(--warn-text)" : PRIMARY_DARK }}>
+              {refillMsg.text}
+            </span>
+          )}
+        </div>
+
         {previewError && (
-          <div style={{ fontSize: 12, color: "var(--danger-text)", marginBottom: 10 }}>{previewError}</div>
+          <div style={{ ...noteStyle("danger"), marginBottom: 10, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ flex: 1 }}>{previewError}</span>
+            <button onClick={runSearch} style={{ ...chipStyle({ active: false }), padding: "5px 12px", fontSize: 12 }}>
+              Tentar de novo
+            </button>
+          </div>
         )}
 
         {noSources && (
           <div style={{ ...cardStyle, fontSize: 13, color: "var(--color-text-secondary)" }}>
-            Escolha ao menos uma loja disponível ali em cima para ver os produtos.
+            Escolha ao menos uma loja disponível em "Onde buscar" para ver os produtos.
           </div>
         )}
 
         {(hiddenRecent > 0 || hiddenQueued > 0) && (
           <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 10 }}>
-            Escondidos nesta página:
+            Escondidos:
             {hiddenRecent > 0 && (
               <> {hiddenRecent} enviado{hiddenRecent !== 1 ? "s" : ""} há pouco
               {cooldownLabel ? ` (menos de ${cooldownLabel})` : ""}</>
@@ -806,15 +944,105 @@ export default function ProductSearchTab({
           </div>
         )}
 
-        {!noSources && !loadingPreview && !previewError && visibleItems.length === 0 && (
-          <div style={{ ...cardStyle, fontSize: 13, color: "var(--color-text-secondary)" }}>
-            {preview.items.length > 0
-              ? "Todos os produtos desta página estão escondidos pelas chaves \"Enviados recentemente\" e \"Já na fila\". Ligue uma delas para vê-los."
-              : "Nenhum produto do catálogo passa nesses filtros. Afrouxe algum critério ou marque mais categorias."}
+        {/* Barra de seleção múltipla */}
+        {selectableItems.length > 0 && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+            marginBottom: 12, padding: "8px 12px", borderRadius: 10,
+            border: `0.5px solid ${selectedProducts.length > 0 ? PRIMARY : "var(--color-border-tertiary)"}`,
+            background: selectedProducts.length > 0 ? PRIMARY_LIGHT : "transparent",
+          }}>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={allSelected}
+                onChange={() => setSelected(s => {
+                  if (allSelected) return new Set();
+                  const next = new Set(s);
+                  for (const p of selectableItems) next.add(cardKey(p));
+                  return next;
+                })}
+                aria-label="Selecionar todos os produtos da lista"
+                style={{ accentColor: PRIMARY, width: 15, height: 15, cursor: "pointer" }}
+              />
+              <span style={{ color: selectedProducts.length > 0 ? PRIMARY_DARK : "var(--color-text-secondary)", fontWeight: selectedProducts.length > 0 ? 500 : 400 }}>
+                {selectedProducts.length > 0
+                  ? `${selectedProducts.length} selecionado${selectedProducts.length !== 1 ? "s" : ""}`
+                  : "Selecionar todos"}
+              </span>
+            </label>
+            {selectedProducts.length > 0 && (
+              <>
+                <button
+                  onClick={() => runBulkAdd(selectedProducts)}
+                  disabled={bulk?.running}
+                  style={{
+                    padding: "6px 14px", borderRadius: 8, border: "none", background: PRIMARY, color: "#fff",
+                    fontSize: 12, fontWeight: 500, fontFamily: "inherit",
+                    cursor: bulk?.running ? "wait" : "pointer", opacity: bulk?.running ? 0.6 : 1,
+                  }}
+                >
+                  {bulk?.running
+                    ? `Adicionando ${bulk.done} de ${bulk.total}...`
+                    : `Adicionar ${selectedProducts.length} à fila`}
+                </button>
+                <button onClick={() => setSelected(new Set())} style={linkBtnStyle}>Limpar seleção</button>
+              </>
+            )}
           </div>
         )}
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12, opacity: loadingPreview ? 0.5 : 1, transition: "opacity 0.15s" }}>
+        {/* O resumo do lote fica fora da barra de seleção: no fim de um lote
+            bem-sucedido os cards viram "já na fila" e a barra some — o aviso
+            do que aconteceu não pode sumir junto. */}
+        {bulk && !bulk.running && (bulk.result || bulk.error) && (
+          <div style={{
+            ...(bulk.error ? noteStyle("danger") : {}),
+            marginBottom: 12, fontSize: 12,
+            color: bulk.error ? undefined : PRIMARY_DARK,
+            display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+          }}>
+            <span style={{ flex: 1 }}>{bulk.error || bulkResultText(bulk.result)}</span>
+            <button onClick={() => setBulk(null)} style={linkBtnStyle}>Ok</button>
+          </div>
+        )}
+
+        {bulkCooldown.length > 0 && (
+          <div style={{ ...noteStyle("warn"), marginBottom: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ flex: 1 }}>
+              {bulkCooldown.length} produto{bulkCooldown.length !== 1 ? "s" : ""} foi enviado há pouco
+              {cooldownLabel ? ` (espera de ${cooldownLabel})` : ""} e ficou de fora.
+            </span>
+            <button
+              onClick={() => runBulkAdd(bulkCooldown, true)}
+              disabled={bulk?.running}
+              style={{ ...chipStyle({ active: true }), padding: "5px 12px", fontSize: 12 }}
+            >
+              Adicionar assim mesmo
+            </button>
+            <button onClick={() => setBulkCooldown([])} style={linkBtnStyle}>Deixar de fora</button>
+          </div>
+        )}
+
+        {!noSources && !loadingPreview && !previewError && visibleItems.length === 0 && (
+          <div style={{ ...cardStyle, fontSize: 13, color: "var(--color-text-secondary)" }}>
+            {preview.items.length > 0 ? (
+              "Todos os produtos desta busca estão escondidos pelas chaves \"Enviados recentemente\" e \"Já na fila\". Ligue uma delas para vê-los."
+            ) : (
+              <>
+                <div>Nenhum produto do catálogo passa nesses filtros. Afrouxe algum critério ou marque mais categorias.</div>
+                {hasAnyFilter && (
+                  <button onClick={resetFilters} style={{ ...chipStyle({ active: false }), marginTop: 10, fontSize: 12 }}>
+                    Limpar filtros
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12, opacity: loadingPreview && preview.items.length > 0 ? 0.5 : 1, transition: "opacity 0.15s" }}>
+          {showSkeleton && Array.from({ length: 8 }).map((_, i) => <SkeletonCard key={`sk-${i}`} />)}
           {visibleItems.map((p, i) => {
             const ck = cardKey(p);
             const status = statusOf(p);
@@ -822,13 +1050,24 @@ export default function ProductSearchTab({
             // Já enviado não bloqueia: passado o tempo de espera ele volta a ser
             // elegível, e dentro do tempo o backend pede confirmação.
             const blocked = status === "queue" || status === "pending";
-            const busy = addingKey === ck;
+            const busy = addingKeys.has(ck);
             const asking = cooldownAsk?.key === ck;
-            const msg = addMsg?.key === ck ? addMsg : null;
+            const msg = addMsgs.get(ck);
             return (
               <ProductGridCard
                 key={p.key || `${p.link}-${i}`}
                 product={p}
+                select={!blocked ? (
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--color-text-secondary)", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={selected.has(ck)}
+                      onChange={() => toggleSelected(ck)}
+                      aria-label={`Selecionar ${p.name}`}
+                      style={{ accentColor: PRIMARY, width: 15, height: 15, cursor: "pointer" }}
+                    />
+                  </label>
+                ) : null}
                 badge={status ? <span style={statusChipStyle}>{
                   status === "queue" ? "Já está na fila"
                     : status === "pending" ? "Aguardando revisão"
@@ -879,14 +1118,14 @@ export default function ProductSearchTab({
                   ) : (
                     <button
                       onClick={() => addProduct(p)}
-                      disabled={blocked || busy || !!addingKey}
+                      disabled={blocked || busy}
                       title={blocked ? "Este produto já está na fila desta campanha" : "Adicionar este produto à fila da campanha"}
                       style={{
                         width: "100%", padding: "7px 10px", borderRadius: 8, border: "none",
                         background: blocked ? "var(--color-background-secondary)" : PRIMARY_LIGHT,
                         color: blocked ? "var(--color-text-secondary)" : PRIMARY_DARK,
                         fontSize: 12, fontWeight: 500,
-                        cursor: blocked || addingKey ? "not-allowed" : "pointer",
+                        cursor: blocked ? "not-allowed" : "pointer",
                         opacity: busy ? 0.6 : 1,
                       }}
                     >
@@ -902,6 +1141,27 @@ export default function ProductSearchTab({
             );
           })}
         </div>
+
+        {!noSources && !previewError && preview.items.length > 0 && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginTop: 16 }}>
+            {hasMore ? (
+              <button
+                onClick={() => setPage(p => p + 1)}
+                disabled={loadingPreview}
+                style={{
+                  padding: "9px 20px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)",
+                  background: "transparent", color: "inherit", fontSize: 13, fontFamily: "inherit",
+                  cursor: loadingPreview ? "wait" : "pointer", opacity: loadingPreview ? 0.6 : 1,
+                }}
+              >
+                {loadingPreview ? "Carregando..." : "Carregar mais"}
+              </button>
+            ) : null}
+            <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+              {preview.items.length} de {preview.approximate ? "~" : ""}{preview.total.toLocaleString("pt-BR")} carregados
+            </span>
+          </div>
+        )}
       </div>
 
       {/* ── 5. Aguardando revisão ─────────────────────────────────────── */}
@@ -934,9 +1194,70 @@ export default function ProductSearchTab({
           </div>
         </div>
       )}
+
+      {/* ── Barra fixa de salvar: as configurações desta aba ficam
+             espalhadas pela rolagem, então o aviso acompanha a tela. ──── */}
+      {(dirty || saved) && (
+        <div style={{
+          position: "sticky", bottom: 0, zIndex: 5,
+          display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+          padding: "10px 14px", marginTop: 8,
+          borderRadius: 12, border: `0.5px solid ${saved ? PRIMARY : "var(--warn-border)"}`,
+          background: saved ? PRIMARY_LIGHT : "var(--warn-bg)",
+          boxShadow: "0 -2px 12px rgba(0,0,0,0.08)",
+        }}>
+          <span style={{ flex: 1, fontSize: 12, color: saved ? PRIMARY_DARK : "var(--warn-text)" }}>
+            {saved ? "Configurações salvas." : "Você tem alterações não salvas nesta aba."}
+          </span>
+          <button
+            onClick={save}
+            disabled={!dirty && !saved}
+            title={dirty ? "Salvar as configurações desta aba" : "Sem alterações pra salvar"}
+            style={saveBtnStyle(dirty)}
+          >
+            {saved ? "✓ Salvo!" : "Salvar configurações"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
+
+// Resumo de um "adicionar vários": só entra o que aconteceu de verdade.
+function bulkResultText(r) {
+  if (!r) return "";
+  const parts = [];
+  if (r.added) parts.push(`${r.added} adicionado${r.added !== 1 ? "s" : ""}`);
+  if (r.duplicates) parts.push(`${r.duplicates} já ${r.duplicates !== 1 ? "estavam" : "estava"} na fila`);
+  if (r.errors?.length) parts.push(`${r.errors.length} com erro`);
+  return parts.length ? parts.join(" · ") : "Nada foi adicionado.";
+}
+
+// Placeholder cinza do mesmo tamanho do card, pra primeira carga não ser um
+// buraco branco.
+function SkeletonCard() {
+  return (
+    <div
+      aria-hidden="true"
+      style={{
+        background: "var(--color-background-primary)",
+        border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12,
+        padding: 14, display: "flex", flexDirection: "column", gap: 8, minHeight: 250,
+      }}
+    >
+      <div style={{ ...skelBar, height: 120, borderRadius: 8 }} />
+      <div style={{ ...skelBar, width: "90%" }} />
+      <div style={{ ...skelBar, width: "60%" }} />
+      <div style={{ ...skelBar, width: "40%", marginTop: "auto" }} />
+    </div>
+  );
+}
+
+const skelBar = {
+  height: 12, borderRadius: 6,
+  background: "var(--color-background-secondary)",
+  animation: "nimbus-skeleton 1.2s ease-in-out infinite",
+};
 
 const cardStyle = {
   background: "var(--color-background-primary)",
@@ -956,6 +1277,11 @@ const inputStyle = {
   background: "var(--color-background-secondary)",
   color: "var(--color-text-primary)",
   fontSize: 13, fontFamily: "inherit", boxSizing: "border-box",
+};
+
+const prefixStyle = {
+  position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)",
+  fontSize: 12, color: "var(--color-text-secondary)", pointerEvents: "none",
 };
 
 const hintStyle = { fontSize: 11, color: "var(--color-text-secondary)", marginTop: 6 };
@@ -995,13 +1321,4 @@ const noteStyle = (kind) => ({
   background: kind === "danger" ? "var(--danger-bg)" : "var(--warn-bg)",
   border: `0.5px solid ${kind === "danger" ? "var(--danger-border)" : "var(--warn-border)"}`,
   borderRadius: 8, padding: "8px 10px",
-});
-
-const pagBtnStyle = (disabled) => ({
-  padding: "5px 12px", borderRadius: 7,
-  border: "0.5px solid var(--color-border-secondary)",
-  background: "transparent",
-  color: disabled ? "var(--color-text-secondary)" : "var(--color-text-primary)",
-  fontSize: 12, cursor: disabled ? "not-allowed" : "pointer",
-  opacity: disabled ? 0.5 : 1,
 });

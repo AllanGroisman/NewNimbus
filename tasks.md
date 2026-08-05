@@ -427,4 +427,8 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 
 67. [x] Quando clico em uma campanha la no menu da esquerda para abrir direto sua pagina, quero que suba ate o topo da pagina.
 
-68. [] Porque o link postado em um grupo líder https://meli.la/2RiRnb8, quando foi repassado virou https://meli.la/33BBqUF que nao vai pro produto. Teste a transformacao manual do link do líder (que ao entrar vira este https://www.mercadolivre.com.br/social/oreidapromobr?matt_word=tcgrafa&matt_tool=37515304&forceInApp=true&ref=BLa7Lar6G%2Fe51xKXeYOP0tzkO%2FIugsgGP9%2FruS%2BuAz6ax1P9Eca50%2Fn7tbd%2FbzoVrsV4yeSI3jptJ2qteXUY3BKLXDoSB3k1d9vDYsz%2FfD2rkbWL5ludQ92GMhq0ehDwlLK57j5LLBh4Bn0vAoXwbe68VuQvPk%2FpR0RZErAnp8RK4lCXl1ND8LivVWx5h4k2tB3EHWw%3D) e virou https://meli.la/2p7yNat que seria o correto. Da uma olhada. Talvez adicionar mais uma camada pós geração do link de afiliado para garantir que formou certo? 
+68. [] Revise os itens da amazon. Busquei 10 itens de cada categoria nele e por exemplo https://www.amazon.com.br/God-War-Hits-PlayStation-4/dp/B07YT1GLV9 ta com o valor errado, aconteceu com 
+
+69. [] Adicionar botão de misturar os itens da fila na aba de fila. Adicionar a opcao no preenchimento automatico para executar a mistura depois de adicionar os itens na fila. 
+
+70. [] Por padrão a campnha vem com a janela de envio zerada. Quando a janela de envio é zerada as campanhas ficam pausadas. O horário padrão quando adiciona uma janela de envio é de 00:00 ate 23:59.

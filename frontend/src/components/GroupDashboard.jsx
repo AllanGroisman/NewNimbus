@@ -525,9 +525,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         return;
       }
       // Sucesso — atualiza UI imediatamente e fecha
-      const ops = await loadAppOps();
-      const o = (ops.groups || []).find(g => g.id === group.id);
-      if (o) onUpdate(group.id, { queue: o.queue, pending: o.pending });
+      await reloadGroupOps();
       const targetLabel = r.target === "pending" ? "aguardando revisão" : "fila";
       setRefillMsg({ type: "ok", text: `Produto adicionado à ${targetLabel}.` });
       setTimeout(() => setRefillMsg(null), 4000);
@@ -539,34 +537,70 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     }
   };
 
+  // Dados prontos do catálogo viram os overrides do "adicionar link", que já
+  // trata duplicata, cooldown e auto-aprovação — sem precisar re-scrapear a URL.
+  const catalogOverrides = (product) => ({
+    name: product.name,
+    price: product.price ?? null,
+    originalPrice: product.originalPrice ?? null,
+    discount: product.discount ?? null,
+    img: product.img || null,
+    store: product.store || null,
+    category: (typeof product.category === "string" ? product.category : product.category?.id)
+      || (groupInfo.categories || [])[0] || null,
+    sold: product.sold || null,
+    soldCount: product.soldCount ?? null,
+    rating: product.rating ?? null,
+    reviewsCount: product.reviewsCount ?? null,
+  });
+
+  // Recarrega fila e pendentes do servidor. Uma chamada só, no fim do lote — o
+  // loadAppOps traz o estado inteiro da app e é caro pra rodar por produto.
+  const reloadGroupOps = async () => {
+    const ops = await loadAppOps();
+    const o = (ops.groups || []).find(g => g.id === group.id);
+    if (o) onUpdate(group.id, { queue: o.queue, pending: o.pending });
+  };
+
   // Adiciona um produto escolhido a dedo na prévia do catálogo (aba Busca de
-  // Produtos). Passa pelo mesmo caminho do "adicionar link" — que já trata
-  // duplicata, cooldown e auto-aprovação — só que com os dados já prontos do
-  // catálogo, sem precisar re-scrapear a URL.
+  // Produtos).
   const addCatalogProduct = async (product, force = false) => {
     const r = await manualAddToQueue(group.id, {
       url: product.link,
       force,
-      overrides: {
-        name: product.name,
-        price: product.price ?? null,
-        originalPrice: product.originalPrice ?? null,
-        discount: product.discount ?? null,
-        img: product.img || null,
-        store: product.store || null,
-        category: (typeof product.category === "string" ? product.category : product.category?.id)
-          || (groupInfo.categories || [])[0] || null,
-        sold: product.sold || null,
-        soldCount: product.soldCount ?? null,
-        rating: product.rating ?? null,
-        reviewsCount: product.reviewsCount ?? null,
-      },
+      overrides: catalogOverrides(product),
     });
+    // Cooldown não mexeu em nada ainda: a tela pergunta e reenvia com force.
     if (r.inCooldown) return r;
-    const ops = await loadAppOps();
-    const o = (ops.groups || []).find(g => g.id === group.id);
-    if (o) onUpdate(group.id, { queue: o.queue, pending: o.pending });
+    await reloadGroupOps();
     return r;
+  };
+
+  // Versão em lote (seleção múltipla da aba de busca). Vai um a um pra
+  // aproveitar o mesmo caminho de validação do servidor, mas recarrega as ops
+  // uma vez só no fim. Devolve o resumo pra tela montar a mensagem.
+  const addCatalogProducts = async (products, force = false, onProgress) => {
+    const result = { added: 0, duplicates: 0, cooldown: [], errors: [] };
+    let done = 0;
+    for (const product of products) {
+      try {
+        const r = await manualAddToQueue(group.id, {
+          url: product.link,
+          force,
+          overrides: catalogOverrides(product),
+        });
+        if (r?.inCooldown) result.cooldown.push(product);
+        else result.added++;
+      } catch (err) {
+        // Duplicata não é falha: o produto já está onde o usuário queria.
+        if (err?.code === "duplicate_queue" || err?.code === "duplicate_pending") result.duplicates++;
+        else result.errors.push({ product, message: err?.message || "Não foi possível adicionar." });
+      }
+      done++;
+      if (onProgress) onProgress(done, products.length);
+    }
+    if (result.added > 0) await reloadGroupOps();
+    return result;
   };
 
   // A aba de busca precisa saber quais lojas o admin trancou pra desenhar o
@@ -2519,6 +2553,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           onApproveAll={approveAllProducts}
           onRejectAll={rejectAllProducts}
           onAddCatalogProduct={addCatalogProduct}
+          onAddCatalogProducts={addCatalogProducts}
         />
       )}
 
