@@ -1668,34 +1668,59 @@ app.post("/api/state/groups/:gid/refill", auth.requireAuth, requireActiveSubscri
 // Ofertas — agora lê do CATÁLOGO global (preenchido pelo admin-scraper)
 // ────────────────────────────────────────────────────────────────────────
 
+const OFERTAS_SORTS = new Set(["discount_desc", "price_asc", "price_desc", "rating_desc", "lastSeen_desc"]);
+
+// Navegação do catálogo pelo usuário comum — mesma superfície de filtros e
+// ordenação que o refill da campanha usa, com paginação. A aba "Busca de
+// Produtos" consome isso pra mostrar a prévia do que a busca vai trazer.
 app.get("/api/ofertas", auth.requireAuth, async (req, res) => {
   try {
-    const category = req.query.category || null;
+    // `categories` (lista) é o formato novo; `category` (single) continua aceito.
+    const listParam = (v) => (v ? String(v).split(",").map(s => s.trim()).filter(Boolean) : null);
+    const categories = listParam(req.query.categories) || (req.query.category ? [String(req.query.category)] : null);
+    const sources = listParam(req.query.sources);
+
     const minDiscount = parseInt(req.query.minDiscount) || 0;
     const minPrice = parseFloat(req.query.minPrice) || 0;
-    const maxPrice = parseFloat(req.query.maxPrice) || Infinity;
-    const limit = parseInt(req.query.limit) || 50;
-    const sources = req.query.sources
-      ? String(req.query.sources).split(",").map(s => s.trim()).filter(Boolean)
-      : null;
+    const rawMax = parseFloat(req.query.maxPrice);
+    const maxPrice = Number.isFinite(rawMax) && rawMax > 0 ? rawMax : null;
+    const minRating = parseFloat(req.query.minRating) || 0;
+    const minSales = parseInt(req.query.minSales) || 0;
+    const keywords = String(req.query.q || req.query.keywords || "").trim();
+    const filters = { minDiscount, minPrice, maxPrice, minRating, minSales, keywords };
 
-    const [products, catalogStats] = await Promise.all([
-      catalog.query({
-        categories: category ? [category] : null,
-        sources,
-        filters: { minDiscount, minPrice, maxPrice },
-        limit,
-        sortBy: "discount_desc",
-      }),
-      catalog.getStats(),
+    const sortBy = OFERTAS_SORTS.has(req.query.sortBy) ? req.query.sortBy : "discount_desc";
+
+    // Modo paginado (page/pageSize) ou modo legado (limit simples).
+    const paginated = req.query.page != null || req.query.pageSize != null;
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const pageSize = Math.min(60, Math.max(1, parseInt(req.query.pageSize) || 24));
+    const limit = paginated ? pageSize : Math.min(200, Math.max(1, parseInt(req.query.limit) || 50));
+    const offset = paginated ? (page - 1) * pageSize : 0;
+
+    // getStats() são 5 agregações na tabela inteira — caro demais pra prévia
+    // paginada, que refaz a request a cada ajuste de filtro. Só no modo legado.
+    const [products, total, catalogStats] = await Promise.all([
+      catalog.query({ categories, sources, filters, limit, offset, sortBy }),
+      catalog.count({ categories, sources, filters }),
+      paginated ? null : catalog.getStats(),
     ]);
 
     res.json({
-      total: products.length,
-      category,
+      // `total` no modo paginado é o total de matches; no legado mantém o
+      // comportamento antigo (tamanho da página) pra não quebrar quem já usa.
+      total: paginated ? total : products.length,
+      page: paginated ? page : 1,
+      pageSize: paginated ? pageSize : products.length,
+      // total aproximado quando minSales corta pós-query (ver catalog.count)
+      approximateTotal: minSales > 0,
+      category: categories && categories.length === 1 ? categories[0] : null,
+      categories,
       sources,
-      products,
-      catalogStats,
+      sortBy,
+      items: products,
+      products,   // alias legado
+      ...(catalogStats ? { catalogStats } : {}),
     });
   } catch (err) {
     console.error("[ofertas] Erro:", err.message);

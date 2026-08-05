@@ -82,6 +82,27 @@ describe("catalog.query — filtros", () => {
     }
   });
 
+  it("produto sem desconto vai pro fim do discount_desc, não pro topo", async () => {
+    // No Postgres, ORDER BY discount DESC joga NULL na frente: "maior desconto"
+    // abria a lista com os produtos que não têm desconto nenhum.
+    await catalog.upsertProducts([
+      mlProduct(910, { category: "livros", discount: null, price: 50 }),
+      mlProduct(911, { category: "livros", discount: 70, price: 50 }),
+      mlProduct(912, { category: "livros", discount: 20, price: 50 }),
+    ]);
+    const items = await catalog.query({ categories: ["livros"], limit: 100, sortBy: "discount_desc" });
+    expect(items.map(p => p.discount)).toEqual([70, 20, null]);
+  });
+
+  it("preço nulo também não fura a fila do price_desc", async () => {
+    await catalog.upsertProducts([
+      mlProduct(920, { category: "pet", price: null, discount: 10 }),
+      mlProduct(921, { category: "pet", price: 300, discount: 10 }),
+    ]);
+    const items = await catalog.query({ categories: ["pet"], limit: 100, sortBy: "price_desc" });
+    expect(items.map(p => p.price)).toEqual([300, null]);
+  });
+
   it("excludeKeys remove produtos especificos", async () => {
     const all = await catalog.query({ limit: 5 });
     if (all.length === 0) return;
@@ -111,6 +132,66 @@ describe("GET /api/ofertas — endpoint HTTP", () => {
   it("sem token retorna 401", async () => {
     const res = await request(app).get("/api/ofertas");
     expect(res.status).toBe(401);
+  });
+});
+
+// Modo paginado: é o que a aba "Busca de Produtos" da campanha usa pra mostrar
+// a prévia — mesmos filtros e mesma ordem que o refill da fila.
+describe("GET /api/ofertas — navegação paginada do catálogo", () => {
+  // O catálogo é truncado entre os testes (helpers/setup-each.js), então cada
+  // teste semeia o que precisa.
+  const seed = () => catalog.upsertProducts([
+    mlProduct(401, { category: "gamer", discount: 15, price: 90, name: "Teclado Nimbus 401" }),
+    mlProduct(402, { category: "gamer", discount: 55, price: 250, name: "Mouse Nimbus 402" }),
+    mlProduct(403, { category: "gamer", discount: 35, price: 700, name: "Monitor Nimbus 403" }),
+  ]);
+
+  it("pagina os resultados e devolve o total de matches (não o da página)", async () => {
+    await seed();
+    const { auth } = await createTestUser();
+    const res = await auth("get", "/api/ofertas?categories=gamer&page=1&pageSize=2");
+    expect(res.status).toBe(200);
+    expect(res.body.items.length).toBeLessThanOrEqual(2);
+    expect(res.body.page).toBe(1);
+    expect(res.body.pageSize).toBe(2);
+    expect(res.body.total).toBe(3);
+
+    const p2 = await auth("get", "/api/ofertas?categories=gamer&page=2&pageSize=2");
+    expect(p2.status).toBe(200);
+    // Página 2 não repete nada da página 1
+    const keys1 = res.body.items.map(p => p.key);
+    expect(p2.body.items.every(p => !keys1.includes(p.key))).toBe(true);
+  });
+
+  it("q filtra pelo nome (vários termos = OR) e sortBy ordena", async () => {
+    await seed();
+    const { auth } = await createTestUser();
+    const q = encodeURIComponent("Mouse Nimbus 402, Monitor Nimbus 403");
+    const res = await auth("get", `/api/ofertas?q=${q}&page=1&pageSize=20&sortBy=price_asc`);
+    expect(res.status).toBe(200);
+    const names = res.body.items.map(p => p.name);
+    expect(names).toContain("Mouse Nimbus 402");
+    expect(names).toContain("Monitor Nimbus 403");
+    expect(names).not.toContain("Teclado Nimbus 401");
+    const prices = res.body.items.map(p => p.price ?? 0);
+    for (let i = 1; i < prices.length; i++) expect(prices[i - 1] <= prices[i]).toBe(true);
+  });
+
+  it("sortBy inválido cai no padrão em vez de estourar", async () => {
+    await seed();
+    const { auth } = await createTestUser();
+    const res = await auth("get", "/api/ofertas?page=1&pageSize=5&sortBy=drop-table");
+    expect(res.status).toBe(200);
+    expect(res.body.sortBy).toBe("discount_desc");
+  });
+
+  it("pageSize tem teto (não dá pra pedir o catálogo inteiro numa página)", async () => {
+    await seed();
+    const { auth } = await createTestUser();
+    const res = await auth("get", "/api/ofertas?page=1&pageSize=5000");
+    expect(res.status).toBe(200);
+    expect(res.body.pageSize).toBe(60);
+    expect(res.body.items.length).toBeLessThanOrEqual(60);
   });
 });
 

@@ -117,9 +117,9 @@ async function listAll() {
   return all.map(fromRow);
 }
 
-async function query({
-  categories, sources, excludeKeys, filters = {}, limit = 200, sortBy = "discount_desc",
-} = {}) {
+// Monta o `where` do Prisma a partir dos filtros da campanha/página.
+// Separado de query() porque count() precisa exatamente do mesmo filtro.
+function buildWhere({ categories, sources, excludeKeys, filters = {} }) {
   const where = { AND: [] };
 
   if (Array.isArray(categories) && categories.length) {
@@ -159,29 +159,59 @@ async function query({
   }
   // minSales depende do parseSold do payload — filtramos pós-query (campo não-indexado).
 
+  return where.AND.length ? where : undefined;
+}
+
+async function query({
+  categories, sources, excludeKeys, filters = {}, limit = 200, offset = 0,
+  sortBy = "discount_desc",
+} = {}) {
+  const where = buildWhere({ categories, sources, excludeKeys, filters });
+  const { minSales = 0 } = filters;
+  const skip = Math.max(0, Number(offset) || 0);
+
+  // `nulls: "last"` é obrigatório: price/discount/rating são colunas opcionais e
+  // no Postgres o DESC joga NULL na frente — "maior desconto" abria a lista com
+  // os produtos que nem têm desconto.
   const orderBy = (() => {
     switch (sortBy) {
-      case "price_asc":     return [{ price: "asc" }];
-      case "price_desc":    return [{ price: "desc" }];
-      case "rating_desc":   return [{ rating: "desc" }];
+      case "price_asc":     return [{ price: { sort: "asc", nulls: "last" } }];
+      case "price_desc":    return [{ price: { sort: "desc", nulls: "last" } }];
+      case "rating_desc":   return [{ rating: { sort: "desc", nulls: "last" } }];
       case "lastSeen_desc": return [{ lastSeenAt: "desc" }];
       case "discount_desc":
-      default:              return [{ discount: "desc" }];
+      default:              return [{ discount: { sort: "desc", nulls: "last" } }];
     }
   })();
 
-  // Quando vai ter filtro pós-query (minSales), busca um pouco mais que o limit.
-  const fetchLimit = (minSales > 0 && limit > 0) ? limit * 5 : (limit > 0 ? limit : undefined);
+  // Com minSales o corte é pós-query, então o offset também precisa ser aplicado
+  // depois do filtro — buscamos com folga e paginamos em memória. Sem minSales,
+  // skip/take vão direto pro banco.
+  const postFilter = minSales > 0;
+  const fetchLimit = limit > 0
+    ? (postFilter ? (skip + limit) * 5 : limit)
+    : undefined;
   const rows = await prisma().catalogProduct.findMany({
-    where: where.AND.length ? where : undefined,
+    where,
     orderBy,
+    skip: postFilter ? undefined : (skip || undefined),
     take: fetchLimit,
   });
 
   let out = rows.map(fromRow);
-  if (minSales > 0) out = out.filter(p => parseSold(p.sold) >= minSales);
-  if (limit > 0) out = out.slice(0, limit);
+  if (postFilter) {
+    out = out.filter(p => parseSold(p.sold) >= minSales);
+    out = limit > 0 ? out.slice(skip, skip + limit) : out.slice(skip);
+  }
   return out;
+}
+
+// Total de produtos que batem com os filtros (pro contador/paginação da UI).
+// Com minSales o número é aproximado: esse filtro é pós-query e o count roda no
+// banco, então ele ignora o corte de vendas.
+async function count({ categories, sources, excludeKeys, filters = {} } = {}) {
+  const where = buildWhere({ categories, sources, excludeKeys, filters });
+  return prisma().catalogProduct.count({ where });
 }
 
 async function getStats() {
@@ -242,7 +272,9 @@ module.exports = {
   loadAll,
   listAll,
   query,
+  count,
   getStats,
+  parseSold,
   prune,
   pruneBeforeDate,
   clearAll,

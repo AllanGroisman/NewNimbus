@@ -71,20 +71,22 @@ export const TOURS = {
       { tab: "overview", anchor: "ov-last-sent", title: "Últimos produtos enviados", text: "Os últimos que já foram pros grupos. Pra ver quais ainda estão esperando pra sair, a aba é a Fila." },
 
       // ── Gerenciar
-      { tab: "manage", anchor: "tab-manage", title: "Gerenciar", text: "É aqui que a campanha é configurada: trocar o nome, escolher as categorias de produtos e as lojas." },
-      { tab: "manage", anchor: "mg-info", title: "Nome e categorias", text: "O nome da campanha e as categorias de produtos que ela vai buscar. Pode marcar mais de uma." },
-      { tab: "manage", anchor: "mg-sources", title: "As lojas desta campanha", text: "Onde procurar oferta: Mercado Livre, Amazon e Shopee. Só entra produto das lojas marcadas aqui." },
+      { tab: "manage", anchor: "tab-manage", title: "Gerenciar", text: "O nome da campanha e a espera pra repetir um produto. As lojas e as categorias ficam na aba Busca de Produtos." },
+      { tab: "manage", anchor: "mg-info", title: "Nome da campanha", text: "Só o apelido que aparece no menu e nos avisos. Pode trocar quando quiser." },
+      { tab: "manage", anchor: "mg-sources", title: "As lojas do repasse", text: "De quais lojas os links postados nos grupos líderes podem ser repassados. Link de outra loja é ignorado." },
       { tab: "manage", anchor: "mg-cooldown", title: "Espera pra repetir um produto", text: "Quanto tempo um produto já enviado tem que esperar pra poder ir de novo — é o que evita repetir a mesma oferta no grupo." },
       { tab: "manage", anchor: "mg-save", title: "Salvar", text: "O que você mudou nesta aba só passa a valer depois de clicar aqui. O botão acende quando tem algo pra salvar." },
 
       // ── Busca de produtos / Repasse
       { tab: "products", anchor: "tab-products", title: "De onde vêm os produtos", text: "Numa campanha de busca, é aqui que você diz o que procurar no catálogo. Numa de repasse, é onde escolhe os grupos líderes que vão ser copiados. Colar um link na mão não é aqui — isso fica na aba Fila." },
       { tab: "products", anchor: "pr-leader", title: "Grupos líderes", text: "Os grupos que o sistema fica escutando: todo link de produto postado neles é capturado e re-afiliado com a sua tag. Quantos você pode ter depende do seu plano." },
-      { tab: "products", anchor: "pr-search", title: "O que buscar", text: "As palavras que o produto precisa ter no nome. Vários termos separados por vírgula; vazio traz tudo da categoria." },
-      { tab: "products", anchor: "pr-filters", title: "Filtros avançados", text: "Abre faixa de preço, desconto mínimo, avaliação e vendas. Produto que não passa em todos é ignorado." },
-      { tab: "products", anchor: "pr-auto", title: "Aprovar sozinho ou revisar", text: "Ligado, o que for encontrado entra direto na fila. Desligado, cada produto espera a sua aprovação." },
-      { tab: "products", anchor: "pr-run", title: "Buscar agora", text: "Salva a configuração e busca na hora, sem esperar o horário. Bom pra testar se os filtros não ficaram apertados demais." },
-      { tab: "products", anchor: "pr-pending", title: "Aguardando revisão", text: "Com a aprovação automática desligada, os produtos param aqui até você aprovar ou rejeitar." },
+      { tab: "products", anchor: "pr-where", title: "Onde buscar", text: "As lojas e as categorias que esta campanha vasculha. Aparecem só as categorias ligadas; o botão \"Adicionar categoria\" abre a lista pra marcar mais, até o limite do seu plano." },
+      { tab: "products", anchor: "pr-queue", title: "Preenchimento automático", text: "A chave liga e desliga o preenchimento sozinho. Em \"Configurar\" você escolhe quando ele acontece — quando a fila estiver acabando ou em horários fixos do dia —, quantos produtos entram por vez e em que ordem." },
+      { tab: "products", anchor: "pr-run", title: "Preencher fila agora", text: "Salva as escolhas e completa a fila na hora, sem esperar o horário. Bom pra testar se os filtros não ficaram apertados demais." },
+      { tab: "products", anchor: "pr-search", title: "Busca por palavras-chave", text: "As palavras que o produto precisa ter no nome. Vários termos separados por vírgula; vazio traz tudo das categorias marcadas." },
+      { tab: "products", anchor: "pr-filters", title: "Filtros", text: "Este botão abre faixa de preço, desconto mínimo, avaliação e vendas. Produto que não passa em todos é ignorado." },
+      { tab: "products", anchor: "pr-results", title: "Os produtos encontrados", text: "A lista que os filtros trazem, na mesma ordem que o preenchimento usa. Dá pra mandar um produto específico pra fila pelo botão do card, e as duas chaves escondem o que já foi enviado há pouco e o que já está na fila." },
+      { tab: "products", anchor: "pr-pending", title: "Aguardando revisão", text: "No repasse, os links capturados param aqui até você aprovar ou rejeitar. Numa campanha de busca isso só aparece se sobrou algo da revisão antiga." },
 
       // ── Fila
       { tab: "queue", anchor: "tab-queue", title: "Fila", text: "A ordem de quem vai ser enviado — é aqui que você vê o que está esperando pra sair." },

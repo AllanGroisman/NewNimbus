@@ -24,6 +24,7 @@ vi.mock("../data/api", () => ({
   saveGroupQueue: vi.fn(),
   approveAllPending: vi.fn(),
   rejectAllPending: vi.fn(),
+  browseCatalog: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 24 }),
 }));
 
 import Sidebar from "../components/Sidebar.jsx";
@@ -98,6 +99,8 @@ describe("StoreLockedNotice", () => {
 });
 
 describe("GroupDashboard — fonte de loja trancada", () => {
+  // As lojas da campanha de busca ficam na aba "Busca de Produtos" (no repasse
+  // elas seguem na aba Gerenciar).
   function makeGroup(overrides = {}) {
     return {
       id: 1,
@@ -115,7 +118,7 @@ describe("GroupDashboard — fonte de loja trancada", () => {
     };
   }
 
-  function renderManageTab(storeLocks, groupOver = {}) {
+  function renderSourcesTab(storeLocks, groupOver = {}) {
     const props = {
       group: makeGroup(groupOver),
       numbers: [],
@@ -128,14 +131,13 @@ describe("GroupDashboard — fonte de loja trancada", () => {
       onGoToAffiliate: vi.fn(), onGoToSettings: vi.fn(),
     };
     const utils = render(<GroupDashboard {...props} />);
-    // A escolha de fontes vive na aba de configuração da campanha.
-    fireEvent.click(screen.getByRole("button", { name: /Configurações|Gerenciar/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Busca de Produtos/i }));
     return { props, ...utils };
   }
 
   it("chip da loja trancada mostra cadeado e não entra na campanha ao clicar", () => {
-    const { props } = renderManageTab(LOCKED_SHOPEE);
-    const chip = screen.getByText(/🔒 Shopee/);
+    const { props } = renderSourcesTab(LOCKED_SHOPEE);
+    const chip = screen.getByRole("button", { name: /🔒 Shopee/ });
     fireEvent.click(chip);
     // Abre a explicação em vez de selecionar
     expect(screen.getByText("Shopee volta em breve")).toBeInTheDocument();
@@ -143,14 +145,14 @@ describe("GroupDashboard — fonte de loja trancada", () => {
   });
 
   it("campanha que já usa a loja trancada mostra aviso de que ela é ignorada", () => {
-    renderManageTab(LOCKED_SHOPEE, { scraping: { auto: true, sources: ["Mercado Livre", "Shopee"], filters: {} } });
+    renderSourcesTab(LOCKED_SHOPEE, { scraping: { auto: true, sources: ["Mercado Livre", "Shopee"], filters: {} } });
     expect(screen.getByText(/ignorada e a campanha segue buscando nas outras/i)).toBeInTheDocument();
   });
 
   it("sem travas, o chip alterna normalmente", () => {
-    renderManageTab({});
+    renderSourcesTab({});
     expect(screen.queryByText(/🔒 Shopee/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByText("Shopee"));
-    expect(screen.getByText("✓ Shopee")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Shopee" }));
+    expect(screen.getByRole("button", { name: "✓ Shopee" })).toBeInTheDocument();
   });
 });

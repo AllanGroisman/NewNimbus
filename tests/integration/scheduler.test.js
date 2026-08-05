@@ -45,19 +45,21 @@ describe("scheduler.refillNow — popa do catalogo", () => {
     }
   });
 
-  it("auto=false manda items pra PENDING em vez de queue", async () => {
+  // A revisão manual saiu da campanha de catálogo: o preenchimento (automático
+  // ou pelo botão) joga direto na fila, mesmo em campanha antiga com auto=false.
+  it("campanha de catálogo com auto=false antigo mesmo assim vai pra QUEUE", async () => {
     const { user, auth } = await createUserWithMLAffiliate();
     const group = makeGroup({ id: 101, categories: ["gamer"], sources: ["ml"], auto: false });
     await auth("put", "/api/state").send({ groups: [group] });
 
     const r = await scheduler.refillNow(user.id, 101);
-    expect(r.target).toBe("pending");
-    expect(r.pendingSize).toBeGreaterThan(0);
+    expect(r.target).toBe("queue");
+    expect(r.queueSize).toBeGreaterThan(0);
 
     const state = await storage.loadState(user.id);
     const g = state.groups.find(g => g.id === 101);
-    expect(g.pending.length).toBeGreaterThan(0);
-    expect(g.queue).toEqual([]);
+    expect(g.queue.length).toBeGreaterThan(0);
+    expect(g.pending).toEqual([]);
   });
 
   it("aplica overrides de filtros (UI ainda nao persistiu)", async () => {
@@ -342,6 +344,97 @@ describe("scheduler.tick — loop periodico", () => {
     const state = await storage.loadState(user.id);
     const g = state.groups.find(g => g.id === 999);
     expect(g.queue.length + g.history.length).toBeGreaterThan(0);
+  });
+
+  it("autoRefill=false NÃO popula a fila sozinho, mesmo em janela ativa", async () => {
+    await catalog.upsertProducts([
+      mlProduct(921, { category: "beleza", discount: 40 }),
+      mlProduct(922, { category: "beleza", discount: 60 }),
+    ]);
+
+    const { user, auth } = await createUserWithMLAffiliate();
+    const waGroups = [makeWhatsAppGroup({ id: "wa-noref", numberId: "num-noref", jid: "noref@g.us" })];
+    const group = makeGroup({
+      id: 998,
+      categories: ["beleza"],
+      sources: ["ml"],
+      whatsappGroupIds: ["wa-noref"],
+      schedule: { windows: [{ from: "00:00", to: "23:59", interval: 0 }], cooldownValue: 24, cooldownUnit: "horas" },
+    });
+    group.scraping.autoRefill = false;
+    await auth("put", "/api/state").send({
+      groups: [group],
+      numbers: [{ id: "num-noref", phone: "5511num-noref" }],
+      whatsappGroups: waGroups,
+    });
+    waConnect(user.id, "num-noref");
+
+    await scheduler.tick();
+
+    const state = await storage.loadState(user.id);
+    const g = state.groups.find(g => g.id === 998);
+    expect(g.queue.length + g.pending.length + g.history.length).toBe(0);
+
+    // O preenchimento manual continua funcionando com o automático desligado.
+    const r = await scheduler.refillNow(user.id, 998);
+    expect(r.added).toBeGreaterThan(0);
+  });
+
+  it("modo horários: fora do horário não preenche; no horário preenche uma vez só", async () => {
+    await catalog.upsertProducts([
+      mlProduct(931, { category: "beleza", discount: 40 }),
+      mlProduct(932, { category: "beleza", discount: 60 }),
+    ]);
+
+    const { user, auth } = await createUserWithMLAffiliate();
+    const waGroups = [makeWhatsAppGroup({ id: "wa-hor", numberId: "num-hor", jid: "hor@g.us" })];
+    const group = makeGroup({
+      id: 997,
+      categories: ["beleza"],
+      sources: ["ml"],
+      whatsappGroupIds: ["wa-hor"],
+      // Sem janela de envio: o modo horários preenche mesmo assim, e nada é enviado.
+      schedule: { windows: [], cooldownValue: 24, cooldownUnit: "horas" },
+    });
+    group.scraping.refillMode = "schedule";
+    group.scraping.refillTimes = ["03:00"];   // horário que não é "agora" no teste
+    await auth("put", "/api/state").send({
+      groups: [group],
+      numbers: [{ id: "num-hor", phone: "5511num-hor" }],
+      whatsappGroups: waGroups,
+    });
+    waConnect(user.id, "num-hor");
+
+    await scheduler.tick();
+    let state = await storage.loadState(user.id);
+    let g = state.groups.find(g => g.id === 997);
+    // Fora do horário escolhido, a fila fica vazia (a menos que o relógio do CI
+    // esteja justamente nos 15 min seguintes às 03:00 — então o horário muda).
+    const now = new Date();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    const dentroDaGraca = nowMin >= 180 && nowMin - 180 <= 15;
+    if (!dentroDaGraca) expect(g.queue.length).toBe(0);
+
+    // Agora com o horário atual: preenche no tick seguinte.
+    const hhmm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    group.scraping.refillTimes = [hhmm];
+    await auth("put", "/api/state").send({
+      groups: [group],
+      numbers: [{ id: "num-hor", phone: "5511num-hor" }],
+      whatsappGroups: waGroups,
+    });
+
+    await scheduler.tick();
+    state = await storage.loadState(user.id);
+    g = state.groups.find(g => g.id === 997);
+    expect(g.queue.length).toBeGreaterThan(0);
+    const depoisDoPrimeiro = g.queue.length;
+
+    // Segundo tick no mesmo horário não busca de novo.
+    await scheduler.tick();
+    state = await storage.loadState(user.id);
+    g = state.groups.find(g => g.id === 997);
+    expect(g.queue.length).toBe(depoisDoPrimeiro);
   });
 
   it("scraping.autoSend=true despacha mesmo SEM janela ativa", async () => {

@@ -332,7 +332,77 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 
 64. [] Como funcionam os cupons no ML e na Shopee? Como poderia buscar e integrar eles no sistema? Tem algums grupos de whats que enviam o produto com o cupom a ser utilizado.
 
-65. [] Como tu acha que dava pra melhorar as abas das campanhas, para simplificar a utilizacao por parte do usuario? Por exemplo, a busca dos produtos podia ser parecida com a aba produtos que tenho no ADMIN, onde eu consigo filtrar e ver todos os produtos ali, ordenando como eu quero, se eu quiser pegar automaticamente, apenas deixo salvo esses filtros e ordem e adiciono o numero de produto que quero buscar e ele vai buscar na ordem que deixei ate completar este numero.
+65. [x] Como tu acha que dava pra melhorar as abas das campanhas, para simplificar a utilizacao por parte do usuario? Por exemplo, a busca dos produtos podia ser parecida com a aba produtos que tenho no ADMIN, onde eu consigo filtrar e ver todos os produtos ali, ordenando como eu quero, se eu quiser pegar automaticamente, apenas deixo salvo esses filtros e ordem e adiciono o numero de produto que quero buscar e ele vai buscar na ordem que deixei ate completar este numero.
+
+    A aba "Busca de Produtos" foi refeita do zero, no formato da aba Produtos do
+    ADMIN. Antes a pessoa mexia nos filtros no escuro: clicava em "Buscar
+    produtos" e só descobria o que tinha vindo depois, quando os produtos já
+    estavam na fila — e ainda tinha que ir na aba Gerenciar pra trocar loja ou
+    categoria. Agora tudo que decide quais produtos entram está numa tela só,
+    em quatro blocos:
+    1. Onde buscar — as lojas (com cadeado nas que o admin trancou) e as
+       categorias, com o contador do plano. Este bloco não esconde: fica sempre
+       aberto. À mostra ficam só as categorias ligadas, cada uma com um X pra
+       tirar (menos a última, que a campanha precisa ter); o botão "Adicionar
+       categoria" abre a lista das que faltam pra marcar várias e confirmar de
+       uma vez — e ao chegar no limite do plano as não marcadas ficam apagadas
+       explicando que precisa tirar uma ou subir de plano.
+    2. Busca por palavras-chave — o campo fica sozinho e sempre à vista, e o
+       resto dos filtros (preço mínimo e máximo, desconto, avaliação e vendas)
+       mora atrás do botão "Filtros", à direita da busca, que mostra quantos
+       estão ligados. Trocamos os sliders (que era chute no arrasto) por campos
+       e listas com o valor escrito, e mesmo com o painel fechado ficam à vista
+       os selos do que está filtrando, cada um com um X pra tirar.
+    3. Preenchimento automático — a chave de ligar/desligar, o resumo do que
+       está valendo e o botão "Preencher fila agora" ficam sempre à vista; o
+       botão "Configurar" (igual ao dos filtros) abre quando o preenchimento
+       acontece, quantos produtos entram por vez (1 a 50) e em que ordem
+       escolher (maior desconto, menor/maior preço, melhor avaliação, mais
+       recentes). Antes pegava até 100 de uma vez, sempre pelo maior desconto,
+       e não tinha como desligar.
+    4. Produtos encontrados — a lista de verdade do catálogo, com paginação e
+       contador, na mesma ordem que o preenchimento usa. Cada card tem
+       "Adicionar à fila" pra escolher a dedo, e marca o que já está na fila,
+       aguardando revisão ou já enviado.
+    A ordem na tela é: Onde buscar, Preenchimento automático, Busca por
+    palavras-chave e Produtos encontrados — primeiro o que se configura uma vez,
+    depois o que se mexe a toda hora, colado na lista que ele muda. Nada mais
+    esconde por bloco inteiro: o que sai da frente são só os ajustes finos, nos
+    painéis dos botões "Filtros" e "Configurar", e cada um lembra se ficou
+    aberto ou fechado.
+    Na lista há duas chaves: "Enviados recentemente" mostra ou esconde os
+    produtos enviados dentro do tempo de espera para reenvio (escondidos por
+    padrão, que é o que o preenchimento faz), e "Já na fila" faz o mesmo com os
+    que já estão na campanha. Passado o tempo de espera o produto volta pra lista
+    e pode ser mandado de novo.
+    O encontro com fila/histórico é pela chave do produto, não pelo link: o que
+    está salvo guarda o link já afiliado, então comparar link nenhum produto
+    batia — nem o selo "já enviado", nem a chave de esconder.
+    Quando o produto pedido já foi enviado há pouco, a pergunta "adicionar mesmo
+    assim?" aparece dentro do próprio card, no lugar do botão. Antes ia pro topo
+    da página, longe de onde a pessoa clicou. O mesmo vale pro "Foi pra fila":
+    ele ocupa o lugar do botão pelos segundos em que fica na tela, e quando sai
+    o botão volta já dizendo "Já na fila".
+    No catálogo, "maior desconto" abria com os produtos sem desconto: no Postgres
+    o ORDER BY DESC coloca os nulos na frente. Agora as ordenações por desconto,
+    preço e avaliação mandam os sem informação pro fim.
+    A aprovação automática deixou de existir na campanha de catálogo: ela virava
+    uma segunda coisa pra entender sem motivo, já que o produto vem dos filtros
+    que a própria pessoa montou. O preenchimento automático agora faz exatamente
+    o que o botão faz, e o resultado vai direto pra fila; a revisão continua só
+    no repasse, onde o link vem de outro grupo. O que já estava aguardando
+    revisão continua na tela até ser aprovado ou rejeitado.
+    O preenchimento automático tem dois gatilhos: quando faltarem menos de X
+    produtos na fila (X escolhido, dentro das janelas de envio), ou em horários
+    fixos do dia, que rodam uma vez cada, mesmo fora das janelas.
+    Com o preenchimento automático desligado, a campanha só recebe produto por
+    ação sua — e o "Enviar agora" com fila vazia avisa isso em vez de buscar
+    escondido. A aba Gerenciar ficou só com nome e tempo de espera para reenvio
+    (no repasse, as lojas continuam lá).
+    De quebra: subir "vendas mínimas" agora limpa da fila os produtos que não
+    passam mais nesse filtro — antes esse critério só valia na hora de buscar —
+    e as chavinhas liga/desliga do sistema inteiro passaram a funcionar pelo
+    teclado e a ter nome no leitor de tela.
 
 66. [x] Conferir se dá pra furar os limites da assinatura (campanhas, WhatsApps, grupos, líderes) usando o próprio sistema.
 
@@ -356,3 +426,5 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     assinatura ao tentar mexer na fila — antes conseguia mexer, só não enviava.
 
 67. [x] Quando clico em uma campanha la no menu da esquerda para abrir direto sua pagina, quero que suba ate o topo da pagina.
+
+68. [] Porque o link postado em um grupo líder https://meli.la/2RiRnb8, quando foi repassado virou https://meli.la/33BBqUF que nao vai pro produto. Teste a transformacao manual do link do líder (que ao entrar vira este https://www.mercadolivre.com.br/social/oreidapromobr?matt_word=tcgrafa&matt_tool=37515304&forceInApp=true&ref=BLa7Lar6G%2Fe51xKXeYOP0tzkO%2FIugsgGP9%2FruS%2BuAz6ax1P9Eca50%2Fn7tbd%2FbzoVrsV4yeSI3jptJ2qteXUY3BKLXDoSB3k1d9vDYsz%2FfD2rkbWL5ludQ92GMhq0ehDwlLK57j5LLBh4Bn0vAoXwbe68VuQvPk%2FpR0RZErAnp8RK4lCXl1ND8LivVWx5h4k2tB3EHWw%3D) e virou https://meli.la/2p7yNat que seria o correto. Da uma olhada. Talvez adicionar mais uma camada pós geração do link de afiliado para garantir que formou certo? 

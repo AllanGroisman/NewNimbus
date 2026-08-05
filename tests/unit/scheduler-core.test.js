@@ -151,6 +151,137 @@ describe("scheduler.itemMatchesCampaign — filtros da campanha", () => {
     expect(scheduler.itemMatchesCampaign(null, baseCtx)).toBe(false);
     expect(scheduler.itemMatchesCampaign(undefined, baseCtx)).toBe(false);
   });
+
+  it("minSales reprova quem vendeu pouco (texto de vendas ou soldCount)", () => {
+    const ctx = { ...baseCtx, filters: { minSales: 100 } };
+    expect(scheduler.itemMatchesCampaign({ ...baseItem, sold: "+1 mil vendidos" }, ctx)).toBe(true);
+    expect(scheduler.itemMatchesCampaign({ ...baseItem, sold: "12 vendidos" }, ctx)).toBe(false);
+    // Shopee manda a contagem exata em soldCount, sem texto
+    expect(scheduler.itemMatchesCampaign({ ...baseItem, soldCount: 500 }, ctx)).toBe(true);
+    expect(scheduler.itemMatchesCampaign({ ...baseItem, soldCount: 3 }, ctx)).toBe(false);
+    // sem informação de vendas nenhuma: reprova (mesma regra do rating)
+    expect(scheduler.itemMatchesCampaign(baseItem, ctx)).toBe(false);
+  });
+});
+
+describe("scheduler.isAutoRefill — preenchimento automático da fila", () => {
+  it("ligado por padrão; campanha antiga (sem o campo) continua preenchendo sozinha", () => {
+    expect(scheduler.isAutoRefill({ scraping: {} })).toBe(true);
+    expect(scheduler.isAutoRefill({})).toBe(true);
+    expect(scheduler.isAutoRefill({ scraping: { autoRefill: true } })).toBe(true);
+  });
+
+  it("só desliga com o valor explícito false", () => {
+    expect(scheduler.isAutoRefill({ scraping: { autoRefill: false } })).toBe(false);
+  });
+});
+
+describe("scheduler.sortMode / batchSize — ordem e tamanho do lote da busca", () => {
+  it("sortMode aceita os modos do catálogo e cai no padrão pro resto", () => {
+    expect(scheduler.sortMode({ sortBy: "price_asc" })).toBe("price_asc");
+    expect(scheduler.sortMode({ sortBy: "lastSeen_desc" })).toBe("lastSeen_desc");
+    expect(scheduler.sortMode({ sortBy: "inventado" })).toBe("discount_desc");
+    expect(scheduler.sortMode({})).toBe("discount_desc");
+    expect(scheduler.sortMode(undefined)).toBe("discount_desc");
+  });
+
+  it("batchSize usa o valor salvo, com teto de 50 e padrão de 20", () => {
+    expect(scheduler.batchSize({ batchSize: 5 })).toBe(5);
+    expect(scheduler.batchSize({ batchSize: "7" })).toBe(7);
+    expect(scheduler.batchSize({ batchSize: 999 })).toBe(50);
+    expect(scheduler.batchSize({ batchSize: 0 })).toBe(20);
+    expect(scheduler.batchSize({ batchSize: -3 })).toBe(20);
+    expect(scheduler.batchSize({})).toBe(20);
+    expect(scheduler.batchSize(undefined)).toBe(20);
+  });
+});
+
+describe("scheduler.isAutoApprove — revisão só existe no repasse", () => {
+  it("campanha de catálogo manda direto pra fila, mesmo com o auto:false antigo", () => {
+    expect(scheduler.isAutoApprove({ scraping: {} })).toBe(true);
+    expect(scheduler.isAutoApprove({ scraping: { auto: false } })).toBe(true);
+  });
+
+  it("repasse mantém a aprovação manual dos links capturados", () => {
+    expect(scheduler.isAutoApprove({ scraping: { kind: "repasse" } })).toBe(true);
+    expect(scheduler.isAutoApprove({ scraping: { kind: "repasse", auto: false } })).toBe(false);
+  });
+});
+
+describe("scheduler.autoRefillDue — quando o preenchimento automático dispara", () => {
+  const baseGroup = (scraping, queue = [], pending = []) => ({
+    id: 1, scraping, queue, pending,
+  });
+
+  it("refillThreshold: valor salvo, com teto e padrão 5", () => {
+    expect(scheduler.refillThreshold({ refillThreshold: 12 })).toBe(12);
+    expect(scheduler.refillThreshold({ refillThreshold: "8" })).toBe(8);
+    expect(scheduler.refillThreshold({ refillThreshold: 999 })).toBe(50);
+    expect(scheduler.refillThreshold({ refillThreshold: 0 })).toBe(5);
+    expect(scheduler.refillThreshold({})).toBe(5);
+  });
+
+  it("refillTimes aceita só HH:MM, sem repetidos e em ordem", () => {
+    expect(scheduler.refillTimes({ refillTimes: ["14:30", "08:00", "14:30", "25:00", "abc", ""] }))
+      .toEqual(["08:00", "14:30"]);
+    expect(scheduler.refillTimes({})).toEqual([]);
+    expect(scheduler.refillTimes({ refillTimes: "08:00" })).toEqual([]);
+  });
+
+  it("refillMode é 'threshold' a não ser que a campanha peça 'schedule'", () => {
+    expect(scheduler.refillMode({})).toBe("threshold");
+    expect(scheduler.refillMode({ refillMode: "schedule" })).toBe("schedule");
+    expect(scheduler.refillMode({ refillMode: "qualquer" })).toBe("threshold");
+  });
+
+  it("modo fila acabando: dispara abaixo do número, e só dentro da janela", () => {
+    const now = new Date();
+    const g = (n) => baseGroup({ refillThreshold: 3 }, new Array(n).fill({}));
+    expect(scheduler.autoRefillDue(g(2), now, true).go).toBe(true);
+    expect(scheduler.autoRefillDue(g(3), now, true).go).toBe(false);
+    // fora da janela de envio não busca, mesmo com a fila vazia
+    expect(scheduler.autoRefillDue(g(0), now, false).go).toBe(false);
+  });
+
+  it("modo fila acabando conta os pendentes junto da fila", () => {
+    const now = new Date();
+    const g = baseGroup({ refillThreshold: 3 }, [{}], [{}, {}]);
+    expect(scheduler.autoRefillDue(g, now, true).go).toBe(false);
+  });
+
+  it("modo horários: dispara no horário que acabou de passar, mesmo fora da janela", () => {
+    const now = new Date();
+    now.setHours(10, 5, 0, 0);
+    const g = baseGroup({ refillMode: "schedule", refillTimes: ["10:00", "18:00"] });
+    const due = scheduler.autoRefillDue(g, now, false);
+    expect(due.go).toBe(true);
+    expect(due.slot).toBe("10:00");
+  });
+
+  it("modo horários: uma vez marcado, o mesmo horário não repete no dia", () => {
+    const now = new Date();
+    now.setHours(10, 5, 0, 0);
+    const g = { ...baseGroup({ refillMode: "schedule", refillTimes: ["10:00"] }), id: 4242 };
+    const due = scheduler.autoRefillDue(g, now, false);
+    expect(due.go).toBe(true);
+    scheduler.markAutoRefill(g.id, now, due.slot);
+    expect(scheduler.autoRefillDue(g, now, false).go).toBe(false);
+    // o tick 30s depois também não repete
+    const later = new Date(now.getTime() + 30000);
+    expect(scheduler.autoRefillDue(g, later, false).go).toBe(false);
+  });
+
+  it("modo horários: horário antigo demais não dispara (evita rodar o dia todo no restart)", () => {
+    const now = new Date();
+    now.setHours(23, 0, 0, 0);
+    const g = baseGroup({ refillMode: "schedule", refillTimes: ["08:00"] });
+    expect(scheduler.autoRefillDue(g, now, true).go).toBe(false);
+  });
+
+  it("modo horários sem nenhum horário não dispara nada", () => {
+    const g = baseGroup({ refillMode: "schedule", refillTimes: [] });
+    expect(scheduler.autoRefillDue(g, new Date(), true).go).toBe(false);
+  });
 });
 
 describe("scheduler.renderTemplate — mensagem do envio", () => {
@@ -200,11 +331,16 @@ describe("scheduler.renderTemplate — mensagem do envio", () => {
 });
 
 describe("scheduler.isAutoApprove / isRepasse", () => {
-  it("auto default é true (legado); false só quando explícito", () => {
+  it("campanha de catálogo sempre aprova (a revisão saiu da aba de busca)", () => {
     expect(scheduler.isAutoApprove({})).toBe(true);
     expect(scheduler.isAutoApprove({ scraping: {} })).toBe(true);
-    expect(scheduler.isAutoApprove({ scraping: { auto: false } })).toBe(false);
+    expect(scheduler.isAutoApprove({ scraping: { auto: false } })).toBe(true);
     expect(scheduler.isAutoApprove({ scraping: { auto: true } })).toBe(true);
+  });
+
+  it("no repasse o auto:false continua mandando pra revisão", () => {
+    expect(scheduler.isAutoApprove({ scraping: { kind: "repasse", auto: false } })).toBe(false);
+    expect(scheduler.isAutoApprove({ scraping: { kind: "repasse" } })).toBe(true);
   });
 
   it("isRepasse só com kind='repasse'", () => {

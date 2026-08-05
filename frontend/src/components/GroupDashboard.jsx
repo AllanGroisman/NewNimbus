@@ -115,6 +115,7 @@ import Tabs from "./ui/Tabs";
 import Modal from "./ui/Modal";
 import Toggle from "./ui/Toggle";
 import { ProductRow } from "./ui/ProductCard";
+import ProductSearchTab from "./campaign/ProductSearchTab";
 
 // Marca um valor "vazio" como — para o card mostrar todos os campos sempre.
 const NULL_LABEL = "—";
@@ -280,7 +281,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const [refillMsg, setRefillMsg] = useState(null);
   // AbortController da request de refill — permite cancelar via overlay.
   const refillAbortRef = useRef(null);
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [confirmDeleteTpl, setConfirmDeleteTpl] = useState(null);
   // Diálogo "Salvar alterações" do modelo: abre quando usuário tenta salvar
   // mudanças (presets nunca são sobrescritos, customs podem ser).
@@ -360,6 +360,8 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         filters: scraping.filters,
         sources: scraping.sources,
         categories: groupInfo.categories,
+        sortBy: scraping.sortBy,
+        batchSize: scraping.batchSize,
       }, { signal: ctrl.signal });
       const ops = await loadAppOps();
       const o = (ops.groups || []).find(g => g.id === group.id);
@@ -536,6 +538,40 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       setManualSubmitting(false);
     }
   };
+
+  // Adiciona um produto escolhido a dedo na prévia do catálogo (aba Busca de
+  // Produtos). Passa pelo mesmo caminho do "adicionar link" — que já trata
+  // duplicata, cooldown e auto-aprovação — só que com os dados já prontos do
+  // catálogo, sem precisar re-scrapear a URL.
+  const addCatalogProduct = async (product, force = false) => {
+    const r = await manualAddToQueue(group.id, {
+      url: product.link,
+      force,
+      overrides: {
+        name: product.name,
+        price: product.price ?? null,
+        originalPrice: product.originalPrice ?? null,
+        discount: product.discount ?? null,
+        img: product.img || null,
+        store: product.store || null,
+        category: (typeof product.category === "string" ? product.category : product.category?.id)
+          || (groupInfo.categories || [])[0] || null,
+        sold: product.sold || null,
+        soldCount: product.soldCount ?? null,
+        rating: product.rating ?? null,
+        reviewsCount: product.reviewsCount ?? null,
+      },
+    });
+    if (r.inCooldown) return r;
+    const ops = await loadAppOps();
+    const o = (ops.groups || []).find(g => g.id === group.id);
+    if (o) onUpdate(group.id, { queue: o.queue, pending: o.pending });
+    return r;
+  };
+
+  // A aba de busca precisa saber quais lojas o admin trancou pra desenhar o
+  // cadeado e pra tirá-las da prévia (o refill também as ignora).
+  const lockMessageForStore = (src) => storeLockMessage(storeLocks, src);
 
   const templateRef = useRef(null);
 
@@ -1145,14 +1181,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
   const save = () => { onUpdate(group.id, { schedule: sched, scraping, queue, pending, ...groupInfo }); setSaved(true); setTimeout(() => setSaved(false), 2000); };
 
-  // Zera todos os filtros e a pesquisa (não persiste — a próxima busca salva).
-  const resetFilters = () => {
-    setScraping(s => ({
-      ...s,
-      filters: { keywords: "", minPrice: 0, maxPrice: null, minDiscount: 0, minRating: 0, minSales: 0 },
-    }));
-  };
-
   // Dirty state por aba — usado pra (a) escurecer o botão de salvar quando
   // não há alterações, e (b) impedir cliques inúteis. JSON.stringify é
   // suficiente porque todos os objetos são produzidos por código com keys
@@ -1163,18 +1191,36 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const cooldownDirty = sched?.cooldownValue !== group.schedule?.cooldownValue
     || sched?.cooldownUnit !== group.schedule?.cooldownUnit;
   const windowsDirty = stableJSON(sched?.windows) !== stableJSON(group.schedule?.windows);
+  // Tempo de espera para reenvio em minutos — a aba de busca usa pra esconder da
+  // lista os produtos enviados há pouco (os mesmos que o preenchimento pula).
+  const cooldownLabel = sched?.cooldownValue
+    ? `${sched.cooldownValue} ${sched.cooldownUnit || "horas"}`
+    : null;
+  const cooldownMins = (() => {
+    const v = Number(sched?.cooldownValue) || 0;
+    const u = String(sched?.cooldownUnit || "horas").toLowerCase();
+    if (u.startsWith("min")) return v;
+    if (u.startsWith("hor")) return v * 60;
+    return v * 60 * 24;
+  })();
+  // Categorias e lojas saíram da aba Gerenciar (agora vivem na Busca de
+  // Produtos); no repasse as lojas continuam aqui, então só ali elas contam.
+  const isRepasseGroup = scraping?.kind === "repasse";
   const manageDirty = groupInfo.name !== group.name
-    || stableJSON(groupInfo.categories) !== stableJSON(getGroupCategories(group))
-    || stableJSON(scraping?.sources) !== stableJSON(group.scraping?.sources)
+    || (isRepasseGroup && stableJSON(scraping?.sources) !== stableJSON(group.scraping?.sources))
     || cooldownDirty;
   const scrapingDirty = stableJSON(scraping) !== stableJSON(group.scraping);
+  // A aba de busca edita o scraping E as categorias (que vivem no grupo), então
+  // o botão de salvar dela precisa acender pelos dois.
+  const categoriesDirty = stableJSON(groupInfo.categories) !== stableJSON(getGroupCategories(group));
+  const searchTabDirty = scrapingDirty || categoriesDirty;
   const filtersDirty = stableJSON(scraping?.filters) !== stableJSON(group.scraping?.filters);
   const scheduleDirty = windowsDirty;
   const messageDirty = groupInfo.messageTemplate !== group.messageTemplate;
 
   // Alterações não salvas agregadas (todas as abas editáveis). Usado pelo guard
   // de navegação pra avisar ao trocar de aba ou sair da campanha.
-  const hasUnsaved = manageDirty || scrapingDirty || filtersDirty
+  const hasUnsaved = manageDirty || scrapingDirty || filtersDirty || categoriesDirty
     || scheduleDirty || windowsDirty || cooldownDirty || messageDirty;
 
   // Reverte o estado local editável pros valores salvos do grupo (usado no
@@ -1467,64 +1513,48 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div data-tour="mg-info" style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
             <div style={{ fontWeight: 500, marginBottom: 4 }}>Informações da campanha</div>
-            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>{isRepasse ? "Nome" : "Nome e categorias"}</div>
-            <div style={{ marginBottom: isRepasse ? 0 : 14 }}>
+            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>Nome</div>
+            <div>
               <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Nome da campanha</label>
               <input value={groupInfo.name} onChange={e => setGroupInfo(g => ({ ...g, name: e.target.value }))} placeholder="Ex: Tech BR" style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }} />
             </div>
-            {!isRepasse && (
-              <div>
-                <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                  Categorias <span style={{ color: "var(--color-text-tertiary, var(--color-text-secondary))" }}>(selecione uma ou mais)</span>
-                  <UsageBadge current={(groupInfo.categories || []).length} limit={limits?.categoriesPerGroup} label="categorias selecionadas" />
-                </label>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {Object.keys(CATEGORIES).map(id => {
-                    const active = groupInfo.categories.includes(id);
-                    return (
-                      <div
-                        key={id}
-                        onClick={() => toggleCategory(id)}
-                        style={{ padding: "6px 14px", borderRadius: 8, border: `0.5px solid ${active ? PRIMARY : "var(--color-border-tertiary)"}`, background: active ? PRIMARY_LIGHT : "transparent", color: active ? PRIMARY_DARK : "var(--color-text-secondary)", fontSize: 13, cursor: "pointer", fontWeight: active ? 500 : 400, userSelect: "none" }}
-                      >
-                        {active ? "✓ " : ""}<span style={{ marginRight: 4 }}>{categoryIcon(id)}</span>{categoryLabel(id)}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
           </div>
 
-          <div data-tour="mg-sources" style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-            <div style={{ fontWeight: 500, marginBottom: 4 }}>Fontes de busca</div>
-            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
-              {isRepasse
-                ? "Escolha de quais lojas os links postados nos grupos líderes podem ser repassados. Links de outras lojas são ignorados."
-                : "Selecione as lojas onde a campanha vai procurar ofertas."}
-            </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {allSources.map(src => {
-                const active = scraping.sources.includes(src);
-                const lockMsg = storeLockMessage(storeLocks, src);
-                // Loja trancada fica cinza com cadeado, mesmo se a campanha já a
-                // tinha selecionada — o clique só abre a explicação.
-                return <div key={src} onClick={() => handleToggleSource(src)} title={lockMsg || undefined} style={{ padding: "6px 14px", borderRadius: 8, border: `0.5px solid ${lockMsg ? "var(--color-border-tertiary)" : (active ? PRIMARY : "var(--color-border-tertiary)")}`, background: lockMsg ? "var(--color-background-secondary)" : (active ? PRIMARY_LIGHT : "transparent"), color: lockMsg ? "var(--color-text-secondary)" : (active ? PRIMARY_DARK : "var(--color-text-secondary)"), fontSize: 13, cursor: lockMsg ? "not-allowed" : "pointer", fontWeight: active && !lockMsg ? 500 : 400, opacity: lockMsg ? 0.7 : 1 }}>{lockMsg ? "🔒 " : (active ? "✓ " : "")}{src}</div>;
-              })}
-            </div>
-            {allSources.some(src => scraping.sources.includes(src) && storeLockMessage(storeLocks, src)) && (
-              <div style={{ marginTop: 10, fontSize: 11, color: "var(--warn-text)", background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 8, padding: "8px 10px" }}>
-                Uma das lojas desta campanha está indisponível no momento — ela é ignorada e a campanha segue buscando nas outras.
-              </div>
-            )}
-            {scraping.sources.length === 0 && (
-              <div style={{ marginTop: 10, fontSize: 11, color: "var(--danger-text)" }}>{isRepasse ? "Selecione ao menos uma fonte para o repasse funcionar." : "Selecione ao menos uma fonte para o scraping funcionar."}</div>
-            )}
-          </div>
-
+          {/* Lojas: só no repasse. Campanha de busca escolhe lojas e categorias
+              junto dos filtros, na aba Busca de Produtos. */}
           {isRepasse && (
+            <div data-tour="mg-sources" style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+              <div style={{ fontWeight: 500, marginBottom: 4 }}>Fontes de busca</div>
+              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
+                Escolha de quais lojas os links postados nos grupos líderes podem ser repassados. Links de outras lojas são ignorados.
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {allSources.map(src => {
+                  const active = scraping.sources.includes(src);
+                  const lockMsg = storeLockMessage(storeLocks, src);
+                  // Loja trancada fica cinza com cadeado, mesmo se a campanha já a
+                  // tinha selecionada — o clique só abre a explicação.
+                  return <div key={src} onClick={() => handleToggleSource(src)} title={lockMsg || undefined} style={{ padding: "6px 14px", borderRadius: 8, border: `0.5px solid ${lockMsg ? "var(--color-border-tertiary)" : (active ? PRIMARY : "var(--color-border-tertiary)")}`, background: lockMsg ? "var(--color-background-secondary)" : (active ? PRIMARY_LIGHT : "transparent"), color: lockMsg ? "var(--color-text-secondary)" : (active ? PRIMARY_DARK : "var(--color-text-secondary)"), fontSize: 13, cursor: lockMsg ? "not-allowed" : "pointer", fontWeight: active && !lockMsg ? 500 : 400, opacity: lockMsg ? 0.7 : 1 }}>{lockMsg ? "🔒 " : (active ? "✓ " : "")}{src}</div>;
+                })}
+              </div>
+              {allSources.some(src => scraping.sources.includes(src) && storeLockMessage(storeLocks, src)) && (
+                <div style={{ marginTop: 10, fontSize: 11, color: "var(--warn-text)", background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 8, padding: "8px 10px" }}>
+                  Uma das lojas desta campanha está indisponível no momento — ela é ignorada e a campanha segue buscando nas outras.
+                </div>
+              )}
+              {scraping.sources.length === 0 && (
+                <div style={{ marginTop: 10, fontSize: 11, color: "var(--danger-text)" }}>Selecione ao menos uma fonte para o repasse funcionar.</div>
+              )}
+            </div>
+          )}
+
+          {isRepasse ? (
             <div style={{ fontSize: 12, color: "var(--color-text-secondary)", padding: "0 2px" }}>
               Os grupos líderes, a aprovação automática e a revisão dos links capturados ficam na aba <strong>Repasse</strong>.
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", padding: "0 2px" }}>
+              As lojas, as categorias e os filtros de produto ficam na aba <strong>Busca de Produtos</strong>.
             </div>
           )}
 
@@ -2463,195 +2493,35 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       )}
 
       {tab === "products" && !isRepasse && (
-        <div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 20 }}>
-            <div data-tour="pr-auto" style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 500, marginBottom: 4 }}>Auto-aprovação</div>
-                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
-                    {scraping.auto !== false
-                      ? "Produtos novos do scraping entram direto na fila e são enviados automaticamente."
-                      : "Produtos novos ficam aguardando revisão. Você precisa aprovar cada um antes do envio."}
-                  </div>
-                </div>
-                <Toggle value={scraping.auto !== false} onChange={v => setScraping(s => ({ ...s, auto: v }))} />
-              </div>
-            </div>
-
-            <button
-              data-tour="pr-filters"
-              onClick={() => setShowAdvancedFilters(v => !v)}
-              style={{ alignSelf: "flex-start", padding: "8px 14px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}
-            >
-              <span style={{ display: "inline-block", transition: "transform 0.15s", transform: showAdvancedFilters ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
-              {showAdvancedFilters ? "Ocultar filtros avançados" : "Mostrar filtros avançados"}
-              <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>(preço, desconto, avaliação, vendas)</span>
-            </button>
-
-            <div data-tour="pr-search" style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-              <div style={{ fontWeight: 500, marginBottom: 8 }}>Pesquisa</div>
-              <div style={{ position: "relative" }}>
-                <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14, color: "var(--color-text-secondary)", pointerEvents: "none" }}>🔍</span>
-                <input
-                  type="text"
-                  value={scraping.filters.keywords}
-                  onChange={e => setScraping(s => ({ ...s, filters: { ...s.filters, keywords: e.target.value } }))}
-                  onKeyDown={e => { if (e.key === "Enter" && !refilling) triggerRefill(); }}
-                  placeholder="Pesquisar produtos (ex: notebook, monitor, fone bluetooth)"
-                  style={{ width: "100%", padding: "10px 12px 10px 36px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", fontFamily: "inherit" }}
-                />
-              </div>
-              <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 8 }}>
-                Separe vários termos por vírgula. Traz produtos cujo nome contenha <strong>pelo menos um</strong> dos termos. Vazio = todos.
-              </div>
-              {scraping.filters.keywords.trim() && (
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
-                  {scraping.filters.keywords.split(",").map(k => k.trim()).filter(Boolean).map((kw, i) => (
-                    <span key={i} style={{ padding: "3px 10px", borderRadius: 6, background: PRIMARY_LIGHT, color: PRIMARY_DARK, fontSize: 11, fontWeight: 500 }}>
-                      {kw}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {showAdvancedFilters && <>
-            <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-              <div style={{ fontWeight: 500, marginBottom: 4 }}>Filtros de qualidade</div>
-              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 16 }}>
-                Produtos que não atenderem a <strong>todos</strong> os critérios serão ignorados.
-              </div>
-              {(() => {
-                const PRICE_MAX = 10000;
-                const PRICE_STEP = 50;
-                const rawMax = scraping.filters?.maxPrice;
-                const maxIsUnlimited = rawMax == null || !Number.isFinite(Number(rawMax)) || Number(rawMax) >= PRICE_MAX;
-                const minP = Math.max(0, Math.min(PRICE_MAX, Number(scraping.filters?.minPrice ?? 0)));
-                const maxP = maxIsUnlimited ? PRICE_MAX : Math.max(minP, Math.min(PRICE_MAX, Number(rawMax)));
-                const setMin = (v) => setScraping(s => ({ ...s, filters: { ...s.filters, minPrice: Math.min(v, (Number(s.filters?.maxPrice) || PRICE_MAX) - PRICE_STEP) } }));
-                // Slider no máximo = sem limite (salva null pro backend ignorar o filtro)
-                const setMax = (v) => setScraping(s => {
-                  const adjusted = Math.max(v, (s.filters?.minPrice ?? 0) + PRICE_STEP);
-                  return { ...s, filters: { ...s.filters, maxPrice: adjusted >= PRICE_MAX ? null : adjusted } };
-                });
-                const leftPct = (minP / PRICE_MAX) * 100;
-                const rightPct = 100 - (maxP / PRICE_MAX) * 100;
-                return (
-                  <div style={{ marginBottom: 18 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                      <label style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Faixa de preço</label>
-                      <span style={{ fontSize: 13, fontWeight: 500 }}>
-                        R$ {minP.toLocaleString("pt-BR")} — {maxP >= PRICE_MAX ? "sem limite" : `R$ ${maxP.toLocaleString("pt-BR")}`}
-                      </span>
-                    </div>
-                    <div className="range-dual">
-                      <div className="track" />
-                      <div className="track-active" style={{ left: `${leftPct}%`, right: `${rightPct}%` }} />
-                      <input
-                        type="range" min={0} max={PRICE_MAX} step={PRICE_STEP} value={minP}
-                        onChange={e => setMin(Number(e.target.value))}
-                      />
-                      <input
-                        type="range" min={0} max={PRICE_MAX} step={PRICE_STEP} value={maxP}
-                        onChange={e => setMax(Number(e.target.value))}
-                      />
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2 }}>
-                      <span>R$ 0</span><span>R$ {PRICE_MAX.toLocaleString("pt-BR")}+</span>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              <div className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-                {[
-                  { label: "Desconto mínimo", key: "minDiscount", min: 0, max: 80, unit: "%", step: 5 },
-                  { label: "Avaliação mínima", key: "minRating", min: 0, max: 5, unit: "★", step: 0.5 },
-                  { label: "Vendas mínimas", key: "minSales", min: 0, max: 1000, unit: " vendas", step: 10 },
-                ].map(({ label, key, min, max, unit, step, prefix }) => {
-                  const value = Number(scraping.filters[key] ?? 0);
-                  const isDisabled = value === 0;
-                  const displayValue = isDisabled
-                    ? "Sem filtro"
-                    : (prefix ? `${unit} ${value.toLocaleString("pt-BR")}` : `${value}${unit}`);
-                  return (
-                    <div key={key}>
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                        <label style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>{label}</label>
-                        <span style={{ fontSize: 13, fontWeight: 500, color: isDisabled ? "var(--color-text-secondary)" : undefined, fontStyle: isDisabled ? "italic" : "normal" }}>{displayValue}</span>
-                      </div>
-                      <input type="range" min={min} max={max} step={step} value={value} onChange={e => setScraping(s => ({ ...s, filters: { ...s.filters, [key]: Number(e.target.value) } }))} style={{ width: "100%" }} />
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2 }}>
-                        <span>{min === 0 ? "Sem filtro" : (prefix ? `${unit} ${min}` : `${min}${unit}`)}</span><span>{prefix ? `${unit} ${max.toLocaleString("pt-BR")}` : `${max}${unit}`}</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 10, padding: "6px 10px", background: "var(--color-background-secondary)", borderRadius: 6 }}>
-                ⚠️ Filtros de Avaliação e Vendas excluem produtos sem essa info — alguns produtos da Amazon não vêm com rating extraído.
-              </div>
-            </div>
-            </>}
-
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-              <button data-tour="pr-run" onClick={triggerRefill} disabled={refilling} title="Salva a configuração atual e busca produtos no catálogo com a pesquisa e os filtros definidos" style={{ padding: "9px 20px", borderRadius: 8, border: "none", background: PRIMARY, color: "#fff", fontSize: 13, cursor: refilling ? "wait" : "pointer", fontWeight: 500, opacity: refilling ? 0.6 : 1 }}>
-                {refilling ? "⟳ Buscando..." : "🔍 Buscar produtos"}
-              </button>
-              <button onClick={resetFilters} title="Zera a pesquisa e todos os filtros" style={{ padding: "9px 18px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>
-                Limpar filtros
-              </button>
-              <button
-                onClick={save}
-                disabled={!scrapingDirty && !saved}
-                title={scrapingDirty ? "Salvar configurações do scraping desta campanha (ex: auto-aprovação)" : "Sem alterações pra salvar"}
-                style={saveBtnStyle(scrapingDirty)}
-              >
-                {saved ? "✓ Salvo!" : "Salvar configurações"}
-              </button>
-              {refillMsg && (
-                <span style={{ fontSize: 12, color: refillMsg.type === "err" ? "var(--danger-text)" : refillMsg.type === "warn" ? "var(--warn-text)" : PRIMARY_DARK }}>
-                  {refillMsg.text}
-                </span>
-              )}
-            </div>
-            <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 8 }}>
-              💡 Buscar já salva a pesquisa e os filtros atuais. Os filtros são aplicados sobre o catálogo central — a fila também é reabastecida automaticamente nos horários de envio.
-            </div>
-          </div>
-
-          {pending.length > 0 && (
-            <div data-tour="pr-pending" style={{ marginBottom: 20 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 500 }}>Aguardando revisão</div>
-                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>Produtos do scraping que precisam de aprovação</div>
-                </div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <button onClick={approveAllProducts} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY_LIGHT, color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Adicionar todos à fila</button>
-                  <button onClick={rejectAllProducts} style={{ padding: "5px 12px", borderRadius: 7, background: "var(--danger-bg)", color: "var(--danger-text)", border: "0.5px solid var(--danger-border)", fontSize: 12, cursor: "pointer" }}>Rejeitar todos</button>
-                </div>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {pending.map(p => {
-                  const pid = p.id ?? p.key;
-                  return (
-                    <ProductRow
-                      key={pid}
-                      product={p}
-                      actions={<>
-                        <button onClick={() => approveProduct(pid)} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY_LIGHT, color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Adicionar na fila</button>
-                        <button onClick={() => rejectProduct(pid)} style={{ padding: "5px 10px", borderRadius: 7, border: "0.5px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", fontSize: 12, cursor: "pointer" }}>Rejeitar</button>
-                      </>}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
+        <ProductSearchTab
+          scraping={scraping}
+          setScraping={setScraping}
+          categories={groupInfo.categories}
+          onToggleCategory={toggleCategory}
+          categoryLimit={limits?.categoriesPerGroup}
+          selectedSources={scraping.sources || []}
+          onToggleSource={handleToggleSource}
+          lockMessageFor={lockMessageForStore}
+          refilling={refilling}
+          triggerRefill={triggerRefill}
+          save={save}
+          dirty={searchTabDirty}
+          saved={saved}
+          saveBtnStyle={saveBtnStyle}
+          refillMsg={refillMsg}
+          pending={pending}
+          queue={queue}
+          history={group.history || []}
+          cooldownMinutes={cooldownMins}
+          cooldownLabel={cooldownLabel}
+          onApprove={approveProduct}
+          onReject={rejectProduct}
+          onApproveAll={approveAllProducts}
+          onRejectAll={rejectAllProducts}
+          onAddCatalogProduct={addCatalogProduct}
+        />
       )}
+
 
       {tab === "queue" && (
         <div>

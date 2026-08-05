@@ -44,12 +44,14 @@ describe("POST /refill — endpoint HTTP", () => {
     expect(r.body.queueSize).toBeGreaterThan(0);
   });
 
-  it("popa pending quando auto=false", async () => {
+  // Campanha de catálogo não tem mais revisão manual — o auto=false salvo antes
+  // da mudança não segura mais nada na fila de aprovação.
+  it("popa a queue mesmo com o auto=false antigo", async () => {
     const { auth } = await userWithGroup({ id: 402, sources: ["ml"], auto: false, group: { categories: ["gamer"] } });
     const r = await auth("post", "/api/state/groups/402/refill").send({});
     expect(r.status).toBe(200);
-    expect(r.body.target).toBe("pending");
-    expect(r.body.pendingSize).toBeGreaterThan(0);
+    expect(r.body.target).toBe("queue");
+    expect(r.body.queueSize).toBeGreaterThan(0);
   });
 
   it("overrides de filtros (ainda não persistidos no group) aplicam", async () => {

@@ -385,6 +385,28 @@ export async function fetchOfertas({ category, minDiscount = 0, minPrice = 0, ma
   return http("GET", `/api/ofertas?${params}`);
 }
 
+// Navega o catálogo com os mesmos filtros/ordem que a busca da campanha usa.
+// Alimenta a prévia da aba "Busca de Produtos" (paginada).
+// Retorna { items, total, page, pageSize, approximateTotal, catalogStats }.
+export async function browseCatalog({
+  categories, sources, q = "", minPrice = 0, maxPrice, minDiscount = 0,
+  minRating = 0, minSales = 0, sortBy = "discount_desc", page = 1, pageSize = 24,
+} = {}, { signal } = {}) {
+  const params = new URLSearchParams();
+  if (categories && categories.length) params.set("categories", categories.join(","));
+  if (sources && sources.length) params.set("sources", sources.join(","));
+  if (q && q.trim()) params.set("q", q.trim());
+  if (minPrice > 0) params.set("minPrice", minPrice);
+  if (maxPrice) params.set("maxPrice", maxPrice);
+  if (minDiscount > 0) params.set("minDiscount", minDiscount);
+  if (minRating > 0) params.set("minRating", minRating);
+  if (minSales > 0) params.set("minSales", minSales);
+  params.set("sortBy", sortBy);
+  params.set("page", page);
+  params.set("pageSize", pageSize);
+  return http("GET", `/api/ofertas?${params}`, undefined, { signal });
+}
+
 export async function fetchStatus() {
   return http("GET", "/api/status");
 }

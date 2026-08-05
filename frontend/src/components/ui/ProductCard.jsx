@@ -86,9 +86,11 @@ export function ProductRow({ product, actions, index }) {
   );
 }
 
-// Card grid para catálogo de produtos
-export function ProductGridCard({ product }) {
-  return (
+// Card grid para catálogo de produtos.
+// `footer` (opcional) fica FORA do <a> — botões não podem viver dentro do link
+// que abre o produto na loja.
+export function ProductGridCard({ product, footer, badge }) {
+  const card = (
     <a
       href={product.link}
       target="_blank"
@@ -156,5 +158,16 @@ export function ProductGridCard({ product }) {
         </div>
       </div>
     </a>
+  );
+
+  if (!footer && !badge) return card;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      {badge && (
+        <div style={{ marginBottom: 6 }}>{badge}</div>
+      )}
+      <div style={{ flex: 1 }}>{card}</div>
+      {footer && <div style={{ marginTop: 8 }}>{footer}</div>}
+    </div>
   );
 }

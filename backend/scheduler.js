@@ -15,8 +15,14 @@ const userNotifier = require("./notifications/user-notifier");
 // Cadência do loop principal (em ms). Roda janelas de envio.
 const TICK_MS = 30 * 1000;
 
-// Refill do catálogo: faz quando a queue tem menos que isso
+// Refill do catálogo: faz quando a queue tem menos que isso (default do modo
+// "quando a fila estiver acabando" — a campanha pode escolher outro número).
 const REFILL_THRESHOLD = 5;
+const MAX_REFILL_THRESHOLD = 50;
+const MAX_REFILL_TIMES = 12;
+// Modo "horários fixos": um horário só dispara se passou há no máximo isso.
+// Sem essa janela, subir o processo às 23h refaria todos os horários do dia.
+const REFILL_TIME_GRACE_MIN = 15;
 
 function todayKey(d = new Date()) {
   return d.toISOString().slice(0, 10);
@@ -95,6 +101,88 @@ function activeSources(sources) {
   return resolveSources(sources).filter(id => !locked.has(id));
 }
 
+// Ordem e tamanho do lote da busca de produtos, escolhidos pelo usuário na aba
+// "Busca de Produtos" e guardados no jsonb `scraping` da campanha.
+const SORT_MODES = new Set(["discount_desc", "price_asc", "price_desc", "rating_desc", "lastSeen_desc"]);
+const DEFAULT_BATCH = 20;
+const MAX_BATCH = 50;
+
+function sortMode(scraping) {
+  const s = scraping && scraping.sortBy;
+  return SORT_MODES.has(s) ? s : "discount_desc";
+}
+
+function batchSize(scraping) {
+  const n = Number(scraping && scraping.batchSize);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_BATCH;
+  return Math.min(MAX_BATCH, Math.max(1, Math.round(n)));
+}
+
+// Quando o preenchimento automático dispara:
+//   "threshold" (default) — quando a fila está acabando, dentro da janela de envio;
+//   "schedule"            — nos horários escolhidos pelo usuário, com janela ou não.
+function refillMode(scraping) {
+  return scraping && scraping.refillMode === "schedule" ? "schedule" : "threshold";
+}
+
+// Quantos itens no buffer (fila + pendentes) disparam o preenchimento.
+function refillThreshold(scraping) {
+  const n = Number(scraping && scraping.refillThreshold);
+  if (!Number.isFinite(n) || n <= 0) return REFILL_THRESHOLD;
+  return Math.min(MAX_REFILL_THRESHOLD, Math.max(1, Math.round(n)));
+}
+
+// Horários "HH:MM" do modo agendado, sem repetidos e em ordem.
+function refillTimes(scraping) {
+  const raw = Array.isArray(scraping && scraping.refillTimes) ? scraping.refillTimes : [];
+  const seen = new Set();
+  for (const t of raw) {
+    const s = String(t || "").trim();
+    if (/^([01]\d|2[0-3]):[0-5]\d$/.test(s)) seen.add(s);
+  }
+  return [...seen].sort().slice(0, MAX_REFILL_TIMES);
+}
+
+// Último preenchimento automático por campanha. Fica em memória de propósito:
+// é só um "já rodei este horário", e a janela de graça acima faz o restart do
+// processo perder no máximo um disparo em vez de repetir o dia inteiro.
+const _lastAutoRefill = new Map();
+
+function minutesOf(hm) {
+  const [h, m] = String(hm).split(":");
+  return Number(h) * 60 + Number(m);
+}
+
+// Decide se o preenchimento automático roda agora.
+// Retorna { go, slot } — `slot` é o horário que disparou (modo agendado).
+function autoRefillDue(group, now, inWindowNow) {
+  const scraping = group.scraping || {};
+  if (refillMode(scraping) !== "schedule") {
+    const buffer = (group.queue || []).length + (group.pending || []).length;
+    return { go: inWindowNow && buffer < refillThreshold(scraping), slot: null };
+  }
+  const times = refillTimes(scraping);
+  if (!times.length) return { go: false, slot: null };
+  const nowMin = minutesOf(hhmm(now));
+  // O horário mais recente que já passou hoje e ainda está dentro da graça.
+  let slot = null;
+  for (const t of times) {
+    const tMin = minutesOf(t);
+    if (tMin <= nowMin && nowMin - tMin <= REFILL_TIME_GRACE_MIN) slot = t;
+  }
+  if (!slot) return { go: false, slot: null };
+  // Dia local (todayKey é UTC e viraria o dia às 21h no horário de Brasília).
+  const day = now.toDateString();
+  const done = _lastAutoRefill.get(group.id);
+  if (done === `${day} ${slot}`) return { go: false, slot };
+  return { go: true, slot };
+}
+
+// Registra que o horário já rodou hoje (nada a fazer no modo por fila).
+function markAutoRefill(groupId, now, slot) {
+  if (slot) _lastAutoRefill.set(groupId, `${now.toDateString()} ${slot}`);
+}
+
 // Extrai cats/srcs/filters do grupo em formato canônico (Sets) pro itemMatchesCampaign.
 function campaignFilterCtx(group) {
   const catList = Array.isArray(group.categories) && group.categories.length
@@ -123,11 +211,18 @@ function itemMatchesCampaign(item, ctx) {
     const sid = catalog.storeToId ? catalog.storeToId(item.store) : null;
     if (!sid || !srcs.has(sid)) return false;
   }
-  const { minDiscount = 0, minPrice = 0, maxPrice, minRating = 0, keywords = "" } = filters || {};
+  const { minDiscount = 0, minPrice = 0, maxPrice, minRating = 0, minSales = 0, keywords = "" } = filters || {};
   if (minDiscount > 0 && (!item.discount || item.discount < minDiscount)) return false;
   if (minPrice > 0 && (item.price == null || item.price < minPrice)) return false;
   if (maxPrice != null && Number.isFinite(maxPrice) && maxPrice > 0 && (item.price == null || item.price > maxPrice)) return false;
   if (minRating > 0 && (item.rating || 0) < minRating) return false;
+  // Mesma regra do catálogo: soldCount (Shopee) quando existe, senão o texto de vendas.
+  if (minSales > 0) {
+    const sales = item.soldCount != null && Number.isFinite(Number(item.soldCount))
+      ? Number(item.soldCount)
+      : catalog.parseSold(item.sold);
+    if (sales < minSales) return false;
+  }
   if (keywords && String(keywords).trim()) {
     const terms = String(keywords).toLowerCase().split(",").map(t => t.trim()).filter(Boolean);
     if (terms.length && !terms.some(t => (item.name || "").toLowerCase().includes(t))) return false;
@@ -203,10 +298,23 @@ async function whatsappGate(userId, group, whatsappGroups, planPaused, numbers) 
 }
 
 // Auto-aprovação: produtos vão direto pra queue. Se false, vão pra pending pra
-// o usuário aprovar antes de enviar. Default = true (mantém comportamento legado).
+// o usuário aprovar antes de enviar.
+// Campanha de catálogo não tem mais essa etapa: o preenchimento automático faz
+// exatamente o que o botão "Preencher fila agora" faz, e o resultado vai pra
+// fila. A revisão continua só no repasse, onde o link vem de outro grupo e o
+// usuário não escolheu o produto. Pendentes antigos seguem na tela até serem
+// aprovados ou rejeitados.
 function isAutoApprove(group) {
+  if (!isRepasse(group)) return true;
   const v = group.scraping?.auto;
   return v === undefined ? true : !!v;
+}
+
+// Preenchimento automático da fila: quando desligado, a campanha só recebe
+// produtos quando o usuário clica em "Preencher fila agora" (ou adiciona um a
+// um pela prévia do catálogo). Ligado é o padrão — campanha antiga não muda.
+function isAutoRefill(group) {
+  return group.scraping?.autoRefill !== false;
 }
 
 // Campanha de repasse: a fila é populada pelos links capturados nos grupos líderes,
@@ -311,7 +419,8 @@ async function refillQueue(userId, group) {
         sources,
         excludeKeys,
         filters,
-        limit: 100,
+        limit: batchSize(group.scraping),
+        sortBy: sortMode(group.scraping),
       })
     : [];
 
@@ -625,7 +734,7 @@ async function sendNextNow(userId, groupId) {
   // Tenta refill se queue está vazia — "enviar agora" é ação manual do user,
   // então força os itens pra queue mesmo se a campanha está em modo de revisão.
   let queue = group.queue || [];
-  if (!queue.length && !isRepasse(group)) {
+  if (!queue.length && !isRepasse(group) && isAutoRefill(group)) {
     const { cleanedQueue, newItems } = await refillQueue(userId, group);
     const refilled = [...cleanedQueue, ...newItems];
     if (refilled.length) {
@@ -637,6 +746,7 @@ async function sendNextNow(userId, groupId) {
 
   if (!queue.length) {
     if (isRepasse(group)) throw new Error("Fila vazia — nenhum produto capturado dos grupos líderes ainda. Aprove os pendentes ou aguarde novos links nos grupos líderes.");
+    if (!isAutoRefill(group)) throw new Error("Fila vazia — o preenchimento automático desta campanha está desligado. Use \"Preencher fila agora\" na aba Busca de Produtos ou ligue o preenchimento automático.");
     throw new Error("Fila vazia — sem produtos no catálogo que passem nos filtros desta campanha. Peça pro admin atualizar o catálogo (página Scraping) ou afrouxe os filtros.");
   }
 
@@ -703,14 +813,14 @@ async function processGroup(userId, group, whatsappGroups, numbers, planPaused) 
   }
 
   // Refill se a campanha precisa de itens — leve porque consulta catálogo.
-  // O "buffer" é queue + pending: se auto-aprova vai direto pra queue, senão pra
-  // pending pro usuário revisar. Em ambos os casos, queremos manter ~5 itens
-  // no buffer pra cobrir a janela.
-  const queueLen = (group.queue || []).length;
-  const pendingLen = (group.pending || []).length;
+  // Dois gatilhos possíveis (autoRefillDue): fila acabando dentro da janela de
+  // envio, ou horário fixo escolhido pelo usuário. O "buffer" do primeiro é
+  // queue + pending, pra contar também o que está aguardando revisão no repasse.
   const inWindow = !!activeWindow(now, group.schedule);
+  const due = autoRefillDue(group, now, inWindow);
   // Repasse não puxa do catálogo — a fila é alimentada só pelos grupos líderes.
-  if (!isRepasse(group) && (queueLen + pendingLen < REFILL_THRESHOLD) && inWindow) {
+  if (!isRepasse(group) && isAutoRefill(group) && due.go) {
+    markAutoRefill(group.id, now, due.slot);
     const { cleanedQueue, cleanedPending, newItems, target, removedFromQueue } = await refillQueue(userId, group);
     if (newItems.length || removedFromQueue > 0 || cleanedPending.length !== (group.pending || []).length) {
       if (target === "queue") {
@@ -840,11 +950,17 @@ async function refillNow(userId, groupId, overrides = {}) {
   if (isRepasse(group)) throw new Error("Campanha de repasse não busca no catálogo — a fila é alimentada pelos links dos grupos líderes.");
 
   const merged = { ...group };
-  if (overrides && (overrides.filters || overrides.sources || overrides.categories)) {
+  const hasOverride = overrides && (
+    overrides.filters || overrides.sources || overrides.categories ||
+    overrides.sortBy !== undefined || overrides.batchSize !== undefined
+  );
+  if (hasOverride) {
     merged.scraping = {
       ...(group.scraping || {}),
       ...(overrides.sources !== undefined ? { sources: overrides.sources } : {}),
       ...(overrides.filters !== undefined ? { filters: overrides.filters } : {}),
+      ...(overrides.sortBy !== undefined ? { sortBy: overrides.sortBy } : {}),
+      ...(overrides.batchSize !== undefined ? { batchSize: overrides.batchSize } : {}),
     };
     if (Array.isArray(overrides.categories)) merged.categories = overrides.categories;
   }
@@ -980,7 +1096,8 @@ async function addItemToGroup(userId, group, item, { force = false } = {}) {
 
 module.exports = {
   start, stop, tick, sendNextNow, refillNow, manualAdd, addItemToGroup,
-  isRepasse, isAutoApprove, resolveSources, activeSources, status, processSendJob,
+  isRepasse, isAutoApprove, isAutoRefill, resolveSources, activeSources, status, processSendJob,
   // Funções puras exportadas só pra teste unitário (tests/unit/scheduler-core.test.js).
   inWindow, activeWindow, cooldownMinutes, renderTemplate, itemMatchesCampaign, campaignFilterCtx,
+  sortMode, batchSize, refillMode, refillThreshold, refillTimes, autoRefillDue, markAutoRefill,
 };
