@@ -174,7 +174,7 @@ function saveTemplates(body) {
     if (!String(saved.subject ?? spec.default.subject).trim()) {
       throw new Error(`O assunto de "${spec.label}" não pode ficar vazio`);
     }
-    // Só os 13 avisos podem ser desligados; nos de link o campo é ignorado.
+    // Só os 16 avisos podem ser desligados; nos de link o campo é ignorado.
     if (spec.canDisable && value.enabled !== undefined) saved.enabled = !!value.enabled;
 
     next[key] = saved;

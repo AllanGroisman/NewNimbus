@@ -139,8 +139,11 @@ async function provisionFromCheckout(session) {
 
   if (created && setPasswordToken) {
     const planLabel = planId ? limits.getPlan(planId).label : null;
+    // userId: o mailer registra o envio em email_log, e é esse registro que
+    // segura o "assinatura confirmada" do webhook (billing/notify.js) — senão
+    // quem vem da landing recebe dois e-mails dizendo a mesma coisa.
     mailer.sendWelcomeSetPasswordEmail({
-      to: user.email, name: user.name, token: setPasswordToken, planLabel,
+      to: user.email, name: user.name, token: setPasswordToken, planLabel, userId: user.id,
     }).catch(err => logger.error({ err: err.message }, "[provision] e-mail de boas-vindas falhou"));
   }
 

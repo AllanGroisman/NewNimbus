@@ -58,6 +58,12 @@ const PLANS = {
   },
 };
 
+// Quanto custa o teste de 15 dias, em centavos. Quem cobra de verdade é o price
+// STRIPE_PRICE_TRIAL_FEE do dashboard — esta constante existe só pra escrever
+// "R$ 1,00" no e-mail de confirmação sem ir buscar a fatura no Stripe. Mesmo
+// acordo do priceBRL acima: se mudar no Stripe, mude aqui.
+const TRIAL_FEE_CENTS = 100;
+
 // Carência de pagamento: cartão que falha (past_due/unpaid) não derruba o
 // cliente na hora — o Stripe ainda vai tentar cobrar de novo. Durante estes
 // 3 dias, contados de `pastDueSince`, o plano pago continua valendo.
@@ -205,6 +211,7 @@ module.exports = {
   PLANS,
   PLAN_RANK,
   GRACE_MS,
+  TRIAL_FEE_CENTS,
   planRank,
   isUpgrade,
   effectivePlanId,

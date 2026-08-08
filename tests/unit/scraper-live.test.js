@@ -41,16 +41,32 @@ describe("scrapeML (live)", () => {
 });
 
 describe("scrapeAmazon (live — página de ofertas por departamento)", () => {
-  it.skipIf(!LIVE)("traz ofertas do departamento com nome, link /dp/ e preço", async () => {
+  it.skipIf(!LIVE)("traz ofertas com nome, link canônico /dp/ASIN e preço confirmado", async () => {
     const items = await scraper.scrapeAmazon({ category: "beleza", limit: 8 });
     expect(items.length).toBeGreaterThan(0);
     for (const p of items) {
       expect(typeof p.name).toBe("string");
       expect(p.name.length).toBeGreaterThan(0);
-      expect(p.link).toMatch(/amazon\.com\.br/);
+      // Link canônico: sem slug de nome, sem /ref= de campanha, sem tracking.
+      expect(p.link).toMatch(/^https:\/\/www\.amazon\.com\.br\/dp\/[A-Z0-9]{10}$/);
       expect(typeof p.price).toBe("number");
       expect(p.price).toBeGreaterThan(0);
       expect(p.store).toBe("Amazon");
+      // Task 68: nada entra no catálogo sem preço conferido na página do produto.
+      expect(p.priceVerified).toBe(true);
     }
-  }, 120000);
+  }, 180000);
+
+  // O teste que reproduz a reclamação da task 68: "abri o link do card e o preço
+  // era outro". Compara o que o catálogo guardaria com o que a página do produto
+  // mostra AGORA — se divergir, o bug voltou.
+  it.skipIf(!LIVE)("o preço do catálogo bate com o da página do produto", async () => {
+    const items = await scraper.scrapeAmazon({ category: "beleza", limit: 3 });
+    expect(items.length).toBeGreaterThan(0);
+    for (const p of items.slice(0, 3)) {
+      const single = await scraper.scrapeSingleProduct(p.link);
+      expect(single.price).not.toBeNull();
+      expect(Math.abs(single.price - p.price)).toBeLessThan(0.01);
+    }
+  }, 300000);
 });

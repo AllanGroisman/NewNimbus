@@ -90,7 +90,6 @@ export default function ProductSearchTab({
   refilling, triggerRefill, refillMsg,
   save, dirty, saved, saveBtnStyle,
   pending = [], queue = [], history = [], cooldownMinutes = 0, cooldownLabel,
-  onApprove, onReject, onApproveAll, onRejectAll,
   onAddCatalogProduct, onAddCatalogProducts,
 }) {
   const filters = scraping.filters || {};
@@ -726,6 +725,20 @@ export default function ProductSearchTab({
             <div style={hintStyle}>Pega de cima pra baixo da lista, nesta ordem — é a mesma ordem da lista de produtos.</div>
           </div>
         </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 12, paddingTop: 14 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 500 }}>Misturar a fila depois de preencher</div>
+            <div style={hintStyle}>
+              Embaralha a fila inteira a cada preenchimento, pra não sair uma sequência de ofertas parecidas na ordem em que foram achadas.
+            </div>
+          </div>
+          <Toggle
+            label="Misturar a fila depois de preencher"
+            value={scraping.shuffleAfterRefill === true}
+            onChange={v => setScraping(s => ({ ...s, shuffleAfterRefill: v }))}
+          />
+        </div>
         </div>
       )}
 
@@ -1164,34 +1177,11 @@ export default function ProductSearchTab({
         )}
       </div>
 
-      {/* ── 5. Aguardando revisão ─────────────────────────────────────── */}
+      {/* A revisão dos pendentes vive na aba Fila (uma tela só pros dois tipos
+             de campanha) — aqui ficou só o link pra lá. */}
       {pending.length > 0 && (
-        <div data-tour="pr-pending" style={{ marginBottom: 20 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 500 }}>Aguardando revisão</div>
-              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>Produtos encontrados que precisam da sua aprovação</div>
-            </div>
-            <div style={{ display: "flex", gap: 6 }}>
-              <button onClick={onApproveAll} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY_LIGHT, color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Adicionar todos à fila</button>
-              <button onClick={onRejectAll} style={{ padding: "5px 12px", borderRadius: 7, background: "var(--danger-bg)", color: "var(--danger-text)", border: "0.5px solid var(--danger-border)", fontSize: 12, cursor: "pointer" }}>Rejeitar todos</button>
-            </div>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {pending.map(p => {
-              const pid = p.id ?? p.key;
-              return (
-                <ProductRow
-                  key={pid}
-                  product={p}
-                  actions={<>
-                    <button onClick={() => onApprove(pid)} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY_LIGHT, color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Adicionar na fila</button>
-                    <button onClick={() => onReject(pid)} style={{ padding: "5px 10px", borderRadius: 7, border: "0.5px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", fontSize: 12, cursor: "pointer" }}>Rejeitar</button>
-                  </>}
-                />
-              );
-            })}
-          </div>
+        <div style={{ marginBottom: 20, padding: "10px 14px", borderRadius: 10, background: "var(--color-background-secondary)", fontSize: 12, color: "var(--color-text-secondary)" }}>
+          {pending.length} produto{pending.length !== 1 ? "s" : ""} aguardando revisão — aprove ou rejeite na aba <strong>Fila</strong>.
         </div>
       )}
 

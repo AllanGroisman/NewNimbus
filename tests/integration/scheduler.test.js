@@ -380,6 +380,13 @@ describe("scheduler.tick — loop periodico", () => {
     expect(r.added).toBeGreaterThan(0);
   });
 
+  // Janela de 5 minutos 12 horas afastada de agora — nunca contém o horário do
+  // teste, então o dispatch não roda mas a campanha não conta como pausada.
+  function janelaLonge() {
+    const h = String((new Date().getHours() + 12) % 24).padStart(2, "0");
+    return { id: 1, from: `${h}:00`, to: `${h}:05`, interval: 30 };
+  }
+
   it("modo horários: fora do horário não preenche; no horário preenche uma vez só", async () => {
     await catalog.upsertProducts([
       mlProduct(931, { category: "beleza", discount: 40 }),
@@ -393,8 +400,10 @@ describe("scheduler.tick — loop periodico", () => {
       categories: ["beleza"],
       sources: ["ml"],
       whatsappGroupIds: ["wa-hor"],
-      // Sem janela de envio: o modo horários preenche mesmo assim, e nada é enviado.
-      schedule: { windows: [], cooldownValue: 24, cooldownUnit: "horas" },
+      // Janela longe do horário atual: o modo horários preenche FORA da janela,
+      // e nada é enviado. (Sem janela nenhuma a campanha ficaria pausada — é o
+      // gate de "campanha sem janela de envio".)
+      schedule: { windows: [janelaLonge()], cooldownValue: 24, cooldownUnit: "horas" },
     });
     group.scraping.refillMode = "schedule";
     group.scraping.refillTimes = ["03:00"];   // horário que não é "agora" no teste
@@ -490,6 +499,39 @@ describe("scheduler.tick — loop periodico", () => {
     expect(g.queue).toHaveLength(1);
     expect(g.history).toHaveLength(0);
   });
+
+  it("sem NENHUMA janela a campanha fica parada: não envia e nem busca produtos novos", async () => {
+    await catalog.upsertProducts([
+      mlProduct(941, { category: "beleza", discount: 40 }),
+      mlProduct(942, { category: "beleza", discount: 60 }),
+    ]);
+    const { user, auth } = await createUserWithMLAffiliate();
+    const waGroups = [makeWhatsAppGroup({ id: "wa-nowin", numberId: "num-nowin", jid: "nowin@g.us" })];
+    const group = makeGroup({
+      id: 1003,
+      categories: ["beleza"],
+      sources: ["ml"],
+      whatsappGroupIds: ["wa-nowin"],
+      schedule: { windows: [], cooldownValue: 24, cooldownUnit: "horas" },
+    });
+    // Modo horários dispararia agora — mas a campanha está parada por falta de janela.
+    const now = new Date();
+    group.scraping.refillMode = "schedule";
+    group.scraping.refillTimes = [`${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`];
+    await auth("put", "/api/state").send({
+      groups: [group],
+      numbers: [{ id: "num-nowin", phone: "5511num-nowin" }],
+      whatsappGroups: waGroups,
+    });
+    waConnect(user.id, "num-nowin");
+
+    await scheduler.tick();
+
+    const g = (await storage.loadState(user.id)).groups.find(g => g.id === 1003);
+    expect(g.queue).toHaveLength(0);
+    expect(g.pending).toHaveLength(0);
+    expect(g.history).toHaveLength(0);
+  });
 });
 
 describe("POST /api/state/groups/:gid/refill — endpoint HTTP", () => {
@@ -502,6 +544,29 @@ describe("POST /api/state/groups/:gid/refill — endpoint HTTP", () => {
     const r = await auth("post", "/api/state/groups/800/refill").send({});
     expect(r.status).toBe(200);
     expect(r.body.queueSize).toBeGreaterThan(0);
+  });
+
+  it("shuffleAfterRefill embaralha a fila (mesmos itens, fora da ordem de desconto)", async () => {
+    // 15 descontos distintos: sem embaralhar a fila sai exatamente do maior pro
+    // menor, então qualquer outra ordem prova que o embaralhamento rodou.
+    const produtos = [];
+    for (let i = 0; i < 15; i++) produtos.push(mlProduct(820 + i, { category: "esporte", discount: 30 + i }));
+    await catalog.upsertProducts(produtos);
+    const { user, auth } = await createUserWithMLAffiliate();
+    const group = makeGroup({ id: 820, categories: ["esporte"], sources: ["ml"] });
+    await auth("put", "/api/state").send({ groups: [group] });
+
+    const r = await auth("post", "/api/state/groups/820/refill").send({ shuffleAfterRefill: true });
+    expect(r.status).toBe(200);
+
+    const g = (await storage.loadState(user.id)).groups.find(g => g.id === 820);
+    expect(g.queue.length).toBe(15);
+    const descontos = g.queue.map(i => i.discount);
+    const ordenado = [...descontos].sort((a, b) => b - a);
+    // Nenhum item se perdeu no caminho...
+    expect(ordenado).toEqual(produtos.map(p => p.discount).sort((a, b) => b - a));
+    // ...mas a fila não está mais na ordem de desconto.
+    expect(descontos).not.toEqual(ordenado);
   });
 });
 

@@ -11,13 +11,34 @@
 // webhook, onde uma exceção viraria 500 e reentrega.
 
 const emails = require("../notifications/email");
+const emailLog = require("../notifications/email/log");
 const auth = require("../auth");
 const limits = require("./limits");
 const stripe = require("./stripe");
+const store = require("./pg");
 const logger = require("../infra/logger");
 
 const PAST_DUE = new Set(["past_due", "unpaid"]);
 const EM_DIA = new Set(["active", "trialing"]);
+
+// Quem assina pela landing recebe o "crie sua senha", que já abre com "pagamento
+// confirmado". Se o webhook mandasse o "assinatura confirmada" logo atrás seriam
+// dois e-mails dizendo a mesma coisa — esta janela cobre a distância entre os
+// dois eventos do Stripe (checkout.session.completed e subscription.created).
+const JANELA_BOAS_VINDAS_MS = 30 * 60 * 1000;
+
+// Faturas que NÃO viram recibo: a primeira da assinatura já foi confirmada pelo
+// `subscription_started`, e fatura de R$ 0 (crédito, trial sem cobrança) não é
+// pagamento. Assim cada cobrança gera exatamente um e-mail.
+const RECIBO_MOTIVOS = new Set(["subscription_cycle", "subscription_update"]);
+
+// Valor mensal do plano em centavos, pelo catálogo local (limits.js). Não vale a
+// pena ir ao Stripe por isso dentro do webhook — e limits.js já é o fallback
+// oficial de preço quando o catálogo remoto não responde (billing/prices.js).
+function centavosDoPlano(planId) {
+  const preco = limits.getPlan(planId)?.priceBRL;
+  return Number.isFinite(preco) ? Math.round(preco * 100) : null;
+}
 
 function iso(d) {
   if (!d) return "";
@@ -32,11 +53,12 @@ function modoBate(livemode) {
   return livemode === (stripe.mode() === "live");
 }
 
-// Quem não deve receber aviso de cobrança: conta sem e-mail, suspensa (já
-// recebeu o aviso de suspensão) e admin, que tem plano Business por bypass e
-// receberia avisos que não correspondem à realidade dele.
+// Quem não deve receber aviso de cobrança: conta sem e-mail e conta suspensa
+// (que já recebeu o aviso de suspensão). Admin recebe como qualquer cliente —
+// ele tem Business por bypass de gating, mas se tem assinatura de verdade os
+// avisos valem pra ele igual, e sem isso não dá pra testar cobrança na prática.
 function podeReceber(user) {
-  return !!(user && user.email && !user.suspended && user.role !== "admin");
+  return !!(user && user.email && !user.suspended);
 }
 
 function base(user, sub) {
@@ -67,9 +89,36 @@ function decidirAviso({ before, after, user }) {
     };
   }
 
-  // 3. Trocou de plano. Só entre planos pagos: cair pra free é cancelamento,
+  // 3. Assinou pela primeira vez (ou voltou depois de cancelar): free/sem plano
+  // → plano pago em dia. É o comprovante de que o pagamento entrou — no teste de
+  // R$ 1,00 é ele que avisa quando e quanto será a cobrança cheia.
+  // A dedupeKey ancorada no id da assinatura segura as reentregas do Stripe, e
+  // depois do primeiro evento `antes` já é pago, então a regra nem é alcançada.
+  const eraPago = !!antes.planId && antes.planId !== "free";
+  if (!eraPago && depois.planId && depois.planId !== "free" && EM_DIA.has(depois.status)) {
+    const trial = depois.status === "trialing";
+    const mensal = centavosDoPlano(depois.planId);
+    return {
+      kind: "subscription_started",
+      payload: {
+        ...base(user, depois),
+        trial,
+        // No teste, o que a pessoa pagou agora foi a taxa de R$ 1,00 — o valor
+        // do plano só entra na frase sobre a próxima cobrança.
+        amount: trial ? limits.TRIAL_FEE_CENTS : mensal,
+        planAmount: mensal,
+        currency: "brl",
+        // Em trial, currentPeriodEnd é o fim do teste (é quando a cobrança cheia
+        // acontece); fora dele, a data da próxima renovação. Serve aos dois.
+        periodEnd: depois.currentPeriodEnd,
+      },
+      dedupeKey: `subscription_started:${user.id}:${depois.stripeSubscriptionId || iso(depois.currentPeriodEnd)}`,
+    };
+  }
+
+  // 4. Trocou de plano. Só entre planos pagos: cair pra free é cancelamento,
   // que vem por subscription.deleted; sair de free é a primeira assinatura,
-  // que já tem o e-mail de boas-vindas.
+  // que a regra acima já cobre.
   if (antes.planId && depois.planId && antes.planId !== depois.planId
       && antes.planId !== "free" && depois.planId !== "free") {
     return {
@@ -85,7 +134,7 @@ function decidirAviso({ before, after, user }) {
     };
   }
 
-  // 4. Cancelamento agendado / desfeito pelo Customer Portal.
+  // 5. Cancelamento agendado / desfeito pelo Customer Portal.
   if (!antes.cancelAtPeriodEnd && depois.cancelAtPeriodEnd) {
     return {
       kind: "cancel_scheduled",
@@ -121,6 +170,13 @@ async function onSubscriptionChanged({ userId, before, after, livemode, planPaus
       aviso.payload.pausedNumbers = (planPaused?.numbers || []).length;
     }
 
+    // Conta que nasceu deste mesmo pagamento já recebeu o "crie sua senha", que
+    // abre confirmando o pagamento. Um só basta.
+    if (aviso.kind === "subscription_started"
+        && await emailLog.recentlySent(userId, "welcome_set_password", JANELA_BOAS_VINDAS_MS)) {
+      return null;
+    }
+
     emails.sendAsync(aviso.kind, aviso.payload, { dedupeKey: aviso.dedupeKey });
     return aviso.kind;
   } catch (err) {
@@ -148,4 +204,89 @@ async function onSubscriptionDeleted({ userId, before, livemode, user }) {
   }
 }
 
-module.exports = { onSubscriptionChanged, onSubscriptionDeleted, decidirAviso, podeReceber };
+// Dono de um objeto do Stripe que só traz o customer (fatura, cobrança).
+// getByCustomerId devolve a linha CRUA de propósito: a máscara de modo faria a
+// assinatura do outro modo parecer free e o e-mail sairia com o plano errado.
+async function donoDoCustomer(customer) {
+  const customerId = typeof customer === "string" ? customer : customer?.id;
+  if (!customerId) return { sub: null, user: null };
+  const sub = await store.getByCustomerId(customerId);
+  if (!sub) return { sub: null, user: null };
+  return { sub, user: await auth.findById(sub.userId) };
+}
+
+// Recibo das cobranças recorrentes — `invoice.payment_succeeded`.
+// A primeira fatura da assinatura (billing_reason "subscription_create", que é
+// onde entra a taxa de R$ 1,00 do teste) fica de fora: quem confirma aquela é o
+// `subscription_started`, senão o cliente recebe dois e-mails da mesma cobrança.
+async function onInvoicePaid({ invoice, livemode }) {
+  try {
+    if (!modoBate(livemode)) return null;
+    const pago = Number(invoice?.amount_paid) || 0;
+    if (pago <= 0) return null;
+    if (!RECIBO_MOTIVOS.has(String(invoice?.billing_reason || ""))) return null;
+
+    const { sub, user } = await donoDoCustomer(invoice?.customer);
+    if (!sub || !podeReceber(user)) return null;
+
+    emails.sendAsync(
+      "payment_receipt",
+      {
+        ...base(user, sub),
+        amount: pago,
+        currency: invoice.currency,
+        // status_transitions.paid_at vem em segundos (epoch), como todo
+        // timestamp do Stripe.
+        paidAt: invoice?.status_transitions?.paid_at
+          ? new Date(invoice.status_transitions.paid_at * 1000)
+          : new Date(),
+        periodEnd: sub.currentPeriodEnd,
+        invoiceUrl: invoice?.hosted_invoice_url || "",
+      },
+      { dedupeKey: `payment_receipt:${user.id}:${invoice.id}` },
+    );
+    return "payment_receipt";
+  } catch (err) {
+    logger.warn({ err: err.message, invoice: invoice?.id }, "[billing] recibo de pagamento falhou");
+    return null;
+  }
+}
+
+// Estorno — `charge.refunded`. Vale pro integral e pro parcial; o Stripe reenvia
+// o evento a cada novo estorno da mesma cobrança, e por isso o valor acumulado
+// entra na dedupeKey (dois estornos parciais = dois e-mails, um por valor).
+async function onChargeRefunded({ charge, livemode }) {
+  try {
+    if (!modoBate(livemode)) return null;
+    const devolvido = Number(charge?.amount_refunded) || 0;
+    if (devolvido <= 0) return null;
+
+    const { sub, user } = await donoDoCustomer(charge?.customer);
+    if (!sub || !podeReceber(user)) return null;
+
+    emails.sendAsync(
+      "refund_issued",
+      {
+        ...base(user, sub),
+        amount: devolvido,
+        currency: charge.currency,
+        partial: devolvido < (Number(charge?.amount) || 0),
+        refundedAt: new Date(),
+      },
+      { dedupeKey: `refund_issued:${user.id}:${charge.id}:${devolvido}` },
+    );
+    return "refund_issued";
+  } catch (err) {
+    logger.warn({ err: err.message, charge: charge?.id }, "[billing] aviso de reembolso falhou");
+    return null;
+  }
+}
+
+module.exports = {
+  onSubscriptionChanged,
+  onSubscriptionDeleted,
+  onInvoicePaid,
+  onChargeRefunded,
+  decidirAviso,
+  podeReceber,
+};

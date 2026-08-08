@@ -37,7 +37,7 @@ const NAO_FOI_VOCE =
 const V_NOME = { name: "nome", desc: "Primeiro nome de quem recebe" };
 const V_LINK = { name: "link", desc: "O link do botão, em texto (pra quem não consegue clicar)" };
 
-// ── Os 17 e-mails ─────────────────────────────────────────────────────────
+// ── Os 20 e-mails ─────────────────────────────────────────────────────────
 //
 // `ctaUrl` só existe nos e-mails cujo botão aponta pra um endereço fixo. Nos do
 // grupo "token" o link é gerado no envio e chega por parâmetro (render.js).
@@ -301,6 +301,119 @@ const EMAILS = [
   // dias só valem alguma coisa se alguém avisar a pessoa. Todos apontam pra tela
   // de Assinatura, onde já existe o botão do Customer Portal (a URL do portal
   // expira em minutos, então não vai em e-mail).
+  //
+  // Os três primeiros são os avisos de dinheiro que ENTROU (ou voltou). Cada
+  // cobrança gera exatamente um deles: a primeira fatura é
+  // `subscription_started`, as seguintes são `payment_receipt`. Ver
+  // billing/notify.js.
+  {
+    key: "subscription_started",
+    group: "billing",
+    label: "Assinatura confirmada (primeira cobrança)",
+    description:
+      "Enviado quando a assinatura paga começa — inclusive no teste de R$ 1,00. É o comprovante de que o pagamento entrou.",
+    canDisable: true,
+    variables: [
+      V_NOME,
+      { name: "plano", desc: "Nome do plano assinado" },
+      { name: "valor", desc: 'Quanto foi pago agora (ex.: "R$ 1,00")' },
+      {
+        name: "cobranca",
+        desc: "Frase pronta sobre a próxima cobrança — muda se for teste ou assinatura cheia",
+      },
+    ],
+    example: {
+      nome: "Ana",
+      plano: "Básico",
+      valor: "R$ 1,00",
+      cobranca:
+        "Seu teste vai até *22 de agosto de 2026*. A partir daí a assinatura passa a *R$ 69,90 por mês*, cobrada automaticamente no mesmo cartão.",
+    },
+    ctaUrl: billingUrl,
+    default: {
+      subject: "Assinatura confirmada — bem-vindo ao Nimbus",
+      title: "Pagamento confirmado!",
+      greeting: "{nome}",
+      tone: "normal",
+      paragraphs: [
+        "Recebemos seu pagamento de *{valor}* e sua assinatura do plano *{plano}* já está ativa.",
+        "{cobranca}",
+        "Tudo pronto pra usar: é só entrar no sistema, conectar seu WhatsApp e criar a primeira campanha.",
+      ],
+      ctaLabel: "Ver minha assinatura",
+      footnote:
+        "Você pode cancelar quando quiser pela tela de Assinatura — sem multa e sem falar com ninguém.",
+    },
+  },
+  {
+    key: "payment_receipt",
+    group: "billing",
+    label: "Recibo de cobrança (renovação)",
+    description:
+      "Enviado a cada cobrança recorrente aprovada. A primeira cobrança não entra aqui — ela tem o e-mail de assinatura confirmada.",
+    canDisable: true,
+    variables: [
+      V_NOME,
+      { name: "plano", desc: "Nome do plano cobrado" },
+      { name: "valor", desc: 'Valor cobrado (ex.: "R$ 69,90")' },
+      { name: "data_pagamento", desc: "Data da cobrança, por extenso" },
+      {
+        name: "proxima_cobranca",
+        desc: 'Frase pronta da próxima cobrança (ex.: "em *07 de setembro de 2026*")',
+        condicional: true,
+      },
+      { name: "link_fatura", desc: "Link da fatura no Stripe", condicional: true },
+    ],
+    example: {
+      nome: "Ana",
+      plano: "Básico",
+      valor: "R$ 69,90",
+      data_pagamento: "07 de agosto de 2026",
+      proxima_cobranca: "em *07 de setembro de 2026*",
+      link_fatura: "https://invoice.stripe.com/i/exemplo",
+    },
+    ctaUrl: billingUrl,
+    default: {
+      subject: "Recibo do seu pagamento — Nimbus",
+      title: "Pagamento recebido",
+      greeting: "{nome}",
+      tone: "normal",
+      paragraphs: [
+        "Recebemos *{valor}* referente à assinatura do plano *{plano}* em {data_pagamento}. Nada precisa ser feito — está tudo em dia.",
+        "A próxima cobrança é {proxima_cobranca}.",
+        "Segunda via da fatura: {link_fatura}",
+      ],
+      ctaLabel: "Ver minha assinatura",
+      footnote: "",
+    },
+  },
+  {
+    key: "refund_issued",
+    group: "billing",
+    label: "Reembolso processado",
+    description: "Enviado quando um pagamento é estornado, no todo ou em parte.",
+    canDisable: true,
+    variables: [
+      V_NOME,
+      { name: "valor", desc: 'Valor devolvido (ex.: "R$ 69,90")' },
+      { name: "tipo", desc: '"integral" ou "parcial"' },
+      { name: "data_reembolso", desc: "Data do estorno, por extenso" },
+    ],
+    example: { nome: "Ana", valor: "R$ 69,90", tipo: "integral", data_reembolso: "07 de agosto de 2026" },
+    ctaUrl: billingUrl,
+    default: {
+      subject: "Seu reembolso do Nimbus foi processado",
+      title: "Reembolso processado",
+      greeting: "{nome}",
+      tone: "normal",
+      paragraphs: [
+        "Processamos o reembolso {tipo} de *{valor}* em {data_reembolso}.",
+        "O valor volta pra mesma forma de pagamento usada na compra. O banco costuma levar de 5 a 10 dias úteis pra mostrar o crédito na fatura — esse prazo é do cartão, não nosso.",
+      ],
+      ctaLabel: "Ver minha assinatura",
+      footnote: "Ficou alguma dúvida sobre o valor? É só responder este e-mail.",
+    },
+  },
   {
     key: "payment_failed",
     group: "billing",

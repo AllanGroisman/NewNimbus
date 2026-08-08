@@ -48,6 +48,16 @@ function activeWindow(now, schedule) {
   return schedule.windows.find(w => inWindow(now, w)) || null;
 }
 
+// Campanha sem NENHUMA janela de envio fica parada — é assim que o usuário
+// pausa (a campanha nova nasce sem janela). O envio instantâneo ignora as
+// janelas de propósito, então com ele ligado a campanha continua rodando.
+function windowGate(group) {
+  const windows = group?.schedule?.windows;
+  if (Array.isArray(windows) && windows.length) return { ok: true, reason: null };
+  if (group?.scraping?.autoSend === true) return { ok: true, reason: null };
+  return { ok: false, reason: "nenhuma janela de envio configurada" };
+}
+
 function cooldownMinutes(schedule) {
   if (!schedule) return 0;
   const v = Number(schedule.cooldownValue) || 0;
@@ -315,6 +325,23 @@ function isAutoApprove(group) {
 // um pela prévia do catálogo). Ligado é o padrão — campanha antiga não muda.
 function isAutoRefill(group) {
   return group.scraping?.autoRefill !== false;
+}
+
+// Embaralhar a fila depois de cada preenchimento automático (Fisher–Yates).
+// Sem isso a fila sai na ordem da busca (maior desconto primeiro, por exemplo)
+// e o grupo recebe ofertas parecidas em sequência.
+function shuffleArray(arr) {
+  const out = [...(arr || [])];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+// Opção do preenchimento automático — desligada por padrão.
+function shuffleAfterRefill(group) {
+  return group?.scraping?.shuffleAfterRefill === true;
 }
 
 // Campanha de repasse: a fila é populada pelos links capturados nos grupos líderes,
@@ -614,7 +641,7 @@ async function dispatchOne(userId, group, whatsappGroups, numbers) {
   if (!queue.length) return null;
 
   const now = new Date();
-  // Envio automático (repasse): ignora janelas e intervalo — tudo que está na
+  // Envio instantâneo (repasse): ignora janelas e intervalo — tudo que está na
   // fila é despachado (um item por tick). Sem esse flag, respeita janela+intervalo.
   const autoSend = group.scraping?.autoSend === true;
   if (!autoSend) {
@@ -792,6 +819,13 @@ async function processGroup(userId, group, whatsappGroups, numbers, planPaused) 
     userNotifier.onCampaignStopped(userId, group.id, group.name, waGate.reason, true).catch(() => {});
     return;
   }
+  // Sem nenhuma janela de envio a campanha está parada de verdade: não envia e
+  // também não busca produtos novos (senão a fila cresceria sem nunca sair).
+  // O envio instantâneo ignora as janelas de propósito, então ele não conta.
+  if (!windowGate(group).ok) {
+    userNotifier.onCampaignStopped(userId, group.id, group.name, "nenhuma janela de envio configurada", true).catch(() => {});
+    return;
+  }
   // Não está parada por gate: reseta o edge-trigger pra uma próxima parada avisar.
   userNotifier.onCampaignStopped(userId, group.id, group.name, null, false).catch(() => {});
 
@@ -824,7 +858,10 @@ async function processGroup(userId, group, whatsappGroups, numbers, planPaused) 
     const { cleanedQueue, cleanedPending, newItems, target, removedFromQueue } = await refillQueue(userId, group);
     if (newItems.length || removedFromQueue > 0 || cleanedPending.length !== (group.pending || []).length) {
       if (target === "queue") {
-        updates.queue = [...cleanedQueue, ...newItems];
+        // Embaralha a fila inteira (antigos + novos) quando o usuário pediu —
+        // só faz sentido pra fila; pendente espera aprovação, não tem ordem.
+        const next = [...cleanedQueue, ...newItems];
+        updates.queue = newItems.length && shuffleAfterRefill(group) ? shuffleArray(next) : next;
         if (cleanedPending.length !== (group.pending || []).length) updates.pending = cleanedPending;
       } else {
         updates.pending = [...cleanedPending, ...newItems];
@@ -952,7 +989,8 @@ async function refillNow(userId, groupId, overrides = {}) {
   const merged = { ...group };
   const hasOverride = overrides && (
     overrides.filters || overrides.sources || overrides.categories ||
-    overrides.sortBy !== undefined || overrides.batchSize !== undefined
+    overrides.sortBy !== undefined || overrides.batchSize !== undefined ||
+    overrides.shuffleAfterRefill !== undefined
   );
   if (hasOverride) {
     merged.scraping = {
@@ -961,6 +999,7 @@ async function refillNow(userId, groupId, overrides = {}) {
       ...(overrides.filters !== undefined ? { filters: overrides.filters } : {}),
       ...(overrides.sortBy !== undefined ? { sortBy: overrides.sortBy } : {}),
       ...(overrides.batchSize !== undefined ? { batchSize: overrides.batchSize } : {}),
+      ...(overrides.shuffleAfterRefill !== undefined ? { shuffleAfterRefill: overrides.shuffleAfterRefill } : {}),
     };
     if (Array.isArray(overrides.categories)) merged.categories = overrides.categories;
   }
@@ -968,7 +1007,8 @@ async function refillNow(userId, groupId, overrides = {}) {
   const { cleanedQueue, cleanedPending, newItems, target, removedFromQueue, skippedAff } = await refillQueue(userId, merged);
   const updates = {};
   if (target === "queue") {
-    updates.queue = [...cleanedQueue, ...newItems];
+    const next = [...cleanedQueue, ...newItems];
+    updates.queue = newItems.length && shuffleAfterRefill(merged) ? shuffleArray(next) : next;
     if (cleanedPending.length !== (group.pending || []).length) updates.pending = cleanedPending;
   } else {
     updates.pending = [...cleanedPending, ...newItems];
@@ -1098,6 +1138,7 @@ module.exports = {
   start, stop, tick, sendNextNow, refillNow, manualAdd, addItemToGroup,
   isRepasse, isAutoApprove, isAutoRefill, resolveSources, activeSources, status, processSendJob,
   // Funções puras exportadas só pra teste unitário (tests/unit/scheduler-core.test.js).
-  inWindow, activeWindow, cooldownMinutes, renderTemplate, itemMatchesCampaign, campaignFilterCtx,
+  inWindow, activeWindow, windowGate, cooldownMinutes, renderTemplate, itemMatchesCampaign, campaignFilterCtx,
   sortMode, batchSize, refillMode, refillThreshold, refillTimes, autoRefillDue, markAutoRefill,
+  shuffleArray, shuffleAfterRefill,
 };

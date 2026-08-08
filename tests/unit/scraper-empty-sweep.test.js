@@ -17,7 +17,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 const scraper = require(path.resolve(__dirname, "..", "..", "backend", "scraping", "scraper.js"));
-const { summarizeDeadStores } = require(path.resolve(__dirname, "..", "..", "backend", "scraping", "admin.js"));
+const { summarizeDeadStores, emptySweepReason } = require(path.resolve(__dirname, "..", "..", "backend", "scraping", "admin.js"));
 
 const { STORES, scrapeOfertas } = scraper;
 const originalScrape = { ml: STORES.ml.scrape, shopee: STORES.shopee.scrape };
@@ -130,5 +130,32 @@ describe("summarizeDeadStores — resumo da rodada", () => {
   it("trata rodada vazia sem quebrar", () => {
     expect(summarizeDeadStores({})).toBeNull();
     expect(summarizeDeadStores(null)).toBeNull();
+  });
+});
+
+// Com a conferência de preço da Amazon, "0 produtos" ganhou mais de uma causa
+// possível. O `stats` que a loja reporta diz qual foi, pra o alerta no WhatsApp
+// não obrigar o admin a adivinhar.
+describe("emptySweepReason", () => {
+  it("aponta a vitrine quando nem os cards vieram", () => {
+    expect(emptySweepReason([{ source: "amazon", harvested: 0, verified: 0 }]))
+      .toMatch(/vitrine de ofertas não devolveu/i);
+  });
+
+  it("aponta bloqueio/layout quando nada teve o preço confirmado", () => {
+    const msg = emptySweepReason([{ source: "amazon", harvested: 120, verified: 0 }]);
+    expect(msg).toMatch(/preço confirmado/i);
+    expect(msg).toMatch(/120/);
+  });
+
+  it("aponta os filtros quando o preço foi confirmado mas nada passou", () => {
+    const msg = emptySweepReason([{ source: "amazon", harvested: 120, verified: 37, discardedByFilter: 37 }]);
+    expect(msg).toMatch(/filtros/i);
+    expect(msg).toMatch(/37/);
+  });
+
+  it("cai na mensagem genérica quando a loja não reporta stats", () => {
+    expect(emptySweepReason([])).toMatch(/nenhum produto retornado/i);
+    expect(emptySweepReason(null)).toMatch(/nenhum produto retornado/i);
   });
 });

@@ -6,10 +6,12 @@
 // Estratégia:
 //   1. Se a URL tiver MLB ID (Mercado Livre), usa "MLB" + id
 //   2. Se a URL tiver padrão Shopee `i.<sellerId>.<itemId>`, usa "SHP" + ids
-//   3. Senão, usa origin + pathname (descarta query strings de tracking)
-//   4. Fallback: nome normalizado + store
+//   3. Se for Amazon e der pra extrair o ASIN, usa "AMZ" + asin
+//   4. Senão, usa origin + pathname (descarta query strings de tracking)
+//   5. Fallback: nome normalizado + store
 
 const crypto = require("crypto");
+const { isAmazonHost, extractASIN } = require("../scraping/amazon-url");
 
 function productKey(p) {
   const link = p.link || "";
@@ -22,6 +24,12 @@ function productKey(p) {
   // Shopee — formato `...-i.SELLERID.ITEMID` (com ou sem query)
   const msh = decoded.match(/[.\-/]i\.(\d+)\.(\d+)(?:[/?#]|$)/i);
   if (msh) return crypto.createHash("md5").update(`SHP${msh[1]}.${msh[2]}`).digest("hex");
+  // Amazon — o ASIN é o identificador do produto. Sem isso, /dp/ASIN,
+  // /gp/product/ASIN e /slug/dp/ASIN/ref=... viravam três linhas no catálogo.
+  if (isAmazonHost(link)) {
+    const asin = extractASIN(decoded);
+    if (asin) return crypto.createHash("md5").update("AMZ" + asin).digest("hex");
+  }
   if (link) {
     try {
       const u = new URL(link);

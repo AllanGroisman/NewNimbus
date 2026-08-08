@@ -17,6 +17,7 @@
 const { appPublicUrl: APP_PUBLIC_URL } = require("../config/publicUrl");
 const transport = require("../notifications/email/transport");
 const render = require("../notifications/email/render");
+const emailLog = require("../notifications/email/log");
 
 function verifyUrl(token) {
   return `${APP_PUBLIC_URL}/?verify=${encodeURIComponent(token)}`;
@@ -75,8 +76,14 @@ async function sendPasswordResetEmail({ to, name, token }) {
 // existe), só com texto de primeiro acesso — e vale 24h.
 // Este e-mail é o plano B: no caminho feliz a pessoa já volta logada do Stripe e
 // define a senha ali mesmo.
-async function sendWelcomeSetPasswordEmail({ to, name, token, planLabel }) {
-  return enviar({
+//
+// É o único dos quatro que deixa rastro em `email_log`: billing/notify.js precisa
+// saber se ele saiu pra não mandar o "assinatura confirmada" logo atrás (os dois
+// dizem "pagamento confirmado" — quem assina pela landing receberia dois e-mails
+// quase iguais). O log falhar não pode impedir o envio: sem senha a pessoa não
+// entra no sistema.
+async function sendWelcomeSetPasswordEmail({ to, name, token, planLabel, userId }) {
+  const res = await enviar({
     key: "welcome_set_password",
     to,
     url: resetUrl(token),
@@ -84,6 +91,20 @@ async function sendWelcomeSetPasswordEmail({ to, name, token, planLabel }) {
     fallbackLabel: "BOAS-VINDAS / DEFINIR SENHA",
     validade: "24h",
   });
+
+  if (userId) {
+    try {
+      const row = await emailLog.claim({
+        kind: "welcome_set_password",
+        userId,
+        to,
+        dedupeKey: `welcome_set_password:${userId}:${token}`,
+      });
+      if (row) await emailLog.finish(row.id, "sent");
+    } catch { /* histórico é secundário — o e-mail já foi */ }
+  }
+
+  return res;
 }
 
 // Confirmação de troca de email. Vai SEMPRE para o endereço novo: é ele que

@@ -110,7 +110,7 @@ describe("Lembretes de cobrança — quem é avisado", () => {
     expect(await logsDe(user.id)).toHaveLength(0);
   });
 
-  it("pula admin e conta suspensa", async () => {
+  it("avisa admin igual a qualquer cliente, mas pula conta suspensa", async () => {
     const admin = await criarAssinante({
       status: "trialing", currentPeriodEnd: new Date(Date.now() + 1 * DIA), role: "admin",
     });
@@ -120,7 +120,10 @@ describe("Lembretes de cobrança — quem é avisado", () => {
 
     await reminders.runOnce();
 
-    expect(await logsDe(admin.id)).toHaveLength(0);
+    // Admin tem Business por bypass, mas se assinou de verdade os prazos valem
+    // pra ele igual — e sem isso não dá pra conferir cobrança na prática.
+    expect(await logsDe(admin.id)).toHaveLength(1);
+    // Conta suspensa já recebeu o aviso de suspensão.
     expect(await logsDe(suspenso.id)).toHaveLength(0);
   });
 

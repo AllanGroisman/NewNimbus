@@ -35,10 +35,10 @@ function dias(ms) {
   return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
 }
 
-// Mesma regra do billing/notify: admin tem Business por bypass e receberia
-// aviso falso; conta suspensa já foi avisada da suspensão.
+// Mesma regra do billing/notify: conta suspensa já foi avisada da suspensão.
+// Admin recebe como qualquer cliente.
 function podeReceber(user) {
-  return !!(user && user.email && !user.suspended && user.role !== "admin");
+  return !!(user && user.email && !user.suspended);
 }
 
 // Decide o aviso de UMA assinatura. Pura — o runOnce só orquestra.

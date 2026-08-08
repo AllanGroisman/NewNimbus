@@ -113,8 +113,12 @@ export const getGroupStats = (group, whatsappGroups = [], { affiliateConfigured 
   const pausedByAffiliateShopee = !shopeeOk && groupUsesShopee(group);
   const pausedByAffiliate = pausedByAffiliateML || pausedByAffiliateShopee;
   const pausedManual = !!group?.paused;
+  // Sem nenhuma janela de envio a campanha está parada: o backend não envia nem
+  // busca produtos novos. O envio instantâneo ignora as janelas de propósito,
+  // então com ele ligado a campanha continua rodando.
+  const pausedNoWindow = !((group?.schedule?.windows || []).length) && group?.scraping?.autoSend !== true;
   let status;
-  if (pausedManual || pausedByAffiliate) status = "paused";       // amarelo (manual/afiliado)
+  if (pausedManual || pausedByAffiliate || pausedNoWindow) status = "paused";  // amarelo (manual/afiliado/sem janela)
   else if (linked.length === 0) status = "empty";                 // cinza
   else if (connected === 0) status = "disconnected";              // vermelho — sem WhatsApp, pausada
   else if (connected < linked.length) status = "degraded";        // amarelo — parcial (algum caído)
@@ -129,7 +133,8 @@ export const getGroupStats = (group, whatsappGroups = [], { affiliateConfigured 
     pausedByAffiliateML,
     pausedByAffiliateShopee,
     pausedManual,
-    paused: pausedManual || pausedByAffiliate,
+    pausedNoWindow,
+    paused: pausedManual || pausedByAffiliate || pausedNoWindow,
   };
 };
 

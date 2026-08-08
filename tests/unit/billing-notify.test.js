@@ -49,9 +49,51 @@ describe("billing/notify — falha e recuperação de pagamento", () => {
     expect(decidir(emDia, emDia)).toBeNull();
   });
 
-  it("assinatura nova (sem estado anterior) não manda aviso de cobrança", () => {
-    // Quem acabou de assinar já recebeu o e-mail de boas-vindas.
-    expect(decidir(null, emDia)).toBeNull();
+});
+
+describe("billing/notify — primeira assinatura", () => {
+  it("sem estado anterior → plano pago manda subscription_started", () => {
+    const aviso = decidir(null, { ...emDia, stripeSubscriptionId: "sub_1" });
+    expect(aviso.kind).toBe("subscription_started");
+    expect(aviso.payload.planLabel).toBe("Pro");
+    expect(aviso.payload.trial).toBe(false);
+    // Fora do teste, o valor cobrado agora é a mensalidade do plano.
+    expect(aviso.payload.amount).toBe(9990);
+    // Ancorada na assinatura: reentrega do mesmo evento não repete o e-mail.
+    expect(aviso.dedupeKey).toBe("subscription_started:u-1:sub_1");
+  });
+
+  it("free → básico em teste manda subscription_started com o valor do teste", () => {
+    const aviso = decidir(
+      { planId: "free", status: "inactive" },
+      { planId: "basic", status: "trialing", currentPeriodEnd: new Date("2026-08-22"), stripeSubscriptionId: "sub_2" },
+    );
+    expect(aviso.kind).toBe("subscription_started");
+    expect(aviso.payload.trial).toBe(true);
+    // Pagou R$ 1,00 agora; a mensalidade só entra na frase da próxima cobrança.
+    expect(aviso.payload.amount).toBe(100);
+    expect(aviso.payload.planAmount).toBe(6990);
+  });
+
+  it("segundo evento da mesma assinatura não repete (já era pago)", () => {
+    const pago = { ...emDia, stripeSubscriptionId: "sub_1" };
+    expect(decidir(pago, pago)).toBeNull();
+  });
+
+  it("trialing → active (teste virou cobrança) não manda assinatura nova", () => {
+    const teste = { ...emDia, planId: "basic", status: "trialing" };
+    expect(decidir(teste, { ...teste, status: "active" })).toBeNull();
+  });
+
+  it("past_due → active continua sendo payment_recovered, não assinatura nova", () => {
+    const atrasado = { ...emDia, status: "past_due", pastDueSince: new Date("2026-08-01") };
+    expect(decidir(atrasado, emDia).kind).toBe("payment_recovered");
+  });
+
+  it("reassinar depois de cancelar (free → pago) manda subscription_started", () => {
+    const cancelado = { planId: "free", status: "canceled" };
+    expect(decidir(cancelado, { ...emDia, stripeSubscriptionId: "sub_3" }).kind)
+      .toBe("subscription_started");
   });
 });
 
@@ -89,8 +131,10 @@ describe("billing/notify — cancelamento agendado", () => {
 });
 
 describe("billing/notify — quem não recebe", () => {
-  it("admin não recebe (tem Business por bypass, o aviso seria falso)", () => {
-    expect(notify.podeReceber({ ...user, role: "admin" })).toBe(false);
+  it("admin recebe igual a qualquer cliente", () => {
+    // Antes era bloqueado por causa do Business por bypass. Na prática isso
+    // deixava o dono do sistema sem nenhum e-mail nos testes de cobrança.
+    expect(notify.podeReceber({ ...user, role: "admin" })).toBe(true);
   });
 
   it("conta suspensa não recebe (já foi avisada da suspensão)", () => {

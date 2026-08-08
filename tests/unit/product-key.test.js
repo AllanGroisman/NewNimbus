@@ -25,9 +25,19 @@ describe("productKey", () => {
     expect(productKey(a)).toBe(productKey(b));
   });
 
-  it("cai pra origin+pathname quando nao ha MLB id", () => {
-    const a = { link: "https://www.amazon.com.br/dp/B0CXXX12345" };
-    const b = { link: "https://www.amazon.com.br/dp/B0CXXX12345?tag=foo&ref=bar" };
+  it("usa o ASIN como chave da Amazon, independente do formato da URL", () => {
+    const canonico = { link: "https://www.amazon.com.br/dp/B07YT1GLV9" };
+    const comSlugERef = { link: "https://www.amazon.com.br/God-War-Hits-PlayStation-4/dp/B07YT1GLV9/ref=sr_1_1?keywords=god+of+war" };
+    const gpProduct = { link: "https://www.amazon.com.br/gp/product/B07YT1GLV9" };
+    const comTag = { link: "https://www.amazon.com.br/dp/B07YT1GLV9?tag=foo&ref=bar" };
+    expect(productKey(comSlugERef)).toBe(productKey(canonico));
+    expect(productKey(gpProduct)).toBe(productKey(canonico));
+    expect(productKey(comTag)).toBe(productKey(canonico));
+  });
+
+  it("cai pra origin+pathname quando nao ha id conhecido", () => {
+    const a = { link: "https://www.lojaqualquer.com.br/produto/xyz" };
+    const b = { link: "https://www.lojaqualquer.com.br/produto/xyz?utm=foo&ref=bar" };
     expect(productKey(a)).toBe(productKey(b));
   });
 

@@ -1,18 +1,19 @@
 const puppeteer = require("puppeteer");
 const urlGuard = require("./urlGuard");
 const { pickBestImage } = require("./image-quality");
+const { canonicalAmazonUrl } = require("./amazon-url");
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // Amazon — confiabilidade contra CAPTCHA/anti-bot (intermitente).
-// A página de ofertas é re-tentada com backoff; o enriquecimento de rating
-// (abre 1 aba por produto) é limitado pra não disparar bloqueio em massa.
+// A página de ofertas é re-tentada com backoff; a conferência de preço na página
+// de cada produto (1 aba por produto) é limitada pra não disparar bloqueio em massa.
 const AMZ_MAX_ATTEMPTS = 3;
 const AMZ_BACKOFF_MS = [3000, 8000, 20000];   // por tentativa (1-based) + jitter
-const AMZ_ENRICH_DISPLAY = 40;                // sem filtro de rating/reviews: só p/ exibir
-const AMZ_ENRICH_MAX = 120;                   // com filtro de rating/reviews
+const AMZ_VERIFY_DEFAULT = 60;                // fallback do enrichLimit do admin
+const AMZ_VERIFY_MAX = 120;                   // teto da folga quando há filtro de nota/avaliações
 
 // Backoff com jitter ±30% pra a tentativa N (1-based). Pura → testável.
 function amzBackoffMs(attempt) {
@@ -434,15 +435,11 @@ async function harvestAmazonDeals(url, limit) {
     // A grade de ofertas é VIRTUALIZADA: cards saem do DOM ao rolar. Por isso
     // colhemos incrementalmente — a cada scroll, recolhemos os cards visíveis num
     // Map (dedup por ASIN) até bater o limite ou a página parar de crescer.
+    // Devolve TEXTO CRU (igual ao resto do scraper): quem interpreta são as funções
+    // puras no Node (parseBrlPrice/parseDiscountLabel/reconcilePricing), testáveis
+    // sem browser. O preço daqui é provisório — serve pra ordenar e pré-filtrar; o
+    // valor definitivo vem conferido na página do produto (enrichAmazonProducts).
     return await page.evaluate(async (targetLimit) => {
-      const parsePrice = (s) => {
-        if (!s) return null;
-        const m = String(s).replace(/\s+/g, "").match(/R\$([\d.]+)(?:,(\d{1,2}))?/i);
-        if (!m) return null;
-        const v = parseFloat(`${m[1].replace(/\./g, "")}.${m[2] || "00"}`);
-        return isNaN(v) ? null : v;
-      };
-
       const seen = new Map();
       const harvest = () => {
         for (const card of document.querySelectorAll('[data-testid="product-card"]')) {
@@ -455,24 +452,28 @@ async function harvestAmazonDeals(url, limit) {
           const name = imgEl?.getAttribute("alt")?.trim() || null;
 
           // Preço atual: a-price base. Original: a-price riscado. O .a-offscreen
-          // vem com prefixo ("Preço da Oferta: R$ ..."), mas o parsePrice extrai o R$.
-          const price = parsePrice(card.querySelector('.a-price[data-a-color="base"] .a-offscreen')?.textContent);
-          const originalPrice = parsePrice(card.querySelector('.a-price[data-a-strike="true"] .a-offscreen')?.textContent);
+          // vem com prefixo ("Preço da Oferta: R$ ..."), tratado no parseBrlPrice.
+          const priceText = card.querySelector('.a-price[data-a-color="base"] .a-offscreen')?.textContent || null;
+          const originalText = card.querySelector('.a-price[data-a-strike="true"] .a-offscreen')?.textContent || null;
 
-          let discount = null;
-          const dm = (card.textContent || "").match(/(\d+)%\s*off/i);
-          if (dm) discount = parseInt(dm[1], 10);
-          else if (originalPrice && price && originalPrice > price) discount = Math.round((1 - price / originalPrice) * 100);
+          // Desconto: SÓ do selo. Antes lia o textContent do card inteiro, o que
+          // pegava "10% off" de cupom/leve-2-pague-1 como se fosse o desconto do item.
+          const badgeEl = card.querySelector('[data-testid="deal-badge"]')
+                       || card.querySelector('[class*="percentOff"]')
+                       || card.querySelector('[class*="dealBadge"]')
+                       || card.querySelector(".a-badge-text");
+          const discountText = badgeEl?.textContent || null;
 
-          if (!name || !href || !price) continue;
+          if (!name || !href || !priceText) continue;
 
           seen.set(asin, {
+            asin,
             name,
             link: href,
             img: imgEl?.getAttribute("src") || null,
-            price,
-            originalPrice,
-            discount,
+            priceText,
+            originalText,
+            discountText,
           });
         }
       };
@@ -496,7 +497,22 @@ async function harvestAmazonDeals(url, limit) {
   }
 }
 
-async function scrapeAmazon({ category, limit = 100 } = {}) {
+// Escolhe o que de fato vai pro catálogo, DEPOIS da conferência de preço na página
+// do produto. Regra dura: item sem preço confirmado não entra — melhor catálogo
+// menor do que anunciar no grupo um valor que não é o que a Amazon cobra.
+// Pura → testável.
+function selectVerifiedAmazonProducts(pool, cfg, limit, passes) {
+  const verified = (pool || []).filter(p => p && p.priceVerified === true);
+  const kept = verified.filter(p => passes(p, cfg));
+  kept.sort((a, b) => (b.discount || 0) - (a.discount || 0));
+  return {
+    kept: kept.slice(0, limit).map(({ _cardPrice, _attempts, ...rest }) => rest),
+    discardedUnverified: (pool || []).length - verified.length,
+    discardedByFilter: verified.length - kept.length,
+  };
+}
+
+async function scrapeAmazon({ category, limit = 100, stats } = {}) {
   const cat = CATEGORIES[category];
   const url = buildAmazonDealsUrl(cat?.amzDept);
   const tag = category || "geral";
@@ -515,23 +531,39 @@ async function scrapeAmazon({ category, limit = 100 } = {}) {
     } catch (err) {
       const last = attempt >= AMZ_MAX_ATTEMPTS;
       console.warn(`[scraper Amazon] ${tag}: tentativa ${attempt}/${AMZ_MAX_ATTEMPTS} falhou (${err.message})${last ? " — desistindo" : ", aguardando backoff"}`);
-      if (last) return [];
+      // Devolver [] escondia bloqueio: o admin registrava "0 produtos" como se fosse
+      // filtro restritivo. Erro tipado → scrapeOfertas empilha em `errors` e o alerta
+      // do WhatsApp diz o que aconteceu de verdade.
+      if (last) throw Object.assign(new Error(`vitrine de ofertas inacessível após ${AMZ_MAX_ATTEMPTS} tentativas (${err.message})`), { blocked: true });
       await sleep(amzBackoffMs(attempt));
     }
   }
   if (!raw.length) return [];
 
-  // Sobe a resolução das imagens (a Amazon serve thumbnail minúsculo no card).
+  // Card → produto. Preço/desconto daqui são PROVISÓRIOS: servem pra ordenar e
+  // pré-filtrar; o valor que vai pro catálogo é o conferido na página do produto.
   for (const p of raw) {
     p.img = upgradeAmazonImageUrl(p.img);
     p.category = category || null;
-    // Todos preenchidos no enriquecimento (a página de ofertas não expõe nenhum) —
-    // ficam nestes defaults nos produtos que não forem enriquecidos.
+    // Link canônico /dp/ASIN: sem slug nem /ref= de campanha (que às vezes força
+    // uma oferta específica). É a página que será conferida e o link do catálogo.
+    p.link = canonicalAmazonUrl(p.asin) || p.link;
+    const cardPricing = reconcilePricing({
+      price: parseBrlPrice(p.priceText),
+      originalPrice: parseBrlPrice(p.originalText),
+      discount: parseDiscountLabel(p.discountText),
+    });
+    p.price = cardPricing.price;
+    p.originalPrice = cardPricing.originalPrice;
+    p.discount = cardPricing.discount;
+    delete p.priceText; delete p.originalText; delete p.discountText;
+    // Todos preenchidos na conferência (a vitrine não expõe nenhum).
     p.rating = null;
     p.reviewsCount = null;
     p.seller = null;
     p.freeShipping = false;
     p.sold = null;
+    p.priceVerified = false;
     p.store = "Amazon";
     p.scrapedAt = new Date().toISOString();
   }
@@ -539,37 +571,60 @@ async function scrapeAmazon({ category, limit = 100 } = {}) {
   const affiliate = require("./affiliate");
   const cfg = affiliate.readAmazonScraperFilters();
 
-  // 1) Filtro barato com dados do próprio card (preço/desconto). rating/reviews
-  //    ainda ausentes → passesAmazonFilters não corta por eles aqui.
-  let pool = raw.filter(p => affiliate.passesAmazonFilters(p, cfg));
+  // 1) Pré-filtro barato com o preço do card, só pra priorizar a fila de conferência
+  //    (o filtro definitivo roda depois, sobre o preço real).
+  let pool = raw.filter(p => p.price != null && affiliate.passesAmazonFilters(p, cfg));
   pool.sort((a, b) => (b.discount || 0) - (a.discount || 0));
 
-  // 2) Enriquece rating/reviews abrindo a página de cada produto — em browser
-  //    PRÓPRIO (fresco) e LIMITADO: abrir centenas de páginas é o que mais dispara
-  //    CAPTCHA. Só vale a pena quando há filtro de rating/reviews; sem filtro,
-  //    enriquece poucos só pra exibição. pool já vem ordenado por desconto, então
-  //    os enriquecidos são os mais relevantes (os que de fato vão pra fila).
+  // 2) Confere o preço de cada produto na PÁGINA DO PRODUTO — e de quebra colhe
+  //    nota, avaliações, vendas, vendedor e frete. É o passo caro (~4s por produto),
+  //    então tem teto: `enrichLimit` do admin. Como só entra no catálogo quem for
+  //    conferido, esse teto é também o tamanho máximo do catálogo por categoria.
+  //    pool vem ordenado por desconto → confere os mais relevantes primeiro.
   const needsRatingData = cfg.minRating > 0 || cfg.minReviews > 0;
-  const configured = Number.isFinite(Number(cfg.enrichLimit)) ? Number(cfg.enrichLimit) : AMZ_ENRICH_DISPLAY;
-  const enrichCap = needsRatingData ? Math.max(configured, AMZ_ENRICH_MAX) : configured;
-  const toEnrich = pool.slice(0, Math.min(pool.length, enrichCap));
-  if (toEnrich.length) {
+  const configured = Number.isFinite(Number(cfg.enrichLimit)) ? Number(cfg.enrichLimit) : AMZ_VERIFY_DEFAULT;
+  // Com filtro de nota/avaliações, parte do que for conferido morre no filtro —
+  // confere uma folga pra não esvaziar a categoria.
+  const verifyCap = needsRatingData ? Math.min(AMZ_VERIFY_MAX, Math.ceil(configured * 1.5)) : configured;
+  const toVerify = pool.slice(0, Math.min(pool.length, verifyCap));
+  let summary = { attempted: 0, verified: 0, failed: 0, captchaHits: 0, divergent: 0, stopped: false };
+  if (toVerify.length) {
     const eBrowser = await launchAmazonBrowser();
     try {
-      await enrichAmazonRatings(toEnrich, eBrowser, category);
+      summary = await enrichAmazonProducts(toVerify, eBrowser, category);
     } finally {
       try { await eBrowser.close(); } catch {}
     }
   }
 
-  // 3) Reaplica os filtros — agora minRating/minReviews valem pra quem foi enriquecido.
-  const kept = pool.filter(p => affiliate.passesAmazonFilters(p, cfg));
-  if (kept.length < pool.length) {
-    console.log(`[scraper Amazon] ${tag}: ${pool.length} ofertas, ${pool.length - kept.length} cortadas por rating/reviews, ${kept.length} aprovadas`);
+  // 3) Bloqueio no meio da conferência não pode virar "0 produtos, deve ser o filtro".
+  if (summary.attempted > 0 && (summary.stopped || summary.verified / summary.attempted < 0.5)) {
+    const causa = summary.captchaHits > 0 ? "CAPTCHA/bloqueio" : "sem preço na página (layout mudou?)";
+    throw Object.assign(
+      new Error(`conferência de preço falhou em mais da metade dos produtos — ${causa}: ${summary.verified}/${summary.attempted} conferidos`),
+      { blocked: true },
+    );
   }
 
-  kept.sort((a, b) => (b.discount || 0) - (a.discount || 0));
-  return kept.slice(0, limit);
+  // 4) Só entra quem teve o preço confirmado, e os filtros valem sobre o preço real.
+  const sel = selectVerifiedAmazonProducts(pool, cfg, limit, affiliate.passesAmazonFilters);
+  console.log(
+    `[scraper Amazon] ${tag}: ${raw.length} na vitrine → ${summary.verified} conferidos ` +
+    `(${summary.divergent} com preço diferente do card) → ${sel.kept.length} aprovados; ` +
+    `descartados: ${sel.discardedUnverified} sem conferência, ${sel.discardedByFilter} por filtro`
+  );
+  if (Array.isArray(stats)) {
+    stats.push({
+      source: "amazon",
+      harvested: raw.length,
+      verified: summary.verified,
+      divergent: summary.divergent,
+      discardedUnverified: sel.discardedUnverified,
+      discardedByFilter: sel.discardedByFilter,
+      kept: sel.kept.length,
+    });
+  }
+  return sel.kept;
 }
 
 // A Amazon não mostra "vendidos" — mostra prova social de compras recentes, tipo
@@ -586,6 +641,33 @@ function parseAmazonSold(text) {
   const unit = (m[2] || "").toLowerCase();
   const suffix = unit === "k" ? " mil" : unit ? ` ${unit}` : "";
   return `${plus ? "+" : ""}${m[1]}${suffix} vendidos`;
+}
+
+// "R$ 1.234,56" → 1234.56. Aceita prefixo ("Preço da Oferta: R$ 99,90") e ausência
+// de centavos ("R$199"). Ponto é separador de milhar, vírgula é decimal — é assim
+// que a Amazon/ML escrevem no .a-offscreen. Pura → testável.
+function parseBrlPrice(text) {
+  if (!text) return null;
+  const m = String(text).replace(/\s+/g, "").match(/R\$([\d.]+)(?:,(\d{1,2}))?/i);
+  if (!m) return null;
+  const v = parseFloat(`${m[1].replace(/\./g, "")}.${m[2] || "00"}`);
+  return isNaN(v) ? null : v;
+}
+
+// Percentual de desconto a partir do TEXTO DO SELO (não do texto da página/card
+// inteiro — senão "Economize 10% com cupom" ou "Compre 2, ganhe 5% off" viravam o
+// desconto do produto). Aceita "57% off", "-57%", "57% de desconto".
+// Fora de 1..95 → null. Pura → testável.
+function parseDiscountLabel(text) {
+  const s = String(text || "");
+  if (!s.trim()) return null;
+  // Defesa a mais, caso o seletor pegue um selo vizinho: percentual de cupom,
+  // leve-mais-pague-menos ou assinatura NÃO é o desconto do produto.
+  if (/cupom|coupon|leve\s|compre\s|ganhe\s|assinatura|assine|parcel/i.test(s)) return null;
+  const m = s.match(/-?\s*(\d{1,3})\s*%/);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  return n >= 1 && n <= 95 ? n : null;
 }
 
 // Deixa preço / preço original / desconto coerentes entre si. Rede de segurança pra
@@ -621,6 +703,136 @@ function reconcilePricing({ price, originalPrice, discount } = {}) {
   return { price: p, originalPrice: orig, discount: disc };
 }
 
+// Lê o preço na PÁGINA DO PRODUTO da Amazon, ESCOPADO no bloco de compra.
+//
+// Roda dentro do browser (page.evaluate) e devolve só TEXTO CRU — quem interpreta
+// são as funções puras no Node. É a única leitura de preço da Amazon: serve tanto o
+// link único quanto a conferência em massa da vitrine de ofertas.
+//
+// O escopo é o ponto principal. A PDP tem "Comprados juntos com frequência",
+// "Produtos similares" e "Outras opções de compra", cada bloco com SEU .a-price —
+// buscar no documento inteiro fazia o preço vir de outro produto. Mesmo problema já
+// corrigido no ML com a .ui-pdp-price__main-container.
+function readAmazonPdpPricing() {
+  const CONTAINERS = [
+    "#corePriceDisplay_desktop_feature_div",
+    "#corePrice_feature_div",
+    "#corePriceDisplay_mobile_feature_div",
+    "#apex_desktop",
+    "#price_inside_buybox",
+    "#buybox",
+    "#rightCol",
+  ];
+
+  let root = null, containerId = null;
+  for (const sel of CONTAINERS) {
+    const el = document.querySelector(sel);
+    if (!el) continue;
+    // #price_inside_buybox é o span solto do preço; o riscado/selo ficam no box em volta.
+    const scope = sel === "#price_inside_buybox" ? (el.closest("#qualifiedBuybox") || el.closest(".a-box") || el) : el;
+    if (scope.querySelector(".a-price")) { root = scope; containerId = sel; break; }
+  }
+
+  const pick = (scope, sels) => {
+    for (const s of sels) {
+      const el = scope.querySelector(s);
+      const t = el?.textContent?.replace(/\s+/g, " ").trim();
+      if (t) return t;
+    }
+    return null;
+  };
+
+  // O preço ATUAL não está mais no .a-offscreen: nas PDPs de hoje aquele span vem
+  // vazio e o valor fica (a) no rótulo de acessibilidade do apex ou (b) partido em
+  // .a-price-symbol/.a-price-whole/.a-price-fraction. Era exatamente isso que fazia
+  // a leitura antiga escorregar pro último seletor e pegar o preço de OUTRO bloco
+  // da página — o preço errado da task 68.
+  const composePrice = (el) => {
+    if (!el) return null;
+    const off = el.querySelector(".a-offscreen")?.textContent?.replace(/\s+/g, " ").trim();
+    if (off) return off;
+    let whole = el.querySelector(".a-price-whole")?.textContent?.replace(/\s+/g, "") || "";
+    if (!whole) {
+      // Elemento que já É o texto do preço (rótulo de acessibilidade do apex).
+      const own = el.textContent?.replace(/\s+/g, " ").trim();
+      return own && /R\$/.test(own) ? own : null;
+    }
+    whole = whole.replace(/[.,]$/, "");
+    const frac = el.querySelector(".a-price-fraction")?.textContent?.replace(/\s+/g, "") || "00";
+    const sym = el.querySelector(".a-price-symbol")?.textContent?.replace(/\s+/g, "") || "R$";
+    return `${sym}${whole},${frac}`;
+  };
+  const pickPrice = (scope, sels) => {
+    for (const s of sels) {
+      const t = composePrice(scope.querySelector(s));
+      if (t) return t;
+    }
+    return null;
+  };
+
+  const PRICE_SELS = [
+    "#apex-pricetopay-accessibility-label",   // "R$ 59,90 com 47 por cento de desconto"
+    ".priceToPay",
+    '.a-price[data-a-color="base"]:not(.a-text-price)',
+    ".a-price:not(.a-text-price)",
+  ];
+  const ORIGINAL_SELS = [
+    '.a-price.a-text-price[data-a-strike="true"]',
+    ".basisPrice .a-price",
+    ".basisPrice",
+    '[data-a-strike="true"]',
+  ];
+  const DISCOUNT_SELS = [".savingsPercentage", ".savingPriceOverride"];
+
+  const availabilityTxt = (document.querySelector("#availability")?.textContent || "").replace(/\s+/g, " ").trim();
+  const unavailable = !!document.querySelector("#outOfStock")
+                   || /indispon[íi]vel|currently unavailable|fora de estoque/i.test(availabilityTxt);
+
+  // Sem nenhum container conhecido (layout novo): repete no documento inteiro, mas
+  // avisa via container:null — o Node marca priceSource "pdp-unscoped" e o log
+  // denuncia a mudança de layout antes de o preço errado chegar no cliente.
+  const scope = root || document;
+  return {
+    container: containerId,
+    priceText: pick(scope, PRICE_SELS),
+    originalText: pick(scope, ORIGINAL_SELS),
+    // Só o selo. Sem varrer o texto do bloco: "Economize 5% com cupom" e
+    // "Compre 2, ganhe 10% off" não são o desconto do produto — quando não há selo,
+    // o desconto sai calculado do preço riscado (reconcilePricing).
+    discountText: pick(scope, DISCOUNT_SELS),
+    unavailable,
+  };
+}
+
+// Interpreta o retorno cru de readAmazonPdpPricing. Produto indisponível sai sem
+// preço (não tem "o preço que o cliente paga"). Pura → testável.
+function parseAmazonPdpPricing(raw = {}) {
+  const priceSource = raw.container ? `pdp:${raw.container}` : "pdp-unscoped";
+  if (raw.unavailable) return { price: null, originalPrice: null, discount: null, priceSource };
+  const pricing = reconcilePricing({
+    price: parseBrlPrice(raw.priceText),
+    originalPrice: parseBrlPrice(raw.originalText),
+    discount: parseDiscountLabel(raw.discountText),
+  });
+  return { ...pricing, priceSource };
+}
+
+// Tela "Continuar comprando" da Amazon: um interstitial que aparece no lugar da PDP.
+// Clicar segue pro produto de verdade. Usado nos dois fluxos — sem isso a conferência
+// de preço em massa descartaria produtos bons achando que a página não carregou.
+async function dismissAmazonInterstitial(page) {
+  const clicked = await page.evaluate(() => {
+    const el = [...document.querySelectorAll("button, input[type=submit], a")]
+      .find(e => /continuar comprando|continue shopping/i.test(e.textContent || e.value || ""));
+    if (el) { el.click(); return true; }
+    return false;
+  }).catch(() => false);
+  if (!clicked) return false;
+  try { await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }); } catch {}
+  await sleep(1200);
+  return true;
+}
+
 // Nota de uma página de produto, a partir do texto cru colhido no DOM. Aceita os
 // formatos das três lojas: "4,8 de 5 estrelas" (Amazon), "Classificação 4.8 de 5
 // estrelas" (ML acessível) e "4.8" solto. Fora de 0-5 → null (pegou outro número).
@@ -646,87 +858,148 @@ function parseReviewsCount(text) {
   return digits || null;
 }
 
-// Enriquece produtos da Amazon com rating + reviewsCount abrindo a página de cada um
-// (/dp/ASIN) num browser dedicado (passado pelo chamador). A página de ofertas não
-// traz esses dados; um fetch sem browser é bloqueado por CAPTCHA, então precisa do
-// navegador real (~5s/produto). Concorrência baixa pra não parecer abuso. Disjuntor:
-// após N CAPTCHAs/erros seguidos, para de enriquecer o resto (ficam com rating null
-// e seguem no catálogo). O nº de produtos já vem limitado por quem chama (scrapeAmazon).
-async function enrichAmazonRatings(products, browser, category, { concurrency = 3, maxConsecutiveFails = 6 } = {}) {
-  if (!products.length) return;
+// Abre a PÁGINA DE CADA PRODUTO (/dp/ASIN) num browser dedicado (passado pelo
+// chamador) pra CONFERIR O PREÇO e colher nota, avaliações, vendas, vendedor e frete.
+//
+// A conferência de preço é a razão de existir da função: o preço do card da vitrine
+// pode estar velho, ser de outra variação ou de outro vendedor — e era isso que fazia
+// o cliente abrir o link e ver outro valor. Quem não for conferido não entra no
+// catálogo (ver selectVerifiedAmazonProducts).
+//
+// Um fetch sem browser é bloqueado por CAPTCHA, então precisa do navegador real
+// (~4s/produto). Uma aba por worker (reusada entre produtos) e concorrência baixa
+// pra não parecer abuso. CAPTCHA devolve o produto pro fim da fila com backoff;
+// só um bloqueio persistente (N falhas seguidas) interrompe a rodada.
+// O nº de produtos já vem limitado por quem chama (scrapeAmazon).
+async function enrichAmazonProducts(products, browser, category, { concurrency = 3, maxConsecutiveFails = 8, maxAttempts = 2 } = {}) {
+  const summary = { attempted: products.length, verified: 0, failed: 0, captchaHits: 0, divergent: 0, unscoped: 0, stopped: false };
+  if (!products.length) return summary;
   const queue = products.slice();
   let consecutiveFails = 0;
   let stopped = false;
   let enriched = 0;
+  // Concorrência adaptativa: ao segundo CAPTCHA da rodada, os workers extras
+  // encerram e sobra um só — pisar mais leve costuma destravar sem abortar tudo.
+  let activeLimit = Math.min(concurrency, products.length);
 
-  const worker = async () => {
-    while (queue.length && !stopped) {
-      const p = queue.shift();
-      if (!p.link) continue;
-      // jitter pequeno pra dessincronizar as abas
-      await new Promise(r => setTimeout(r, 150 + Math.floor(Math.random() * 350)));
-      let page;
-      try {
-        page = await browser.newPage();
-        await applyAmazonStealth(page);
-        await page.goto(p.link, { waitUntil: "domcontentloaded", timeout: 20000 });
-        await new Promise(r => setTimeout(r, 800));
-        const data = await page.evaluate(() => {
-          const txt = (s) => document.querySelector(s)?.textContent?.replace(/\s+/g, " ").trim() || null;
-          const attr = (s, a) => document.querySelector(s)?.getAttribute(a) || null;
-          const captcha = /digite os caracteres|enter the characters|automated access|tipo de tr[áa]fego/i.test(document.body?.innerText || "");
-          const ratingTxt = attr("#acrPopover", "title")
-                         || txt('span[data-hook="rating-out-of-text"]')
-                         || txt("#acrPopover .a-icon-alt")
-                         || txt("i.a-icon-star .a-icon-alt");
-          const reviewTxt = txt("#acrCustomerReviewText");
-          // "Mais de 2 mil compras no mês passado" — prova social logo abaixo do título.
-          const soldTxt = txt("#social-proofing-faceout-title-tk_bought")
-                       || txt("#socialProofingAsinFaceout_feature_div .social-proofing-faceout-title-text")
-                       || txt(".social-proofing-faceout-title-text");
-          // Vendedor: link do lojista no bloco de compra ("Vendido por X").
-          const sellerTxt = txt("#sellerProfileTriggerId")
-                         || txt("#merchant-info a")
-                         || txt('[offer-display-feature-name="desktop-merchant-info"] a');
-          const deliveryTxt = txt("#mir-layout-DELIVERY_BLOCK")
-                           || txt("#deliveryBlockMessage")
-                           || txt("#amazonGlobal_feature_div");
-          return { captcha, ratingTxt, reviewTxt, soldTxt, sellerTxt, deliveryTxt };
-        });
+  const worker = async (slot) => {
+    let page = null;
+    const freshPage = async () => {
+      if (page && !page.isClosed()) return page;
+      page = await browser.newPage();
+      await applyAmazonStealth(page);
+      return page;
+    };
+    try {
+      while (queue.length && !stopped) {
+        if (slot >= activeLimit) break;
+        const p = queue.shift();
+        if (!p.link) continue;
+        // jitter pequeno pra dessincronizar as abas
+        await new Promise(r => setTimeout(r, 150 + Math.floor(Math.random() * 350)));
+        try {
+          await freshPage();
+          await page.goto(p.link, { waitUntil: "domcontentloaded", timeout: 20000 });
+          await new Promise(r => setTimeout(r, 800));
+          const data = await page.evaluate(() => {
+            const txt = (s) => document.querySelector(s)?.textContent?.replace(/\s+/g, " ").trim() || null;
+            const attr = (s, a) => document.querySelector(s)?.getAttribute(a) || null;
+            const bodyTxt = document.body?.innerText || "";
+            const captcha = /digite os caracteres|enter the characters|automated access|tipo de tr[áa]fego/i.test(bodyTxt);
+            const interstitial = /continuar comprando|continue shopping/i.test(bodyTxt) && !document.querySelector("#productTitle");
+            const ratingTxt = attr("#acrPopover", "title")
+                           || txt('span[data-hook="rating-out-of-text"]')
+                           || txt("#acrPopover .a-icon-alt")
+                           || txt("i.a-icon-star .a-icon-alt");
+            const reviewTxt = txt("#acrCustomerReviewText");
+            // "Mais de 2 mil compras no mês passado" — prova social logo abaixo do título.
+            const soldTxt = txt("#social-proofing-faceout-title-tk_bought")
+                         || txt("#socialProofingAsinFaceout_feature_div .social-proofing-faceout-title-text")
+                         || txt(".social-proofing-faceout-title-text");
+            // Vendedor: link do lojista no bloco de compra ("Vendido por X").
+            const sellerTxt = txt("#sellerProfileTriggerId")
+                           || txt("#merchant-info a")
+                           || txt('[offer-display-feature-name="desktop-merchant-info"] a');
+            const deliveryTxt = txt("#mir-layout-DELIVERY_BLOCK")
+                             || txt("#deliveryBlockMessage")
+                             || txt("#amazonGlobal_feature_div");
+            return { captcha, interstitial, ratingTxt, reviewTxt, soldTxt, sellerTxt, deliveryTxt };
+          });
 
-        if (data.captcha) {
+          if (data.captcha) {
+            summary.captchaHits++;
+            if (summary.captchaHits >= 2) activeLimit = 1;
+            // CAPTCHA é intermitente: devolve pro fim da fila com backoff em vez de
+            // descartar o produto. Só falha de vez quando insiste.
+            p._attempts = (p._attempts || 0) + 1;
+            if (p._attempts < maxAttempts) {
+              queue.push(p);
+              await sleep(amzBackoffMs(p._attempts));
+            } else {
+              summary.failed++;
+            }
+            if (++consecutiveFails >= maxConsecutiveFails) stopped = true;
+            continue;
+          }
+          // Tela "Continuar comprando" no lugar da PDP: clica antes de ler o preço.
+          if (data.interstitial) await dismissAmazonInterstitial(page);
+          const pdp = parseAmazonPdpPricing(await page.evaluate(readAmazonPdpPricing));
+          if (pdp.price == null) {
+            // Sem preço na página (indisponível, sem buy box, layout mudou) → não entra.
+            summary.failed++;
+            consecutiveFails = 0;
+            continue;
+          }
+          if (p.price != null && Math.abs(pdp.price - p.price) / p.price > 0.01) summary.divergent++;
+          p._cardPrice = p.price;
+          p.price = pdp.price;
+          p.originalPrice = pdp.originalPrice;
+          p.discount = pdp.discount;
+          p.priceVerified = true;
+          p.priceSource = pdp.priceSource;
+          if (pdp.priceSource === "pdp-unscoped") summary.unscoped++;
+          p.priceCheckedAt = new Date().toISOString();
+          summary.verified++;
+
+          consecutiveFails = 0;
+          if (data.ratingTxt) {
+            const m = data.ratingTxt.match(/([\d,.]+)\s*de\s*5/i);
+            if (m) p.rating = parseFloat(m[1].replace(",", "."));
+          }
+          if (data.reviewTxt) {
+            const n = data.reviewTxt.replace(/[^\d]/g, "");
+            if (n) p.reviewsCount = n;
+          }
+          const sold = parseAmazonSold(data.soldTxt);
+          if (sold) p.sold = sold;
+          if (data.sellerTxt) p.seller = data.sellerTxt.replace(/^vendido por\s+/i, "").trim() || null;
+          if (data.deliveryTxt) p.freeShipping = /gr[áa]tis|free/i.test(data.deliveryTxt);
+          if (p.rating != null || p.reviewsCount != null) enriched++;
+        } catch {
+          // Timeout/aba morta: a aba pode ter ficado num estado ruim — descarta pra
+          // que a próxima volta abra uma limpa.
+          summary.failed++;
+          if (page) { try { await page.close(); } catch {} page = null; }
           if (++consecutiveFails >= maxConsecutiveFails) stopped = true;
-          continue;
         }
-        consecutiveFails = 0;
-        if (data.ratingTxt) {
-          const m = data.ratingTxt.match(/([\d,.]+)\s*de\s*5/i);
-          if (m) p.rating = parseFloat(m[1].replace(",", "."));
-        }
-        if (data.reviewTxt) {
-          const n = data.reviewTxt.replace(/[^\d]/g, "");
-          if (n) p.reviewsCount = n;
-        }
-        const sold = parseAmazonSold(data.soldTxt);
-        if (sold) p.sold = sold;
-        if (data.sellerTxt) p.seller = data.sellerTxt.replace(/^vendido por\s+/i, "").trim() || null;
-        if (data.deliveryTxt) p.freeShipping = /gr[áa]tis|free/i.test(data.deliveryTxt);
-        if (p.rating != null || p.reviewsCount != null) enriched++;
-      } catch {
-        if (++consecutiveFails >= maxConsecutiveFails) stopped = true;
-      } finally {
-        if (page) { try { await page.close(); } catch {} }
       }
+    } finally {
+      if (page) { try { await page.close(); } catch {} }
     }
   };
 
-  await Promise.all(Array.from({ length: Math.min(concurrency, products.length) }, worker));
+  await Promise.all(Array.from({ length: activeLimit }, (_, i) => worker(i)));
+  summary.stopped = stopped;
   const tag = category || "geral";
   if (stopped) {
-    console.warn(`[scraper Amazon] ${tag}: enriquecimento interrompido (CAPTCHA/erros seguidos) — ${enriched}/${products.length} com rating`);
+    console.warn(`[scraper Amazon] ${tag}: conferência interrompida (CAPTCHA/erros seguidos) — ${summary.verified}/${summary.attempted} com preço confirmado`);
   } else {
-    console.log(`[scraper Amazon] ${tag}: rating/reviews enriquecidos ${enriched}/${products.length}`);
+    console.log(`[scraper Amazon] ${tag}: preço confirmado em ${summary.verified}/${summary.attempted} (${enriched} com nota/avaliações)`);
   }
+  if (summary.unscoped > 0) {
+    console.warn(`[scraper Amazon] ${tag}: ${summary.unscoped} produtos sem bloco de compra reconhecido — preço lido da página inteira (layout mudou?)`);
+  }
+  return summary;
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -939,7 +1212,10 @@ async function scrapeShopee({ category, limit = 50 } = {}) {
 // que falhou. Sem ele, uma loja fora do ar é indistinguível de "não tinha oferta
 // hoje" — o retorno é [] nos dois casos. Quem monitora (scraping/admin.js) passa
 // o array pra conseguir reportar a falha em vez de gravar sucesso com 0 produtos.
-async function scrapeOfertas({ category, sources, limit = 200, errors } = {}) {
+// `errors` e `stats` são out-params opcionais (arrays): o chamador passa e recebe,
+// respectivamente, as falhas por loja e o resumo do que foi coletado/descartado —
+// é o que permite ao admin dizer "a Amazon bloqueou" em vez de "0 produtos".
+async function scrapeOfertas({ category, sources, limit = 200, errors, stats } = {}) {
   const ids = (sources && sources.length ? sources : ["ml"])
     .map(normalizeSource)
     .filter(Boolean);
@@ -952,7 +1228,7 @@ async function scrapeOfertas({ category, sources, limit = 200, errors } = {}) {
     try {
       console.log(`[scraper] ${store.label} / ${category || "geral"}: iniciando...`);
       const t0 = Date.now();
-      const data = await store.scrape({ category, limit });
+      const data = await store.scrape({ category, limit, stats });
       console.log(`[scraper] ${store.label} / ${category || "geral"}: ${data.length} produtos em ${Date.now() - t0}ms`);
       return data;
     } catch (err) {
@@ -1155,18 +1431,7 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
     } else if (store === "Amazon") {
       // Tela "Continuar comprando": clica no botão e segue pra PDP real.
       const pre = await detectBlockPage(page, store);
-      if (pre.interstitial) {
-        const clicked = await page.evaluate(() => {
-          const el = [...document.querySelectorAll("button, input[type=submit], a")]
-            .find(e => /continuar comprando|continue shopping/i.test(e.textContent || e.value || ""));
-          if (el) { el.click(); return true; }
-          return false;
-        });
-        if (clicked) {
-          try { await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }); } catch {}
-          await sleep(1200);
-        }
-      }
+      if (pre.interstitial) await dismissAmazonInterstitial(page);
       try { await page.waitForSelector("#productTitle, h1#title", { timeout: 5000 }); } catch {}
     }
 
@@ -1286,20 +1551,11 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
       } else if (store === "Amazon") {
         const titleEl = document.querySelector("#productTitle, h1#title span, h1#title");
         name = titleEl?.textContent?.trim() || ogTitle;
-        const priceCurrentEl = document.querySelector(".a-price[data-a-color='base']:not(.a-text-price) .a-offscreen")
-                            || document.querySelector(".priceToPay .a-offscreen")
-                            || document.querySelector("#corePrice_feature_div .a-offscreen")
-                            || document.querySelector(".a-price:not(.a-text-price) .a-offscreen");
-        if (priceCurrentEl) price = parsePrice(priceCurrentEl.textContent);
-        const priceOriginalEl = document.querySelector(".a-price.a-text-price[data-a-strike='true'] .a-offscreen")
-                             || document.querySelector(".basisPrice .a-offscreen");
-        if (priceOriginalEl) originalPrice = parsePrice(priceOriginalEl.textContent);
-        if (originalPrice && price && originalPrice > price && originalPrice < price * 20) {
-          discount = Math.round((1 - price / originalPrice) * 100);
-        }
+        // Preço NÃO sai daqui: vem de readAmazonPdpPricing, num evaluate à parte,
+        // escopado no bloco de compra (ver a chamada logo abaixo deste evaluate).
         const imgEl = document.querySelector("#landingImage, #imgBlkFront, #main-image");
         img = imgEl?.getAttribute("src") || imgEl?.getAttribute("data-old-hires") || ogImage;
-        // Mesmos seletores do enriquecimento em massa (enrichAmazonRatings).
+        // Mesmos seletores do enriquecimento em massa (enrichAmazonProducts).
         ratingTxt = attr("#acrPopover", "title")
                  || txt('span[data-hook="rating-out-of-text"]')
                  || txt("#acrPopover .a-icon-alt")
@@ -1342,7 +1598,20 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
 
     // Preço/original/desconto só saem daqui se fecharem entre si; produto fora de
     // promoção sai com original e desconto nulos (hasPromo=false), sem inventar nada.
-    const pricing = reconcilePricing({ price: data.price, originalPrice: data.originalPrice, discount: data.discount });
+    // Na Amazon a leitura é escopada no bloco de compra (readAmazonPdpPricing), num
+    // evaluate próprio — é O MESMO caminho usado pela conferência em massa da vitrine.
+    let pricing;
+    let priceSource = null;
+    if (store === "Amazon") {
+      const parsed = parseAmazonPdpPricing(await page.evaluate(readAmazonPdpPricing));
+      priceSource = parsed.priceSource;
+      pricing = { price: parsed.price, originalPrice: parsed.originalPrice, discount: parsed.discount };
+      if (priceSource === "pdp-unscoped") {
+        console.warn(`[scraper Amazon] bloco de compra não encontrado em ${finalUrl.slice(0, 120)} — preço lido da página inteira (layout mudou?)`);
+      }
+    } else {
+      pricing = reconcilePricing({ price: data.price, originalPrice: data.originalPrice, discount: data.discount });
+    }
 
     // Shopee e lojas genéricas caem no og:image, que costuma ser miniatura —
     // upgradeImageUrl decide a regra pelo domínio da imagem. Aqui (link único,
@@ -1366,6 +1635,8 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
       reviewsCount: parseReviewsCount(data.reviewTxt),
       img: img || null,
       store: store || null,
+      // Só na Amazon: o preço veio conferido na página do produto (e de qual bloco).
+      ...(store === "Amazon" ? { priceVerified: pricing.price != null, priceSource } : {}),
       scrapedAt: new Date().toISOString(),
     };
   } finally {
@@ -1513,6 +1784,7 @@ async function autoScroll(page) {
   await new Promise(r => setTimeout(r, 1000));
 }
 
-module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, upgradeMLImageUrl, upgradeShopeeImageUrl, upgradeImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, extractShopeeIds, parseMLReviewCompacted, mergeNewProducts, parseAmazonSold, parseRatingText, parseReviewsCount, reconcilePricing, normalizeSoldText, CATEGORIES, STORES,
+module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, upgradeMLImageUrl, upgradeShopeeImageUrl, upgradeImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, extractShopeeIds, parseMLReviewCompacted, mergeNewProducts, parseAmazonSold, parseRatingText, parseReviewsCount, reconcilePricing, normalizeSoldText,
+  parseBrlPrice, parseDiscountLabel, parseAmazonPdpPricing, selectVerifiedAmazonProducts, CATEGORIES, STORES,
   // Reusados por ml-hub.js (navegar logado em páginas do ML)
   launchAmazonBrowser, applyAmazonStealth, parseMLCookies, autoScroll, detectBlockPage, UA };

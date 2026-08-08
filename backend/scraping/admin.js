@@ -113,6 +113,17 @@ function summarizeDeadStores(perCategory) {
   return dead.length ? `loja(s) sem coletar nada nesta rodada — ${dead.join(" ; ")}` : null;
 }
 
+// Motivo de uma varredura ter voltado vazia, a partir do `stats` que a loja reporta.
+// Sem isso o admin recebia sempre "loja bloqueando, layout mudou ou filtro restritivo"
+// e tinha que adivinhar qual dos três era. Pura → testável.
+function emptySweepReason(stats) {
+  const s = (stats || [])[0];
+  if (!s) return "nenhum produto retornado (loja bloqueando, layout mudou ou filtro restritivo demais)";
+  if (!s.harvested) return "a vitrine de ofertas não devolveu nenhum produto (layout mudou?)";
+  if (!s.verified) return `0 aprovados — nenhum dos ${s.harvested} produtos teve o preço confirmado na página (Amazon bloqueando ou layout do bloco de preço mudou)`;
+  return `0 aprovados — ${s.verified} produtos com preço confirmado, todos cortados pelos filtros de qualidade (revise Admin → Amazon)`;
+}
+
 // Roda uma vez: para cada (categoria × loja), faz scrape e dá upsert no catálogo.
 async function runOnce() {
   if (_runPromise) return _runPromise;
@@ -144,18 +155,22 @@ async function runOnce() {
             // scrapeOfertas engole o erro de cada loja e devolve [] — sem coletar
             // `storeErrors` uma loja fora do ar viraria "ok, 0 produtos".
             const storeErrors = [];
+            const storeStats = [];
             const products = await scrapeOfertas({
               category: cat,
               sources: [src],
               limit: (cfg.limitsBySource && cfg.limitsBySource[src]) || cfg.limitPerCategory,
               errors: storeErrors,
+              stats: storeStats,
             });
             if (storeErrors.length) throw new Error(storeErrors.map(e => e.error).join(" | "));
             // Varredura vazia é falha, não sucesso: uma loja que muda o HTML, bloqueia
             // o robô ou perde o Chrome devolve 0 produtos sem lançar erro. Só é
             // legítimo zerar quando o filtro do admin é restritivo — e aí o alerta
             // avisando é preferível ao silêncio de um scraping quebrado há dias.
-            if (products.length === 0) throw new Error("nenhum produto retornado (loja bloqueando, layout mudou ou filtro restritivo demais)");
+            // Bloqueio já vem como erro tipado acima (storeErrors), então o que sobra
+            // aqui é diagnosticável: o `stats` diz onde os produtos morreram.
+            if (products.length === 0) throw new Error(emptySweepReason(storeStats));
             // Marca a categoria EXPLICITAMENTE — o scraper às vezes devolve categoria
             // como objeto {label, mlCode, ...}; aqui forçamos string id.
             const tagged = products.map(p => ({ ...p, category: cat }));
@@ -200,6 +215,10 @@ async function runOnce() {
         // só guarda o que veio na rodada atual (e em rodadas anteriores do mesmo dia).
         // Isso atende ao requisito "ao realizar um scrap, exclui itens do dia anterior"
         // e elimina duplicatas residuais (a chave já é única, mas variantes antigas somem).
+        //
+        // NÃO afrouxar isso pra "salvar" a Amazon num dia de bloqueio: preço velho é
+        // exatamente o bug que a conferência na página do produto veio corrigir.
+        // Catálogo vazio é falha visível e alertada; preço errado vai calado pro grupo.
         const startOfToday = new Date();
         startOfToday.setHours(0, 0, 0, 0);
         const purged = await catalog.pruneBeforeDate(startOfToday);
@@ -290,6 +309,7 @@ module.exports = {
   start,
   stop,
   summarizeDeadStores,
+  emptySweepReason,
   DEFAULT_CONFIG,
   AVAILABLE_CATEGORIES: Object.keys(CATEGORIES),
   AVAILABLE_SOURCES: Object.keys(STORES),

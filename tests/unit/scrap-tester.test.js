@@ -161,10 +161,21 @@ describe("evaluateSample", () => {
   });
 
   it("limiar padrão pode variar por loja (minPctBy)", () => {
-    // 50% de cobertura de nota: reprova no ML (80%) e passa na Amazon (40%).
-    const half = (make) => [make(), make({ rating: null })];
-    expect(evaluateSample("ml", half(mlProduct), noThresholds).missing).toContain("rating");
-    expect(evaluateSample("amazon", half(mlProduct), noThresholds).missing).not.toContain("rating");
+    // 50% de cobertura de vendas: reprova no ML (70%) e passa na Amazon (30%,
+    // porque a prova social de compras nem sempre existe lá).
+    const half = (make) => [make(), make({ sold: null, soldCount: null })];
+    expect(evaluateSample("ml", half(mlProduct), noThresholds).missing).toContain("sold");
+    expect(evaluateSample("amazon", half(mlProduct), noThresholds).missing).not.toContain("sold");
+  });
+
+  it("Amazon reprova quando o preço não foi confirmado na página do produto", () => {
+    const semConferir = [mlProduct({ priceVerified: true }), mlProduct({ priceVerified: false })];
+    const r = evaluateSample("amazon", semConferir, noThresholds);
+    expect(r.missing).toContain("priceVerified");
+    // Campo crítico: reprova a amostra inteira, não é só um aviso.
+    expect(r.status).toBe("fail");
+    // O ML não tem esse campo — a conferência é específica da Amazon.
+    expect(evaluateSample("ml", semConferir, noThresholds).fields.priceVerified).toBeUndefined();
   });
 
   it("respeita limiar personalizado por loja+campo", () => {

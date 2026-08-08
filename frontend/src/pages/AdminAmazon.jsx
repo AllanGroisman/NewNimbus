@@ -19,7 +19,7 @@ export default function PageAdminAmazon() {
   );
 }
 
-const RECOMENDADOS = { minRating: 4.0, minReviews: 20, minPrice: 20, maxPrice: 0, maxDiscount: 90, minDiscount: 0, enrichLimit: 40 };
+const RECOMENDADOS = { minRating: 4.0, minReviews: 20, minPrice: 20, maxPrice: 0, maxDiscount: 90, minDiscount: 0, enrichLimit: 60 };
 
 function AmazonFiltersSection() {
   const [filters, setFilters] = useState(null);
@@ -87,9 +87,9 @@ function AmazonFiltersSection() {
         <NumField label="Desconto mínimo (%)"        step="5" max="100"
           value={filters.minDiscount}   onChange={v => set("minDiscount", v)}
           hint="Ex: 1 — só itens em promoção. 0 = qualquer um" />
-        <NumField label="Produtos enriquecidos"      step="10" max="300"
+        <NumField label="Produtos conferidos na página" step="10" max="300"
           value={filters.enrichLimit}   onChange={v => set("enrichLimit", v)}
-          hint="Quantos produtos por rodada ganham nota, vendas, vendedor e frete. Cada um abre a página do produto (~5s). Mais = dado mais completo, rodada mais lenta e mais risco de bloqueio. Padrão: 40" />
+          hint="Todo produto da Amazon só entra no catálogo com o preço confirmado na página do produto (~4s cada). Este número é o teto de produtos conferidos — e, portanto, do que entra no catálogo — por categoria. Mais = catálogo maior, rodada mais lenta e mais risco de bloqueio. Padrão: 60" />
       </div>
 
       {msg && (

@@ -33,7 +33,9 @@ export const makeEmptyGroup = ({ id, name, categories, template, type, repasse, 
     lastSend: "—",
     weekData: [0, 0, 0, 0, 0, 0, 0],
     schedule: {
-      windows: [{ id: 1, from: "09:00", to: "12:00", interval: 30 }, { id: 2, from: "14:00", to: "18:00", interval: 30 }],
+      // Sem janela de propósito: a campanha nasce pausada e só começa a enviar
+      // depois que o usuário escolher o horário na aba "Janelas de envio".
+      windows: [],
       cooldownValue: 2,
       cooldownUnit: "dias",
     },

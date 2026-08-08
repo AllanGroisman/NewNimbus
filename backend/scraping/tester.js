@@ -73,10 +73,16 @@ const FIELD_SPECS = [
   { key: "price",         label: "Preço",            applies: ["ml", "ml-hub", "amazon", "shopee"], minPct: 100, critical: true },
   { key: "originalPrice", label: "Preço original",   applies: ["ml", "ml-hub", "amazon", "shopee"], minPct: 50 },
   { key: "discount",      label: "Desconto",         applies: ["ml", "ml-hub", "amazon", "shopee"], minPct: 50, zeroIsValid: true },
-  { key: "rating",        label: "Avaliação",        applies: ["ml", "ml-hub", "amazon", "shopee"], minPct: 80, minPctBy: { amazon: 40 } },
-  { key: "reviewsCount",  label: "Nº de avaliações", applies: ["amazon"],                           minPct: 40 },
+  { key: "rating",        label: "Avaliação",        applies: ["ml", "ml-hub", "amazon", "shopee"], minPct: 80, minPctBy: { amazon: 85 } },
+  { key: "reviewsCount",  label: "Nº de avaliações", applies: ["amazon"],                           minPct: 70 },
+  // A Amazon agora abre a página de TODO produto que entra no catálogo, então
+  // nota/avaliações/vendedor deixaram de ser "só dos primeiros" e o limiar sobe.
+  // priceVerified é o guarda do bug da task 68: se o bloco de compra mudar de
+  // layout, isso apita antes de o cliente ver preço errado.
+  { key: "priceVerified", label: "Preço confirmado na página", applies: ["amazon"],                  minPct: 100, critical: true,
+    check: (p) => p.priceVerified === true },
   { key: "sold",          label: "Nº de vendas",     applies: ["ml", "ml-hub", "amazon", "shopee"], minPct: 70, minPctBy: { amazon: 30 }, altKey: "soldCount", zeroIsValid: true },
-  { key: "seller",        label: "Vendedor",         applies: ["ml", "amazon", "shopee"],           minPct: 50, minPctBy: { amazon: 30 } },
+  { key: "seller",        label: "Vendedor",         applies: ["ml", "amazon", "shopee"],           minPct: 50, minPctBy: { amazon: 70 } },
   { key: "freeShipping",  label: "Frete grátis",     applies: ["ml", "amazon"],                     minPct: 0, boolField: true },
   { key: "commission",    label: "Comissão",         applies: ["ml-hub"],                           minPct: 80 },
 ];

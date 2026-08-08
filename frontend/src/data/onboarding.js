@@ -73,31 +73,33 @@ export const TOURS = {
       // ── Gerenciar
       { tab: "manage", anchor: "tab-manage", title: "Gerenciar", text: "O nome da campanha e a espera pra repetir um produto. As lojas e as categorias ficam na aba Busca de Produtos." },
       { tab: "manage", anchor: "mg-info", title: "Nome da campanha", text: "Só o apelido que aparece no menu e nos avisos. Pode trocar quando quiser." },
-      { tab: "manage", anchor: "mg-sources", title: "As lojas do repasse", text: "De quais lojas os links postados nos grupos líderes podem ser repassados. Link de outra loja é ignorado." },
+      { tab: "manage", anchor: "mg-sources", title: "As lojas do repasse", text: "De quais lojas os links postados nos grupos líderes podem ser repassados. Link de outra loja é ignorado. Os líderes em si ficam na aba Grupos." },
       { tab: "manage", anchor: "mg-cooldown", title: "Espera pra repetir um produto", text: "Quanto tempo um produto já enviado tem que esperar pra poder ir de novo — é o que evita repetir a mesma oferta no grupo." },
       { tab: "manage", anchor: "mg-save", title: "Salvar", text: "O que você mudou nesta aba só passa a valer depois de clicar aqui. O botão acende quando tem algo pra salvar." },
 
-      // ── Busca de produtos / Repasse
-      { tab: "products", anchor: "tab-products", title: "De onde vêm os produtos", text: "Numa campanha de busca, é aqui que você diz o que procurar no catálogo. Numa de repasse, é onde escolhe os grupos líderes que vão ser copiados. Colar um link na mão não é aqui — isso fica na aba Fila." },
-      { tab: "products", anchor: "pr-leader", title: "Grupos líderes", text: "Os grupos que o sistema fica escutando: todo link de produto postado neles é capturado e re-afiliado com a sua tag. Quantos você pode ter depende do seu plano." },
+      // ── Busca de produtos (a campanha de repasse não tem esta aba: os grupos
+      //    líderes ficam na aba Grupos e a revisão dos links, na aba Fila)
+      { tab: "products", anchor: "tab-products", title: "De onde vêm os produtos", text: "É aqui que você diz o que procurar no catálogo. Colar um link na mão não é aqui — isso fica na aba Fila." },
       { tab: "products", anchor: "pr-where", title: "Onde buscar", text: "As lojas e as categorias que esta campanha vasculha. Aparecem só as categorias ligadas; o botão \"Adicionar categoria\" abre a lista pra marcar mais, até o limite do seu plano." },
       { tab: "products", anchor: "pr-queue", title: "Preenchimento automático", text: "A chave liga e desliga o preenchimento sozinho. Em \"Configurar\" você escolhe quando ele acontece — quando a fila estiver acabando ou em horários fixos do dia —, quantos produtos entram por vez e em que ordem." },
       { tab: "products", anchor: "pr-search", title: "Busca por palavras-chave", text: "As palavras que o produto precisa ter no nome. Vários termos separados por vírgula; vazio traz tudo das categorias marcadas." },
       { tab: "products", anchor: "pr-filters", title: "Filtros", text: "Este botão abre faixa de preço, desconto mínimo, avaliação e vendas. Produto que não passa em todos é ignorado." },
       { tab: "products", anchor: "pr-results", title: "Os produtos encontrados", text: "A lista que os filtros trazem, na mesma ordem que o preenchimento usa. Dá pra mandar um produto específico pra fila pelo botão do card, e as duas chaves escondem o que já foi enviado há pouco e o que já está na fila." },
       { tab: "products", anchor: "pr-run", title: "Preencher fila agora", text: "Logo acima da lista: salva as escolhas e completa a fila na hora, sem esperar o horário. Bom pra testar se os filtros não ficaram apertados demais." },
-      { tab: "products", anchor: "pr-pending", title: "Aguardando revisão", text: "No repasse, os links capturados param aqui até você aprovar ou rejeitar. Numa campanha de busca isso só aparece se sobrou algo da revisão antiga." },
 
       // ── Fila
       { tab: "queue", anchor: "tab-queue", title: "Fila", text: "A ordem de quem vai ser enviado — é aqui que você vê o que está esperando pra sair." },
       { tab: "queue", anchor: "qu-list", title: "A fila em ordem", text: "O de cima é o próximo. Dá pra arrastar pra reordenar, tirar da fila ou mandar um produto furar a fila." },
       { tab: "queue", anchor: "qu-manual-add", title: "Adicionar um link na mão", text: "Cole o link de um produto e ele entra na fila, mesmo que a busca não tenha encontrado. Esta é a opção que faz isso." },
       { tab: "queue", anchor: "qu-send-now", title: "Enviar agora", text: "Manda o próximo da fila na hora, sem esperar o horário. O intervalo recomeça a contar a partir daí." },
+      { tab: "queue", anchor: "pr-pending", title: "Aguardando revisão", text: "Quando a aprovação automática está desligada, os links capturados param aqui até você aprovar ou rejeitar." },
 
       // ── Grupos
       { tab: "whatsapp", anchor: "tab-whatsapp", title: "Grupos", text: "Os grupos do WhatsApp que recebem as ofertas desta campanha. Sem grupo aqui, não tem pra quem enviar." },
       { tab: "whatsapp", anchor: "wg-add", title: "Adicionar um grupo", text: "Cria um grupo novo ou vincula um que já existe, usando um dos números que você conectou." },
       { tab: "whatsapp", anchor: "wg-list", title: "Situação de cada grupo", text: "A bolinha diz se o grupo está conectado. Aqui você vê membros, envios de hoje e o último envio." },
+      { tab: "whatsapp", anchor: "pr-leader", title: "Grupos líderes", text: "No repasse, os grupos que o sistema fica escutando: todo link de produto postado neles é capturado e re-afiliado com a sua tag. Quantos você pode ter depende do seu plano." },
+      { tab: "whatsapp", anchor: "pr-auto", title: "Aprovação automática", text: "Ligada, os links capturados entram direto na fila. Desligada, eles esperam a sua aprovação na aba Fila." },
 
       // ── Modelos de mensagem
       { tab: "messages", anchor: "tab-messages", title: "Modelos de mensagem", text: "É onde você escolhe como vai ser a mensagem enviada nos grupos: o texto que acompanha cada oferta." },
@@ -107,7 +109,7 @@ export const TOURS = {
       { tab: "messages", anchor: "ms-activate", title: "Ativar na campanha", text: "O modelo só passa a ser usado nos envios depois de ativado — e as edições precisam ser salvas." },
 
       // ── Janelas de envio
-      { tab: "schedule", anchor: "tab-schedule", title: "Janelas de envio", text: "Os horários em que a campanha pode enviar. Fora deles, ela não manda nada." },
+      { tab: "schedule", anchor: "tab-schedule", title: "Janelas de envio", text: "Os horários em que a campanha pode enviar. Fora deles, ela não manda nada — e sem nenhuma janela ela fica pausada." },
       { tab: "schedule", anchor: "sc-window", title: "Início, fim e intervalo", text: "Cada janela tem hora de começar, hora de terminar e quanto tempo esperar entre uma mensagem e a próxima." },
       { tab: "schedule", anchor: "sc-add", title: "Mais de uma janela", text: "Dá pra ter vários períodos no mesmo dia — de manhã e no fim da tarde, por exemplo." },
 

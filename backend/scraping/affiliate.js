@@ -347,24 +347,9 @@ async function gerarLinkAfiliadoML(userId, linkOriginal) {
 // Amazon BR
 // ────────────────────────────────────────────────────────────────────────
 
-function extractASIN(url) {
-  if (!url || typeof url !== "string") return null;
-  const decoded = (() => { try { return decodeURIComponent(url); } catch { return url; } })();
-  const patterns = [
-    /\/dp\/([A-Z0-9]{10})(?:[/?]|$)/i,
-    /\/gp\/product\/([A-Z0-9]{10})(?:[/?]|$)/i,
-    /\/gp\/aw\/d\/([A-Z0-9]{10})(?:[/?]|$)/i,
-    /\/product\/([A-Z0-9]{10})(?:[/?]|$)/i,
-    /\/[a-z]{2}\/dp\/([A-Z0-9]{10})(?:[/?]|$)/i,
-    /\/exec\/obidos\/asin\/([A-Z0-9]{10})(?:[/?]|$)/i,
-    /[?&]asin=([A-Z0-9]{10})\b/i,
-  ];
-  for (const p of patterns) {
-    const m = decoded.match(p);
-    if (m) return m[1].toUpperCase();
-  }
-  return null;
-}
+// Mora em ./amazon-url — o catalog/product-key.js também usa, e requerer
+// affiliate.js de lá criaria ciclo. Reexportado aqui pra não quebrar chamadores.
+const { extractASIN } = require("./amazon-url");
 
 function gerarLinkAfiliadoAmazon(userId, linkOriginal) {
   if (!linkOriginal || typeof linkOriginal !== "string") return null;
@@ -740,11 +725,13 @@ const AMAZON_FILTERS_DEFAULTS = {
   maxPrice:    0,  // 0 = sem teto
   maxDiscount: 0,  // % máximo; 0 = sem filtro
   minDiscount: 0,  // % mínimo. >0 = só itens em promoção. 0 = sem filtro
-  // Quantos produtos por rodada ganham nota/avaliações/vendas/vendedor/frete —
-  // cada um exige abrir a página do produto (~5s e risco de CAPTCHA), por isso é
-  // limitado. Só vale pras rodadas SEM filtro de nota/avaliações; com filtro o
-  // scraper usa o teto maior (AMZ_ENRICH_MAX), senão o filtro cortaria tudo.
-  enrichLimit: 40,
+  // Quantos produtos por categoria têm o PREÇO CONFERIDO na própria página do
+  // produto (e, de quebra, ganham nota/avaliações/vendas/vendedor/frete). Cada um
+  // exige abrir a página (~4s e risco de CAPTCHA), por isso é limitado.
+  // Como só entra no catálogo quem for conferido, este número é também o teto de
+  // produtos da Amazon por categoria. Com filtro de nota/avaliações o scraper
+  // confere uma folga (AMZ_VERIFY_MAX), senão o filtro cortaria tudo.
+  enrichLimit: 60,
 };
 
 function readAmazonScraperFilters() {

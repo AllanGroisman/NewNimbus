@@ -222,14 +222,14 @@ describe("GroupDashboard — criar grupo com envio só para admins", () => {
 });
 
 describe("GroupDashboard — fila vazia no modo repasse", () => {
-  it("mostra mensagem/botão de repasse (Repasse), não de Busca de Produtos", () => {
+  it("mostra mensagem/botão de repasse (Grupos), não de Busca de Produtos", () => {
     renderDashboard({
       group: { scraping: { kind: "repasse", sources: [], filters: {} }, queue: [] },
     });
     fireEvent.click(screen.getByRole("button", { name: /Fila/ })); // aba Fila
 
     expect(screen.getByText(/grupos líderes/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Ir para Repasse/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Ir para Grupos/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Ir para Busca de Produtos/i })).not.toBeInTheDocument();
   });
 });
@@ -237,7 +237,8 @@ describe("GroupDashboard — fila vazia no modo repasse", () => {
 describe("GroupDashboard — grupos líderes do repasse", () => {
   function abrirRepasse(overrides) {
     const r = renderDashboard(overrides);
-    fireEvent.click(screen.getByRole("button", { name: /^Repasse/ })); // aba Repasse
+    // Os grupos líderes moram na aba Grupos desde que a aba Repasse foi removida.
+    fireEvent.click(screen.getByRole("button", { name: /^Grupos/ }));
     return r;
   }
 
@@ -256,7 +257,7 @@ describe("GroupDashboard — grupos líderes do repasse", () => {
     ]);
     expect(screen.getByText("Ofertas A")).toBeInTheDocument();
     expect(screen.getByText("Ofertas B")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: /Remover/ })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: /^Remover$/ })).toHaveLength(2);
   });
 
   it("entende o formato antigo de líder único", () => {
@@ -272,6 +273,23 @@ describe("GroupDashboard — grupos líderes do repasse", () => {
     renderRepasse([{ numberId: "n1", jid: "111@g.us", name: "Ofertas A" }], 1);
     expect(screen.getByText(/limite de 1 grupo líder do seu plano/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Número 1/ })).not.toBeInTheDocument();
+  });
+
+  it("a aba Repasse não existe mais — os líderes ficam na aba Grupos", () => {
+    renderDashboard({
+      group: { scraping: { kind: "repasse", sources: [], filters: {}, repasse: { leaders: [] } } },
+      numbers: [{ id: "n1", label: "Número 1" }],
+      limits: { leadersPerCampaign: 3 },
+    });
+    expect(screen.queryByRole("button", { name: /^Repasse$/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Grupos/ }));
+    expect(screen.getAllByText(/Grupos líderes/i).length).toBeGreaterThan(0);
+    expect(screen.getByRole("switch", { name: "Aprovação automática" })).toBeInTheDocument();
+  });
+
+  it("campanha de busca continua com a aba Busca de Produtos", () => {
+    renderDashboard({ group: { scraping: { kind: "scraping", sources: ["Amazon"], filters: {} } } });
+    expect(screen.getByRole("button", { name: /Busca de Produtos/ })).toBeInTheDocument();
   });
 
   it("com vaga sobrando, o seletor de número fica disponível", () => {

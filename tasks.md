@@ -427,8 +427,81 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 
 67. [x] Quando clico em uma campanha la no menu da esquerda para abrir direto sua pagina, quero que suba ate o topo da pagina.
 
-68. [] Revise os itens da amazon. Busquei 10 itens de cada categoria nele e por exemplo https://www.amazon.com.br/God-War-Hits-PlayStation-4/dp/B07YT1GLV9 ta com o valor errado, aconteceu com 
+68. [x] Revise os itens da amazon. Busquei 10 itens de cada categoria nele e por exemplo https://www.amazon.com.br/God-War-Hits-PlayStation-4/dp/B07YT1GLV9 ta com o valor errado, aconteceu com 
 
-69. [] Adicionar botão de misturar os itens da fila na aba de fila. Adicionar a opcao no preenchimento automatico para executar a mistura depois de adicionar os itens na fila. 
+    O preço da Amazon vinha copiado da vitrine de ofertas, nunca da página do
+    produto — por isso o valor mudava quando você clicava no link. Agora o robô
+    abre a página de cada produto e só guarda o item com o preço confirmado lá;
+    o que não puder ser conferido simplesmente não entra.
+    Achei também um erro maior enquanto testava: na página do produto a Amazon
+    parou de escrever o preço no lugar onde o sistema lia, e ele acabava pegando
+    o preço de OUTRO bloco da página (os "produtos similares", "comprados
+    juntos"). O God of War é o exemplo: o certo é R$ 59,90 (de R$ 114,90, 47%).
+    Isso valia também pro link avulso e pro repasse — os três estavam errados.
+    De quebra: o desconto agora só sai do selo de oferta (antes qualquer
+    "10% off" de cupom ou leve-2 virava o desconto do produto), o link salvo é
+    sempre o /dp/ASIN limpo, produtos repetidos com URLs diferentes viraram um
+    só, e quando a Amazon bloqueia o robô o alerta diz isso em vez de "0
+    produtos, deve ser o filtro".
+    Efeito colateral esperado: o catálogo da Amazon fica menor (teto de 60
+    produtos por categoria, ajustável em Admin → Amazon) e a coleta demora mais
+    (~27 min pra todas as categorias, contra ~4 min antes).
 
-70. [] Por padrão a campnha vem com a janela de envio zerada. Quando a janela de envio é zerada as campanhas ficam pausadas. O horário padrão quando adiciona uma janela de envio é de 00:00 ate 23:59.
+69. [x] Adicionar botão de misturar os itens da fila na aba de fila. Adicionar a opcao no preenchimento automatico para executar a mistura depois de adicionar os itens na fila.
+
+    A aba Fila ganhou o botão "🔀 Misturar" (aparece com 2 ou mais produtos):
+    embaralha a ordem e já recalcula os horários de cada envio. E no
+    "Preenchimento automático" (Configurar) tem a chave "Misturar a fila depois
+    de preencher" — desligada por padrão; ligada, ela embaralha a fila inteira
+    a cada preenchimento, pra não sair uma sequência de ofertas parecidas na
+    ordem em que o robô achou.
+
+70. [x] Por padrão a campanha vem com a janela de envio zerada. Quando a janela de envio é zerada as campanhas ficam pausadas. O horário padrão quando adiciona uma janela de envio é de 00:00 ate 23:59.
+
+    Campanha nova nasce sem nenhuma janela (antes vinha com 09:00–12:00 e
+    14:00–18:00 já prontas) e por isso nasce pausada — o modal de criação avisa
+    isso. Sem janela ela para de verdade: não envia e também não busca produtos
+    novos. No painel aparece o selo "Pausada · sem janela de envio", e clicar no
+    card abre direto a aba Janelas de envio. Agora dá pra remover até a última
+    janela (era bloqueado), e a janela criada pelo "+ Adicionar janela" vem das
+    00:00 às 23:59. Exceção: com o envio automático ligado ela continua rodando,
+    porque ele ignora as janelas de propósito.
+
+71. [x] Colocar o toggle de envio automatico ignorando a janela de envio para dentro da aba da fila e náo no repasse, assim o usuario consegue mexer nisso direto na fila.
+
+    A chave saiu da aba Repasse e foi pro topo da aba Fila, e passou a se chamar
+    "Envio instantâneo". Continua só nas campanhas de repasse. Ela salva na hora,
+    sem botão de salvar. A aba Janelas de envio avisa quando ela está ligada, pra
+    ninguém achar que os horários pararam de funcionar sozinhos.
+
+72. [x] Tira a os grupos lideres a aba de repasse e coloca eles na aba grupos, assim todos os grupos do whats relacionados ficam la. o toggle de aprovacao automatica tb. Depois pode excluir a aba de repasse.
+
+    A aba Repasse não existe mais. Os grupos líderes e a chave de aprovação
+    automática foram pra aba Grupos (junto dos grupos que recebem as ofertas), e
+    a lista "Aguardando revisão" foi pra aba Fila — onde ela agora vale pros dois
+    tipos de campanha, num lugar só (a cópia que existia na aba de busca virou um
+    aviso apontando pra Fila). O tour guiado e os textos que mandavam pra "aba
+    Repasse" foram atualizados; quem estava com a aba Repasse aberta cai na Visão
+    geral.
+
+73. [] Reorganiza a aba de Grupos nas campanhas de repasse, os lideres devem aparecer primeiro, so depois os grupos de envio. Depois da uma olhada e ve o que tu acha que da pra melhorar.
+
+74. [x] Faltam emails como os de confirmação de pagamento, por exemplo:fiz uma compra teste la com o trial de 1 real, mas não recebi nada.
+
+    Não era falha de entrega: o e-mail não existia. Todos os avisos de cobrança
+    falavam de coisa ruim (cartão recusado, cancelamento, teste acabando) e
+    nenhum dizia "recebemos seu pagamento". Quem assinava por dentro do sistema
+    caía num vão: o único e-mail de pagamento confirmado era o "crie sua senha",
+    que só vai pra quem assina pela landing e ainda não tem conta.
+
+    Agora todo evento de dinheiro gera exatamente um e-mail: "Assinatura
+    confirmada" na primeira cobrança (no teste de R$ 1,00 ele diz quando acaba o
+    teste e quanto será a mensalidade), "Recibo do seu pagamento" a cada
+    renovação mensal, com valor e link da fatura, e "Reembolso processado" nos
+    estornos — que o sistema nem escutava antes. Quem vem da landing continua
+    recebendo um e-mail só. Os três são editáveis em Admin › E-mails, como os
+    outros, e podem ser desligados.
+
+    Também caiu o bloqueio que impedia contas admin de receber aviso de
+    cobrança — era ele que fazia o teste parecer que nada tinha sido enviado.
+    Falta ligar o evento `charge.refunded` no painel do Stripe (nos dois modos). 

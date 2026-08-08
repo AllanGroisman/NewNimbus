@@ -248,7 +248,7 @@ describe("getGroupStats — derivações", () => {
   });
 
   it("status=empty quando não há grupos vinculados", () => {
-    const stats = getGroupStats({}, waGroups, { affiliateConfigured: true });
+    const stats = getGroupStats({ schedule: { windows: [{ from: "08:00", to: "22:00" }] } }, waGroups, { affiliateConfigured: true });
     expect(stats.status).toBe("empty");
     expect(stats.count).toBe(0);
   });

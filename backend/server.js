@@ -248,8 +248,19 @@ async function handleStripeEvent(event) {
     case "invoice.payment_succeeded":
     case "invoice.payment_failed":
       // Status do subscription já reflete em customer.subscription.updated;
-      // só logamos pra observabilidade.
+      // o log continua aqui pra observabilidade.
       logger.info({ type: event.type, invoice: obj.id }, "[billing] invoice event");
+      // Cobrança recorrente aprovada = recibo pro cliente. O notify decide se
+      // aquela fatura merece e-mail (a primeira da assinatura, não) e engole os
+      // próprios erros — recibo não pode derrubar o webhook.
+      if (event.type === "invoice.payment_succeeded") {
+        await billing.notify.onInvoicePaid({ invoice: obj, livemode: event.livemode });
+      }
+      return;
+    case "charge.refunded":
+      // Estorno total ou parcial. Nada muda na assinatura (quem cancela é o
+      // subscription.deleted) — é só o aviso de que o dinheiro voltou.
+      await billing.notify.onChargeRefunded({ charge: obj, livemode: event.livemode });
       return;
     default:
       // Ignora silenciosamente — Stripe manda muitos tipos.

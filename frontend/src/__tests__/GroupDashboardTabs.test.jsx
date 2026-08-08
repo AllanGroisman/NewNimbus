@@ -147,6 +147,99 @@ describe("GroupDashboard — aba Fila com itens", () => {
     expect(call[1].queue.map(i => i.name)).toEqual(["Teclado Mecânico"]);
     await waitFor(() => expect(saveGroupQueue).toHaveBeenCalledTimes(1));
   });
+
+  it("'Enviar próximo agora' fica liberado numa campanha com janela e grupo vinculado", () => {
+    renderDashboard({
+      group: {
+        whatsappGroupIds: ["wa-1"],
+        queue: [makeItem({ id: "q1", name: "Mouse Gamer" })],
+      },
+      whatsappGroups: [{ id: "wa-1", name: "Grupo", numberId: "n1", jid: "g@g.us", status: "connected", members: 10 }],
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Fila/ }));
+    expect(screen.getByRole("button", { name: /Enviar próximo agora/ })).toBeEnabled();
+  });
+
+  it("sem janela de envio, 'Enviar próximo agora' fica travado e diz o porquê", () => {
+    renderDashboard({
+      group: {
+        whatsappGroupIds: ["wa-1"],
+        schedule: { windows: [], cooldownValue: 24, cooldownUnit: "horas" },
+        queue: [makeItem({ id: "q1", name: "Mouse Gamer" })],
+      },
+      whatsappGroups: [{ id: "wa-1", name: "Grupo", numberId: "n1", jid: "g@g.us", status: "connected", members: 10 }],
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Fila/ }));
+    const btn = screen.getByRole("button", { name: /Enviar próximo agora/ });
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute("title", expect.stringMatching(/janela de envio/i));
+  });
+
+  it("sem janela de envio a campanha se mostra pausada e o aviso leva pra aba Janelas de envio", () => {
+    renderDashboard({
+      group: {
+        whatsappGroupIds: ["wa-1"],
+        schedule: { windows: [], cooldownValue: 24, cooldownUnit: "horas" },
+      },
+      whatsappGroups: [{ id: "wa-1", name: "Grupo", numberId: "n1", jid: "g@g.us", status: "connected", members: 10 }],
+    });
+    // Selo no cabeçalho e botão de pausa refletindo o estado real
+    expect(screen.getByText(/Pausada · sem janela de envio/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Retomar/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Pausar/ })).not.toBeInTheDocument();
+    // Faixa de aviso com botão que abre a aba de janelas
+    expect(screen.getByText(/pausada porque não tem janela de envio/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Adicionar janela de envio/ }));
+    expect(screen.getByText(/Defina os intervalos do dia/)).toBeInTheDocument();
+  });
+
+  it("com janela configurada não aparece nem selo nem faixa de 'sem janela'", () => {
+    renderDashboard({
+      group: { whatsappGroupIds: ["wa-1"] },
+      whatsappGroups: [{ id: "wa-1", name: "Grupo", numberId: "n1", jid: "g@g.us", status: "connected", members: 10 }],
+    });
+    expect(screen.queryByText(/sem janela de envio/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/pausada porque não tem janela de envio/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Pausar/ })).toBeInTheDocument();
+  });
+
+  it("'Misturar' embaralha e persiste a fila (só aparece com 2+ itens)", async () => {
+    const { props } = renderQueueTab();
+    fireEvent.click(screen.getByRole("button", { name: /Misturar/ }));
+
+    const call = props.onUpdate.mock.calls.find(([, patch]) => patch.queue);
+    expect(call[1].queue.map(i => i.name).sort()).toEqual(["Mouse Gamer", "Teclado Mecânico"]);
+    await waitFor(() => expect(saveGroupQueue).toHaveBeenCalledTimes(1));
+    expect(saveGroupQueue.mock.calls[0][1]).toHaveLength(2);
+  });
+
+  it("'Misturar' não aparece com menos de 2 itens na fila", () => {
+    renderDashboard({ group: { queue: [makeItem({ id: "q1", name: "Mouse Gamer" })] } });
+    fireEvent.click(screen.getByRole("button", { name: /Fila/ }));
+    expect(screen.queryByRole("button", { name: /Misturar/ })).not.toBeInTheDocument();
+  });
+
+  it("o envio instantâneo mora na aba Fila do repasse e salva na hora", () => {
+    const { props } = renderDashboard({
+      group: { scraping: { kind: "repasse", auto: true, sources: [], filters: {} } },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Fila/ }));
+    fireEvent.click(screen.getByRole("switch", { name: /Envio instantâneo/i }));
+    const call = props.onUpdate.mock.calls.find(([, patch]) => patch.scraping?.autoSend === true);
+    expect(call).toBeTruthy();
+  });
+
+  it("campanha de busca não tem envio instantâneo na Fila", () => {
+    renderQueueTab();
+    expect(screen.queryByRole("switch", { name: /Envio instantâneo/i })).not.toBeInTheDocument();
+  });
+
+  it("'Aguardando revisão' aparece na aba Fila", () => {
+    renderDashboard({ group: { pending: [makeItem({ id: "p1", name: "Fone Pendente" })] } });
+    fireEvent.click(screen.getByRole("button", { name: /Fila/ }));
+    expect(screen.getByText(/Aguardando revisão/)).toBeInTheDocument();
+    expect(screen.getByText("Fone Pendente")).toBeInTheDocument();
+  });
 });
 
 describe("GroupDashboard — aba Janelas de envio", () => {
@@ -156,12 +249,15 @@ describe("GroupDashboard — aba Janelas de envio", () => {
     return out;
   }
 
-  it("mostra a janela existente com horários; com 1 janela não dá pra remover", () => {
+  it("mostra a janela existente com horários; dá pra remover até a última", () => {
     renderScheduleTab();
     expect(screen.getByText("Janela 1")).toBeInTheDocument();
     expect(screen.getByDisplayValue("08:00")).toBeInTheDocument();
     expect(screen.getByDisplayValue("22:00")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Remover$/ })).not.toBeInTheDocument();
+    // Sem janela nenhuma a campanha fica pausada — por isso remover a última é permitido.
+    fireEvent.click(screen.getByRole("button", { name: /^Remover$/ }));
+    expect(screen.queryByText("Janela 1")).not.toBeInTheDocument();
+    expect(screen.getByText(/nenhuma janela de envio/i)).toBeInTheDocument();
   });
 
   it("botão salvar começa desabilitado (sem alterações)", () => {

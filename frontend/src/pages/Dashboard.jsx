@@ -3,6 +3,7 @@ import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, CATEGORIES, categoryLabel, catego
 import Badge from "../components/ui/Badge";
 import UsageBadge from "../components/ui/UsageBadge";
 import Modal from "../components/ui/Modal";
+import { writeSavedTab } from "../components/GroupDashboard";
 
 // Calcula status da janela: ativa agora (até quando) ou próxima (em quanto tempo).
 function getWindowStatus(group, now = new Date()) {
@@ -130,7 +131,10 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
               // Estado efetivo: manual OU afiliado faltando OU sem WhatsApp conectado —
               // botão reflete todos. (degraded/parcial ainda envia, então não pausa.)
               const planPaused = isPlanPaused(g);
-              const isPaused = planPaused || !!g.paused || stats.pausedByAffiliate || stats.status === "disconnected";
+              const isPaused = planPaused || !!g.paused || stats.pausedByAffiliate || stats.pausedNoWindow || stats.status === "disconnected";
+              // Parada só por falta de janela: o botão não "ativa" nada, ele abre
+              // a campanha na aba onde a janela é criada — o rótulo tem que dizer isso.
+              const winOnly = stats.pausedNoWindow && !g.paused && !planPaused && !stats.pausedByAffiliate;
               const isLive = !planPaused && !stats.paused && stats.status === "connected";
               const missingAff = stats.pausedByAffiliateML && stats.pausedByAffiliateShopee
                 ? "ML e Shopee"
@@ -145,6 +149,8 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                 ? <Badge color="amber">Campanha pausada</Badge>
                 : stats.pausedByAffiliate
                   ? <Badge color="amber">Pausado · sem afiliado {missingAff}</Badge>
+                : stats.pausedNoWindow
+                  ? <Badge color="amber">Pausada · sem janela de envio</Badge>
                   : stats.status === "connected"
                     ? <Badge color="green">Ativa</Badge>
                     : stats.status === "degraded"
@@ -177,6 +183,9 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                         // campanha pra ver o alerta — pausar/retomar manual aqui não
                         // resolve sozinho.
                         if (stats.pausedByAffiliate && !g.paused) { onSelectGroup(g); return; }
+                        // Sem janela de envio: abre a campanha já na aba onde ela
+                        // é criada, senão o usuário não sabe onde resolver.
+                        if (stats.pausedNoWindow && !g.paused) { writeSavedTab(g.id, "schedule"); onSelectGroup(g); return; }
                         if (stats.status === "disconnected" && !g.paused && !stats.pausedByAffiliate) { onSelectGroup(g); return; }
                         togglePause(g);
                       }}
@@ -184,6 +193,7 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                         planPaused ? "Ativar esta campanha dentro do seu plano"
                           : g.paused ? "Reativar campanha"
                           : stats.pausedByAffiliate ? `Configure o afiliado ${missingAff} para reativar`
+                          : stats.pausedNoWindow ? "Crie uma janela de envio para a campanha começar"
                           : stats.status === "disconnected" ? "Conecte um WhatsApp para reativar (retoma sozinho)"
                           : "Pausar campanha"
                       }
@@ -195,7 +205,7 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                         fontSize: 12, cursor: "pointer", fontWeight: 500,
                       }}
                     >
-                      {isPaused ? "▶ Ativar" : "⏸ Pausar"}
+                      {winOnly ? "🗓 Adicionar janela" : isPaused ? "▶ Ativar" : "⏸ Pausar"}
                     </button>
                   </div>
 
@@ -254,7 +264,7 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                       <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
                         {win.kind === "current" ? "Janela atual" : "Próxima janela"}
                       </div>
-                      <div style={{ fontSize: 13, fontWeight: 500, color: win.kind === "current" ? PRIMARY_DARK : "var(--color-text-primary)" }}>
+                      <div style={{ fontSize: 13, fontWeight: 500, color: win.kind === "current" ? PRIMARY_DARK : win.kind === "none" ? "var(--warn-text)" : "var(--color-text-primary)" }}>
                         {win.text}
                       </div>
                       {win.sub && <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 1 }}>{win.sub}</div>}
@@ -337,6 +347,11 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                   </span>
                 </label>
               </div>
+              {/* A campanha nasce sem janela de envio (pausada) — avisar aqui
+                  evita a impressão de que ela quebrou logo depois de criada. */}
+              <div style={{ fontSize: 11, color: "var(--color-text-secondary)", background: "var(--color-background-secondary)", padding: "8px 10px", borderRadius: 8, marginTop: 12, lineHeight: 1.5 }}>
+                ⏸️ Ela começa pausada: defina a <strong>janela de envio</strong> dentro da campanha pra ela começar a enviar.
+              </div>
               <div style={{ display: "flex", gap: 8, justifyContent: "space-between", marginTop: 18 }}>
                 <button type="button" onClick={() => setForm(f => ({ ...f, type: null }))} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>← Voltar</button>
                 <button type="submit" disabled={!form.name.trim()} style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: !form.name.trim() ? 0.5 : 1 }}>Criar campanha</button>
@@ -373,6 +388,11 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                     })}
                   </div>
                 </div>
+              </div>
+              {/* A campanha nasce sem janela de envio (pausada) — avisar aqui
+                  evita a impressão de que ela quebrou logo depois de criada. */}
+              <div style={{ fontSize: 11, color: "var(--color-text-secondary)", background: "var(--color-background-secondary)", padding: "8px 10px", borderRadius: 8, marginTop: 12, lineHeight: 1.5 }}>
+                ⏸️ Ela começa pausada: defina a <strong>janela de envio</strong> dentro da campanha pra ela começar a enviar.
               </div>
               <div style={{ display: "flex", gap: 8, justifyContent: "space-between", marginTop: 18 }}>
                 <button type="button" onClick={() => setForm(f => ({ ...f, type: null }))} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>← Voltar</button>

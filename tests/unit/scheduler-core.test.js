@@ -176,6 +176,48 @@ describe("scheduler.isAutoRefill — preenchimento automático da fila", () => {
   });
 });
 
+describe("scheduler.windowGate — sem janela a campanha fica parada", () => {
+  it("com pelo menos uma janela, passa", () => {
+    expect(scheduler.windowGate({ schedule: { windows: [{ from: "08:00", to: "12:00" }] } }).ok).toBe(true);
+  });
+
+  it("sem nenhuma janela, barra (e diz o porquê)", () => {
+    const g = scheduler.windowGate({ schedule: { windows: [] } });
+    expect(g.ok).toBe(false);
+    expect(g.reason).toMatch(/janela de envio/i);
+    expect(scheduler.windowGate({ schedule: {} }).ok).toBe(false);
+    expect(scheduler.windowGate({}).ok).toBe(false);
+  });
+
+  it("envio automático ignora as janelas de propósito — não está parada", () => {
+    expect(scheduler.windowGate({ schedule: { windows: [] }, scraping: { autoSend: true } }).ok).toBe(true);
+    // Só o true explícito vale.
+    expect(scheduler.windowGate({ schedule: { windows: [] }, scraping: { autoSend: "sim" } }).ok).toBe(false);
+  });
+});
+
+describe("scheduler.shuffleArray / shuffleAfterRefill — misturar a fila", () => {
+  it("shuffleArray devolve os mesmos itens, sem mexer no array original", () => {
+    const orig = [1, 2, 3, 4, 5, 6, 7, 8];
+    const out = scheduler.shuffleArray(orig);
+    expect(out).toHaveLength(orig.length);
+    expect([...out].sort((a, b) => a - b)).toEqual(orig);
+    expect(orig).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  it("shuffleArray aguenta vazio e undefined", () => {
+    expect(scheduler.shuffleArray([])).toEqual([]);
+    expect(scheduler.shuffleArray(undefined)).toEqual([]);
+  });
+
+  it("shuffleAfterRefill é desligado por padrão e só liga com true explícito", () => {
+    expect(scheduler.shuffleAfterRefill({})).toBe(false);
+    expect(scheduler.shuffleAfterRefill({ scraping: {} })).toBe(false);
+    expect(scheduler.shuffleAfterRefill({ scraping: { shuffleAfterRefill: "sim" } })).toBe(false);
+    expect(scheduler.shuffleAfterRefill({ scraping: { shuffleAfterRefill: true } })).toBe(true);
+  });
+});
+
 describe("scheduler.sortMode / batchSize — ordem e tamanho do lote da busca", () => {
   it("sortMode aceita os modos do catálogo e cai no padrão pro resto", () => {
     expect(scheduler.sortMode({ sortBy: "price_asc" })).toBe("price_asc");

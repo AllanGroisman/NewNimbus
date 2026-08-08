@@ -328,6 +328,23 @@ describe("ProductSearchTab — preenchimento automático", () => {
     expect(screen.queryByRole("switch", { name: "Aprovação automática" })).not.toBeInTheDocument();
   });
 
+  it("a opção de misturar depois de preencher fica no Configurar, desligada por padrão", async () => {
+    render(<Harness />);
+    await screen.findByRole("switch", { name: "Preencher a fila automaticamente" });
+    expect(screen.queryByRole("switch", { name: /Misturar a fila/i })).not.toBeInTheDocument();
+    abrirConfig();
+    const sw = await screen.findByRole("switch", { name: /Misturar a fila/i });
+    expect(sw).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(sw);
+    expect(await screen.findByRole("switch", { name: /Misturar a fila/i })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("os pendentes não são mais revisados aqui — o aviso manda pra aba Fila", async () => {
+    render(<Harness pending={[{ id: "p1", key: "p1", name: "Fone Pendente", store: "Amazon", price: 10, discount: 20 }]} />);
+    expect(await screen.findByText(/aguardando revisão/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Adicionar todos à fila/ })).not.toBeInTheDocument();
+  });
+
   it("a quantidade por vez aparece no botão de preencher", async () => {
     render(<Harness />);
     expect(await screen.findByRole("button", { name: /Preencher fila agora \(até 20\)/ })).toBeInTheDocument();
