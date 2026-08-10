@@ -296,4 +296,63 @@ describe("GroupDashboard — grupos líderes do repasse", () => {
     renderRepasse([{ numberId: "n1", jid: "111@g.us", name: "Ofertas A" }], 3);
     expect(screen.getByRole("button", { name: /Número 1/ })).toBeInTheDocument();
   });
+
+  it("a captura (líderes) vem antes da lista de grupos de envio", () => {
+    const { container } = renderRepasse([{ numberId: "n1", jid: "111@g.us", name: "Ofertas A" }]);
+    const lideres = container.querySelector('[data-tour="pr-leader"]');
+    const envio = container.querySelector('[data-tour="wg-list"]');
+    expect(lideres).toBeTruthy();
+    expect(envio).toBeTruthy();
+    expect(lideres.compareDocumentPosition(envio) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText("Grupos de envio")).toBeInTheDocument();
+  });
+
+  it("campanha de busca não ganha seção de captura na aba Grupos", () => {
+    const { container } = renderDashboard({ group: { scraping: { kind: "scraping", sources: ["Amazon"], filters: {} } } });
+    fireEvent.click(screen.getByRole("button", { name: /^Grupos/ }));
+    expect(container.querySelector('[data-tour="pr-leader"]')).toBeNull();
+    expect(screen.getByText("Grupos do WhatsApp")).toBeInTheDocument();
+  });
+
+  it("líder com número conectado mostra 'Conectado'", () => {
+    abrirRepasse({
+      group: { scraping: { kind: "repasse", sources: [], filters: {}, repasse: { leaders: [{ numberId: "n1", jid: "111@g.us", name: "Ofertas A" }] } } },
+      numbers: [{ id: "n1", label: "Número 1", status: "connected" }],
+      limits: { leadersPerCampaign: 3 },
+    });
+    expect(screen.getByText("Conectado")).toBeInTheDocument();
+  });
+
+  it("líder com número desconectado avisa que nada é capturado", () => {
+    renderRepasse([{ numberId: "n1", jid: "111@g.us", name: "Ofertas A" }]);
+    expect(screen.getByText("Desconectado")).toBeInTheDocument();
+    expect(screen.getByText(/nada é capturado neste grupo/i)).toBeInTheDocument();
+  });
+
+  it("líder cujo número sumiu aparece como removido", () => {
+    abrirRepasse({
+      group: { scraping: { kind: "repasse", sources: [], filters: {}, repasse: { leaders: [{ numberId: "n9", jid: "111@g.us", name: "Ofertas A" }] } } },
+      numbers: [{ id: "n1", label: "Número 1", status: "connected" }],
+      limits: { leadersPerCampaign: 3 },
+    });
+    expect(screen.getByText(/número removido/i)).toBeInTheDocument();
+  });
+
+  it("repasse sem nenhum líder avisa que a campanha não captura nada", () => {
+    renderRepasse([]);
+    expect(screen.getByText(/Nenhum grupo líder escolhido/i)).toBeInTheDocument();
+  });
+
+  it("grupo que é destino e líder ao mesmo tempo ganha o selo de líder", () => {
+    abrirRepasse({
+      group: {
+        whatsappGroupIds: ["111@g.us"],
+        scraping: { kind: "repasse", sources: [], filters: {}, repasse: { leaders: [{ numberId: "n1", jid: "111@g.us", name: "Ofertas A" }] } },
+      },
+      whatsappGroups: [{ id: "111@g.us", name: "Ofertas A", numberId: "n1", status: "connected", members: 10 }],
+      numbers: [{ id: "n1", label: "Número 1", status: "connected" }],
+      limits: { leadersPerCampaign: 3 },
+    });
+    expect(screen.getByText(/Também é líder/)).toBeInTheDocument();
+  });
 });

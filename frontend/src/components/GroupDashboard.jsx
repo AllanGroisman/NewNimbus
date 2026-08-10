@@ -861,6 +861,12 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const primaryCat = groupInfo.categories[0] || getGroupCategories(group)[0];
   const barColor = primaryCat === "gamer" ? "#378ADD" : PRIMARY;
   const linkedWGs = whatsappGroups.filter(w => groupInfo.whatsappGroupIds.includes(w.id));
+  // Líderes do repasse — usados nas duas seções da aba Grupos (o card de
+  // líderes e o cruzamento com os grupos de envio), por isso ficam aqui fora.
+  // O id de um whatsappGroup É o jid do grupo (ver importAndLink), então
+  // `numberId::id` de um grupo de envio bate com `numberId::jid` de um líder.
+  const campaignLeaders = scraping?.kind === "repasse" ? leadersOf(scraping) : [];
+  const leaderKeys = new Set(campaignLeaders.map(l => `${l.numberId}::${l.jid}`));
   // Passa objeto quando disponível (ml + shopee gating), senão fallback boolean (compat).
   // O `schedule` vem do grupo salvo (e não do `sched` em edição): a campanha só
   // deixa de estar pausada por falta de janela depois que a janela é salva.
@@ -1999,16 +2005,21 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       )}
 
       {tab === "whatsapp" && (() => {
-        return (
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        // No repasse a aba segue o caminho do link: primeiro a captura (grupos
+        // líderes + aprovação), depois o envio. Na campanha de busca só existe
+        // o envio, e ele continua abrindo a aba como sempre.
+        const sendingSection = (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, ...(isRepasse ? { marginTop: 6, paddingTop: 14, borderTop: "0.5px solid var(--color-border-tertiary)" } : null) }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
             <div>
               <div style={{ fontSize: 14, fontWeight: 500, display: "flex", alignItems: "center", gap: 8 }}>
-                Grupos do WhatsApp
+                {isRepasse ? "Grupos de envio" : "Grupos do WhatsApp"}
                 <UsageBadge current={groupInfo.whatsappGroupIds.length} limit={limits?.whatsappGroupsPerCampaign} label="grupos criados" />
               </div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>
-                Esta campanha envia para os grupos abaixo. Cada grupo recebe a mesma fila de produtos.
+                {isRepasse
+                  ? "Para onde vão os produtos capturados nos grupos líderes. Cada grupo recebe a mesma fila."
+                  : "Esta campanha envia para os grupos abaixo. Cada grupo recebe a mesma fila de produtos."}
               </div>
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -2038,6 +2049,10 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 const number = numbers.find(n => n.id === w.numberId);
                 const numberConnected = number?.status === "connected";
                 const connected = w.status === "connected" && numberConnected;
+                // Mesmo grupo nos dois papéis: recebe os envios e também é
+                // escutado. Vale marcar — o resto da tela trata os dois como
+                // listas separadas.
+                const alsoLeader = leaderKeys.has(`${w.numberId}::${w.id}`);
                 return (
                   <div key={w.id} style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12, gap: 12, flexWrap: "wrap" }}>
@@ -2046,6 +2061,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                           <span style={{ width: 9, height: 9, borderRadius: "50%", background: connected ? PRIMARY : "#E24B4A", flexShrink: 0 }} />
                           <span style={{ fontSize: 14, fontWeight: 500 }}>{w.name}</span>
                           <Badge color={connected ? "green" : "red"}>{connected ? "Conectado" : "Desconectado"}</Badge>
+                          {alsoLeader && <Badge color="amber">👑 Também é líder</Badge>}
                         </div>
                         <div
                           style={{
@@ -2161,11 +2177,13 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               })}
             </div>
           )}
+        </div>
+        );
 
-          {/* Repasse: os grupos líderes são grupos de WhatsApp, então moram aqui
-              junto com os grupos de destino (antes ficavam na aba Repasse). */}
-          {isRepasse && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 6, paddingTop: 14, borderTop: "0.5px solid var(--color-border-tertiary)" }}>
+        // Repasse: os grupos líderes são grupos de WhatsApp, então moram aqui
+        // junto com os grupos de destino (antes ficavam na aba Repasse).
+        const captureSection = (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {showRepasseIntro ? (
               <div style={{ display: "flex", alignItems: "flex-start", gap: 10, background: PRIMARY_LIGHT, color: PRIMARY_DARK, padding: "10px 14px", borderRadius: 10, fontSize: 12, lineHeight: 1.5 }}>
                 <div style={{ flex: 1 }}>
@@ -2184,7 +2202,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
             {/* Grupos líderes */}
             {(() => {
-              const leaders = leadersOf(scraping);
+              const leaders = campaignLeaders;
               const leaderLimit = limits?.leadersPerCampaign;
               const leaderFull = leaderLimit != null && leaders.length >= leaderLimit;
               const addLeader = wg => setScraping(s => {
@@ -2205,20 +2223,46 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 Os grupos de onde os links serão capturados. Tudo que eles postarem cai na fila desta campanha.
               </div>
 
-              {leaders.length > 0 && (
+              {leaders.length > 0 ? (
                 <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
-                  {leaders.map(l => (
-                    <div key={`${l.numberId}::${l.jid}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, background: "var(--color-background-secondary)", border: `0.5px solid ${PRIMARY}` }}>
+                  {leaders.map(l => {
+                    // O líder não tem registro em whatsappGroups (ele nunca é
+                    // importado), então o único sinal de saúde é o número que
+                    // escuta o grupo: número caído = captura parada em silêncio.
+                    const leaderNumber = numbers.find(n => n.id === l.numberId);
+                    const leaderOn = leaderNumber?.status === "connected";
+                    return (
+                    <div key={`${l.numberId}::${l.jid}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, background: "var(--color-background-secondary)", border: `0.5px solid ${leaderOn ? PRIMARY : "var(--danger-border)"}` }}>
                       <span style={{ fontSize: 18 }}>👑</span>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 13, fontWeight: 500 }}>{l.name || l.jid}</div>
-                        <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
-                          {(numbers.find(n => n.id === l.numberId)?.label) || `Número ${l.numberId}`}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 13, fontWeight: 500 }}>{l.name || l.jid}</span>
+                          <Badge color={leaderOn ? "green" : "red"}>{leaderOn ? "Conectado" : "Desconectado"}</Badge>
                         </div>
+                        <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                          {leaderNumber
+                            ? (leaderNumber.label || `Número ${l.numberId}`)
+                            : <span style={{ color: "var(--danger-text)", fontStyle: "italic" }}>número removido</span>}
+                        </div>
+                        {!leaderOn && (
+                          <div style={{ fontSize: 11, color: "var(--warn-text)", marginTop: 3 }}>
+                            {leaderNumber
+                              ? "Enquanto este número estiver desconectado, nada é capturado neste grupo."
+                              : "O número que escutava este grupo não existe mais — nada é capturado até escolher outro líder."}
+                          </div>
+                        )}
                       </div>
                       <button onClick={() => removeLeader(l)} style={{ padding: "5px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 12, cursor: "pointer" }}>Remover</button>
                     </div>
-                  ))}
+                    );
+                  })}
+                </div>
+              ) : numbers.length > 0 && (
+                /* Sem líder a campanha de repasse nunca captura nada — e nada
+                   na tela dizia isso. (Sem número conectado, a mensagem de
+                   baixo já explica o que fazer, então não duplicamos o aviso.) */
+                <div style={{ fontSize: 12, color: "var(--warn-text)", background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", padding: "10px 12px", borderRadius: 8, marginBottom: 12, lineHeight: 1.5 }}>
+                  ⚠ <strong>Nenhum grupo líder escolhido.</strong> Sem líder esta campanha não captura nenhum link, e a fila fica vazia. Escolha abaixo o grupo que ela deve escutar.
                 </div>
               )}
 
@@ -2267,11 +2311,18 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                       ) : (
                         filteredLeaderGroups.map(wg => {
                           const already = leaders.some(l => l.jid === wg.jid && l.numberId === addExistingNumberId);
+                          // Escolher como líder um grupo que já é destino desta
+                          // campanha é válido, mas quase sempre é engano — o
+                          // nome dos dois costuma ser parecido no seletor.
+                          const isDestino = linkedWGs.some(w => w.id === wg.jid && w.numberId === addExistingNumberId);
                           return (
                           <div key={wg.jid} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)" }}>
                             <div style={{ flex: 1 }}>
                               <div style={{ fontSize: 13, fontWeight: 500 }}>{wg.name}</div>
                               <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{wg.members || 0} membros</div>
+                              {isDestino && (
+                                <div style={{ fontSize: 11, color: "var(--warn-text)", marginTop: 2 }}>já é grupo de envio desta campanha</div>
+                              )}
                             </div>
                             <button
                               onClick={() => addLeader(wg)}
@@ -2319,7 +2370,12 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               </button>
             </div>
             </div>
-          )}
+        );
+
+        return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {isRepasse && captureSection}
+          {sendingSection}
 
           {addStep === "choose" && (
             <Modal title="Adicionar grupo" onClose={closeAddModal}>

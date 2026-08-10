@@ -517,7 +517,25 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 
 73. [x] Como funcionam os cupons no ML e na Shopee? Como poderia buscar e integrar eles no sistema? Tem algums grupos de whats que enviam o produto com o cupom a ser utilizado.
 
-74. [] Reorganiza a aba de Grupos nas campanhas de repasse, os lideres devem aparecer primeiro, so depois os grupos de envio. Depois da uma olhada e ve o que tu acha que da pra melhorar.
+74. [x] Reorganiza a aba de Grupos nas campanhas de repasse, os lideres devem aparecer primeiro, so depois os grupos de envio. Depois da uma olhada e ve o que tu acha que da pra melhorar.
+
+    A aba agora segue o caminho do link: primeiro a captura (grupos líderes +
+    aprovação automática + salvar) e só depois os grupos de envio, separados por
+    um divisor. O bloco de envio se chama "Grupos de envio" no repasse. Campanha
+    de busca não mudou nada.
+
+    Junto vieram quatro coisas que faltavam ali:
+
+    - Cada grupo líder agora mostra se o número que escuta ele está conectado
+      (bolinha + selo, igual aos grupos de envio) e avisa que nada é capturado
+      enquanto ele estiver fora — antes a captura parava em silêncio.
+    - Campanha de repasse sem nenhum líder ganha uma faixa laranja explicando
+      que assim ela nunca captura nada.
+    - Grupo que é destino e líder ao mesmo tempo ganha o selo "👑 Também é
+      líder", e no seletor de líderes os grupos que já são destino aparecem
+      marcados — evita escolher o grupo errado sem perceber.
+    - O tour passa nos líderes antes do "+ Adicionar grupo", seguindo a nova
+      ordem da tela.
 
 75. [x] Ao criar uma nova campanha, tirar a mensagem "Já vamos preencher os defaults.... Tudo isso pode ser ajustado depois.". Tire tb a mensagem  "Ela começa pausada... ela começa a enviar".
 
@@ -529,4 +547,12 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 
 79. [x] Quero na edicao dos modelos de mensagem ter uma opcao para que se o item nao estiverm em promocao não apareca "de" ou "desconto", o que tu sugere?
 
-80. [] 
+80. [] Tira o cupom fixo da campanha no modelo de mensagem
+
+81. [] Campanha de repasse não precisa de categoria, pode tirar.
+
+82. [] Na campanha de repasse, mesmo com uma loja bloqueada, quero que o repasse ignore os bloqueios. O bloquieio é apenas para campanhas normais onde pode-se buscar produtos no próprio sistema.
+
+83. Nos grupos, quero que mude de "Grupos do WhatsApp" para "Grupos Destino".
+
+84. No Modelos Mensagens, quero que troque e tenha 2 botões para salvar, o "Salvar" que apenas salva a alteração feita e o "Salvar Como" que salva como um diferente modelo com outro nome. Tira o "Criar a partir deste". Sempre que for salvar abra um popup perguntando se já quer ativar o modelo.

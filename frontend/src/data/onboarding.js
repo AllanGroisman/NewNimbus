@@ -83,8 +83,11 @@ export const TOURS = {
 
       // ── Grupos
       { tab: "whatsapp", anchor: "tab-whatsapp", title: "Grupos", text: "Os grupos do WhatsApp que recebem as ofertas desta campanha. Sem grupo aqui, não tem pra quem enviar." },
-      { tab: "whatsapp", anchor: "wg-add", title: "Adicionar um grupo", text: "Cria um grupo novo ou vincula um que já existe, usando um dos números que você conectou. A bolinha de cada grupo na lista diz se ele está conectado." },
+      // Líderes antes do "+ Adicionar grupo": no repasse a aba abre pela
+      // captura, e o tour segue a mesma ordem da tela. Na campanha de busca a
+      // âncora pr-leader não existe e o passo é pulado.
       { tab: "whatsapp", anchor: "pr-leader", title: "Grupos líderes", text: "No repasse, os grupos que o sistema fica escutando: todo link de produto postado neles é capturado e re-afiliado com a sua tag. Com a aprovação automática ligada eles entram direto na fila; desligada, esperam você aprovar na aba Fila." },
+      { tab: "whatsapp", anchor: "wg-add", title: "Adicionar um grupo", text: "Cria um grupo novo ou vincula um que já existe, usando um dos números que você conectou. A bolinha de cada grupo na lista diz se ele está conectado." },
 
       // ── Modelos de mensagem
       { tab: "messages", anchor: "tab-messages", title: "Modelos de mensagem", text: "É onde você escolhe como vai ser a mensagem enviada nos grupos: o texto que acompanha cada oferta." },
