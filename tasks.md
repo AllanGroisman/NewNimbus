@@ -30,7 +30,6 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 10. [x] Quando o usuário tem uma assinatura ativa, mude a tela de assinatura para aparecer seus benefícios junto com a informação do plano atual e também deixe os planos maiores, se existirem, com menos destaque. Quero que puxe informações do stripe para dizer até quando vai ficar ativo, mesmo se for cancelado. Da uma olhada em como ta, me faça perguntas para alterar como funciona a página para fazer um plano e ter a melhor forma possível.
 
 11. [x] Repasse -> as vezes o link do produto vem como afiliado, em uma página diferente, como em https://www.mercadolivre.com.br/social/oreidapromobr?matt_word=orpcami&matt_tool=37515304&forceInApp=true&ref=BMzx%2BB%2BJzXYiDBLAlICsACrMd3anZ%2B1VMHKghql01swINfTi6PEffWt4EMfbJoNSx1oZhOaPpSaqKCDJ6shB5b8rPFSRFvoRarzrlDxIUvHGDPyy9VkBIm1uKfmvR1aA8saDF5BPM82is0k4tds%2B2IBDXCKN%2BWwadJFE1Um5zgkijOE5J%2FLIR1EWUY3wJfhs8OrSoA%3D%3D, ver as possibilidades
-    
 
 12. [x] Quero alterar os campos das lojas especificas no menu admin para editar manualmente, esta bugado.
 
@@ -119,17 +118,15 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 
 40. [x] Quero adicionar a marca nimbus como icone na aba do navegador e onde geralmente é utilizado. Quero tb que a marca esteja no topo do site. É o N de Nimbus, posso colocar o png em uma pasta que tu sugerir para adicionar esse tipo de asset.
 
-41. [] Quero conferir se o ambiente mobile esta condizente e bem construido para utilizacao do usuario.
-
-42. [x] Quero buscar o nome dos produtos do stripe direto de la para ficar condizente assim como o preco. Tb, quero ter um botao em uma nova aba de ADMIN para trocar entre os produtos em ambiente de teste e ambiente de producao do stripe.
+41. [x] Quero buscar o nome dos produtos do stripe direto de la para ficar condizente assim como o preco. Tb, quero ter um botao em uma nova aba de ADMIN para trocar entre os produtos em ambiente de teste e ambiente de producao do stripe.
     Nome do produto vem do Stripe junto com o preco (cards da Assinatura, "plano atual" e rotulo da
     sidebar); limits.js so entra como reserva. Nova aba ADMIN > Stripe mostra o modo ativo, o que cada
     modo tem no .env e os produtos em uso, e troca teste<->producao em dois cliques, sem reiniciar.
     Assinatura guarda o modo em que nasceu (coluna stripeMode) e fica inerte enquanto o sistema esta no
-    outro modo. Fecha tambem a task 44. PENDENTE: preencher STRIPE_*_LIVE no .env da VPS e validar a
+    outro modo. Fecha tambem a task 43. PENDENTE: preencher STRIPE_*_LIVE no .env da VPS e validar a
     troca no navegador depois do deploy.
 
-43. [x] Todos os erros estao sendo tratados e mostrados ao usuario de maneira apropriada? Por exemplo, quando sistema ta off e o usuario ta em uma pagina fica aparecendo bad gateway ou algo do tipo, preferiria que aparecesse uma mensagem de offline, tente mais tarde ou algo do tipo. Revise bem o sistema.
+42. [x] Todos os erros estao sendo tratados e mostrados ao usuario de maneira apropriada? Por exemplo, quando sistema ta off e o usuario ta em uma pagina fica aparecendo bad gateway ou algo do tipo, preferiria que aparecesse uma mensagem de offline, tente mais tarde ou algo do tipo. Revise bem o sistema.
     Erro agora passa por 4 camadas e todas devolvem português: o nginx responde JSON
     ({error, code:"server_offline"}) no lugar da página "502 Bad Gateway"; o Express ganhou
     tratador global + 404 JSON e os 47 `res.status(500).json({error: err.message})` viraram
@@ -145,19 +142,15 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     PENDENTE: rodar deploy/update.sh na VPS e validar o roteiro manual (pm2 stop nimbus-backend
     com a tela aberta).
 
-44. [x] Quero uma maneira facil de trocar entre os produtos do modo teste do stripe e os produto de producao. Ja criei os produtos na producao do stripe.
-    Feito junto com a task 42: botao na aba ADMIN > Stripe.
+43. [x] Quero uma maneira facil de trocar entre os produtos do modo teste do stripe e os produto de producao. Ja criei os produtos na producao do stripe.
+    Feito junto com a task 41: botao na aba ADMIN > Stripe.
 
-45. [x] Quero que os grupos de whatsapp sejam criados com a possibilidade de mandar msg apenas pelos admins do grupo.
+44. [x] Quero que os grupos de whatsapp sejam criados com a possibilidade de mandar msg apenas pelos admins do grupo.
     Todo grupo criado pelo Nimbus ja nasce com "Enviar mensagens: somente administradores"
     (groupSettingUpdate announcement logo apos o groupCreate). Vale so para grupos novos; se o
     WhatsApp recusar a restricao o grupo e criado do mesmo jeito e o modal avisa pra ajustar na mao.
 
-46. [] Quero fazer um resumo geral do sistema e criar um arquivo na raiz do projeto que explique didaticamente como esta funcionando. Náo sei exatamente tudo que quero no resumo, mas as tecnologias usadas, onde estao os banco de dados, o que tenho guardado em cada um, quais sao minhas camadas de seguranca, como funciona, como esta arquitetado para expansao caso cresca o numero de usuario, onde e como sao feitos os backups e o que tem neles, um resumo do custo computacional das diferentes partes da arquitetura, etc...
-
-47. [] Pack 3meses ,6 meses e 1 ano nos planos
-
-48. [x] Hoje quais emails sao enviados? Quais estao faltando?
+45. [x] Hoje quais emails sao enviados? Quais estao faltando?
 
     ANTES existiam 4 e-mails, todos ligados a token: confirmar e-mail no cadastro
     (mais reenvio manual e pelo admin), redefinir senha, "assinatura ativa — crie
@@ -193,38 +186,33 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     alertas de admin (backup falhou, erro de sistema) por e-mail como canal
     reserva, ja que hoje dependem do proprio WhatsApp estar de pe.
 
-49. [] Na landpage:
-    Quando já tem o plano que esta tentando ativo, no é só ntrar na sua conta tem que ter hyperlink na sua conta para logar.
-    Quando clicar no plano maior, ir direto pro stripe ou ter que logar?
-    Ao clicar para fazer upgrade do plano, quero que va para o stripe para realizar a nova compra. No momento ele ta fazendo automatico no proprio site, tem que ir direto la.
-
-50. [x] Limitar usuario por cpf. Acrescentar essa info em todo fluxo de compra.
+46. [x] Limitar usuario por cpf. Acrescentar essa info em todo fluxo de compra.
     Uma conta = um CPF (`users.cpf` UNIQUE). Os botões da landing abrem um popup
     pedindo e-mail e CPF, e o sistema decide antes do Stripe: CPF de outra conta
     ou plano ativo bloqueiam e mandam entrar na conta. Contas antigas informam o
     CPF na primeira entrada. O teste de R$ 1,00 continua só no Bronze — o texto
     da landing que prometia "todos os planos" foi corrigido.
 
-51. [x] Adicionar o cpf la no stripe na hora que vai pro pagamento.
+47. [x] Adicionar o cpf la no stripe na hora que vai pro pagamento.
     O CPF agora é gravado como documento fiscal do cliente no Stripe (tax ID
     br_cpf), e não só como anotação interna — aparece no cadastro, nas faturas e
     nos recibos. Como o cliente do Stripe passou a ser criado ANTES do pagamento,
     o CPF já vale na primeira fatura. Vale para os dois caminhos: quem vem da
     landing e quem assina por dentro do sistema.
 
-52. [x] Na LP (index.php) ao tentar assinar o plano de 1 real ou qualquer um dos outros 3, no popup, se entrar com mesmo email e cpf de uma conta ja criada e com assinatura, aparece botoes com as opcoes de assinar os planos maiores. Se for o plano maior apenas informa.
+48. [x] Na LP (index.php) ao tentar assinar o plano de 1 real ou qualquer um dos outros 3, no popup, se entrar com mesmo email e cpf de uma conta ja criada e com assinatura, aparece botoes com as opcoes de assinar os planos maiores. Se for o plano maior apenas informa.
     O popup mostra os planos maiores que o atual com nome e preço; quem já está
     no maior plano só recebe a informação e o botão de entrar. A mesma tela vale
     em /assinar. Quem decide quais planos aparecem é o backend, então a regra
     mora num lugar só.
 
-53. [x] Na LP (index.php) ao tentar assinar o plano de 1 real ou qualquer um dos outros 3, se entrar com mesmo email e cpf de uma conta ja criada e com assinatura, mas ta tentando assinar uma assinatura maior do que a ativa, aparece mensagem explicando a situacao e um botao "Quero assinar o plano mesmo assim" ou algo do tipo como tu sugerir melhor.
+49. [x] Na LP (index.php) ao tentar assinar o plano de 1 real ou qualquer um dos outros 3, se entrar com mesmo email e cpf de uma conta ja criada e com assinatura, mas ta tentando assinar uma assinatura maior do que a ativa, aparece mensagem explicando a situacao e um botao "Quero assinar o plano mesmo assim" ou algo do tipo como tu sugerir melhor.
     Botão "Quero assinar o {plano} mesmo assim": leva pro login e cai na tela de
     Assinatura com o plano escolhido em destaque, onde a troca cobra só a
     diferença. Não abre um segundo pagamento — duas assinaturas no mesmo CPF
     seriam cobrança dupla. A confirmação é sempre um clique da pessoa.
 
-54. [x] Quero Uma aba de ADMIN onde eu possa editar todos os emails que mandamos no sistema.
+50. [x] Quero Uma aba de ADMIN onde eu possa editar todos os emails que mandamos no sistema.
     Admin › E-mails lista os 17 e-mails do sistema (links de conta, segurança e
     cobrança) e deixa editar assunto, título, saudação, parágrafos, texto do
     botão e rodapé, com pré-visualização do e-mail de verdade ao lado e botão
@@ -236,7 +224,7 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     boas-vindas, trocar e-mail) não, senão ninguém consegue entrar. De brinde,
     esses 4 deixaram de montar HTML na mão e agora escapam o nome do usuário.
 
-55. [x] Quero buscar itens e fazer scraping tb na pagina de ofertas para afiliados do mercado livre em https://www.mercadolivre.com.br/afiliados/hub. Quero que tenha na aba Mercado livre opcoes para por minhas credenciais e fazer login para que seja possivel acessar a pagina. Caso seja necessario logar para ti ter acesso e ver como fazer o scraping, podemos dividir essa tarefa em 2, primeiro logar e te dar acesso utilizando essa aba do MErcado livre e depois uma outra tarefa para implementar o scraping da pagina!
+51. [x] Quero buscar itens e fazer scraping tb na pagina de ofertas para afiliados do mercado livre em https://www.mercadolivre.com.br/afiliados/hub. Quero que tenha na aba Mercado livre opcoes para por minhas credenciais e fazer login para que seja possivel acessar a pagina. Caso seja necessario logar para ti ter acesso e ver como fazer o scraping, podemos dividir essa tarefa em 2, primeiro logar e te dar acesso utilizando essa aba do MErcado livre e depois uma outra tarefa para implementar o scraping da pagina!
     Esta é a parte 1 — o acesso. Admin › Mercado Livre ganhou o card "Conta do
     Mercado Livre do sistema": você cola o cookie de uma conta ML nossa e clica
     em "Testar acesso ao Hub", que abre a página num navegador de verdade e diz
@@ -246,10 +234,10 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     usuário/senha de propósito: login automático no ML esbarra em CAPTCHA e
     código de verificação. Junto veio o comando `node scripts/ml-hub-dump.js`,
     que salva o HTML, um print e as chamadas de dados da página numa pasta —
-    é o que me deixa escrever o scraping olhando a página real (tarefa 56).
+    é o que me deixa escrever o scraping olhando a página real (tarefa 52).
 
-56. [x] Fazer o scraping das ofertas do Hub de Afiliados do Mercado Livre e mandar
-    pro catálogo, usando a sessão da conta do sistema já configurada na 55.
+52. [x] Fazer o scraping das ofertas do Hub de Afiliados do Mercado Livre e mandar
+    pro catálogo, usando a sessão da conta do sistema já configurada na 51.
     Feito: o robô agora coleta também as ofertas do Hub e joga no mesmo catálogo,
     junto com as da vitrine pública, sem repetir produto (quem aparece nos dois
     lugares entra uma vez só). A captura da página mostrou que o Hub serve as
@@ -261,7 +249,7 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     tem um checkbox pra desligar isso; e se a sessão expirar, o robô segue
     coletando a vitrine normalmente em vez de parar.
 
-57. [x] Adicione um marcador assim como o "incluir ofertas do HUB no scraping do Mercado Livre" para incluir ofertas da pagina de ofertas padrao que ja existe, assim consigo desativar tb o scraping antigo. Alem disso queria alterar tb a prioridade ali nas configuracoes do ML, se hoje busco 1000 produtos, quero que comece por um ou por outro dando prioridade e o resto é preenchido pelo segundo na prioridade.
+53. [x] Adicione um marcador assim como o "incluir ofertas do HUB no scraping do Mercado Livre" para incluir ofertas da pagina de ofertas padrao que ja existe, assim consigo desativar tb o scraping antigo. Alem disso queria alterar tb a prioridade ali nas configuracoes do ML, se hoje busco 1000 produtos, quero que comece por um ou por outro dando prioridade e o resto é preenchido pelo segundo na prioridade.
     Admin › Mercado Livre ganhou o card "De onde vêm as ofertas": um marcador
     para a vitrine pública (a coleta de sempre) e outro para o Hub, mais a
     escolha de por qual começar. A fonte escolhida enche a cota primeiro — se o
@@ -272,7 +260,7 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     admin-scraper. Uma fonte que falhar (sessão expirada, por exemplo) é pulada
     com aviso no log e a outra segue normalmente.
 
-58. [x] Inclui no teste do scraper, teste para os produtos que vem do hub e tb um teste de qualidade da foto do produto, tem algumas campanhas de repasse aqui que estao enviando fotos de baixa qualidade.
+54. [x] Inclui no teste do scraper, teste para os produtos que vem do hub e tb um teste de qualidade da foto do produto, tem algumas campanhas de repasse aqui que estao enviando fotos de baixa qualidade.
 
     O ScrapTester agora tem uma coluna só do Hub, ao lado de Mercado Livre,
     Amazon e Shopee (liga/desliga no chip "Fontes testadas"). Ela testa o Hub
@@ -295,11 +283,7 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     Agora todos passam pelo mesmo ajuste, inclusive na hora de enviar pro
     WhatsApp — então item antigo que já estava no catálogo também sai nítido.
 
-59. [] Quero poder escolher horarios especificos para fazer scraping inves de colocar um intervalo.
-
-60. [] Quero um botão para buscar quantos GB ainda estão sobrando no computador que esta rodando o sistema.
-
-61. [x] Quero na aba WhatsNimbus que seja possivel mandar msg. Bem simples, escolhe um grupo, escreve a mensagem e botao enviar.
+55. [x] Quero na aba WhatsNimbus que seja possivel mandar msg. Bem simples, escolhe um grupo, escreve a mensagem e botao enviar.
 
     Feito. Com o WhatsNimbus conectado, aparece na aba um card "Enviar
     mensagem": lista dos grupos do número (com botão pra atualizar a lista),
@@ -308,8 +292,7 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     Se der erro (sessão caída, por exemplo) a mensagem de erro aparece ali
     mesmo. Rota nova no backend: POST /api/admin/whatsnimbus/send (só admin).
 
-
-62. [x] Quero que os grupos de repasse tenham ate 5 líderes
+56. [x] Quero que os grupos de repasse tenham ate 5 líderes
 
     Feito. A campanha de repasse deixou de ter um líder só: na aba Repasse o
     card virou "Grupos líderes", com a lista de todos os grupos escutados, um
@@ -328,11 +311,7 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     Campanha antiga não precisa de nada: o líder único que já estava salvo
     continua funcionando e é convertido pro formato novo no primeiro salvamento.
 
-63. [] Verificar brechas de segurança pelos endpoints do site.
-
-64. [] Como funcionam os cupons no ML e na Shopee? Como poderia buscar e integrar eles no sistema? Tem algums grupos de whats que enviam o produto com o cupom a ser utilizado.
-
-65. [x] Como tu acha que dava pra melhorar as abas das campanhas, para simplificar a utilizacao por parte do usuario? Por exemplo, a busca dos produtos podia ser parecida com a aba produtos que tenho no ADMIN, onde eu consigo filtrar e ver todos os produtos ali, ordenando como eu quero, se eu quiser pegar automaticamente, apenas deixo salvo esses filtros e ordem e adiciono o numero de produto que quero buscar e ele vai buscar na ordem que deixei ate completar este numero.
+57. [x] Como tu acha que dava pra melhorar as abas das campanhas, para simplificar a utilizacao por parte do usuario? Por exemplo, a busca dos produtos podia ser parecida com a aba produtos que tenho no ADMIN, onde eu consigo filtrar e ver todos os produtos ali, ordenando como eu quero, se eu quiser pegar automaticamente, apenas deixo salvo esses filtros e ordem e adiciono o numero de produto que quero buscar e ele vai buscar na ordem que deixei ate completar este numero.
 
     A aba "Busca de Produtos" foi refeita do zero, no formato da aba Produtos do
     ADMIN. Antes a pessoa mexia nos filtros no escuro: clicava em "Buscar
@@ -404,7 +383,7 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     e as chavinhas liga/desliga do sistema inteiro passaram a funcionar pelo
     teclado e a ter nome no leitor de tela.
 
-66. [x] Conferir se dá pra furar os limites da assinatura (campanhas, WhatsApps, grupos, líderes) usando o próprio sistema.
+58. [x] Conferir se dá pra furar os limites da assinatura (campanhas, WhatsApps, grupos, líderes) usando o próprio sistema.
 
     A base estava certa: o plano vem do Stripe (ninguém consegue se promover
     sozinho) e quem passa do limite fica pausado em vez de perder as coisas.
@@ -425,9 +404,9 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     Efeito colateral esperado: quem está sem plano ativo agora vê aviso de
     assinatura ao tentar mexer na fila — antes conseguia mexer, só não enviava.
 
-67. [x] Quando clico em uma campanha la no menu da esquerda para abrir direto sua pagina, quero que suba ate o topo da pagina.
+59. [x] Quando clico em uma campanha la no menu da esquerda para abrir direto sua pagina, quero que suba ate o topo da pagina.
 
-68. [x] Revise os itens da amazon. Busquei 10 itens de cada categoria nele e por exemplo https://www.amazon.com.br/God-War-Hits-PlayStation-4/dp/B07YT1GLV9 ta com o valor errado, aconteceu com 
+60. [x] Revise os itens da amazon. Busquei 10 itens de cada categoria nele e por exemplo https://www.amazon.com.br/God-War-Hits-PlayStation-4/dp/B07YT1GLV9 ta com o valor errado, aconteceu com 
 
     O preço da Amazon vinha copiado da vitrine de ofertas, nunca da página do
     produto — por isso o valor mudava quando você clicava no link. Agora o robô
@@ -447,7 +426,7 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     produtos por categoria, ajustável em Admin → Amazon) e a coleta demora mais
     (~27 min pra todas as categorias, contra ~4 min antes).
 
-69. [x] Adicionar botão de misturar os itens da fila na aba de fila. Adicionar a opcao no preenchimento automatico para executar a mistura depois de adicionar os itens na fila.
+61. [x] Adicionar botão de misturar os itens da fila na aba de fila. Adicionar a opcao no preenchimento automatico para executar a mistura depois de adicionar os itens na fila.
 
     A aba Fila ganhou o botão "🔀 Misturar" (aparece com 2 ou mais produtos):
     embaralha a ordem e já recalcula os horários de cada envio. E no
@@ -456,7 +435,7 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     a cada preenchimento, pra não sair uma sequência de ofertas parecidas na
     ordem em que o robô achou.
 
-70. [x] Por padrão a campanha vem com a janela de envio zerada. Quando a janela de envio é zerada as campanhas ficam pausadas. O horário padrão quando adiciona uma janela de envio é de 00:00 ate 23:59.
+62. [x] Por padrão a campanha vem com a janela de envio zerada. Quando a janela de envio é zerada as campanhas ficam pausadas. O horário padrão quando adiciona uma janela de envio é de 00:00 ate 23:59.
 
     Campanha nova nasce sem nenhuma janela (antes vinha com 09:00–12:00 e
     14:00–18:00 já prontas) e por isso nasce pausada — o modal de criação avisa
@@ -467,14 +446,14 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     00:00 às 23:59. Exceção: com o envio automático ligado ela continua rodando,
     porque ele ignora as janelas de propósito.
 
-71. [x] Colocar o toggle de envio automatico ignorando a janela de envio para dentro da aba da fila e náo no repasse, assim o usuario consegue mexer nisso direto na fila.
+63. [x] Colocar o toggle de envio automatico ignorando a janela de envio para dentro da aba da fila e náo no repasse, assim o usuario consegue mexer nisso direto na fila.
 
     A chave saiu da aba Repasse e foi pro topo da aba Fila, e passou a se chamar
     "Envio instantâneo". Continua só nas campanhas de repasse. Ela salva na hora,
     sem botão de salvar. A aba Janelas de envio avisa quando ela está ligada, pra
     ninguém achar que os horários pararam de funcionar sozinhos.
 
-72. [x] Tira a os grupos lideres a aba de repasse e coloca eles na aba grupos, assim todos os grupos do whats relacionados ficam la. o toggle de aprovacao automatica tb. Depois pode excluir a aba de repasse.
+64. [x] Tira a os grupos lideres a aba de repasse e coloca eles na aba grupos, assim todos os grupos do whats relacionados ficam la. o toggle de aprovacao automatica tb. Depois pode excluir a aba de repasse.
 
     A aba Repasse não existe mais. Os grupos líderes e a chave de aprovação
     automática foram pra aba Grupos (junto dos grupos que recebem as ofertas), e
@@ -484,9 +463,7 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     Repasse" foram atualizados; quem estava com a aba Repasse aberta cai na Visão
     geral.
 
-73. [] Reorganiza a aba de Grupos nas campanhas de repasse, os lideres devem aparecer primeiro, so depois os grupos de envio. Depois da uma olhada e ve o que tu acha que da pra melhorar.
-
-74. [x] Faltam emails como os de confirmação de pagamento, por exemplo:fiz uma compra teste la com o trial de 1 real, mas não recebi nada.
+65. [x] Faltam emails como os de confirmação de pagamento, por exemplo:fiz uma compra teste la com o trial de 1 real, mas não recebi nada.
 
     Não era falha de entrega: o e-mail não existia. Todos os avisos de cobrança
     falavam de coisa ruim (cartão recusado, cancelamento, teste acabando) e
@@ -505,3 +482,44 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     Também caiu o bloqueio que impedia contas admin de receber aviso de
     cobrança — era ele que fazia o teste parecer que nada tinha sido enviado.
     Falta ligar o evento `charge.refunded` no painel do Stripe (nos dois modos). 
+
+66. [] Quero conferir se o ambiente mobile esta condizente e bem construido para utilizacao do usuario.
+
+67. [] Quero fazer um resumo geral do sistema e criar um arquivo na raiz do projeto que explique didaticamente como esta funcionando. Náo sei exatamente tudo que quero no resumo, mas as tecnologias usadas, onde estao os banco de dados, o que tenho guardado em cada um, quais sao minhas camadas de seguranca, como funciona, como esta arquitetado para expansao caso cresca o numero de usuario, onde e como sao feitos os backups e o que tem neles, um resumo do custo computacional das diferentes partes da arquitetura, etc...
+
+68. [] Pack 3meses ,6 meses e 1 ano nos planos
+
+69. [] Na landpage:
+    Quando já tem o plano que esta tentando ativo, no é só ntrar na sua conta tem que ter hyperlink na sua conta para logar.
+    Quando clicar no plano maior, ir direto pro stripe ou ter que logar?
+    Ao clicar para fazer upgrade do plano, quero que va para o stripe para realizar a nova compra. No momento ele ta fazendo automatico no proprio site, tem que ir direto la.
+
+70. [] Quero poder escolher horarios especificos para fazer scraping inves de colocar um intervalo.
+
+71. [] Quero um botão para buscar quantos GB ainda estão sobrando no computador que esta rodando o sistema.
+
+72. [] Verificar brechas de segurança pelos endpoints do site.
+
+73. [] Como funcionam os cupons no ML e na Shopee? Como poderia buscar e integrar eles no sistema? Tem algums grupos de whats que enviam o produto com o cupom a ser utilizado.
+
+74. [] Reorganiza a aba de Grupos nas campanhas de repasse, os lideres devem aparecer primeiro, so depois os grupos de envio. Depois da uma olhada e ve o que tu acha que da pra melhorar.
+
+75. [] Ao criar uma nova campanha, tirar a mensagem "Já vamos preencher os defaults.... Tudo isso pode ser ajustado depois.". Tire tb a mensagem  "Ela começa pausada... ela começa a enviar".
+
+76. [] Enquanto rola o tour na página, os avisos de "Campanha pausada pq ...." não aparecem, só depois que o tour termina, assim o usuario consegue ver os elementos certinhos.
+
+77. [] No tour de campanha mude:
+
+No tour da campanha, no 9 de 34 de onde vem os produtos, tira o "Colar um link na mão não é aqui — isso fica na aba Fila." deixa só "É aqui que você diz o que procurar no catálogo."
+
+No tour da campanha, no 13 de 34 escreve somente "Aqui que aplica-se o filtro para buscar os produtos."
+
+Tour da campanha · 14 de 34 Os produtos encontrados A lista que os filtros trazem, na mesma ordem que o preenchimento automático usa. Dá pra mandar um produto específico pra fila pelo botão do card, e as duas chaves escondem o que já foi enviado recentemente e o que já está na fila.
+
+Tour da campanha · 15 de 34, troca para "Preenche automaticamente a fila com os primeiros 20 produtos vistos na lista a baixo"
+
+Tour da campanha · 17 de 34 A fila em ordem O primeiro é o próximo a ser enviado. Dá pra arrastar pra reordenar, tirar da fila ou mandar um produto diretamente para o topo da fila.
+
+Tour da campanha · 18 de 34 Adicionar um link na mão Cole o link de um produto e ele entra na fila, mesmo que a busca não tenha encontrado. Esta é a opção que faz isso.
+
+78. [] Onde eu escolho qual número de whats que vai enviar as mensagens? É o próprio dono do grupo quando adicionado?
