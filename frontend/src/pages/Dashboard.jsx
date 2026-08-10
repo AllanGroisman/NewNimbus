@@ -347,11 +347,6 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                   </span>
                 </label>
               </div>
-              {/* A campanha nasce sem janela de envio (pausada) — avisar aqui
-                  evita a impressão de que ela quebrou logo depois de criada. */}
-              <div style={{ fontSize: 11, color: "var(--color-text-secondary)", background: "var(--color-background-secondary)", padding: "8px 10px", borderRadius: 8, marginTop: 12, lineHeight: 1.5 }}>
-                ⏸️ Ela começa pausada: defina a <strong>janela de envio</strong> dentro da campanha pra ela começar a enviar.
-              </div>
               <div style={{ display: "flex", gap: 8, justifyContent: "space-between", marginTop: 18 }}>
                 <button type="button" onClick={() => setForm(f => ({ ...f, type: null }))} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>← Voltar</button>
                 <button type="submit" disabled={!form.name.trim()} style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: !form.name.trim() ? 0.5 : 1 }}>Criar campanha</button>
@@ -362,9 +357,6 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
             <form onSubmit={e => { e.preventDefault(); submit(); }}>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>
                 Defina o nome e as categorias de produtos que esta campanha vai monitorar. Você poderá vincular grupos do WhatsApp depois.
-              </div>
-              <div style={{ background: PRIMARY_LIGHT, color: PRIMARY_DARK, padding: "8px 12px", borderRadius: 8, fontSize: 12, marginBottom: 14, lineHeight: 1.4 }}>
-                💡 Já vamos preencher os defaults pra você: modelo de mensagem, filtros (desconto ≥ 25%, avaliação ≥ 4.0), todas as fontes ativas e dois horários de scraping. Tudo isso pode ser ajustado depois.
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 <div>
@@ -388,11 +380,6 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                     })}
                   </div>
                 </div>
-              </div>
-              {/* A campanha nasce sem janela de envio (pausada) — avisar aqui
-                  evita a impressão de que ela quebrou logo depois de criada. */}
-              <div style={{ fontSize: 11, color: "var(--color-text-secondary)", background: "var(--color-background-secondary)", padding: "8px 10px", borderRadius: 8, marginTop: 12, lineHeight: 1.5 }}>
-                ⏸️ Ela começa pausada: defina a <strong>janela de envio</strong> dentro da campanha pra ela começar a enviar.
               </div>
               <div style={{ display: "flex", gap: 8, justifyContent: "space-between", marginTop: 18 }}>
                 <button type="button" onClick={() => setForm(f => ({ ...f, type: null }))} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>← Voltar</button>

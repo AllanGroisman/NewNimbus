@@ -250,7 +250,7 @@ function QueueItemCard({ item, idx, eta, onRemove, onMoveToTop, onDragStart, onD
   );
 }
 
-export default function GroupDashboard({ group, numbers, whatsappGroups = [], affiliateConfigured = true, affiliateStatus = null, storeLocks = {}, onBack, onUpdate, onDelete, onCreateWhatsappGroup, onUpdateWhatsappGroup, onGoToSettings, onGoToAffiliate, onGoToWhatsapp, customTemplates = [], onAddCustomTemplate, onDeleteCustomTemplate, onUpdateCustomTemplate, limits }) {
+export default function GroupDashboard({ group, numbers, whatsappGroups = [], affiliateConfigured = true, affiliateStatus = null, storeLocks = {}, onBack, onUpdate, onDelete, onCreateWhatsappGroup, onUpdateWhatsappGroup, onGoToSettings, onGoToAffiliate, onGoToWhatsapp, customTemplates = [], onAddCustomTemplate, onDeleteCustomTemplate, onUpdateCustomTemplate, limits, tourActive = false }) {
   const [tab, setTab] = useState(() => readSavedTab(group.id, group?.scraping?.kind === "repasse"));
   // Guarda a aba atual por campanha pra restaurar no F5.
   useEffect(() => { writeSavedTab(group.id, tab); }, [group.id, tab]);
@@ -1445,90 +1445,96 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         })()}
       </div>
 
-      {/* Pausada pelo plano (cancelamento/downgrade): nada foi apagado e a
-          edição continua liberada — só os envios param. Ativar é escolher esta
-          campanha entre as que cabem no plano (feito no painel de Campanhas). */}
-      {group.planPaused && (
-        <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 16 }}>🔒</span>
-          <span style={{ fontSize: 13, color: "var(--warn-text)", flex: 1, minWidth: 200 }}>
-            Esta campanha está <strong>pausada pelo seu plano</strong> — ela não envia nada, mas continua aqui e pode ser editada normalmente. Para ativá-la, escolha ela em <strong>Campanhas</strong> (trocando com uma ativa) ou assine um plano maior.
-          </span>
-        </div>
-      )}
+      {/* Enquanto o tour guiado roda esta pilha some: ela muda a altura da
+          página conforme o tour troca de aba, e o holofote só remede em
+          resize/scroll — assim ele acabava iluminando o lugar errado. Volta
+          inteira assim que o tour termina. */}
+      {!tourActive && (<>
+        {/* Pausada pelo plano (cancelamento/downgrade): nada foi apagado e a
+            edição continua liberada — só os envios param. Ativar é escolher esta
+            campanha entre as que cabem no plano (feito no painel de Campanhas). */}
+        {group.planPaused && (
+          <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 16 }}>🔒</span>
+            <span style={{ fontSize: 13, color: "var(--warn-text)", flex: 1, minWidth: 200 }}>
+              Esta campanha está <strong>pausada pelo seu plano</strong> — ela não envia nada, mas continua aqui e pode ser editada normalmente. Para ativá-la, escolha ela em <strong>Campanhas</strong> (trocando com uma ativa) ou assine um plano maior.
+            </span>
+          </div>
+        )}
 
-      {stats.pausedManual && (
-        <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 16 }}>⏸</span>
-          <span style={{ fontSize: 13, color: "var(--warn-text)", flex: 1, minWidth: 200 }}>
-            Esta campanha está <strong>pausada manualmente</strong> — não vai buscar produtos nem enviar mensagens até ser retomada.
-          </span>
-          <button onClick={() => onUpdate(group.id, { paused: false })} style={{ padding: "6px 12px", borderRadius: 8, background: "#22C55E", color: "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
-            ▶ Retomar
-          </button>
-        </div>
-      )}
-
-      {/* Sem janela de envio a campanha fica parada (o backend não envia nem
-          busca produtos). Escondemos a faixa quando ela já está pausada pelo
-          plano ou na mão: nesses casos criar a janela não destrava nada. */}
-      {stats.pausedNoWindow && !group.planPaused && !stats.pausedManual && (
-        <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 16 }}>⏸</span>
-          <span style={{ fontSize: 13, color: "var(--warn-text)", flex: 1, minWidth: 200 }}>
-            Esta campanha está <strong>pausada porque não tem janela de envio</strong> — ela não envia mensagens nem busca produtos novos até você escolher o horário.
-          </span>
-          <button onClick={() => requestNavigation(() => setTab("schedule"))} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--warn-text)", color: "var(--color-background-primary)", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
-            Adicionar janela de envio
-          </button>
-        </div>
-      )}
-
-      {stats.pausedByAffiliateML && (
-        <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 16 }}>⚠️</span>
-          <span style={{ fontSize: 13, color: "var(--warn-text)", flex: 1, minWidth: 200 }}>
-            Esta campanha está <strong>pausada</strong> — o afiliado do <strong>Mercado Livre</strong> não está configurado. Sem TAG e cookie, os links sairiam sem comissão.
-          </span>
-          {(onGoToAffiliate || onGoToSettings) && (
-            <button onClick={() => (onGoToAffiliate ? onGoToAffiliate("ml") : onGoToSettings())} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--warn-text)", color: "var(--color-background-primary)", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
-              Configurar Mercado Livre
+        {stats.pausedManual && (
+          <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 16 }}>⏸</span>
+            <span style={{ fontSize: 13, color: "var(--warn-text)", flex: 1, minWidth: 200 }}>
+              Esta campanha está <strong>pausada manualmente</strong> — não vai buscar produtos nem enviar mensagens até ser retomada.
+            </span>
+            <button onClick={() => onUpdate(group.id, { paused: false })} style={{ padding: "6px 12px", borderRadius: 8, background: "#22C55E", color: "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
+              ▶ Retomar
             </button>
-          )}
-        </div>
-      )}
+          </div>
+        )}
 
-      {stats.pausedByAffiliateShopee && (
-        <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 16 }}>⚠️</span>
-          <span style={{ fontSize: 13, color: "var(--warn-text)", flex: 1, minWidth: 200 }}>
-            Esta campanha está <strong>pausada</strong> — o afiliado da <strong>Shopee</strong> não está configurado. Sem App ID e senha, os links sairiam sem comissão.
-          </span>
-          {(onGoToAffiliate || onGoToSettings) && (
-            <button onClick={() => (onGoToAffiliate ? onGoToAffiliate("shopee") : onGoToSettings())} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--warn-text)", color: "var(--color-background-primary)", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
-              Configurar Shopee
+        {/* Sem janela de envio a campanha fica parada (o backend não envia nem
+            busca produtos). Escondemos a faixa quando ela já está pausada pelo
+            plano ou na mão: nesses casos criar a janela não destrava nada. */}
+        {stats.pausedNoWindow && !group.planPaused && !stats.pausedManual && (
+          <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 16 }}>⏸</span>
+            <span style={{ fontSize: 13, color: "var(--warn-text)", flex: 1, minWidth: 200 }}>
+              Esta campanha está <strong>pausada porque não tem janela de envio</strong> — ela não envia mensagens nem busca produtos novos até você escolher o horário.
+            </span>
+            <button onClick={() => requestNavigation(() => setTab("schedule"))} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--warn-text)", color: "var(--color-background-primary)", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
+              Adicionar janela de envio
             </button>
-          )}
-        </div>
-      )}
+          </div>
+        )}
 
-      {stats.status === "disconnected" && (
-        <div style={{ background: "var(--danger-bg)", border: "0.5px solid var(--danger-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 16 }}>🔴</span>
-          <span style={{ fontSize: 13, color: "var(--danger-text)", flex: 1, minWidth: 200 }}>
-            Campanha <strong>parada</strong> — nenhum WhatsApp vinculado está conectado. Reconecte um número na página WhatsApp; os envios retomam sozinhos.
-          </span>
-        </div>
-      )}
+        {stats.pausedByAffiliateML && (
+          <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 16 }}>⚠️</span>
+            <span style={{ fontSize: 13, color: "var(--warn-text)", flex: 1, minWidth: 200 }}>
+              Esta campanha está <strong>pausada</strong> — o afiliado do <strong>Mercado Livre</strong> não está configurado. Sem TAG e cookie, os links sairiam sem comissão.
+            </span>
+            {(onGoToAffiliate || onGoToSettings) && (
+              <button onClick={() => (onGoToAffiliate ? onGoToAffiliate("ml") : onGoToSettings())} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--warn-text)", color: "var(--color-background-primary)", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
+                Configurar Mercado Livre
+              </button>
+            )}
+          </div>
+        )}
 
-      {stats.status === "degraded" && (
-        <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 16 }}>⚠️</span>
-          <span style={{ fontSize: 13, color: "var(--warn-text)", flex: 1, minWidth: 200 }}>
-            <strong>{stats.connected}/{stats.count}</strong> grupos conectados — um ou mais WhatsApp estão desconectados. A campanha segue enviando nos que estão de pé.
-          </span>
-        </div>
-      )}
+        {stats.pausedByAffiliateShopee && (
+          <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 16 }}>⚠️</span>
+            <span style={{ fontSize: 13, color: "var(--warn-text)", flex: 1, minWidth: 200 }}>
+              Esta campanha está <strong>pausada</strong> — o afiliado da <strong>Shopee</strong> não está configurado. Sem App ID e senha, os links sairiam sem comissão.
+            </span>
+            {(onGoToAffiliate || onGoToSettings) && (
+              <button onClick={() => (onGoToAffiliate ? onGoToAffiliate("shopee") : onGoToSettings())} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--warn-text)", color: "var(--color-background-primary)", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
+                Configurar Shopee
+              </button>
+            )}
+          </div>
+        )}
+
+        {stats.status === "disconnected" && (
+          <div style={{ background: "var(--danger-bg)", border: "0.5px solid var(--danger-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 16 }}>🔴</span>
+            <span style={{ fontSize: 13, color: "var(--danger-text)", flex: 1, minWidth: 200 }}>
+              Campanha <strong>parada</strong> — nenhum WhatsApp vinculado está conectado. Reconecte um número na página WhatsApp; os envios retomam sozinhos.
+            </span>
+          </div>
+        )}
+
+        {stats.status === "degraded" && (
+          <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 16 }}>⚠️</span>
+            <span style={{ fontSize: 13, color: "var(--warn-text)", flex: 1, minWidth: 200 }}>
+              <strong>{stats.connected}/{stats.count}</strong> grupos conectados — um ou mais WhatsApp estão desconectados. A campanha segue enviando nos que estão de pé.
+            </span>
+          </div>
+        )}
+      </>)}
 
       <Tabs tabs={groupTabs} active={tab} onChange={(id) => requestNavigation(() => setTab(id))} />
 
@@ -2787,8 +2793,10 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           </div>
 
           {/* Sem janela nenhuma a campanha fica parada — é assim que ela nasce,
-              e é o jeito de pausar sem mexer no botão de pausa. */}
-          {(sched.windows || []).length === 0 && (
+              e é o jeito de pausar sem mexer no botão de pausa. Escondido
+              durante o tour pelo mesmo motivo das faixas do topo: ele empurra a
+              lista de janelas pra baixo bem no passo desta aba. */}
+          {!tourActive && (sched.windows || []).length === 0 && (
             scraping.autoSend === true ? (
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", background: "var(--color-background-secondary)", padding: "12px 14px", borderRadius: 10, lineHeight: 1.5 }}>
                 O <strong>envio instantâneo</strong> está ligado (aba Fila), então esta campanha envia na hora e não precisa de janela. Se quiser voltar a controlar o horário, desligue ele e crie uma janela aqui.

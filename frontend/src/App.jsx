@@ -1223,6 +1223,7 @@ export default function App() {
               onDeleteCustomTemplate={deleteCustomTemplate}
               onUpdateCustomTemplate={updateCustomTemplate}
               limits={billing?.limits}
+              tourActive={!!activeTour}
             />
           : pageMap[page] || pageMap["dashboard"]
         }

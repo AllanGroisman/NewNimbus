@@ -65,9 +65,16 @@ describe("TOURS", () => {
     for (const [aba, i] of Object.entries(porAba)) {
       expect(steps[i].anchor).toBe(`tab-${aba}`);
       const componentes = steps.filter(s => s.tab === aba && s.anchor !== `tab-${aba}`);
-      // Histórico é a única aba que se explica só com o passo da aba.
-      if (aba !== "history") expect(componentes.length).toBeGreaterThan(0);
+      // Visão geral, Gerenciar e Histórico se explicam só com o passo da aba
+      // (task 77): não têm nada pra configurar, o texto da aba dá conta.
+      if (!["overview", "manage", "history"].includes(aba)) expect(componentes.length).toBeGreaterThan(0);
     }
+  });
+
+  it("o tour da campanha é curto (task 77)", () => {
+    // 34 passos cansavam antes de chegar na janela de envio, que é o que
+    // destrava a campanha. Só a aba e o controle essencial de cada uma.
+    expect(TOURS.campaign.steps.length).toBeLessThanOrEqual(16);
   });
 
   it("o passo das lojas ilumina Mercado Livre, Amazon e Shopee juntos", () => {

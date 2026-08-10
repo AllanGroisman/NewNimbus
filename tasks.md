@@ -519,24 +519,14 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 
 74. [] Reorganiza a aba de Grupos nas campanhas de repasse, os lideres devem aparecer primeiro, so depois os grupos de envio. Depois da uma olhada e ve o que tu acha que da pra melhorar.
 
-75. [] Ao criar uma nova campanha, tirar a mensagem "Já vamos preencher os defaults.... Tudo isso pode ser ajustado depois.". Tire tb a mensagem  "Ela começa pausada... ela começa a enviar".
+75. [x] Ao criar uma nova campanha, tirar a mensagem "Já vamos preencher os defaults.... Tudo isso pode ser ajustado depois.". Tire tb a mensagem  "Ela começa pausada... ela começa a enviar".
 
-76. [] Enquanto rola o tour na página, os avisos de "Campanha pausada pq ...." não aparecem, só depois que o tour termina, assim o usuario consegue ver os elementos certinhos.
+76. [x] Enquanto rola o tour na página, os avisos de "Campanha pausada pq ...." não aparecem, só depois que o tour termina, assim o usuario consegue ver os elementos certinhos.
 
-77. [] No tour de campanha mude:
-
-No tour da campanha, no 9 de 34 de onde vem os produtos, tira o "Colar um link na mão não é aqui — isso fica na aba Fila." deixa só "É aqui que você diz o que procurar no catálogo."
-
-No tour da campanha, no 13 de 34 escreve somente "Aqui que aplica-se o filtro para buscar os produtos."
-
-Tour da campanha · 14 de 34 Os produtos encontrados A lista que os filtros trazem, na mesma ordem que o preenchimento automático usa. Dá pra mandar um produto específico pra fila pelo botão do card, e as duas chaves escondem o que já foi enviado recentemente e o que já está na fila.
-
-Tour da campanha · 15 de 34, troca para "Preenche automaticamente a fila com os primeiros 20 produtos vistos na lista a baixo"
-
-Tour da campanha · 17 de 34 A fila em ordem O primeiro é o próximo a ser enviado. Dá pra arrastar pra reordenar, tirar da fila ou mandar um produto diretamente para o topo da fila.
-
-Tour da campanha · 18 de 34 Adicionar um link na mão Cole o link de um produto e ele entra na fila, mesmo que a busca não tenha encontrado. Esta é a opção que faz isso.
+77. [x] Diminua o tour da campanha, 34 pontos é mt longo, quero só os principais e essenciais.
 
 78. [] Onde eu escolho qual número de whats que vai enviar as mensagens? É o próprio dono do grupo quando adicionado?
 
 79. [x] Quero na edicao dos modelos de mensagem ter uma opcao para que se o item nao estiverm em promocao não apareca "de" ou "desconto", o que tu sugere?
+
+80. [] 
