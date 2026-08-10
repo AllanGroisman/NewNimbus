@@ -91,6 +91,13 @@ function renderTemplate(template, p) {
   // Sem cupom: apaga a linha inteira que contém {cupom} (nada de "🎟️ Cupom:" vazio).
   // Com cupom: substitui normalmente logo abaixo.
   if (!cupom) t = t.replace(/^[^\n]*\{cupom\}[^\n]*\n?/gm, "");
+  // Sem promoção (originalPrice e discount nulos): apaga as linhas inteiras de
+  // {preco_antigo} e {desconto} — mesmo comportamento do {cupom} acima.
+  const hasPromo = p.originalPrice != null || p.discount != null;
+  if (!hasPromo) {
+    t = t.replace(/^[^\n]*\{preco_antigo\}[^\n]*\n?/gm, "");
+    t = t.replace(/^[^\n]*\{desconto\}[^\n]*\n?/gm, "");
+  }
   return t
     .replace(/\{produto\}/g, p.name || "")
     .replace(/\{preco\}/g, fmt(p.price))

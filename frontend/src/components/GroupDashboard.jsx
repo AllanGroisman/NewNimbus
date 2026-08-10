@@ -36,8 +36,8 @@ export function writeSavedTab(groupId, tabId) {
 const TEMPLATE_VARS = [
   { token: "{produto}", desc: "Nome do produto" },
   { token: "{preco}", desc: "Preço com desconto" },
-  { token: "{preco_antigo}", desc: "Preço original" },
-  { token: "{desconto}", desc: "% de desconto" },
+  { token: "{preco_antigo}", desc: "Preço original (a linha some quando não houver promoção)" },
+  { token: "{desconto}", desc: "% de desconto (a linha some quando não houver promoção)" },
   { token: "{loja}", desc: "Nome da loja" },
   { token: "{vendas}", desc: "Nº de vendas (quando houver)" },
   { token: "{cupom}", desc: "Cupom de desconto (a linha some quando não houver)" },
@@ -57,11 +57,16 @@ const TEMPLATE_PREVIEW_DATA = {
 
 // Espelha o renderTemplate do backend (scheduler.js): sem cupom, a linha inteira que
 // contém {cupom} some — pra o preview bater com a mensagem realmente enviada.
-const renderTemplate = (tpl, { cupom } = {}) => {
+const renderTemplate = (tpl, { cupom, promo = true } = {}) => {
   if (!tpl) return "";
   const data = cupom != null ? { ...TEMPLATE_PREVIEW_DATA, cupom } : TEMPLATE_PREVIEW_DATA;
   let t = tpl;
   if (!data.cupom) t = t.replace(/^[^\n]*\{cupom\}[^\n]*\n?/gm, "");
+  // Sem promoção: apaga as linhas de {preco_antigo} e {desconto} — espelha o scheduler.js.
+  if (!promo) {
+    t = t.replace(/^[^\n]*\{preco_antigo\}[^\n]*\n?/gm, "");
+    t = t.replace(/^[^\n]*\{desconto\}[^\n]*\n?/gm, "");
+  }
   return t.replace(/\{(\w+)\}/g, (_, k) => data[k] ?? `{${k}}`);
 };
 
@@ -278,6 +283,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     messageTemplate: group.messageTemplate,
   });
   const [saved, setSaved] = useState(false);
+  const [previewPromo, setPreviewPromo] = useState(true); // preview: simula item com/sem promoção
   const [showDelete, setShowDelete] = useState(false);
   // Modal "Adicionar grupo": null = fechado, "choose" | "create-numbers" | "create-details" | "existing"
   const [addStep, setAddStep] = useState(null);
@@ -1909,10 +1915,16 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 />
               </div>
               <div>
-                <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 4 }}>Prévia (como aparece no WhatsApp)</div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
+                  <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Prévia (como aparece no WhatsApp)</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{previewPromo ? "Com promoção" : "Sem promoção"}</span>
+                    <Toggle value={previewPromo} onChange={setPreviewPromo} label="Simular item com promoção na prévia" />
+                  </div>
+                </div>
                 <div className="wa-preview" style={{ width: "100%", minHeight: 260, padding: 12, borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.5, fontFamily: "inherit", boxSizing: "border-box" }}>
                   {groupInfo.messageTemplate
-                    ? renderWhatsappFormatted(renderTemplate(groupInfo.messageTemplate, { cupom: scraping?.coupon || undefined }))
+                    ? renderWhatsappFormatted(renderTemplate(groupInfo.messageTemplate, { cupom: scraping?.coupon || undefined, promo: previewPromo }))
                     : <span style={{ opacity: 0.6, fontStyle: "italic" }}>Modelo vazio. Comece a digitar à esquerda.</span>}
                 </div>
                 <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 6 }}>

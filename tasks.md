@@ -500,7 +500,7 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 
 72. [] Verificar brechas de segurança pelos endpoints do site.
 
-73. [] Como funcionam os cupons no ML e na Shopee? Como poderia buscar e integrar eles no sistema? Tem algums grupos de whats que enviam o produto com o cupom a ser utilizado.
+73. [x] Como funcionam os cupons no ML e na Shopee? Como poderia buscar e integrar eles no sistema? Tem algums grupos de whats que enviam o produto com o cupom a ser utilizado.
 
 74. [] Reorganiza a aba de Grupos nas campanhas de repasse, os lideres devem aparecer primeiro, so depois os grupos de envio. Depois da uma olhada e ve o que tu acha que da pra melhorar.
 
@@ -523,3 +523,5 @@ Tour da campanha · 17 de 34 A fila em ordem O primeiro é o próximo a ser envi
 Tour da campanha · 18 de 34 Adicionar um link na mão Cole o link de um produto e ele entra na fila, mesmo que a busca não tenha encontrado. Esta é a opção que faz isso.
 
 78. [] Onde eu escolho qual número de whats que vai enviar as mensagens? É o próprio dono do grupo quando adicionado?
+
+79. [x] Quero na edicao dos modelos de mensagem ter uma opcao para que se o item nao estiverm em promocao não apareca "de" ou "desconto", o que tu sugere?
