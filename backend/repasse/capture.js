@@ -148,6 +148,34 @@ function extractUrls(text) {
   return out;
 }
 
+// Extrai o CÓDIGO de cupom da legenda que veio do grupo líder ("use o cupom JBL20",
+// "cupom: TECH-10"). Muitos grupos mandam o produto já com o cupom a aplicar; até aqui
+// o texto era só usado pra achar URLs e descartado — o cupom se perdia. Pura → testável.
+//
+// Conservadora de propósito: só devolve algo quando um dos gatilhos (cupom/código/
+// voucher) aparece ANTES do candidato, e o candidato "parece" código (tem dígito OU
+// caixa mista OU hífen), pra não confundir uma palavra comum da frase com um cupom.
+// Devolve o código em UPPER, sem pontuação nas pontas, 4..20 chars, ou null.
+// "cupom XXXX", "cupom: XXXX", "código de desconto XXXX", "use o cupom XXXX" (o
+// gatilho pode vir depois de "use o"/"com o"/"aplique o" — a regex casa a partir do
+// próprio "cupom"/"código"/"voucher", então esses prefixos não precisam ser listados).
+const COUPON_RE = /(?:cupom|c[óo]digo|voucher)\s*(?:de\s+desconto\s*)?[:\-]?\s*([A-Za-z0-9][A-Za-z0-9._-]{2,19})/gi;
+
+function extractCoupon(text) {
+  if (!text || typeof text !== "string") return null;
+  COUPON_RE.lastIndex = 0;
+  let m;
+  while ((m = COUPON_RE.exec(text))) {
+    const code = (m[1] || "").replace(/[._-]+$/, "");
+    if (code.length < 4 || code.length > 20) continue;
+    // Precisa ter dígito, hífen ou pelo menos uma maiúscula — senão é só uma palavra
+    // comum da frase ("cupom aqui", "código abaixo"), não um código de fato.
+    if (!/\d/.test(code) && !/-/.test(code) && !/[A-Z]/.test(code)) continue;
+    return code.toUpperCase();
+  }
+  return null;
+}
+
 // Resolve redirects (amzn.to, merc.li, mlb.li, links /sec/ de afiliado alheio)
 // pra chegar na URL canônica — necessário pra extractASIN/createLink funcionarem.
 // Best-effort: em qualquer falha devolve a URL original.
@@ -220,6 +248,9 @@ async function onUpsert(userId, numberId, messages) {
       if (!text) continue;
       const urls = extractUrls(text);
       if (!urls.length) continue;
+      // Cupom escrito na legenda (ex.: "use o cupom JBL20"). Extraído aqui, antes de o
+      // texto ser descartado, pra seguir junto do produto e sair no {cupom} do envio.
+      const coupon = extractCoupon(text);
 
       const leaders = await leadersFor(numberId, remoteJid);
       console.log(`[repasse] msg em ${remoteJid} (sessão ${userId}::${numberId}): ${leaders.length} campanha(s) líder | links: ${urls.join(" ")}`);
@@ -237,7 +268,7 @@ async function onUpsert(userId, numberId, messages) {
         byOwner.get(l.userId).push(l);
       }
       for (const [ownerId, ownLeaders] of byOwner) {
-        jobs.push(runSerial(ownerId, () => processMessage(ownerId, ownLeaders, urls, remoteJid)));
+        jobs.push(runSerial(ownerId, () => processMessage(ownerId, ownLeaders, urls, remoteJid, coupon)));
       }
     } catch (err) {
       console.error(`[repasse] onUpsert erro: ${err.message}`);
@@ -248,7 +279,7 @@ async function onUpsert(userId, numberId, messages) {
   return Promise.allSettled(jobs);
 }
 
-async function processMessage(userId, leaders, urls, waJid) {
+async function processMessage(userId, leaders, urls, waJid, coupon = null) {
   const scheduler = require("../scheduler");
 
   // Gating de plano. A captura é acionada pelo listener do Baileys, fora de
@@ -309,25 +340,44 @@ async function processMessage(userId, leaders, urls, waJid) {
         console.warn(`[repasse] scrape falhou pra ${rawUrl}: ${err.message}`);
       }
 
-      // Bloqueio/captcha do ML: nem o Puppeteer conseguiu passar, e o `resolved`
-      // (fetch cru) é sabidamente a mesma página de bloqueio — não existe link
-      // confiável pra guardar, então descarta em vez de propagar um item quebrado.
-      if (!scraped && scrapeErr?.blocked && store === "Mercado Livre") {
-        console.log(`[repasse] bloqueio/captcha do ML → descartado`);
-        discarded.push({ rawUrl, resolved, store, affiliateConfigured, reason: scrapeErr.captcha ? "captcha do ML" : "bloqueio do ML (login)" });
+      // Bloqueio anti-bot (login wall / CAPTCHA / interstitial) em qualquer loja: nem
+      // o Puppeteer passou, e o `resolved` (fetch cru) é sabidamente a mesma página de
+      // bloqueio — não há link confiável pra guardar, então descarta. Registra a razão
+      // EXATA que o detectBlockPage montou (ex.: "Mercado Livre pediu verificação
+      // (CAPTCHA) — tente daqui a alguns minutos ou revise o cookie de afiliado"),
+      // não um "captcha do ML" genérico nem o enganoso "dados insuficientes".
+      if (!scraped && scrapeErr?.blocked) {
+        // detectBlockPage põe a razão detalhada em err.message (new Error(block.reason)).
+        const reason = scrapeErr.message
+          || (scrapeErr.captcha ? `${store}: verificação anti-bot (CAPTCHA)` : `${store}: bloqueio anti-bot (login)`);
+        console.log(`[repasse] ${reason} → descartado`);
+        discarded.push({ rawUrl, resolved, store, affiliateConfigured, reason });
         continue;
       }
 
-      console.log(`[repasse] scrape ${scraped ? "ok" : "falhou"}: ${scraped?.name || store}`);
+      // Scrape falhou por outro motivo (timeout, rede, erro do navegador): registra a
+      // mensagem real do erro em vez de mascarar como "não é produto".
+      if (!scraped) {
+        const reason = `falha no scrape: ${scrapeErr?.message || "motivo desconhecido"}`;
+        console.log(`[repasse] ${store}: ${reason} → descartado`);
+        discarded.push({ rawUrl, resolved, store, affiliateConfigured, reason });
+        continue;
+      }
 
-      // Sem nome, foto e preço confiáveis, não dá pra saber se o link é de fato
-      // um produto (ex.: página de busca, categoria, link caído). Descarta em
-      // vez de inserir um item incompleto/inválido na campanha. Preço antigo
-      // (originalPrice) NÃO é exigido: produtos sem desconto ativo (ex. preço
-      // cheio na Shopee) são válidos e não devem ser descartados por isso.
-      if (!scraped?.name || !scraped?.img || scraped?.price == null) {
-        console.log(`[repasse] dados insuficientes (nome/foto/preço) → provavelmente não é produto, descartado`);
-        discarded.push({ rawUrl, resolved, store, affiliateConfigured, reason: "dados insuficientes (não é produto)" });
+      console.log(`[repasse] scrape ok: ${scraped.name || store}`);
+
+      // Scrape voltou, mas sem nome, foto e preço confiáveis não dá pra saber se o link
+      // é mesmo um produto (página de busca, categoria, link caído). Diz QUAL campo
+      // faltou. Preço antigo (originalPrice) NÃO é exigido: produto sem desconto ativo
+      // (ex.: preço cheio na Shopee) é válido e não deve ser descartado por isso.
+      if (!scraped.name || !scraped.img || scraped.price == null) {
+        const missing = [];
+        if (!scraped.name) missing.push("nome");
+        if (!scraped.img) missing.push("foto");
+        if (scraped.price == null) missing.push("preço");
+        const reason = `dados insuficientes (sem ${missing.join("/")}) — provavelmente não é uma página de produto`;
+        console.log(`[repasse] ${store}: ${reason} → descartado`);
+        discarded.push({ rawUrl, resolved, store, affiliateConfigured, reason });
         continue;
       }
 
@@ -348,6 +398,7 @@ async function processMessage(userId, leaders, urls, waJid) {
         reviewsCount: null,
         freeShipping: false,
         seller: null,
+        coupon: coupon || null,
         manual: true,
         source: "repasse",
       });
@@ -458,6 +509,7 @@ module.exports = {
   onUpsert,
   // exportados p/ testes
   extractUrls,
+  extractCoupon,
   textFromMessage,
   unwrapMessage,
   rebuildLeaderIndex,

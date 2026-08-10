@@ -86,13 +86,19 @@ function formatVendas(p) {
 
 function renderTemplate(template, p) {
   const fmt = v => v != null ? `R$ ${Number(v).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` : "—";
-  return String(template || "")
+  const cupom = (p.coupon || "").toString().trim();
+  let t = String(template || "");
+  // Sem cupom: apaga a linha inteira que contém {cupom} (nada de "🎟️ Cupom:" vazio).
+  // Com cupom: substitui normalmente logo abaixo.
+  if (!cupom) t = t.replace(/^[^\n]*\{cupom\}[^\n]*\n?/gm, "");
+  return t
     .replace(/\{produto\}/g, p.name || "")
     .replace(/\{preco\}/g, fmt(p.price))
     .replace(/\{preco_antigo\}/g, fmt(p.originalPrice))
     .replace(/\{desconto\}/g, p.discount ? `${p.discount}%` : "—")
     .replace(/\{loja\}/g, p.store || "")
     .replace(/\{vendas\}/g, formatVendas(p))
+    .replace(/\{cupom\}/g, cupom)
     .replace(/\{link\}/g, p.link || "");
 }
 
@@ -573,6 +579,12 @@ async function sendItem(userId, group, whatsappGroups, item) {
     const upgraded = upgradeImageUrl(itemForSend.img);
     if (upgraded !== itemForSend.img) itemForSend = { ...itemForSend, img: upgraded };
   }
+
+  // Cupom efetivo: o do próprio item (repasse — veio na legenda do grupo líder)
+  // tem prioridade; senão cai no cupom fixo da campanha (group.scraping.coupon).
+  // Campanhas de catálogo normalmente só têm o fixo; repasse manda o específico.
+  const coupon = (itemForSend.coupon || group.scraping?.coupon || "").toString().trim();
+  itemForSend = { ...itemForSend, coupon };
 
   const text = renderTemplate(group.messageTemplate, itemForSend);
 

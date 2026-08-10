@@ -46,6 +46,34 @@ describe("extractUrls", () => {
   });
 });
 
+describe("extractCoupon", () => {
+  it("acha o código nos formatos mais comuns dos grupos", () => {
+    expect(capture.extractCoupon("Fone JBL R$99 🔥 use o cupom JBL20")).toBe("JBL20");
+    expect(capture.extractCoupon("cupom: TECH-10 válido hoje")).toBe("TECH-10");
+    expect(capture.extractCoupon("aplique o código GALAXY10 no checkout")).toBe("GALAXY10");
+    expect(capture.extractCoupon("com o voucher SHOPEE50 sai mais barato")).toBe("SHOPEE50");
+    expect(capture.extractCoupon("código de desconto BLACK25")).toBe("BLACK25");
+  });
+
+  it("normaliza pra maiúsculas e tira pontuação nas pontas", () => {
+    expect(capture.extractCoupon("use o cupom promo15!")).toBe("PROMO15");
+    expect(capture.extractCoupon("cupom: desc-20.")).toBe("DESC-20");
+  });
+
+  it("ignora frase sem código de verdade (palavra comum, sem dígito/maiúscula)", () => {
+    expect(capture.extractCoupon("tem cupom disponível pra vocês")).toBeNull();
+    expect(capture.extractCoupon("use o cupom aqui embaixo")).toBeNull();
+  });
+
+  it("sem gatilho de cupom, texto vazio ou não-string devolvem null", () => {
+    expect(capture.extractCoupon("só um produto https://a.com/x sem cupom nenhum aplicável")).toBeNull();
+    expect(capture.extractCoupon("promoção sem código")).toBeNull();
+    expect(capture.extractCoupon("")).toBeNull();
+    expect(capture.extractCoupon(null)).toBeNull();
+    expect(capture.extractCoupon(42)).toBeNull();
+  });
+});
+
 describe("textFromMessage / unwrapMessage", () => {
   it("lê conversation simples", () => {
     expect(capture.textFromMessage({ conversation: "oi https://a.com" })).toBe("oi https://a.com");

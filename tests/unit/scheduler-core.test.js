@@ -370,6 +370,17 @@ describe("scheduler.renderTemplate — mensagem do envio", () => {
     expect(scheduler.renderTemplate(null, produto)).toBe("");
     expect(scheduler.renderTemplate(undefined, produto)).toBe("");
   });
+
+  it("{cupom} com valor entra normalmente", () => {
+    const out = scheduler.renderTemplate("{produto}\n🎟️ Cupom: {cupom}\n{link}", { ...produto, coupon: "JBL20" });
+    expect(out).toBe("Mouse Pro\n🎟️ Cupom: JBL20\nhttps://amzn.to/x");
+  });
+
+  it("sem cupom: a linha inteira que contém {cupom} some (nada de 'Cupom:' vazio)", () => {
+    const tpl = "{produto}\n🎟️ Cupom: {cupom}\n🛒 {link}";
+    expect(scheduler.renderTemplate(tpl, produto)).toBe("Mouse Pro\n🛒 https://amzn.to/x");
+    expect(scheduler.renderTemplate(tpl, { ...produto, coupon: "  " })).toBe("Mouse Pro\n🛒 https://amzn.to/x");
+  });
 });
 
 describe("scheduler.isAutoApprove / isRepasse", () => {

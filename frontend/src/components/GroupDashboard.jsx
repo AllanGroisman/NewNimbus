@@ -40,6 +40,7 @@ const TEMPLATE_VARS = [
   { token: "{desconto}", desc: "% de desconto" },
   { token: "{loja}", desc: "Nome da loja" },
   { token: "{vendas}", desc: "Nº de vendas (quando houver)" },
+  { token: "{cupom}", desc: "Cupom de desconto (a linha some quando não houver)" },
   { token: "{link}", desc: "Link de compra" },
 ];
 
@@ -50,12 +51,18 @@ const TEMPLATE_PREVIEW_DATA = {
   desconto: "24%",
   loja: "Mercado Livre",
   vendas: "1,2 mil vendidos",
+  cupom: "GALAXY10",
   link: "https://merc.li/abc123",
 };
 
-const renderTemplate = (tpl) => {
+// Espelha o renderTemplate do backend (scheduler.js): sem cupom, a linha inteira que
+// contém {cupom} some — pra o preview bater com a mensagem realmente enviada.
+const renderTemplate = (tpl, { cupom } = {}) => {
   if (!tpl) return "";
-  return tpl.replace(/\{(\w+)\}/g, (_, k) => TEMPLATE_PREVIEW_DATA[k] ?? `{${k}}`);
+  const data = cupom != null ? { ...TEMPLATE_PREVIEW_DATA, cupom } : TEMPLATE_PREVIEW_DATA;
+  let t = tpl;
+  if (!data.cupom) t = t.replace(/^[^\n]*\{cupom\}[^\n]*\n?/gm, "");
+  return t.replace(/\{(\w+)\}/g, (_, k) => data[k] ?? `{${k}}`);
 };
 
 // Renderiza a formatação que o WhatsApp aplica (*negrito*, _itálico_, ~riscado~, `mono`)
@@ -98,6 +105,7 @@ const MESSAGE_PRESETS = [
 💰 De: {preco_antigo}
 ✅ Por: {preco}
 🏷️ Desconto: -{desconto}
+🎟️ Cupom: {cupom}
 
 🛒 Compre aqui: {link}`,
   },
@@ -1870,6 +1878,24 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               ))}
             </div>
 
+            {/* Cupom fixo da campanha — usado no {cupom} quando o produto não traz um
+                cupom próprio (repasse). Deixe vazio pra não mostrar linha de cupom. */}
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>🎟️ Cupom fixo da campanha:</span>
+              <input
+                value={scraping?.coupon || ""}
+                onChange={e => setScraping(s => ({ ...s, coupon: e.target.value.trim().toUpperCase() }))}
+                // A aba Mensagens não passa pelo "Salvar" da aba Gerenciar (que grava
+                // scraping) — persiste na hora, no blur, lendo o scraping mais recente.
+                onBlur={() => setScraping(s => { onUpdate(group.id, { scraping: s }); return s; })}
+                placeholder="ex: GALAXY10 (opcional)"
+                style={{ padding: "6px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 12, fontFamily: "monospace", width: 200, boxSizing: "border-box" }}
+              />
+              <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>
+                Repasse com cupom próprio sobrepõe este.
+              </span>
+            </div>
+
             {/* Editor + Preview lado a lado */}
             <div data-tour="ms-editor" className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <div>
@@ -1886,7 +1912,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 4 }}>Prévia (como aparece no WhatsApp)</div>
                 <div className="wa-preview" style={{ width: "100%", minHeight: 260, padding: 12, borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.5, fontFamily: "inherit", boxSizing: "border-box" }}>
                   {groupInfo.messageTemplate
-                    ? renderWhatsappFormatted(renderTemplate(groupInfo.messageTemplate))
+                    ? renderWhatsappFormatted(renderTemplate(groupInfo.messageTemplate, { cupom: scraping?.coupon || undefined }))
                     : <span style={{ opacity: 0.6, fontStyle: "italic" }}>Modelo vazio. Comece a digitar à esquerda.</span>}
                 </div>
                 <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 6 }}>
