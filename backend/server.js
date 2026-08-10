@@ -30,6 +30,7 @@ const httpErrors = require("./infra/httpErrors");
 const billing = require("./billing");
 const stripeMod = require("./billing/stripe");
 const backupApi = require("./backup/api");
+const diskInfo = require("./infra/disk");
 const backupMonitor = require("./backup/monitor");
 const billingReminders = require("./billing/reminders");
 // O log direto, e não notifications/email: a rota só lê o histórico, e assim
@@ -1931,6 +1932,15 @@ app.delete("/api/admin/backups/remote/:filename", auth.requireAuth, auth.require
     res.json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+// Espaço livre no disco da máquina, com quanto os backups e o banco ocupam.
+app.get("/api/admin/system/disk", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    res.json(await diskInfo.report());
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/system/disk", expose: true });
   }
 });
 

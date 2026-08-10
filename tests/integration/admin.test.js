@@ -29,6 +29,7 @@ describe("Admin — gating", () => {
       ["put", "/api/admin/scraper/amazon/filters"],
       ["get", "/api/admin/scraper/shopee/filters"],
       ["put", "/api/admin/scraper/shopee/filters"],
+      ["get", "/api/admin/system/disk"],
       ["get", "/api/admin/stripe"],
       ["put", "/api/admin/stripe"],
       ["get", "/api/admin/emails/templates"],
@@ -109,6 +110,25 @@ describe("Admin — users", () => {
   });
 });
 
+describe("Admin — espaço em disco", () => {
+  it("GET /system/disk devolve o disco da máquina, os backups e o banco", async () => {
+    const admin = await makeAdmin();
+    const r = await admin.auth("get", "/api/admin/system/disk");
+    expect(r.status).toBe(200);
+    expect(r.body.totalBytes).toBeGreaterThan(0);
+    expect(r.body.freeBytes).toBeGreaterThan(0);
+    expect(r.body.freeBytes).toBeLessThanOrEqual(r.body.totalBytes);
+    expect(r.body.usedPct).toBeGreaterThanOrEqual(0);
+    expect(r.body.usedPct).toBeLessThanOrEqual(100);
+    expect(r.body.backups).toHaveProperty("count");
+    expect(r.body.database).toHaveProperty("bytes");
+    // Backblaze: só o ocupado — o B2 não expõe espaço livre. Sem credencial no
+    // ambiente de teste vem configured=false, e mesmo assim a rota responde 200.
+    expect(r.body.remote).toHaveProperty("configured");
+    expect(r.body.remote).toHaveProperty("bytes");
+  });
+});
+
 describe("Admin — scraper config + run", () => {
   it("GET /scraper/config devolve config + listas disponiveis", async () => {
     const admin = await makeAdmin();
@@ -131,6 +151,22 @@ describe("Admin — scraper config + run", () => {
     const get = await admin.auth("get", "/api/admin/scraper/config");
     expect(get.body.config.intervalMinutes).toBe(120);
     expect(get.body.config.enabled).toBe(false);
+  });
+
+  it("PUT /scraper/config aceita horarios fixos e normaliza a lista", async () => {
+    const admin = await makeAdmin();
+    const payload = { scheduleMode: "times", times: ["20:00", "08:00", "xx", "20:00"], intervalMinutes: 120 };
+    const r = await admin.auth("put", "/api/admin/scraper/config").send(payload);
+    expect(r.status).toBe(200);
+    expect(r.body.config.scheduleMode).toBe("times");
+    expect(r.body.config.times).toEqual(["08:00", "20:00"]);
+    // Trocar de modo não pode apagar o intervalo escolhido antes.
+    expect(r.body.config.intervalMinutes).toBe(120);
+
+    const volta = await admin.auth("put", "/api/admin/scraper/config").send({ scheduleMode: "interval" });
+    expect(volta.body.config.scheduleMode).toBe("interval");
+    expect(volta.body.config.intervalMinutes).toBe(120);
+    expect(volta.body.config.times).toEqual(["08:00", "20:00"]);
   });
 
   it("GET /scraper/status devolve running + lastRun", async () => {

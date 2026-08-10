@@ -487,16 +487,31 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 
 67. [] Quero fazer um resumo geral do sistema e criar um arquivo na raiz do projeto que explique didaticamente como esta funcionando. Náo sei exatamente tudo que quero no resumo, mas as tecnologias usadas, onde estao os banco de dados, o que tenho guardado em cada um, quais sao minhas camadas de seguranca, como funciona, como esta arquitetado para expansao caso cresca o numero de usuario, onde e como sao feitos os backups e o que tem neles, um resumo do custo computacional das diferentes partes da arquitetura, etc...
 
-68. [] Pack 3meses ,6 meses e 1 ano nos planos
+70. [x] Quero poder escolher horarios especificos para fazer scraping inves de colocar um intervalo.
 
-69. [] Na landpage:
-    Quando já tem o plano que esta tentando ativo, no é só ntrar na sua conta tem que ter hyperlink na sua conta para logar.
-    Quando clicar no plano maior, ir direto pro stripe ou ter que logar?
-    Ao clicar para fazer upgrade do plano, quero que va para o stripe para realizar a nova compra. No momento ele ta fazendo automatico no proprio site, tem que ir direto la.
+    O Scraping global e o ScrapTester agora têm duas opções em "Quando rodar":
+    "a cada X minutos" (como era) ou "em horários do dia" — a mesma lista de
+    horários que as campanhas já usavam no preenchimento automático, até 12 por
+    dia. No modo horários o scraping roda uma vez em cada horário marcado, no
+    fuso do servidor, e o card "Próximo run" mostra qual é o próximo.
 
-70. [] Quero poder escolher horarios especificos para fazer scraping inves de colocar um intervalo.
+    Se o backend estiver fora do ar na hora marcada, ele ainda roda se voltar em
+    até 15 minutos; passou disso, espera o próximo horário em vez de correr atrás
+    do dia inteiro. Trocar de modo não apaga o intervalo que estava configurado.
 
-71. [] Quero um botão para buscar quantos GB ainda estão sobrando no computador que esta rodando o sistema.
+71. [x] Quero um botão para buscar quantos GB ainda estão sobrando no computador que esta rodando o sistema.
+
+    O botão "Espaço em disco" ficou em Admin › Backups, ao lado de "Atualizar" —
+    é ali que a pergunta aparece na prática, na hora de criar mais um backup. Ele
+    mostra quantos GB estão livres, o total do disco e a porcentagem em uso (as
+    mesmas contas do `df`), mais quanto os backups locais e o banco de dados
+    ocupam. Acima de 90% em uso o painel fica vermelho e avisa pra limpar
+    backups antigos.
+
+    O painel também mostra o Backblaze, mas só o que está ocupado lá (quantos GB
+    e quantos arquivos): o B2 não tem "espaço livre" — não existe limite fixo, é
+    cobrado por GB guardado, e o cap de armazenamento da conta não aparece na API
+    S3 que o sistema usa.
 
 72. [] Verificar brechas de segurança pelos endpoints do site.
 

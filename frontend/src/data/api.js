@@ -474,6 +474,7 @@ export async function adminPushBackup(filename)        { return http("POST",   "
 export async function adminRestoreBackup(source, filename) { return http("POST", "/api/admin/backups/restore", { source, filename }, { timeoutMs: SLOW_TIMEOUT_MS }); }
 export async function adminDeleteLocalBackup(filename) { return http("DELETE", `/api/admin/backups/local/${encodeURIComponent(filename)}`); }
 export async function adminDeleteRemoteBackup(filename){ return http("DELETE", `/api/admin/backups/remote/${encodeURIComponent(filename)}`); }
+export async function adminSystemDisk()                { return http("GET",    "/api/admin/system/disk"); }
 
 // ─── Admin / scraper global e catálogo ─────────────────────────────────
 export async function adminScraperConfig()       { return http("GET",  "/api/admin/scraper/config"); }

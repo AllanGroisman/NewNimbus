@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../data/constants";
 import Toggle from "../components/ui/Toggle";
+import ScheduleField from "../components/ui/ScheduleField";
 import {
   adminScrapTesterConfig,
   adminScrapTesterSave,
@@ -436,23 +437,24 @@ export default function PageAdminScrapTester() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
           <div>
             <div style={{ fontWeight: 500 }}>Teste automático</div>
-            <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Roda sozinho no intervalo configurado e notifica o resultado</div>
+            <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+              {config.scheduleMode === "times" ? "Roda sozinho nos horários escolhidos e notifica o resultado" : "Roda sozinho no intervalo configurado e notifica o resultado"}
+            </div>
           </div>
           <Toggle value={config.enabled} onChange={v => save({ enabled: v })} />
         </div>
 
+        <div style={{ marginBottom: 14 }}>
+          <ScheduleField
+            mode={config.scheduleMode}
+            intervalMinutes={config.intervalMinutes}
+            times={config.times}
+            minInterval={15}
+            onChange={updateConfig}
+          />
+        </div>
+
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 14 }}>
-          <Field label="Intervalo (minutos)">
-            <input
-              type="number" min={15} max={10080}
-              value={config.intervalMinutes ?? ""}
-              onChange={e => updateConfig({ intervalMinutes: e.target.value === "" ? "" : parseInt(e.target.value) })}
-              style={inputStyle}
-            />
-            <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4 }}>
-              {config.intervalMinutes >= 60 ? `≈ ${Math.round(config.intervalMinutes / 60)}h` : " "}
-            </div>
-          </Field>
           <Field label="Produtos por fonte">
             <input
               type="number" min={3} max={50}

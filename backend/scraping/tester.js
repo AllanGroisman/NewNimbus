@@ -15,6 +15,7 @@ const { scrapeOfertas, scrapeSingleProduct, normalizeSource, CATEGORIES, STORES 
 const { inspectImages, inspectImage } = require("./image-quality");
 const appConfig = require("../config");
 const adminNotifier = require("../notifications/admin-notifier");
+const schedule = require("./schedule");
 
 // Fontes testáveis. Não são exatamente as LOJAS (STORES): depois da task 57 o
 // Mercado Livre tem duas fontes (vitrine pública e Hub de Afiliados) e o Hub
@@ -37,6 +38,9 @@ const CONFIG_KEY = "scrap-tester-config";
 const STATUS_KEY = "scrap-tester-status";
 const HISTORY_KEY = "scrap-tester-history";
 const HISTORY_MAX = 20;
+
+// Fatia máxima de um setTimeout de agendamento (ver scheduleNext).
+const MAX_TIMER_MS = 15 * 60 * 1000;
 
 // Campos verificados. Nem todo campo existe em toda loja — `applies` evita alarme
 // falso (ex: Shopee nunca traz `seller`, Amazon não traz `sold`).
@@ -91,7 +95,9 @@ const SPEC_BY_KEY = Object.fromEntries(FIELD_SPECS.map(s => [s.key, s]));
 
 const DEFAULT_CONFIG = {
   enabled: false,
-  intervalMinutes: 720,                  // 12h
+  scheduleMode: "interval",              // "interval" | "times"
+  intervalMinutes: 720,                  // 12h (modo "interval")
+  times: [],                             // "HH:MM" do dia (modo "times")
   // O Hub fica de fora por padrão: quem não usa o Hub não precisa de uma coluna
   // vermelha por falta de sessão. Liga pelo chip na tela.
   sources: Object.keys(STORES),
@@ -133,6 +139,10 @@ function readConfig() {
 function writeConfig(cfg) {
   const merged = { ...readConfig(), ...cfg };
   merged.enabled = !!merged.enabled;
+  merged.scheduleMode = merged.scheduleMode === "times" ? "times" : "interval";
+  merged.times = schedule.normalizeTimes(merged.times);
+  // Intervalo validado nos dois modos: alternar pra horários e voltar não pode
+  // apagar o valor escolhido.
   merged.intervalMinutes = Math.max(15, Number(merged.intervalMinutes) || DEFAULT_CONFIG.intervalMinutes);
   merged.sampleSize = Math.min(50, Math.max(3, Number(merged.sampleSize) || DEFAULT_CONFIG.sampleSize));
   merged.checkImages = merged.checkImages !== false;
@@ -508,8 +518,10 @@ function cancel() {
   return { ok: true, message: "Cancelamento solicitado — encerrando após a loja atual" };
 }
 
-// Mesma mecânica do admin-scraper: setTimeout single-shot baseado em
-// `lastRun + intervalMinutes`, reagendado pelo `finally` de runOnce().
+// Mesma mecânica do admin-scraper: scraping/schedule.js decide a hora (intervalo
+// ou horários fixos) e o `finally` de runOnce() reagenda. Espera longa é fatiada
+// em pedaços de MAX_TIMER_MS que só reagendam, pra drift de relógio não fazer
+// perder um horário.
 function scheduleNext() {
   if (_timer) { clearTimeout(_timer); _timer = null; }
   const cfg = readConfig();
@@ -517,15 +529,19 @@ function scheduleNext() {
     _status.nextRunAt = null;
     return;
   }
-  const intervalMs = cfg.intervalMinutes * 60 * 1000;
-  const lastMs = _status.lastRun ? new Date(_status.lastRun).getTime() : 0;
-  const dueAt = lastMs ? lastMs + intervalMs : Date.now() + intervalMs;
-  const delay = Math.max(0, dueAt - Date.now());
-
-  _status.nextRunAt = new Date(Date.now() + delay).toISOString();
-  _timer = setTimeout(() => {
-    runOnce().catch(err => console.error("[scrap-tester] tick:", err.message));
-  }, delay);
+  const plan = schedule.nextRun(cfg, _status.lastRun, new Date());
+  if (!plan) {              // modo horários sem nenhum horário: nada a agendar
+    _status.nextRunAt = null;
+    return;
+  }
+  const delay = Math.max(0, plan.at.getTime() - Date.now());
+  _status.nextRunAt = plan.at.toISOString();
+  _timer = setTimeout(
+    delay > MAX_TIMER_MS
+      ? scheduleNext
+      : () => runOnce().catch(err => console.error("[scrap-tester] tick:", err.message)),
+    Math.min(delay, MAX_TIMER_MS)
+  );
 }
 
 function start() {

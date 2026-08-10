@@ -9,6 +9,7 @@ import {
   adminRestoreBackup,
   adminDeleteLocalBackup,
   adminDeleteRemoteBackup,
+  adminSystemDisk,
   errText,
 } from "../data/api";
 
@@ -18,7 +19,13 @@ function fmtSize(bytes) {
   if (!bytes) return "—";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+  return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+}
+
+function fmtGB(bytes) {
+  if (bytes == null) return "—";
+  return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 }
 
 function nameToDate(name) {
@@ -77,6 +84,9 @@ export default function PageAdminBackups() {
   const [toast,   setToast]   = useState(null);
   const [busy,    setBusy]    = useState({});   // "local:filename" | "remote:filename" → true
   const [creating,setCreating]= useState(false);
+  // Espaço em disco: só é consultado quando o admin clica no botão.
+  const [disk,     setDisk]     = useState(null);
+  const [diskBusy, setDiskBusy] = useState(false);
   // Espelham busy/creating pro polling de fundo ler o valor atual sem re-criar o timer.
   const busyRef = useRef(busy);
   useEffect(() => { busyRef.current = busy; }, [busy]);
@@ -171,6 +181,17 @@ export default function PageAdminBackups() {
     }
   }
 
+  async function handleDisk() {
+    setDiskBusy(true);
+    try {
+      setDisk(await adminSystemDisk());
+    } catch (err) {
+      showToast(errText(err, "Não foi possível ler o espaço em disco."), true);
+    } finally {
+      setDiskBusy(false);
+    }
+  }
+
   function askConfirm(action, item, source) {
     const labels = {
       restore: { label: `Restaurar backup de ${nameToDate(item.name)}?`, danger: true,
@@ -229,6 +250,9 @@ export default function PageAdminBackups() {
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={handleDisk} disabled={diskBusy} style={s.btn("default", diskBusy)}>
+            {diskBusy ? "Lendo..." : "⛁ Espaço em disco"}
+          </button>
           <button onClick={refresh} disabled={loading} style={s.btn("default", loading)}>
             ⟳ Atualizar
           </button>
@@ -237,6 +261,48 @@ export default function PageAdminBackups() {
           </button>
         </div>
       </div>
+
+      {/* Espaço em disco (sob demanda) */}
+      {disk && (
+        <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10, padding: "12px 14px", marginBottom: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 20, fontWeight: 600, color: disk.usedPct >= 90 ? "var(--danger-text)" : PRIMARY_DARK }}>
+              {fmtGB(disk.freeBytes)} livres
+            </div>
+            <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+              de {fmtGB(disk.totalBytes)} · {disk.usedPct}% em uso
+            </div>
+          </div>
+          <div style={{ height: 6, borderRadius: 3, background: "var(--color-background-tertiary)", margin: "10px 0", overflow: "hidden" }}>
+            <div style={{ width: `${Math.min(100, disk.usedPct)}%`, height: "100%", background: disk.usedPct >= 90 ? "var(--danger-text)" : PRIMARY }} />
+          </div>
+          <div style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "flex", gap: 14, flexWrap: "wrap" }}>
+            <span>backups locais: {disk.backups?.count ?? "—"} arquivo(s), {fmtSize(disk.backups?.bytes)}</span>
+            <span>banco de dados: {fmtSize(disk.database?.bytes)}</span>
+            <span>lido em {new Date(disk.checkedAt).toLocaleString("pt-BR")}</span>
+          </div>
+
+          {/* Backblaze: só dá pra mostrar o ocupado — o B2 não tem espaço livre,
+              é cobrado por GB guardado e sem limite fixo. */}
+          <div style={{ marginTop: 10, paddingTop: 10, borderTop: "0.5px solid var(--color-border-tertiary)", fontSize: 11, color: "var(--color-text-secondary)" }}>
+            {disk.remote?.error ? (
+              <span style={{ color: "#B45309" }}>Backblaze: não foi possível consultar ({disk.remote.error})</span>
+            ) : !disk.remote?.configured ? (
+              <span>Backblaze não configurado</span>
+            ) : (
+              <span>
+                Backblaze: <strong style={{ color: "var(--color-text-primary)" }}>{fmtSize(disk.remote.bytes)}</strong> guardados
+                em {disk.remote.count} arquivo(s) — o B2 não tem limite de espaço, é cobrado por GB guardado.
+              </span>
+            )}
+          </div>
+          {disk.usedPct >= 90 && (
+            <div style={{ marginTop: 10, fontSize: 11, color: "var(--danger-text)" }}>
+              Disco quase cheio — apague backups antigos antes de criar outro.
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Restart countdown */}
       {restartCountdown > 0 && (

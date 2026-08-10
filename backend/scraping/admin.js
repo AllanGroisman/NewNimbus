@@ -2,10 +2,13 @@ const { scrapeOfertas, CATEGORIES, STORES } = require("./scraper");
 const catalog = require("../catalog");
 const appConfig = require("../config");
 const adminNotifier = require("../notifications/admin-notifier");
+const schedule = require("./schedule");
 
 const DEFAULT_CONFIG = {
   enabled: false,
-  intervalMinutes: 360,                                  // 6h
+  scheduleMode: "interval",                              // "interval" | "times"
+  intervalMinutes: 360,                                  // 6h (modo "interval")
+  times: [],                                             // "HH:MM" do dia (modo "times")
   categories: Object.keys(CATEGORIES),                   // todas
   sources: Object.keys(STORES),                          // ml, amazon
   limitPerCategory: 200,                                 // fallback (compat com configs antigas)
@@ -17,6 +20,9 @@ const DEFAULT_CONFIG = {
 // pra sobreviver a reboots do backend. `running` e `nextRunAt` não são persistidos
 // (transitórios — reset no boot).
 const STATUS_KEY = "scraper-status";
+
+// Fatia máxima de um setTimeout de agendamento (ver scheduleNext).
+const MAX_TIMER_MS = 15 * 60 * 1000;
 
 let _status = {
   running: false,
@@ -60,6 +66,10 @@ function readConfig() {
 function writeConfig(cfg) {
   const merged = { ...readConfig(), ...cfg };
   // Validações básicas
+  merged.scheduleMode = merged.scheduleMode === "times" ? "times" : "interval";
+  merged.times = schedule.normalizeTimes(merged.times);
+  // O intervalo é validado nos dois modos de propósito: alternar pra horários e
+  // voltar não pode apagar o valor que o admin tinha escolhido.
   merged.intervalMinutes = Math.max(5, Number(merged.intervalMinutes) || DEFAULT_CONFIG.intervalMinutes);
   merged.limitPerCategory = Math.max(10, Number(merged.limitPerCategory) || DEFAULT_CONFIG.limitPerCategory);
   // Limite por loja: para cada loja conhecida, garante um número >= 10 (default 200).
@@ -268,10 +278,13 @@ function cancel() {
   return { ok: true, message: "Cancelamento solicitado — encerrando após o item atual" };
 }
 
-// Agenda o próximo run baseado em `lastRun + intervalMinutes`, não em `now`.
-// Se já passou da hora (ex: backend ficou off, ou está bootando depois do prazo),
-// dispara imediatamente. Caso contrário, agenda só o restante do intervalo.
-// Usa setTimeout single-shot — o `finally` de runOnce reagenda via scheduleNext().
+// Agenda o próximo run (ver scraping/schedule.js: intervalo a partir do lastRun,
+// ou o próximo horário fixo do dia). Se já passou da hora — backend off, ou
+// bootando depois do prazo — dispara imediatamente.
+//
+// setTimeout single-shot, mas com teto: espera longa é fatiada em pedaços de
+// MAX_TIMER_MS que só reagendam. Um timer de 12h erra o alvo com drift de
+// relógio ou máquina suspensa, e em horário fixo errar significa perder o slot.
 function scheduleNext() {
   if (_interval) { clearTimeout(_interval); _interval = null; }
   const cfg = readConfig();
@@ -279,15 +292,19 @@ function scheduleNext() {
     _status.nextRunAt = null;
     return;
   }
-  const intervalMs = cfg.intervalMinutes * 60 * 1000;
-  const lastMs = _status.lastRun ? new Date(_status.lastRun).getTime() : 0;
-  const dueAt = lastMs ? lastMs + intervalMs : Date.now() + intervalMs;
-  const delay = Math.max(0, dueAt - Date.now());
-
-  _status.nextRunAt = new Date(Date.now() + delay).toISOString();
-  _interval = setTimeout(() => {
-    runOnce().catch(err => console.error("[admin-scraper] tick:", err.message));
-  }, delay);
+  const plan = schedule.nextRun(cfg, _status.lastRun, new Date());
+  if (!plan) {              // modo horários sem nenhum horário: nada a agendar
+    _status.nextRunAt = null;
+    return;
+  }
+  const delay = Math.max(0, plan.at.getTime() - Date.now());
+  _status.nextRunAt = plan.at.toISOString();
+  _interval = setTimeout(
+    delay > MAX_TIMER_MS
+      ? scheduleNext
+      : () => runOnce().catch(err => console.error("[admin-scraper] tick:", err.message)),
+    Math.min(delay, MAX_TIMER_MS)
+  );
 }
 
 function start() {

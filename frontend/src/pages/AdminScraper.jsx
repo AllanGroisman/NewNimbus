@@ -3,6 +3,7 @@ import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, formatPrice } from "../data/const
 import Badge from "../components/ui/Badge";
 import Toggle from "../components/ui/Toggle";
 import Modal from "../components/ui/Modal";
+import ScheduleField from "../components/ui/ScheduleField";
 import {
   adminScraperConfig,
   adminSaveScraperConfig,
@@ -277,23 +278,21 @@ export default function PageAdminScraper() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
           <div>
             <div style={{ fontWeight: 500 }}>Scraping automático</div>
-            <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Roda em loop no intervalo configurado</div>
+            <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+              {config.scheduleMode === "times" ? "Roda nos horários escolhidos" : "Roda em loop no intervalo configurado"}
+            </div>
           </div>
           <Toggle value={config.enabled} onChange={v => saveImmediate({ enabled: v })} />
         </div>
 
         <div style={{ marginBottom: 14 }}>
-          <Field label="Intervalo (minutos)">
-            <input
-              type="number" min={5} max={10080}
-              value={config.intervalMinutes ?? ""}
-              onChange={e => updateConfig({ intervalMinutes: e.target.value === "" ? "" : parseInt(e.target.value) })}
-              style={inputStyle}
-            />
-            <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4 }}>
-              {config.intervalMinutes === "" ? " " : (config.intervalMinutes >= 60 ? `≈ ${Math.round(config.intervalMinutes / 60)}h` : `${config.intervalMinutes}min`)}
-            </div>
-          </Field>
+          <ScheduleField
+            mode={config.scheduleMode}
+            intervalMinutes={config.intervalMinutes}
+            times={config.times}
+            minInterval={5}
+            onChange={updateConfig}
+          />
         </div>
 
         <Field label="Limite de produtos por loja (aplicado a cada categoria daquela loja)">
