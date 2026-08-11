@@ -547,12 +547,62 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
 
 79. [x] Quero na edicao dos modelos de mensagem ter uma opcao para que se o item nao estiverm em promocao não apareca "de" ou "desconto", o que tu sugere?
 
-80. [] Tira o cupom fixo da campanha no modelo de mensagem
+80. [x] Tira o cupom fixo da campanha no modelo de mensagem
 
-81. [] Campanha de repasse não precisa de categoria, pode tirar.
+    O campo "🎟️ Cupom fixo da campanha" saiu da aba Modelos Mensagens e o
+    recurso deixou de existir: o {cupom} agora vem só do cupom capturado na
+    legenda do grupo líder, no repasse. Sem cupom, a linha inteira que tem
+    {cupom} some da mensagem, como já acontecia. Na prévia, a campanha de
+    repasse mostra um cupom de exemplo e a de busca mostra a linha sumindo —
+    que é o que realmente vai acontecer nela.
+    Efeito colateral esperado: campanha de busca não manda mais cupom nenhum.
+    O valor que estava salvo em campanhas antigas fica inerte (ninguém lê).
 
-82. [] Na campanha de repasse, mesmo com uma loja bloqueada, quero que o repasse ignore os bloqueios. O bloquieio é apenas para campanhas normais onde pode-se buscar produtos no próprio sistema.
+81. [x] Campanha de repasse não precisa de categoria, pode tirar.
 
-83. Nos grupos, quero que mude de "Grupos do WhatsApp" para "Grupos Destino".
+    Campanha de repasse já nascia sem categoria e não usa categoria em nada —
+    o que sobrava era ela aparecer na tela e contar no plano. Agora: o card da
+    Visão geral vira "Lojas do repasse" e mostra só as lojas (sem categorias e
+    sem filtro de desconto, que não valem ali), os selos de categoria do
+    cabeçalho não aparecem, e ao salvar o backend zera a categoria de qualquer
+    campanha de repasse — então repasse antigo para de consumir cota de
+    "categorias por campanha" do plano.
 
-84. No Modelos Mensagens, quero que troque e tenha 2 botões para salvar, o "Salvar" que apenas salva a alteração feita e o "Salvar Como" que salva como um diferente modelo com outro nome. Tira o "Criar a partir deste". Sempre que for salvar abra um popup perguntando se já quer ativar o modelo.
+82. [x] Na campanha de repasse, mesmo com uma loja bloqueada, quero que o repasse ignore os bloqueios. O bloquieio é apenas para campanhas normais onde pode-se buscar produtos no próprio sistema.
+
+    A trava de loja do admin passou a valer só onde faz sentido: na busca de
+    produtos no catálogo. No repasse o link chega pronto do grupo líder, então
+    ela é ignorada — antes, trancar a única loja da campanha de repasse pausava
+    a campanha com a mensagem de manutenção e todo link daquela loja era
+    descartado em silêncio. Agora a captura entra normalmente, a campanha não
+    pausa por causa da trava, os chips de loja da aba Gerenciar continuam
+    clicáveis (sem cadeado) e a campanha de repasse nova nasce com todas as
+    lojas. A exigência de afiliado configurado continua valendo, porque o
+    repasse precisa dela pra reafiliar o link.
+
+83. [x] Nos grupos, quero que mude de "Grupos do WhatsApp" para "Grupos Destino".
+
+    O bloco agora se chama "Grupos Destino" nos dois tipos de campanha (no
+    repasse ele se chamava "Grupos de envio"), o que também deixa claro o
+    contraste com os "Grupos líderes" logo acima. Junto foram os textos que
+    falavam do mesmo bloco: o selo "Sem grupos destino" no cabeçalho, o
+    "Nenhum grupo destino vinculado" da lista vazia e o passo do tour. Onde
+    "grupos do WhatsApp" quer dizer os grupos de verdade do número (o seletor
+    de vincular, por exemplo) o texto ficou como estava.
+
+84. [x] No Modelos Mensagens, quero que troque e tenha 2 botões para salvar, o "Salvar" que apenas salva a alteração feita e o "Salvar Como" que salva como um diferente modelo com outro nome. Tira o "Criar a partir deste". Sempre que for salvar abra um popup perguntando se já quer ativar o modelo.
+
+    "Criar a partir deste" não existe mais, e o modal que perguntava "novo ou
+    substituir" a cada salvamento também não. Ficaram dois botões: "Salvar",
+    que grava por cima do modelo aberto sem perguntar nada, e "Salvar Como",
+    que pede um nome e cria outro modelo com o que está no editor. No modelo
+    "Padrão", que é inalterável, o Salvar cai no Salvar Como já explicando o
+    porquê.
+    Depois de salvar aparece o popup "Ativar este modelo?", com "Agora não" e
+    "Ativar". Exceção: se o modelo salvo já era o que a campanha usa, ele
+    continua em uso com o texto novo sem perguntar — senão a campanha seguiria
+    mandando a versão antiga (o "em uso" é casado pelo texto).
+    De quebra: só trocar de modelo na lista não conta mais como "alteração não
+    salva" (o aviso agora fala do que você editou e não salvou), e o Salvar das
+    outras abas parou de ativar sem querer o modelo que estivesse aberto no
+    editor.

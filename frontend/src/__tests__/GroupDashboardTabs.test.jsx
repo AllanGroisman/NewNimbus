@@ -331,4 +331,76 @@ describe("GroupDashboard — aba Modelos Mensagens (prévia)", () => {
     expect(preview.textContent).toContain("Smartphone Samsung Galaxy A55 256GB");
     expect(preview.textContent).not.toContain("undefined");
   });
+
+  it("não tem mais campo de cupom fixo da campanha", () => {
+    renderMessagesTab();
+    expect(screen.queryByText(/Cupom fixo da campanha/)).toBeNull();
+  });
+});
+
+describe("GroupDashboard — aba Modelos Mensagens (Salvar / Salvar Como)", () => {
+  const meuModelo = { id: "t1", name: "Meu modelo", template: "Texto salvo" };
+
+  function renderMessagesTab(overrides = {}) {
+    const out = renderDashboard({
+      customTemplates: [meuModelo],
+      onAddCustomTemplate: vi.fn(() => "t2"),
+      onUpdateCustomTemplate: vi.fn(),
+      onDeleteCustomTemplate: vi.fn(),
+      ...overrides,
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Modelos/ }));
+    return out;
+  }
+
+  const escolherModelo = (container, key) =>
+    fireEvent.change(container.querySelector("select"), { target: { value: key } });
+
+  it("os botões são Salvar e Salvar Como — 'Criar a partir deste' não existe mais", () => {
+    renderMessagesTab();
+    expect(screen.queryByRole("button", { name: /Criar a partir deste/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Salvar" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Salvar Como" })).toBeInTheDocument();
+  });
+
+  it("Salvar num modelo próprio grava direto e pergunta se quer ativar", () => {
+    const { props, container } = renderMessagesTab();
+    escolherModelo(container, "custom:t1");
+    fireEvent.change(container.querySelector("textarea"), { target: { value: "Texto novo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+
+    expect(props.onUpdateCustomTemplate).toHaveBeenCalledWith("t1", { name: "Meu modelo", template: "Texto novo" });
+    expect(screen.getByText("Ativar este modelo?")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Ativar" }));
+    const call = props.onUpdate.mock.calls.find(([, patch]) => patch.messageTemplate);
+    expect(call[1].messageTemplate).toBe("Texto novo");
+  });
+
+  it("'Agora não' salva o modelo sem trocar o que a campanha usa", () => {
+    const { props, container } = renderMessagesTab();
+    escolherModelo(container, "custom:t1");
+    fireEvent.change(container.querySelector("textarea"), { target: { value: "Texto novo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Agora não" }));
+
+    expect(props.onUpdateCustomTemplate).toHaveBeenCalled();
+    expect(props.onUpdate.mock.calls.find(([, patch]) => patch.messageTemplate)).toBeUndefined();
+  });
+
+  it("Salvar no modelo padrão (inalterável) pede um nome novo", () => {
+    renderMessagesTab();
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    expect(screen.getByText("Salvar como novo modelo")).toBeInTheDocument();
+  });
+
+  it("Salvar Como cria um modelo novo com o texto que está no editor", () => {
+    const { props, container } = renderMessagesTab();
+    fireEvent.change(container.querySelector("textarea"), { target: { value: "Versão B" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar Como" }));
+    fireEvent.change(screen.getByPlaceholderText(/minha versão/), { target: { value: "Promo curta" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar como novo" }));
+
+    expect(props.onAddCustomTemplate).toHaveBeenCalledWith("Promo curta", "Versão B");
+  });
 });

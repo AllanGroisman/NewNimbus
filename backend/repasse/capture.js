@@ -435,8 +435,10 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null) {
       continue;
     }
 
-    // activeSources (e não resolveSources): loja trancada pelo admin não repassa.
-    const allowedSources = scheduler.activeSources(group.scraping?.sources);
+    // resolveSources (e não activeSources): a trava de loja do admin serve pra
+    // impedir a BUSCA no catálogo daquela loja. No repasse o link já vem pronto
+    // do grupo líder, então só vale a escolha de lojas da própria campanha.
+    const allowedSources = scheduler.resolveSources(group.scraping?.sources);
 
     let approved = 0, pending = 0;
     for (const base of items) {

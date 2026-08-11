@@ -776,7 +776,11 @@ export default function App() {
   }
 
   const handleCreateGroup = ({ name, categories, type, repasse }) => {
-    const newGroup = makeEmptyGroup({ id: Date.now(), name, categories, template: settings.messageTemplate, type, repasse, sources: unlockedSources(storeLocks) });
+    // Campanha de busca nasce sem as lojas trancadas pelo admin; a de repasse
+    // nasce com todas — a trava vale pra busca no catálogo, e o repasse recebe o
+    // link pronto do grupo líder (`sources: undefined` cai no default do maker).
+    const sources = type === "repasse" ? undefined : unlockedSources(storeLocks);
+    const newGroup = makeEmptyGroup({ id: Date.now(), name, categories, template: settings.messageTemplate, type, repasse, sources });
     setGroups(gs => [...gs, newGroup]);
     setSelectedGroup(newGroup);
     setPage("group");

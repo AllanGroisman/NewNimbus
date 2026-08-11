@@ -207,4 +207,26 @@ describe("repasse capture — grupo líder", () => {
     const g = (await storage.loadState(user.id)).groups.find(x => x.id === 5010);
     expect(g.queue.length + g.pending.length).toBe(0);
   });
+
+  // A trava de loja do admin impede a BUSCA no catálogo daquela loja. No repasse
+  // o link já chega pronto do grupo líder, então ela não vale ali.
+  it("loja trancada pelo admin não impede o repasse", async () => {
+    const storeLocks = require(path.join(backendDir, "scraping", "store-locks.js"));
+    const appConfig = require(path.join(backendDir, "config"));
+    const { user } = await createTestUser({ plan: "pro" });
+    affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
+    await storage.saveState(user.id, { groups: [repasseGroup(5011, { auto: true })] });
+    await capture.rebuildLeaderIndex();
+    storeLocks.writeStoreLock("ml", { locked: true, message: "Em manutenção" });
+
+    try {
+      await capture.onUpsert(user.id, NUMBER_ID, [msgWithText("https://www.mercadolivre.com.br/p/MLB555")]);
+
+      const g = (await storage.loadState(user.id)).groups.find(x => x.id === 5011);
+      expect(g.queue.length).toBe(1);
+      expect(g.queue[0].store).toBe("Mercado Livre");
+    } finally {
+      appConfig.set(storeLocks.STORE_LOCKS_KEY, {});
+    }
+  });
 });

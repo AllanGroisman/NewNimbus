@@ -82,7 +82,7 @@ export const TOURS = {
       { tab: "queue", anchor: "qu-list", title: "A fila em ordem", text: "O de cima é o próximo. Dá pra arrastar pra reordenar, tirar da fila, mandar um produto furar a fila ou enviar na hora. Nesta aba também dá pra colar o link de um produto na mão." },
 
       // ── Grupos
-      { tab: "whatsapp", anchor: "tab-whatsapp", title: "Grupos", text: "Os grupos do WhatsApp que recebem as ofertas desta campanha. Sem grupo aqui, não tem pra quem enviar." },
+      { tab: "whatsapp", anchor: "tab-whatsapp", title: "Grupos", text: "Os grupos destino, que recebem as ofertas desta campanha. Sem grupo aqui, não tem pra quem enviar." },
       // Líderes antes do "+ Adicionar grupo": no repasse a aba abre pela
       // captura, e o tour segue a mesma ordem da tela. Na campanha de busca a
       // âncora pr-leader não existe e o passo é pulado.

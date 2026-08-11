@@ -297,21 +297,21 @@ describe("GroupDashboard — grupos líderes do repasse", () => {
     expect(screen.getByRole("button", { name: /Número 1/ })).toBeInTheDocument();
   });
 
-  it("a captura (líderes) vem antes da lista de grupos de envio", () => {
+  it("a captura (líderes) vem antes da lista de grupos destino", () => {
     const { container } = renderRepasse([{ numberId: "n1", jid: "111@g.us", name: "Ofertas A" }]);
     const lideres = container.querySelector('[data-tour="pr-leader"]');
     const envio = container.querySelector('[data-tour="wg-list"]');
     expect(lideres).toBeTruthy();
     expect(envio).toBeTruthy();
     expect(lideres.compareDocumentPosition(envio) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByText("Grupos de envio")).toBeInTheDocument();
+    expect(screen.getByText("Grupos Destino")).toBeInTheDocument();
   });
 
   it("campanha de busca não ganha seção de captura na aba Grupos", () => {
     const { container } = renderDashboard({ group: { scraping: { kind: "scraping", sources: ["Amazon"], filters: {} } } });
     fireEvent.click(screen.getByRole("button", { name: /^Grupos/ }));
     expect(container.querySelector('[data-tour="pr-leader"]')).toBeNull();
-    expect(screen.getByText("Grupos do WhatsApp")).toBeInTheDocument();
+    expect(screen.getByText("Grupos Destino")).toBeInTheDocument();
   });
 
   it("líder com número conectado mostra 'Conectado'", () => {

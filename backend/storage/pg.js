@@ -223,16 +223,21 @@ async function saveState(userId, incoming) {
 
   for (const g of incomingGroups) {
     const id = BigInt(g.id);
+    // normalizeRepasse converte o líder único do formato antigo pro array
+    // `repasse.leaders` — campanha antiga migra sozinha no primeiro save.
+    const scraping = normalizeRepasse(g.scraping ?? {});
+    // Categoria é conceito da busca no catálogo. A campanha de repasse recebe o
+    // link pronto do grupo líder, então não tem categoria — e zerar aqui tira a
+    // campanha antiga da contagem de `categoriesPerGroup` do plano.
+    const isRepasse = scraping.kind === "repasse";
     const cfg = {
       name: String(g.name || ""),
       messageTemplate: String(g.messageTemplate || ""),
       paused: !!g.paused,
-      categories: g.categories ?? [],
+      categories: isRepasse ? [] : (g.categories ?? []),
       whatsappGroupIds: g.whatsappGroupIds ?? [],
       schedule: g.schedule ?? {},
-      // normalizeRepasse converte o líder único do formato antigo pro array
-      // `repasse.leaders` — campanha antiga migra sozinha no primeiro save.
-      scraping: normalizeRepasse(g.scraping ?? {}),
+      scraping,
     };
     tx.push(prisma().group.upsert({
       where: { id },

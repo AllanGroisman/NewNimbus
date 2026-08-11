@@ -124,6 +124,14 @@ function activeSources(sources) {
   return resolveSources(sources).filter(id => !locked.has(id));
 }
 
+// Lojas que ESTA campanha pode usar. A trava do admin existe pra impedir que o
+// sistema BUSQUE naquela loja — no repasse o link já vem pronto do grupo líder,
+// então ela não se aplica: repasse respeita só a escolha de lojas do usuário.
+function sourcesForCampaign(group) {
+  const sources = group?.scraping?.sources;
+  return isRepasse(group) ? resolveSources(sources) : activeSources(sources);
+}
+
 // Ordem e tamanho do lote da busca de produtos, escolhidos pelo usuário na aba
 // "Busca de Produtos" e guardados no jsonb `scraping` da campanha.
 const SORT_MODES = new Set(["discount_desc", "price_asc", "price_desc", "rating_desc", "lastSeen_desc"]);
@@ -214,7 +222,7 @@ function campaignFilterCtx(group) {
   const cats = catList.length ? new Set(catList) : null;
   // Set vazio (todas as lojas trancadas) é intencional: nenhum item casa, então
   // a fila é limpa em vez de virar "sem filtro de loja".
-  const srcs = new Set(activeSources(group.scraping?.sources));
+  const srcs = new Set(sourcesForCampaign(group));
   const filters = (group.scraping && group.scraping.filters) || {};
   return { cats, srcs, filters };
 }
@@ -257,9 +265,10 @@ function itemMatchesCampaign(item, ctx) {
 // afiliado dela não está configurado. Amazon não pausa — cai pro link cru.
 // Retorna { paused, reason } pra o caller poder mostrar mensagem específica.
 function affiliateGate(userId, group) {
-  const sources = activeSources(group.scraping?.sources);
+  const sources = sourcesForCampaign(group);
   // Todas as lojas da campanha estão trancadas pelo admin — pausa com a mensagem
-  // configurada no painel, pra o usuário entender que não é erro dele.
+  // configurada no painel, pra o usuário entender que não é erro dele. No repasse
+  // isso nunca acontece: sourcesForCampaign ignora as travas ali.
   if (!sources.length) {
     const first = resolveSources(group.scraping?.sources)[0];
     return { paused: true, reason: storeLocks.lockMessage(first) || "as lojas desta campanha estão indisponíveis" };
@@ -587,10 +596,10 @@ async function sendItem(userId, group, whatsappGroups, item) {
     if (upgraded !== itemForSend.img) itemForSend = { ...itemForSend, img: upgraded };
   }
 
-  // Cupom efetivo: o do próprio item (repasse — veio na legenda do grupo líder)
-  // tem prioridade; senão cai no cupom fixo da campanha (group.scraping.coupon).
-  // Campanhas de catálogo normalmente só têm o fixo; repasse manda o específico.
-  const coupon = (itemForSend.coupon || group.scraping?.coupon || "").toString().trim();
+  // Cupom: só o do próprio item, que hoje vem da legenda do grupo líder no
+  // repasse (capture.js). Não existe mais cupom fixo por campanha — sem cupom no
+  // item, renderTemplate apaga a linha inteira que contém {cupom}.
+  const coupon = (itemForSend.coupon || "").toString().trim();
   itemForSend = { ...itemForSend, coupon };
 
   const text = renderTemplate(group.messageTemplate, itemForSend);
@@ -1155,9 +1164,11 @@ async function addItemToGroup(userId, group, item, { force = false } = {}) {
 
 module.exports = {
   start, stop, tick, sendNextNow, refillNow, manualAdd, addItemToGroup,
-  isRepasse, isAutoApprove, isAutoRefill, resolveSources, activeSources, status, processSendJob,
+  isRepasse, isAutoApprove, isAutoRefill, resolveSources, activeSources, sourcesForCampaign,
+  status, processSendJob,
   // Funções puras exportadas só pra teste unitário (tests/unit/scheduler-core.test.js).
   inWindow, activeWindow, windowGate, cooldownMinutes, renderTemplate, itemMatchesCampaign, campaignFilterCtx,
+  affiliateGate,
   sortMode, batchSize, refillMode, refillThreshold, refillTimes, autoRefillDue, markAutoRefill,
   shuffleArray, shuffleAfterRefill,
 };

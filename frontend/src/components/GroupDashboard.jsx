@@ -40,7 +40,7 @@ const TEMPLATE_VARS = [
   { token: "{desconto}", desc: "% de desconto (a linha some quando não houver promoção)" },
   { token: "{loja}", desc: "Nome da loja" },
   { token: "{vendas}", desc: "Nº de vendas (quando houver)" },
-  { token: "{cupom}", desc: "Cupom de desconto (a linha some quando não houver)" },
+  { token: "{cupom}", desc: "Cupom capturado no repasse (a linha some quando não houver)" },
   { token: "{link}", desc: "Link de compra" },
 ];
 
@@ -305,11 +305,13 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   // AbortController da request de refill — permite cancelar via overlay.
   const refillAbortRef = useRef(null);
   const [confirmDeleteTpl, setConfirmDeleteTpl] = useState(null);
-  // Diálogo "Salvar alterações" do modelo: abre quando usuário tenta salvar
-  // mudanças (presets nunca são sobrescritos, customs podem ser).
-  // Estrutura: { mode: "preset" | "custom", suggestedName }
+  // Diálogo de nome do modelo: abre no "Salvar Como" e no "Salvar" de um preset
+  // (que é inalterável, então só dá pra salvar como novo).
+  // Estrutura: { mode: "preset" | "saveAs" }
   const [saveTplDialog, setSaveTplDialog] = useState(null);
   const [saveTplName, setSaveTplName] = useState("");
+  // Popup "ativar agora?" depois de salvar. { name, template } ou null.
+  const [activateTplPrompt, setActivateTplPrompt] = useState(null);
   // Confirmações para botões destrutivos
   const [confirmPause, setConfirmPause] = useState(false);
   // Modal de aviso ao tentar retomar campanha com afiliado faltando.
@@ -716,20 +718,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     }
   };
 
-  // "Criar a partir deste": copia o template SALVO da aba ativa (ignora edições
-  // não salvas no editor) e abre uma nova aba com nome "{nome} (cópia)" único.
-  const duplicateActiveTemplate = () => {
-    if (!activeTab) return;
-    const newName = suggestUniqueTemplateName(`${activeTab.name} (cópia)`);
-    const seed = activeTab.template || DEFAULT_MESSAGE_TEMPLATE;
-    const newId = onAddCustomTemplate?.(newName, seed);
-    if (newId) {
-      setActiveTplKey(`custom:${newId}`);
-      setGroupInfo(g => ({ ...g, messageTemplate: seed }));
-      requestAnimationFrame(() => { templateRef.current?.focus(); });
-    }
-  };
-
   // Sugere um nome único pra novos modelos baseados no nome atual da aba.
   const suggestUniqueTemplateName = (base) => {
     const cleanBase = String(base || "Novo modelo").trim() || "Novo modelo";
@@ -742,17 +730,71 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     return name;
   };
 
-  // Abre o diálogo de "Salvar alterações" — sempre pergunta se é pra criar
-  // novo modelo (presets são inalteráveis; customs podem ser substituídos).
-  const openSaveTplDialog = () => {
+  // "Modelo ativo" = aquele cujo texto salvo corresponde ao template em uso
+  // pela campanha. Como múltiplas abas podem ter o mesmo texto, marcamos
+  // todas que casarem (caso raro, mas o indicador fica consistente).
+  const isTemplateActive = (tpl) => !!group.messageTemplate && tpl === group.messageTemplate;
+  const activeTabIsActive = activeTab && isTemplateActive(activeTab.template);
+
+  // Passa a campanha a usar este texto nos envios.
+  const applyTemplateToCampaign = (template) => {
+    onUpdate(group.id, { messageTemplate: template });
+    setGroupInfo(g => ({ ...g, messageTemplate: template }));
+  };
+
+  // Ativa o modelo da aba atual na campanha.
+  const activateActiveTab = () => {
+    if (!activeTab || activeTabIsActive) return;
+    applyTemplateToCampaign(activeTab.template);
+  };
+
+  // Depois de salvar um modelo: o que JÁ era o usado pela campanha continua
+  // sendo, agora com o texto novo — como o casamento "em uso" é por texto
+  // exato, sem isso a campanha seguiria mandando a versão antiga e o modelo
+  // apareceria como fora de uso. Os outros abrem o popup perguntando se ativa.
+  const afterTemplateSaved = ({ name, template, wasActive }) => {
+    if (wasActive) {
+      applyTemplateToCampaign(template);
+      return;
+    }
+    // Texto salvo idêntico ao que a campanha já usa: não há o que ativar.
+    if (isTemplateActive(template)) return;
+    setActivateTplPrompt({ name, template });
+  };
+
+  // Grava o conteúdo do editor por cima do modelo customizado aberto.
+  // `askActivate: false` pro save que vem do aviso de alterações não salvas —
+  // ali a pessoa está saindo da tela, então perguntar de ativar só atrapalha.
+  const commitCustomTemplate = ({ askActivate = true } = {}) => {
+    if (!activeTab || !isCustomTab) return;
+    const wasActive = activeTabIsActive;
+    const name = customNameDraft.trim() || activeTab.name;
+    const template = groupInfo.messageTemplate;
+    onUpdateCustomTemplate?.(activeTab.id, { name, template });
+    if (askActivate) {
+      afterTemplateSaved({ name, template, wasActive });
+    } else if (wasActive) {
+      applyTemplateToCampaign(template);
+    }
+  };
+
+  // "Salvar": grava por cima do modelo aberto. Preset é inalterável, então lá o
+  // Salvar cai no mesmo diálogo do "Salvar Como", já explicando o porquê.
+  const saveActiveTemplate = () => {
     if (!activeTab || !isDirty) return;
     if (isCustomTab) {
-      setSaveTplDialog({ mode: "custom" });
-      setSaveTplName(customNameDraft.trim() || activeTab.name);
-    } else {
-      setSaveTplDialog({ mode: "preset" });
-      setSaveTplName(suggestUniqueTemplateName(`${activeTab.name} (cópia)`));
+      commitCustomTemplate();
+      return;
     }
+    setSaveTplDialog({ mode: "preset" });
+    setSaveTplName(suggestUniqueTemplateName(`${activeTab.name} (cópia)`));
+  };
+
+  // "Salvar Como": sempre cria um modelo novo com o conteúdo atual do editor.
+  const openSaveAsDialog = () => {
+    if (!activeTab) return;
+    setSaveTplDialog({ mode: "saveAs" });
+    setSaveTplName(suggestUniqueTemplateName(`${activeTab.name} (cópia)`));
   };
 
   const closeSaveTplDialog = () => {
@@ -767,37 +809,15 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     const finalName = customTemplates.some(t => t.name === cleanName)
       ? suggestUniqueTemplateName(cleanName)
       : cleanName;
-    const newId = onAddCustomTemplate?.(finalName, groupInfo.messageTemplate);
+    const template = groupInfo.messageTemplate;
+    const newId = onAddCustomTemplate?.(finalName, template);
     if (newId) {
       setActiveTplKey(`custom:${newId}`);
       setCustomNameDraft(finalName);
     }
     closeSaveTplDialog();
-  };
-
-  // Substitui o modelo customizado atual (só disponível em aba custom)
-  const replaceCurrentCustom = () => {
-    if (!activeTab || !isCustomTab) return;
-    const desiredName = customNameDraft.trim() || activeTab.name;
-    onUpdateCustomTemplate?.(activeTab.id, {
-      name: desiredName,
-      template: groupInfo.messageTemplate,
-    });
-    closeSaveTplDialog();
-  };
-
-  // "Modelo ativo" = aquele cujo texto salvo corresponde ao template em uso
-  // pela campanha. Como múltiplas abas podem ter o mesmo texto, marcamos
-  // todas que casarem (caso raro, mas o indicador fica consistente).
-  const isTemplateActive = (tpl) => !!group.messageTemplate && tpl === group.messageTemplate;
-  const activeTabIsActive = activeTab && isTemplateActive(activeTab.template);
-
-  // Ativa o modelo da aba atual na campanha — substitui o messageTemplate do
-  // grupo e reseta o editor pra refletir o que passou a estar em uso.
-  const activateActiveTab = () => {
-    if (!activeTab || activeTabIsActive) return;
-    onUpdate(group.id, { messageTemplate: activeTab.template });
-    setGroupInfo(g => ({ ...g, messageTemplate: activeTab.template }));
+    // Modelo recém-criado nunca é o que a campanha usa — sempre pergunta.
+    afterTemplateSaved({ name: finalName, template, wasActive: false });
   };
 
   // Quando deleta a aba custom ativa, pula pra primeira aba disponível.
@@ -899,7 +919,8 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     const active = scraping.sources.includes(src);
     // Loja trancada pelo admin: nem adiciona nem remove por clique — só explica.
     // (Remover continua possível pelo aviso "Remover desta campanha" no modal.)
-    const lockMsg = storeLockMessage(storeLocks, src);
+    // No repasse a trava não vale: o link vem pronto do grupo líder, não da busca.
+    const lockMsg = scraping?.kind === "repasse" ? null : storeLockMessage(storeLocks, src);
     if (lockMsg) {
       setLockedSourceMsg({ src, message: lockMsg, selected: active });
       return;
@@ -1266,9 +1287,28 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
   // `overrides` existe pros controles que salvam na hora (sem botão "Salvar"),
   // como o envio instantâneo na aba Fila: o setScraping ainda não propagou.
-  const saveWith = (overrides = {}) => { onUpdate(group.id, { schedule: sched, scraping, queue, pending, ...groupInfo, ...overrides }); setSaved(true); setTimeout(() => setSaved(false), 2000); };
+  const saveWith = (overrides = {}) => {
+    // `messageTemplate` fica de fora: ele é o texto do EDITOR de modelos, e o
+    // modelo em uso pela campanha só muda por ação explícita (Ativar / popup de
+    // "ativar agora?"). Sem isso, salvar na aba Gerenciar ativaria pela porta
+    // dos fundos o modelo que estivesse aberto no editor.
+    onUpdate(group.id, {
+      schedule: sched, scraping, queue, pending,
+      name: groupInfo.name,
+      categories: groupInfo.categories,
+      whatsappGroupIds: groupInfo.whatsappGroupIds,
+      ...overrides,
+    });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
   // Handler dos botões "Salvar configurações" — ignora o evento do clique.
-  const save = () => saveWith();
+  // Também é o "Salvar" do aviso de alterações não salvas, então grava junto o
+  // modelo em edição (preset é inalterável: lá só o "Salvar Como" resolve).
+  const save = () => {
+    if (tab === "messages" && isDirty && isCustomTab) commitCustomTemplate({ askActivate: false });
+    saveWith();
+  };
 
   // Dirty state por aba — usado pra (a) escurecer o botão de salvar quando
   // não há alterações, e (b) impedir cliques inúteis. JSON.stringify é
@@ -1305,7 +1345,12 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const searchTabDirty = scrapingDirty || categoriesDirty;
   const filtersDirty = stableJSON(scraping?.filters) !== stableJSON(group.scraping?.filters);
   const scheduleDirty = windowsDirty;
-  const messageDirty = groupInfo.messageTemplate !== group.messageTemplate;
+  // "Não salvo" na aba de modelos = o editor divergir do MODELO aberto
+  // (`isDirty`). Só divergir do texto da campanha não conta: trocar de modelo na
+  // lista é navegação, não edição. E o `isDirty` sozinho também não serve —
+  // campanha cujo texto não casa com nenhum modelo abre já divergindo do preset,
+  // sem ninguém ter digitado nada.
+  const messageDirty = isDirty && groupInfo.messageTemplate !== group.messageTemplate;
 
   // Alterações não salvas agregadas (todas as abas editáveis). Usado pelo guard
   // de navegação pra avisar ao trocar de aba ou sair da campanha.
@@ -1321,8 +1366,11 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       name: group.name,
       categories: getGroupCategories(group),
       whatsappGroupIds: group.whatsappGroupIds || [],
-      messageTemplate: group.messageTemplate,
+      // Descartar no editor de modelos = voltar ao texto salvo do modelo aberto
+      // (não ao da campanha, que pode ser outro modelo).
+      messageTemplate: activeTab ? activeTab.template : group.messageTemplate,
     });
+    setCustomNameDraft(activeTab?.kind === "custom" ? activeTab.name : "");
   };
 
   const requestNavigation = useRequestNavigation();
@@ -1377,13 +1425,14 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         <div>
           <h2 style={{ fontSize: 18, fontWeight: 500, marginBottom: 6 }}>{groupInfo.name}</h2>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {groupInfo.categories.map(c => <Badge key={c} color={categoryColor(c)}><span style={{ marginRight: 4 }}>{categoryIcon(c)}</span>{categoryLabel(c)}</Badge>)}
+            {/* Categoria é conceito da busca no catálogo — campanha de repasse não tem. */}
+            {!isRepasse && groupInfo.categories.map(c => <Badge key={c} color={categoryColor(c)}><span style={{ marginRight: 4 }}>{categoryIcon(c)}</span>{categoryLabel(c)}</Badge>)}
             {stats.pausedManual && <Badge color="amber">Pausada</Badge>}
             {stats.pausedNoWindow && <Badge color="amber">Pausada · sem janela de envio</Badge>}
             {stats.pausedByAffiliateML && <Badge color="amber">Pausado · sem afiliado ML</Badge>}
             {stats.pausedByAffiliateShopee && <Badge color="amber">Pausado · sem afiliado Shopee</Badge>}
             {stats.status === "empty"
-              ? <Badge color="gray">Sem grupos do WhatsApp</Badge>
+              ? <Badge color="gray">Sem grupos destino</Badge>
               : stats.status === "disconnected"
                 ? <Badge color="red">Pausada · sem WhatsApp</Badge>
                 : null
@@ -1563,17 +1612,21 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 12, color: "var(--color-text-secondary)" }}>Envios esta semana</div>
               <MiniBar data={group.weekData} color={barColor} />
             </div>
+            {/* No repasse não há busca no catálogo: nem categoria nem filtro de
+                produto valem ali — o card mostra só as lojas que o repasse aceita. */}
             <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-              <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 10, color: "var(--color-text-secondary)" }}>Filtros do catálogo</div>
-              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 4 }}>
-                Categorias: {(groupInfo.categories || []).length === 0
-                  ? "—"
-                  : (groupInfo.categories || []).map(c => `${categoryIcon(c)} ${categoryLabel(c)}`).join(", ")}
-              </div>
+              <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 10, color: "var(--color-text-secondary)" }}>{isRepasse ? "Lojas do repasse" : "Filtros do catálogo"}</div>
+              {!isRepasse && (
+                <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 4 }}>
+                  Categorias: {(groupInfo.categories || []).length === 0
+                    ? "—"
+                    : (groupInfo.categories || []).map(c => `${categoryIcon(c)} ${categoryLabel(c)}`).join(", ")}
+                </div>
+              )}
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 4 }}>
                 Lojas: {(scraping.sources || []).join(", ") || "todas"}
               </div>
-              {scraping.filters?.minDiscount > 0 && (
+              {!isRepasse && scraping.filters?.minDiscount > 0 && (
                 <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Desconto mín: {scraping.filters.minDiscount}%</div>
               )}
             </div>
@@ -1651,20 +1704,14 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
                 Escolha de quais lojas os links postados nos grupos líderes podem ser repassados. Links de outras lojas são ignorados.
               </div>
+              {/* Sem cadeado: a trava de loja do admin impede a BUSCA no catálogo,
+                  e o repasse não busca — o link chega pronto do grupo líder. */}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {allSources.map(src => {
                   const active = scraping.sources.includes(src);
-                  const lockMsg = storeLockMessage(storeLocks, src);
-                  // Loja trancada fica cinza com cadeado, mesmo se a campanha já a
-                  // tinha selecionada — o clique só abre a explicação.
-                  return <div key={src} onClick={() => handleToggleSource(src)} title={lockMsg || undefined} style={{ padding: "6px 14px", borderRadius: 8, border: `0.5px solid ${lockMsg ? "var(--color-border-tertiary)" : (active ? PRIMARY : "var(--color-border-tertiary)")}`, background: lockMsg ? "var(--color-background-secondary)" : (active ? PRIMARY_LIGHT : "transparent"), color: lockMsg ? "var(--color-text-secondary)" : (active ? PRIMARY_DARK : "var(--color-text-secondary)"), fontSize: 13, cursor: lockMsg ? "not-allowed" : "pointer", fontWeight: active && !lockMsg ? 500 : 400, opacity: lockMsg ? 0.7 : 1 }}>{lockMsg ? "🔒 " : (active ? "✓ " : "")}{src}</div>;
+                  return <div key={src} onClick={() => handleToggleSource(src)} style={{ padding: "6px 14px", borderRadius: 8, border: `0.5px solid ${active ? PRIMARY : "var(--color-border-tertiary)"}`, background: active ? PRIMARY_LIGHT : "transparent", color: active ? PRIMARY_DARK : "var(--color-text-secondary)", fontSize: 13, cursor: "pointer", fontWeight: active ? 500 : 400 }}>{active ? "✓ " : ""}{src}</div>;
                 })}
               </div>
-              {allSources.some(src => scraping.sources.includes(src) && storeLockMessage(storeLocks, src)) && (
-                <div style={{ marginTop: 10, fontSize: 11, color: "var(--warn-text)", background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 8, padding: "8px 10px" }}>
-                  Uma das lojas desta campanha está indisponível no momento — ela é ignorada e a campanha segue buscando nas outras.
-                </div>
-              )}
               {scraping.sources.length === 0 && (
                 <div style={{ marginTop: 10, fontSize: 11, color: "var(--danger-text)" }}>Selecione ao menos uma fonte para o repasse funcionar.</div>
               )}
@@ -1730,7 +1777,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             <div style={{ marginBottom: 10 }}>
               <div style={{ fontWeight: 500, marginBottom: 4 }}>Modelo de mensagem</div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
-                Escolha um modelo na lista, edite à esquerda — a prévia atualiza enquanto você digita. Use <strong>+ Novo modelo</strong> para criar outro.
+                Escolha um modelo na lista, edite à esquerda — a prévia atualiza enquanto você digita. <strong>Salvar</strong> grava no modelo aberto e <strong>Salvar Como</strong> cria outro com o texto atual.
               </div>
             </div>
 
@@ -1790,7 +1837,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               )}
             </div>
 
-            {/* Linha do nome do modelo (só editável em customs) + botão "Salvar alterações" */}
+            {/* Linha do nome do modelo (só editável em customs) + Ativar / Salvar Como / Salvar */}
             <div data-tour="ms-activate" style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12, alignItems: "flex-end" }}>
               <div style={{ flex: "1 1 240px", minWidth: 180 }}>
                 <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Nome do modelo</label>
@@ -1798,7 +1845,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                   <input
                     value={customNameDraft}
                     onChange={e => setCustomNameDraft(e.target.value)}
-                    onKeyDown={e => { if (e.key === "Enter") openSaveTplDialog(); }}
+                    onKeyDown={e => { if (e.key === "Enter") saveActiveTemplate(); }}
                     placeholder="Ex: Eletrônicos com urgência"
                     style={{ width: "100%", height: 36, padding: "0 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", color: "var(--color-text-primary)", fontSize: 13, boxSizing: "border-box" }}
                   />
@@ -1833,9 +1880,9 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                   : "Ativar este modelo"}
               </button>
               <button
-                onClick={duplicateActiveTemplate}
+                onClick={openSaveAsDialog}
                 disabled={!activeTab}
-                title="Cria um novo modelo customizado usando o conteúdo salvo deste como ponto de partida"
+                title="Salvar o que está no editor como um modelo novo, com outro nome"
                 style={{
                   height: 36, padding: "0 16px", borderRadius: 8,
                   border: "0.5px solid var(--color-border-secondary)",
@@ -1846,14 +1893,14 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                   opacity: activeTab ? 1 : 0.55,
                 }}
               >
-                ⎘ Criar a partir deste
+                Salvar Como
               </button>
               <button
-                onClick={openSaveTplDialog}
+                onClick={saveActiveTemplate}
                 disabled={!isDirty}
                 title={!isDirty
                   ? "Sem alterações pra salvar"
-                  : (isCustomTab ? "Salvar alterações neste modelo (ou como novo)" : "Salvar como novo modelo a partir das edições")}
+                  : (isCustomTab ? "Salvar as alterações neste modelo" : "O modelo padrão é inalterável — as edições viram um modelo novo")}
                 style={{
                   height: 36, padding: "0 18px", borderRadius: 8,
                   border: "none",
@@ -1864,7 +1911,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                   opacity: isDirty ? 1 : 0.55,
                 }}
               >
-                Salvar alterações
+                Salvar
               </button>
             </div>
 
@@ -1896,24 +1943,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               ))}
             </div>
 
-            {/* Cupom fixo da campanha — usado no {cupom} quando o produto não traz um
-                cupom próprio (repasse). Deixe vazio pra não mostrar linha de cupom. */}
-            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>🎟️ Cupom fixo da campanha:</span>
-              <input
-                value={scraping?.coupon || ""}
-                onChange={e => setScraping(s => ({ ...s, coupon: e.target.value.trim().toUpperCase() }))}
-                // A aba Mensagens não passa pelo "Salvar" da aba Gerenciar (que grava
-                // scraping) — persiste na hora, no blur, lendo o scraping mais recente.
-                onBlur={() => setScraping(s => { onUpdate(group.id, { scraping: s }); return s; })}
-                placeholder="ex: GALAXY10 (opcional)"
-                style={{ padding: "6px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 12, fontFamily: "monospace", width: 200, boxSizing: "border-box" }}
-              />
-              <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>
-                Repasse com cupom próprio sobrepõe este.
-              </span>
-            </div>
-
             {/* Editor + Preview lado a lado */}
             <div data-tour="ms-editor" className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <div>
@@ -1936,7 +1965,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 </div>
                 <div className="wa-preview" style={{ width: "100%", minHeight: 260, padding: 12, borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.5, fontFamily: "inherit", boxSizing: "border-box" }}>
                   {groupInfo.messageTemplate
-                    ? renderWhatsappFormatted(renderTemplate(groupInfo.messageTemplate, { cupom: scraping?.coupon || undefined, promo: previewPromo }))
+                    ? renderWhatsappFormatted(renderTemplate(groupInfo.messageTemplate, { cupom: isRepasse ? undefined : "", promo: previewPromo }))
                     : <span style={{ opacity: 0.6, fontStyle: "italic" }}>Modelo vazio. Comece a digitar à esquerda.</span>}
                 </div>
                 <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 6 }}>
@@ -1947,11 +1976,11 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           </div>
 
           {saveTplDialog && (
-            <Modal title="Salvar alterações" onClose={closeSaveTplDialog} confirmOnClickOutside>
+            <Modal title="Salvar como novo modelo" onClose={closeSaveTplDialog} confirmOnClickOutside>
               <p style={{ fontSize: 13, marginBottom: 14, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
                 {saveTplDialog.mode === "preset"
                   ? <>O modelo <strong style={{ color: "var(--color-text-primary)" }}>{activeTab?.name}</strong> é o padrão e não pode ser sobrescrito. Suas edições serão salvas como um <strong style={{ color: "var(--color-text-primary)" }}>novo modelo</strong>.</>
-                  : <>Você editou o modelo <strong style={{ color: "var(--color-text-primary)" }}>{activeTab?.name}</strong>. Quer salvar como um novo modelo ou substituir o atual?</>}
+                  : <>O que está no editor será salvo como um <strong style={{ color: "var(--color-text-primary)" }}>novo modelo</strong>. O modelo <strong style={{ color: "var(--color-text-primary)" }}>{activeTab?.name}</strong> continua como está.</>}
               </p>
               <div style={{ marginBottom: 14 }}>
                 <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Nome do novo modelo</label>
@@ -1966,20 +1995,29 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               </div>
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
                 <button onClick={closeSaveTplDialog} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
-                {saveTplDialog.mode === "custom" && (
-                  <button
-                    onClick={replaceCurrentCustom}
-                    style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 13, cursor: "pointer", fontWeight: 500 }}
-                  >
-                    Substituir este modelo
-                  </button>
-                )}
                 <button
                   onClick={saveAsNewTemplate}
                   disabled={!saveTplName.trim()}
                   style={{ padding: "8px 16px", borderRadius: 8, background: saveTplName.trim() ? PRIMARY : "var(--color-background-secondary)", color: saveTplName.trim() ? "#fff" : "var(--color-text-secondary)", border: "none", fontSize: 13, cursor: saveTplName.trim() ? "pointer" : "not-allowed", fontWeight: 500, opacity: saveTplName.trim() ? 1 : 0.55 }}
                 >
                   Salvar como novo
+                </button>
+              </div>
+            </Modal>
+          )}
+
+          {activateTplPrompt && (
+            <Modal title="Ativar este modelo?" onClose={() => setActivateTplPrompt(null)}>
+              <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+                <strong style={{ color: "var(--color-text-primary)" }}>{activateTplPrompt.name}</strong> foi salvo. Quer que esta campanha passe a usar ele nos envios? Você pode ativar depois pelo botão <strong style={{ color: "var(--color-text-primary)" }}>Ativar este modelo</strong>.
+              </p>
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                <button onClick={() => setActivateTplPrompt(null)} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Agora não</button>
+                <button
+                  onClick={() => { applyTemplateToCampaign(activateTplPrompt.template); setActivateTplPrompt(null); }}
+                  style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}
+                >
+                  Ativar
                 </button>
               </div>
             </Modal>
@@ -2013,13 +2051,13 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
             <div>
               <div style={{ fontSize: 14, fontWeight: 500, display: "flex", alignItems: "center", gap: 8 }}>
-                {isRepasse ? "Grupos de envio" : "Grupos do WhatsApp"}
+                Grupos Destino
                 <UsageBadge current={groupInfo.whatsappGroupIds.length} limit={limits?.whatsappGroupsPerCampaign} label="grupos criados" />
               </div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>
                 {isRepasse
                   ? "Para onde vão os produtos capturados nos grupos líderes. Cada grupo recebe a mesma fila."
-                  : "Esta campanha envia para os grupos abaixo. Cada grupo recebe a mesma fila de produtos."}
+                  : "Para onde esta campanha envia. Cada grupo recebe a mesma fila de produtos."}
               </div>
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -2036,7 +2074,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           {linkedWGs.length === 0 ? (
             <div data-tour="wg-list" style={{ textAlign: "center", padding: "40px 20px", color: "var(--color-text-secondary)", fontSize: 13, background: "var(--color-background-secondary)", borderRadius: 12 }}>
               <div style={{ fontSize: 28, marginBottom: 10 }}>💬</div>
-              <div style={{ fontWeight: 500, color: "var(--color-text-primary)", marginBottom: 6 }}>Nenhum grupo do WhatsApp vinculado</div>
+              <div style={{ fontWeight: 500, color: "var(--color-text-primary)", marginBottom: 6 }}>Nenhum grupo destino vinculado</div>
               <div style={{ fontSize: 12, marginBottom: 14 }}>Crie um novo grupo ou vincule um existente para começar a enviar mensagens.</div>
               {numbers.length === 0
                 ? <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Conecte um número do WhatsApp na aba <strong>WhatsApp</strong> do menu para adicionar grupos.</div>
@@ -3244,9 +3282,10 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               >
                 <option value="">— escolher —</option>
                 {/* Loja trancada não entra na lista — só continua aparecendo se o
-                    formulário já estiver com ela preenchida (metadata do link). */}
+                    formulário já estiver com ela preenchida (metadata do link).
+                    No repasse a trava não vale, então todas as lojas aparecem. */}
                 {allSources
-                  .filter(s => !storeLockMessage(storeLocks, s) || manualForm.store === s)
+                  .filter(s => isRepasse || !storeLockMessage(storeLocks, s) || manualForm.store === s)
                   .map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>

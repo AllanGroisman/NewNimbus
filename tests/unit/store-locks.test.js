@@ -88,3 +88,39 @@ describe("scheduler.activeSources", () => {
     expect(scheduler.activeSources(raw)).toEqual(scheduler.resolveSources(raw));
   });
 });
+
+// A trava existe pra impedir que o sistema BUSQUE naquela loja. No repasse o
+// link já vem pronto do grupo líder, então ela não se aplica ali.
+describe("scheduler.sourcesForCampaign — repasse ignora a trava", () => {
+  const busca = { scraping: { kind: "scraping", sources: ["Mercado Livre", "Shopee"] } };
+  const repasse = { scraping: { kind: "repasse", sources: ["Mercado Livre", "Shopee"] } };
+
+  it("campanha de busca perde a loja trancada; a de repasse mantém", () => {
+    storeLocks.writeStoreLock("shopee", { locked: true });
+    expect(scheduler.sourcesForCampaign(busca)).toEqual(["ml"]);
+    expect(scheduler.sourcesForCampaign(repasse)).toEqual(["ml", "shopee"]);
+  });
+
+  it("sem nenhuma trava, os dois tipos veem as mesmas lojas", () => {
+    expect(scheduler.sourcesForCampaign(repasse)).toEqual(scheduler.sourcesForCampaign(busca));
+  });
+});
+
+describe("scheduler.affiliateGate — trava de loja não pausa repasse", () => {
+  const soML = (kind) => ({ scraping: { kind, sources: ["Mercado Livre"] } });
+
+  it("busca com a única loja trancada pausa com a mensagem do admin", () => {
+    storeLocks.writeStoreLock("ml", { locked: true, message: "Em manutenção até sexta" });
+    const gate = scheduler.affiliateGate("user-sem-afiliado", soML("scraping"));
+    expect(gate.paused).toBe(true);
+    expect(gate.reason).toBe("Em manutenção até sexta");
+  });
+
+  it("repasse com a mesma loja trancada não pausa por causa da trava", () => {
+    storeLocks.writeStoreLock("ml", { locked: true, message: "Em manutenção até sexta" });
+    const gate = scheduler.affiliateGate("user-sem-afiliado", soML("repasse"));
+    // Pode pausar por falta de afiliado (o repasse precisa dele pra reafiliar),
+    // mas nunca com a mensagem de manutenção.
+    expect(gate.reason).not.toBe("Em manutenção até sexta");
+  });
+});

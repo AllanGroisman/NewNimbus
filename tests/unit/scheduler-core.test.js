@@ -355,8 +355,15 @@ describe("scheduler.renderTemplate — mensagem do envio", () => {
   });
 
   it("campos ausentes: preço vira — e strings viram vazio", () => {
-    const out = scheduler.renderTemplate("{produto}|{preco}|{desconto}|{loja}|{link}", {});
-    expect(out).toBe("|—|—||");
+    const out = scheduler.renderTemplate("{produto}|{preco}|{loja}|{link}", {});
+    expect(out).toBe("|—||");
+  });
+
+  // Item sem promoção não mostra "de" nem "desconto": a linha inteira sai.
+  it("sem promoção, a linha com {desconto} some; com promoção ela fica", () => {
+    expect(scheduler.renderTemplate("{produto}|{desconto}|{link}", {})).toBe("");
+    expect(scheduler.renderTemplate("{produto}|{desconto}|{link}", { name: "X", discount: 30, link: "L" }))
+      .toBe("X|30%|L");
   });
 
   it("{vendas} usa soldCount numérico compacto ou sold em texto; sem dado fica vazio", () => {
