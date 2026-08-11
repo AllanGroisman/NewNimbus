@@ -5,6 +5,7 @@ import {
 } from "../../data/constants";
 import { browseCatalog, errText } from "../../data/api";
 import Toggle from "../ui/Toggle";
+import Modal from "../ui/Modal";
 import UsageBadge from "../ui/UsageBadge";
 import { ProductRow, ProductGridCard } from "../ui/ProductCard";
 
@@ -131,6 +132,9 @@ export default function ProductSearchTab({
   const [addingKeys, setAddingKeys] = useState(() => new Set());
   const [addMsgs, setAddMsgs] = useState(() => new Map()); // key -> { type, text }
   const [cooldownAsk, setCooldownAsk] = useState(null);    // { key, product, info }
+  // Confirmação do "Preencher fila agora": o botão salva a configuração e sai
+  // buscando no catálogo, então um clique sem querer custa caro.
+  const [askRefill, setAskRefill] = useState(false);
   // Seleção múltipla da lista.
   const [selected, setSelected] = useState(() => new Set());
   const [bulk, setBulk] = useState(null); // { running, done, total } | { done: resumo }
@@ -424,8 +428,8 @@ export default function ProductSearchTab({
       {/* ── 1. Faixa de contexto: o que a campanha busca e como preenche a
              fila. Compacta de propósito — resumo de uma linha e um botão que
              abre o painel inteiro logo abaixo, sem empurrar a lista pra longe. */}
-      <div className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
-        <div data-tour="pr-where" style={{ ...cardStyle, marginBottom: 0, display: "flex", alignItems: "center", gap: 10 }}>
+      <div className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: whereOpen || queueOpen ? 0 : 14 }}>
+        <div data-tour="pr-where" style={stripCardStyle(whereOpen)}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 2 }}>🏪 Onde buscar</div>
             <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>{whereSummary}</div>
@@ -439,11 +443,11 @@ export default function ProductSearchTab({
             title="As lojas e as categorias de produto que esta campanha vasculha"
             style={{ ...chipStyle({ active: false }), padding: "7px 12px", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 6 }}
           >
-            Alterar <span style={{ fontSize: 10 }}>{whereOpen ? "▲" : "▼"}</span>
+            Alterar <span style={caretStyle(whereOpen)}>▼</span>
           </button>
         </div>
 
-        <div data-tour="pr-queue" style={{ ...cardStyle, marginBottom: 0, display: "flex", alignItems: "center", gap: 10 }}>
+        <div data-tour="pr-queue" style={stripCardStyle(queueOpen)}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 2 }}>🔄 Preenchimento automático</div>
             <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>{queueSummary}</div>
@@ -456,7 +460,7 @@ export default function ProductSearchTab({
             title="Quando preencher, quantos produtos por vez e em que ordem"
             style={{ ...chipStyle({ active: false }), padding: "7px 12px", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 6 }}
           >
-            Configurar <span style={{ fontSize: 10 }}>{queueOpen ? "▲" : "▼"}</span>
+            Configurar <span style={caretStyle(queueOpen)}>▼</span>
           </button>
           {/* A chave fica na faixa: ligar e desligar é um clique, não precisa
               abrir painel nenhum. */}
@@ -467,10 +471,12 @@ export default function ProductSearchTab({
       </div>
 
       {/* ── 2. Painéis da faixa: abrem aqui, em largura inteira, um por vez —
-             chips de loja e campos do preenchimento não cabem em meia coluna. */}
+             chips de loja e campos do preenchimento não cabem em meia coluna.
+             O painel nasce colado no card que o abriu (canto reto no encontro,
+             borda destacada), então o título não precisa se repetir aqui. */}
       {whereOpen && (
-        <div id="sec-where" style={{ ...cardStyle, marginBottom: 14 }}>
-        <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 12 }}>Onde buscar</div>
+        <div className="nimbus-panel">
+        <div id="sec-where" className="sec-panel join-left" style={panelStyle}>
         <label style={fieldLabelStyle}>Lojas</label>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
           {allSources.map(src => {
@@ -601,11 +607,12 @@ export default function ProductSearchTab({
           </div>
         )}
         </div>
+        </div>
       )}
 
       {queueOpen && (
-        <div id="sec-queue" style={{ ...cardStyle, marginBottom: 14 }}>
-        <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 2 }}>Preenchimento automático</div>
+        <div className="nimbus-panel">
+        <div id="sec-queue" className="sec-panel join-right" style={panelStyle}>
         <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 4 }}>
           {autoRefill
             ? "Ligado: o sistema faz sozinho o mesmo que o botão \"Preencher fila agora\" — busca os produtos e joga direto na fila."
@@ -738,6 +745,7 @@ export default function ProductSearchTab({
             value={scraping.shuffleAfterRefill === true}
             onChange={v => setScraping(s => ({ ...s, shuffleAfterRefill: v }))}
           />
+        </div>
         </div>
         </div>
       )}
@@ -911,7 +919,7 @@ export default function ProductSearchTab({
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
           <button
             data-tour="pr-run"
-            onClick={triggerRefill}
+            onClick={() => setAskRefill(true)}
             disabled={refilling || noSources}
             title={noSources ? "Escolha ao menos uma loja disponível" : "Salva a configuração e completa a fila agora, sem esperar o horário"}
             style={{ padding: "9px 20px", borderRadius: 8, border: "none", background: PRIMARY, color: "#fff", fontSize: 13, cursor: refilling ? "wait" : (noSources ? "not-allowed" : "pointer"), fontWeight: 500, opacity: refilling || noSources ? 0.6 : 1 }}
@@ -1209,6 +1217,32 @@ export default function ProductSearchTab({
           </button>
         </div>
       )}
+
+      {/* Confirmação do "Preencher fila agora": diz quantos produtos vão entrar
+          e de onde saem, antes de sair buscando no catálogo. */}
+      {askRefill && (
+        <Modal title="Preencher a fila agora?" onClose={() => setAskRefill(false)}>
+          <div style={{ fontSize: 13, lineHeight: 1.5, marginBottom: 10 }}>
+            Vamos pegar os <strong>{batch} primeiros produtos</strong> desta lista, na ordem em que
+            estão na tela, e mandar pra fila.
+          </div>
+          <div style={{ fontSize: 12, color: "var(--color-text-secondary)", lineHeight: 1.5, marginBottom: 18 }}>
+            O que já está na fila ou foi enviado há pouco é pulado, então pode entrar menos que {batch}.
+            As escolhas desta aba também são salvas.
+          </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button onClick={() => setAskRefill(false)} style={chipStyle({ active: false })}>
+              Cancelar
+            </button>
+            <button
+              onClick={() => { setAskRefill(false); triggerRefill(); }}
+              style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: PRIMARY, color: "#fff", fontSize: 13, fontFamily: "inherit", fontWeight: 500, cursor: "pointer" }}
+            >
+              Preencher agora
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -1255,6 +1289,42 @@ const cardStyle = {
   borderRadius: 12,
   padding: 16,
 };
+
+// Card da faixa. Com o painel aberto embaixo ele perde o arredondado e a borda
+// de baixo pra emendar no painel, e ganha a borda destacada que contorna os
+// dois. Tudo em propriedades longas (nada de `border`/`borderRadius`): misturar
+// as duas formas faz o React avisar quando a longa some no fechamento.
+const stripCardStyle = (open) => ({
+  background: "var(--color-background-primary)",
+  borderWidth: "0.5px",
+  borderStyle: "solid",
+  borderColor: open ? PRIMARY : "var(--color-border-tertiary)",
+  borderBottomColor: open ? "transparent" : "var(--color-border-tertiary)",
+  borderTopLeftRadius: 12,
+  borderTopRightRadius: 12,
+  borderBottomLeftRadius: open ? 0 : 12,
+  borderBottomRightRadius: open ? 0 : 12,
+  padding: 16,
+  display: "flex",
+  alignItems: "center",
+  gap: 10,
+});
+
+// O painel em si. Sem borderRadius aqui de propósito: os cantos vêm da classe
+// .sec-panel (index.css), que trata o mobile — estilo inline venceria a classe.
+const panelStyle = {
+  background: "var(--color-background-primary)",
+  border: `0.5px solid ${PRIMARY}`,
+  padding: 16,
+  marginBottom: 14,
+};
+
+// Setinha do botão que abre o painel: gira em vez de trocar de glifo.
+const caretStyle = (open) => ({
+  fontSize: 10, display: "inline-block",
+  transition: "transform 0.2s",
+  transform: open ? "rotate(180deg)" : "none",
+});
 
 const fieldLabelStyle = {
   fontSize: 11, color: "var(--color-text-secondary)",

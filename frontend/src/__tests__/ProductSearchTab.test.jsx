@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useState } from "react";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 
 vi.mock("../data/api", () => ({
   errText: (err, fallback) => err?.message || fallback,
@@ -364,11 +364,25 @@ describe("ProductSearchTab — preenchimento automático", () => {
     expect(screen.getByLabelText("Ordenar a lista")).toHaveValue("rating_desc");
   });
 
-  it("preencher fila agora chama o refill", async () => {
+  it("preencher fila agora pede confirmação antes de chamar o refill", async () => {
     const triggerRefill = vi.fn();
     render(<Harness triggerRefill={triggerRefill} />);
     fireEvent.click(await screen.findByRole("button", { name: /Preencher fila agora/ }));
+    // O clique só abre o aviso — nada é buscado ainda.
+    expect(triggerRefill).not.toHaveBeenCalled();
+    const modal = screen.getByRole("dialog");
+    expect(within(modal).getByText(/20 primeiros produtos/)).toBeInTheDocument();
+    fireEvent.click(within(modal).getByRole("button", { name: "Preencher agora" }));
     expect(triggerRefill).toHaveBeenCalled();
+  });
+
+  it("cancelar a confirmação não preenche a fila", async () => {
+    const triggerRefill = vi.fn();
+    render(<Harness triggerRefill={triggerRefill} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Preencher fila agora/ }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(triggerRefill).not.toHaveBeenCalled();
   });
 });
 

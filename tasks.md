@@ -606,3 +606,14 @@ Business: 14,90; 5 número de WhatsApp; campanhas ilimitadas; grupos ilimitados 
     salva" (o aviso agora fala do que você editou e não salvou), e o Salvar das
     outras abas parou de ativar sem querer o modelo que estivesse aberto no
     editor.
+
+85. [x] Na aba de Busca de Produtos faça o seguinte:
+
+No botão de preencher a fila quero que apareça um pop up informando que vai preencher com os X primeiros itens da lista.
+
+No Onde buscar quando clicar em alterar que abre as opções, quero que abra com uma animação zinha de transição aparecendo abrindo. Tb quero que fique mais integrado.
+
+No preenchimento automatico mesma coisa ao clicar em configurar. Em ambos, quando apertar pra configurar um, esconde o outro.
+
+86. [] Na aba de busca de produtos troca a busca de produtos para ser por páginas. Sempre quero que fique preenchido automaticamente. Tb o que tu acha que da pra melhorar e tirar das coisas escritas pra ficar mais clean? Vai me perguntando pra fazermos um plano legal.
+

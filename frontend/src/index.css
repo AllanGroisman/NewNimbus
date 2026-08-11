@@ -324,8 +324,36 @@ textarea::placeholder {
   flex-shrink: 0;
 }
 
+/* Painéis que abrem num botão (aba Busca de Produtos). O truque do
+   grid-template-rows 0fr → 1fr anima a altura real do conteúdo, sem precisar
+   chutar um max-height. Só a abertura é animada: fechar desmonta na hora. */
+@keyframes nimbus-panel-open {
+  from { grid-template-rows: 0fr; opacity: 0; transform: translateY(-4px); }
+  to   { grid-template-rows: 1fr; opacity: 1; transform: none;             }
+}
+.nimbus-panel {
+  display: grid;
+  grid-template-rows: 1fr;
+  animation: nimbus-panel-open 0.22s ease-out;
+}
+.nimbus-panel > * { min-height: 0; overflow: hidden; }
+@media (prefers-reduced-motion: reduce) {
+  .nimbus-panel { animation: none; }
+}
+
+/* O painel fica colado no card que o abriu: o canto do encontro é reto, pra os
+   dois serem lidos como uma peça só. No mobile a faixa vira uma coluna e o
+   painel ocupa a largura inteira — aí os dois cantos de cima ficam retos. */
+.sec-panel { border-radius: 12px; }
+.sec-panel.join-left  { border-top-left-radius: 0;  }
+.sec-panel.join-right { border-top-right-radius: 0; }
+
 /* Mobile responsive */
 @media (max-width: 768px) {
+  .sec-panel.join-left, .sec-panel.join-right {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+  }
   .desktop-only { display: none !important; }
   .app-layout { flex-direction: column !important; }
   .main-content { padding: 14px 12px !important; }
