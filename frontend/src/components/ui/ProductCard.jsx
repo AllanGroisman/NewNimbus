@@ -87,9 +87,9 @@ export function ProductRow({ product, actions, index }) {
 }
 
 // Card grid para catálogo de produtos.
-// `footer` e `select` (opcionais) ficam FORA do <a> — botões e caixas de
-// seleção não podem viver dentro do link que abre o produto na loja.
-export function ProductGridCard({ product, footer, badge, select }) {
+// `footer` e `badge` (opcionais) ficam FORA do <a> — botões não podem viver
+// dentro do link que abre o produto na loja.
+export function ProductGridCard({ product, footer, badge }) {
   const card = (
     <a
       href={product.link}
@@ -160,15 +160,13 @@ export function ProductGridCard({ product, footer, badge, select }) {
     </a>
   );
 
-  if (!footer && !badge && !select) return card;
+  if (!footer && !badge) return card;
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      {(badge || select) && (
-        // A seleção e o selo dividem a mesma faixa acima do card: a caixa à
-        // esquerda, o selo ("Já está na fila", ...) à direita.
+      {badge && (
+        // O selo ("Já está na fila", ...) fica numa faixa acima do card.
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, minHeight: 20 }}>
-          {select}
-          {badge && <div style={{ marginLeft: "auto" }}>{badge}</div>}
+          <div style={{ marginLeft: "auto" }}>{badge}</div>
         </div>
       )}
       <div style={{ flex: 1 }}>{card}</div>

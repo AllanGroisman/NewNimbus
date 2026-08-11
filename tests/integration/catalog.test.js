@@ -1,7 +1,7 @@
 // Catalogo: upsert, query (filtros, sort), prune, /api/ofertas.
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { request, app, createTestUser, catalog } from "../helpers/app.js";
+import { request, app, createTestUser, catalog, storage } from "../helpers/app.js";
 import { mlProduct, amazonProduct, shopeeProduct } from "../helpers/fixtures.js";
 
 describe("catalog.upsertProducts", () => {
@@ -192,6 +192,99 @@ describe("GET /api/ofertas — navegação paginada do catálogo", () => {
     expect(res.status).toBe(200);
     expect(res.body.pageSize).toBe(60);
     expect(res.body.items.length).toBeLessThanOrEqual(60);
+  });
+});
+
+// A aba "Busca de Produtos" manda o groupId pra lista já vir sem o que a
+// campanha tem na fila / mandou há pouco — é o que faz cada página vir cheia,
+// em vez de encolher depois de carregada no navegador.
+describe("GET /api/ofertas — exclusão por campanha (groupId)", () => {
+  const GID = 7001;
+  const seed = () => catalog.upsertProducts([
+    mlProduct(501, { category: "gamer", discount: 15, price: 90, name: "Teclado Nimbus 501" }),
+    mlProduct(502, { category: "gamer", discount: 55, price: 250, name: "Mouse Nimbus 502" }),
+    mlProduct(503, { category: "gamer", discount: 35, price: 700, name: "Monitor Nimbus 503" }),
+  ]);
+
+  // Grupo com cooldown de 24h. O item que entra na fila/history é escolhido
+  // pela key real do catálogo, senão nada casaria.
+  async function setup({ queue = [], history = [] } = {}) {
+    const { user, auth } = await createTestUser({ plan: "pro" });
+    await storage.saveState(user.id, {
+      groups: [{
+        id: GID, name: "Campanha", paused: false,
+        categories: ["gamer"], whatsappGroupIds: [], messageTemplate: "{link}",
+        scraping: { auto: true, sources: ["Mercado Livre"], filters: {} },
+        schedule: { windows: [], cooldownValue: 24, cooldownUnit: "horas" },
+        queue: [], pending: [], history: [],
+        sentToday: 0, sentWeek: 0, weekData: [0, 0, 0, 0, 0, 0, 0], lastSend: "—",
+      }],
+    });
+    // Fila e histórico são campos de "ops" — o saveState (config do usuário) não
+    // escreve neles de propósito; quem grava é o scheduler, por aqui.
+    await storage.updateGroupOps(user.id, GID, { queue, pending: [], history });
+    return auth;
+  }
+
+  const itemFor = (p) => ({ key: p.key, id: p.key, name: p.name, link: p.link, store: p.store, price: p.price });
+
+  it("tira da lista (e do total) o que já está na fila da campanha", async () => {
+    await seed();
+    const todos = await catalog.query({ categories: ["gamer"], limit: 100 });
+    const naFila = todos.find(p => p.name === "Mouse Nimbus 502");
+    const auth = await setup({ queue: [itemFor(naFila)] });
+
+    const res = await auth("get", `/api/ofertas?categories=gamer&page=1&pageSize=24&groupId=${GID}`);
+    expect(res.status).toBe(200);
+    expect(res.body.items.map(p => p.name)).not.toContain("Mouse Nimbus 502");
+    // O total tem que descontar junto, senão a paginação criaria página vazia.
+    expect(res.body.total).toBe(2);
+
+    // hideQueued=0 traz de volta — é a chave "Já na fila" da aba.
+    const comFila = await auth("get", `/api/ofertas?categories=gamer&page=1&pageSize=24&groupId=${GID}&hideQueued=0`);
+    expect(comFila.body.items.map(p => p.name)).toContain("Mouse Nimbus 502");
+    expect(comFila.body.total).toBe(3);
+  });
+
+  it("tira o enviado dentro do cooldown, mas não o enviado há muito tempo", async () => {
+    await seed();
+    const todos = await catalog.query({ categories: ["gamer"], limit: 100 });
+    const recente = todos.find(p => p.name === "Mouse Nimbus 502");
+    const antigo = todos.find(p => p.name === "Teclado Nimbus 501");
+    const auth = await setup({
+      history: [
+        { ...itemFor(recente), sentAt: new Date().toISOString() },
+        { ...itemFor(antigo), sentAt: new Date(Date.now() - 5 * 86400000).toISOString() },
+      ],
+    });
+
+    const res = await auth("get", `/api/ofertas?categories=gamer&page=1&pageSize=24&groupId=${GID}`);
+    const nomes = res.body.items.map(p => p.name);
+    expect(nomes).not.toContain("Mouse Nimbus 502");
+    // Passou o cooldown de 24h: volta a ser elegível.
+    expect(nomes).toContain("Teclado Nimbus 501");
+    expect(res.body.total).toBe(2);
+
+    const comRecentes = await auth("get", `/api/ofertas?categories=gamer&page=1&pageSize=24&groupId=${GID}&hideRecent=0`);
+    expect(comRecentes.body.items.map(p => p.name)).toContain("Mouse Nimbus 502");
+  });
+
+  it("groupId de outro usuário (ou inexistente) é ignorado, não vaza nem estoura", async () => {
+    await seed();
+    const todos = await catalog.query({ categories: ["gamer"], limit: 100 });
+    const naFila = todos.find(p => p.name === "Mouse Nimbus 502");
+    await setup({ queue: [itemFor(naFila)] });
+
+    // Outro usuário pedindo o MESMO groupId: a fila do dono não pode filtrar
+    // (nem vazar) a lista dele.
+    const { auth: outro } = await createTestUser({ plan: "pro" });
+    const res = await outro("get", `/api/ofertas?categories=gamer&page=1&pageSize=24&groupId=${GID}`);
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(3);
+
+    const bobo = await outro("get", "/api/ofertas?categories=gamer&page=1&pageSize=24&groupId=nao-numerico");
+    expect(bobo.status).toBe(200);
+    expect(bobo.body.total).toBe(3);
   });
 });
 

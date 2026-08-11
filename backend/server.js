@@ -1710,11 +1710,29 @@ app.get("/api/ofertas", auth.requireAuth, async (req, res) => {
     const limit = paginated ? pageSize : Math.min(200, Math.max(1, parseInt(req.query.limit) || 50));
     const offset = paginated ? (page - 1) * pageSize : 0;
 
+    // Com `groupId`, a lista já sai sem o que a campanha tem na fila / mandou há
+    // pouco — o mesmo corte que o preenchimento faz. Antes isso era escondido no
+    // navegador depois de receber, o que deixava a página pela metade e fazia o
+    // `total` contar justamente o que a tela escondia.
+    let excludeKeys = null;
+    const gid = req.query.groupId ? String(req.query.groupId) : null;
+    if (gid) {
+      // Escopado no grupo e só na coluna productKey: essa rota é chamada a cada
+      // busca da aba, não dá pra puxar o estado inteiro do usuário aqui.
+      // Grupo de outro dono não acha e volta null — segue sem exclusão.
+      excludeKeys = await storage.loadExcludeKeys(req.user.id, gid, {
+        queued: req.query.hideQueued !== "0",
+        recent: req.query.hideRecent !== "0",
+        cooldownMinutesFor: scheduler.cooldownMinutes,
+      });
+    }
+
     // getStats() são 5 agregações na tabela inteira — caro demais pra prévia
     // paginada, que refaz a request a cada ajuste de filtro. Só no modo legado.
+    // `excludeKeys` vai nos dois: sem ele no count, o número de páginas mentiria.
     const [products, total, catalogStats] = await Promise.all([
-      catalog.query({ categories, sources, filters, limit, offset, sortBy }),
-      catalog.count({ categories, sources, filters }),
+      catalog.query({ categories, sources, excludeKeys, filters, limit, offset, sortBy }),
+      catalog.count({ categories, sources, excludeKeys, filters }),
       paginated ? null : catalog.getStats(),
     ]);
 

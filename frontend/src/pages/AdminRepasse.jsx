@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { PRIMARY_DARK } from "../data/constants";
 import { adminRepasseLogs, errText} from "../data/api";
+import Pagination from "../components/ui/Pagination";
 
 const POLL_MS = 5000;
 
@@ -155,13 +156,7 @@ export default function PageAdminRepasse() {
           </div>
         )}
 
-        {total > pageSize && (
-          <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 14 }}>
-            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1} style={{ padding: "5px 10px", borderRadius: 6, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: page <= 1 ? "not-allowed" : "pointer", opacity: page <= 1 ? 0.5 : 1 }}>← Anterior</button>
-            <span style={{ fontSize: 12, alignSelf: "center" }}>{page} / {totalPages}</span>
-            <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages} style={{ padding: "5px 10px", borderRadius: 6, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: page >= totalPages ? "not-allowed" : "pointer", opacity: page >= totalPages ? 0.5 : 1 }}>Próxima →</button>
-          </div>
-        )}
+        <Pagination page={page} totalPages={totalPages} onChange={setPage} />
       </div>
     </div>
   );

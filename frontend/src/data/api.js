@@ -388,13 +388,22 @@ export async function fetchOfertas({ category, minDiscount = 0, minPrice = 0, ma
 // Navega o catálogo com os mesmos filtros/ordem que a busca da campanha usa.
 // Alimenta a prévia da aba "Busca de Produtos" (paginada).
 // Retorna { items, total, page, pageSize, approximateTotal, catalogStats }.
+// Com `groupId`, o backend já tira da lista o que essa campanha tem na fila
+// (hideQueued) e o que ela mandou dentro do tempo de espera (hideRecent).
 export async function browseCatalog({
   categories, sources, q = "", minPrice = 0, maxPrice, minDiscount = 0,
   minRating = 0, minSales = 0, sortBy = "discount_desc", page = 1, pageSize = 24,
+  groupId, hideQueued = true, hideRecent = true,
 } = {}, { signal } = {}) {
   const params = new URLSearchParams();
   if (categories && categories.length) params.set("categories", categories.join(","));
   if (sources && sources.length) params.set("sources", sources.join(","));
+  if (groupId) {
+    params.set("groupId", groupId);
+    // Só o "0" desliga no backend — mandamos apenas quando é pra desligar.
+    if (!hideQueued) params.set("hideQueued", "0");
+    if (!hideRecent) params.set("hideRecent", "0");
+  }
   if (q && q.trim()) params.set("q", q.trim());
   if (minPrice > 0) params.set("minPrice", minPrice);
   if (maxPrice) params.set("maxPrice", maxPrice);

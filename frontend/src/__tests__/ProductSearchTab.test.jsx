@@ -44,6 +44,7 @@ function Harness({
   }));
   return (
     <ProductSearchTab
+      groupId={rest.groupId || "g1"}
       scraping={scraping}
       setScraping={setScraping}
       categories={categories}
@@ -56,6 +57,7 @@ function Harness({
       triggerRefill={rest.triggerRefill || vi.fn()}
       save={rest.save || vi.fn()}
       dirty={rest.dirty || false}
+      filtersDirty={rest.filtersDirty || false}
       saved={false}
       saveBtnStyle={() => ({})}
       refillMsg={null}
@@ -63,13 +65,11 @@ function Harness({
       queue={rest.queue || []}
       history={rest.history || []}
       cooldownMinutes={rest.cooldownMinutes || 0}
-      cooldownLabel={rest.cooldownLabel}
       onApprove={vi.fn()}
       onReject={vi.fn()}
       onApproveAll={vi.fn()}
       onRejectAll={vi.fn()}
       onAddCatalogProduct={onAddCatalogProduct}
-      onAddCatalogProducts={rest.onAddCatalogProducts}
     />
   );
 }
@@ -254,6 +254,42 @@ describe("ProductSearchTab — filtros", () => {
     await waitFor(() => expect(screen.queryByText(/30% ou mais de desconto/)).not.toBeInTheDocument());
     expect(screen.getByLabelText("Busca por palavras-chave")).toHaveValue("");
   });
+
+  it("aceita um número digitado à mão, fora da lista de sempre", async () => {
+    render(<Harness />);
+    await waitFor(() => expect(browseCatalog).toHaveBeenCalled());
+
+    abrirFiltros();
+    fireEvent.change(screen.getByLabelText("Desconto mínimo"), { target: { value: "35" } });
+
+    await waitFor(() => {
+      const last = browseCatalog.mock.calls[browseCatalog.mock.calls.length - 1][0];
+      expect(last.minDiscount).toBe(35);
+    });
+    expect(await screen.findByText(/35% ou mais de desconto/)).toBeInTheDocument();
+  });
+
+  it("nota acima de 5 encosta no teto ao sair do campo", async () => {
+    render(<Harness />);
+    await waitFor(() => expect(browseCatalog).toHaveBeenCalled());
+
+    abrirFiltros();
+    const nota = screen.getByLabelText("Avaliação mínima");
+    fireEvent.change(nota, { target: { value: "50" } });
+    fireEvent.blur(nota, { target: { value: "50" } });
+
+    await waitFor(() => expect(nota).toHaveValue(5));
+  });
+
+  it("o painel de filtros tem o próprio Salvar", async () => {
+    const save = vi.fn();
+    render(<Harness save={save} filtersDirty />);
+    await waitFor(() => expect(browseCatalog).toHaveBeenCalled());
+
+    abrirFiltros();
+    fireEvent.click(screen.getByRole("button", { name: "Salvar filtros" }));
+    expect(save).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("ProductSearchTab — preenchimento automático", () => {
@@ -353,15 +389,16 @@ describe("ProductSearchTab — preenchimento automático", () => {
     expect(screen.getByRole("button", { name: /Preencher fila agora \(até 5\)/ })).toBeInTheDocument();
   });
 
-  it("trocar a ordem de escolha salva no scraping e refaz a busca", async () => {
+  it("a ordem tem um seletor só, em cima da lista, e salva no scraping", async () => {
     render(<Harness />);
     await waitFor(() => expect(browseCatalog).toHaveBeenCalledTimes(1));
+    // O painel de preenchimento não repete o campo: é o mesmo scraping.sortBy.
     abrirConfig();
-    fireEvent.change(await screen.findByLabelText("Ordem de escolha"), { target: { value: "rating_desc" } });
+    expect(screen.queryByLabelText("Ordem de escolha")).not.toBeInTheDocument();
+
+    fireEvent.change(await screen.findByLabelText("Ordem"), { target: { value: "rating_desc" } });
     await waitFor(() => expect(browseCatalog).toHaveBeenCalledTimes(2));
     expect(browseCatalog.mock.calls[1][0].sortBy).toBe("rating_desc");
-    // O seletor da lista mostra a mesma ordem
-    expect(screen.getByLabelText("Ordenar a lista")).toHaveValue("rating_desc");
   });
 
   it("preencher fila agora pede confirmação antes de chamar o refill", async () => {
@@ -425,10 +462,11 @@ describe("ProductSearchTab — lista de produtos", () => {
     expect(await screen.findByRole("button", { name: "Adicionar à fila" })).toBeInTheDocument();
   });
 
-  it("produto que já está na fila aparece marcado e sem botão ativo", async () => {
+  it("produto que já está na fila só diz isso no lugar do botão", async () => {
     render(<Harness queue={[makeProduct()]} />);
-    expect(await screen.findByText("Já está na fila")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Já na fila" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "Já na fila" })).toBeDisabled();
+    // O selo em cima do card sumiu: dizia a mesma coisa duas vezes.
+    expect(screen.queryByText("Já está na fila")).not.toBeInTheDocument();
   });
 
   it("o 'Foi pra fila' ocupa o lugar do botão e depois vira 'Já na fila'", async () => {
@@ -452,30 +490,37 @@ describe("ProductSearchTab — lista de produtos", () => {
     }
   });
 
-  it("esconde os enviados dentro do tempo de espera e mostra quando pedido", async () => {
-    // O histórico guarda o link JÁ AFILIADO — o encontro é pela key, senão a
-    // chave não escondia nada.
-    const enviado = { ...makeProduct(), link: "https://s.mercadolivre.com.br/abc", sentAt: new Date().toISOString() };
-    render(<Harness history={[enviado]} cooldownMinutes={1440} cooldownLabel="1 dias" />);
-    expect(await screen.findByText(/1 enviado há pouco/)).toBeInTheDocument();
-    expect(screen.queryByText("Headset Gamer XYZ")).not.toBeInTheDocument();
+  // As duas chaves são filtro de BACKEND: o corte é feito no /api/ofertas (que
+  // recebe o groupId), pra a página vir cheia em vez de encolher depois de
+  // carregada. Por isso o que se testa aqui é o parâmetro que sai, não o card
+  // que some — o mock devolve sempre a mesma lista.
+  it("a chave 'Enviados recentemente' liga e desliga o hideRecent da busca", async () => {
+    render(<Harness history={[makeProduct()]} cooldownMinutes={1440} cooldownLabel="1 dias" />);
+    await waitFor(() => expect(browseCatalog).toHaveBeenCalledTimes(1));
+    // Desligada por padrão: o backend esconde os enviados há pouco.
+    expect(browseCatalog.mock.calls[0][0].hideRecent).toBe(true);
+    expect(browseCatalog.mock.calls[0][0].groupId).toBe("g1");
 
     fireEvent.click(screen.getByRole("switch", { name: "Mostrar enviados recentemente" }));
-    expect(await screen.findByText("Headset Gamer XYZ")).toBeInTheDocument();
-    expect(screen.getByText("Enviado há pouco")).toBeInTheDocument();
+    await waitFor(() => expect(browseCatalog).toHaveBeenCalledTimes(2));
+    expect(browseCatalog.mock.calls[1][0].hideRecent).toBe(false);
   });
 
-  it("a chave 'Já na fila' esconde e mostra os produtos que já estão na campanha", async () => {
+  it("a chave 'Já na fila' liga e desliga o hideQueued e volta pra primeira página", async () => {
+    browseCatalog.mockResolvedValue({ items: [makeProduct()], total: 100, page: 1, pageSize: 24 });
     render(<Harness queue={[{ ...makeProduct(), link: "https://s.mercadolivre.com.br/abc" }]} />);
-    // Por padrão eles aparecem, marcados.
-    expect(await screen.findByText("Já está na fila")).toBeInTheDocument();
+    // Ligada por padrão: os que já estão na fila aparecem, marcados.
+    expect(await screen.findByRole("button", { name: "Já na fila" })).toBeDisabled();
+    expect(browseCatalog.mock.calls[0][0].hideQueued).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Próxima →" }));
+    await waitFor(() => expect(browseCatalog).toHaveBeenCalledTimes(2));
+    expect(browseCatalog.mock.calls[1][0].page).toBe(2);
 
     fireEvent.click(screen.getByRole("switch", { name: "Mostrar os que já estão na fila" }));
-    await waitFor(() => expect(screen.queryByText("Headset Gamer XYZ")).not.toBeInTheDocument());
-    expect(screen.getByText(/1 já na fila desta campanha/)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("switch", { name: "Mostrar os que já estão na fila" }));
-    expect(await screen.findByText("Headset Gamer XYZ")).toBeInTheDocument();
+    await waitFor(() => expect(browseCatalog).toHaveBeenCalledTimes(3));
+    // Outra busca, outra lista: não faz sentido continuar na página 2.
+    expect(browseCatalog.mock.calls[2][0]).toMatchObject({ hideQueued: true, page: 1 });
   });
 
   it("enviado fora do tempo de espera continua na lista e pode voltar pra fila", async () => {
@@ -526,7 +571,7 @@ describe("ProductSearchTab — painéis que abrem em botão", () => {
   });
 });
 
-describe("ProductSearchTab — adicionar vários de uma vez", () => {
+describe("ProductSearchTab — adicionar da lista", () => {
   const doisProdutos = [
     makeProduct(),
     makeProduct({ key: "k2", name: "Mouse ABC", link: "https://ml.com/p/2" }),
@@ -549,54 +594,53 @@ describe("ProductSearchTab — adicionar vários de uma vez", () => {
     solta();
   });
 
-  it("seleciona dois e manda os dois de uma vez pro handler de lote", async () => {
-    const onBulk = vi.fn().mockResolvedValue({ added: 2, duplicates: 0, cooldown: [], errors: [] });
-    browseCatalog.mockResolvedValue({ items: doisProdutos, total: 2, page: 1, pageSize: 24 });
-    render(<Harness onAddCatalogProducts={onBulk} />);
-
-    fireEvent.click(await screen.findByLabelText("Selecionar Headset Gamer XYZ"));
-    fireEvent.click(screen.getByLabelText("Selecionar Mouse ABC"));
-
-    fireEvent.click(screen.getByRole("button", { name: "Adicionar 2 à fila" }));
-    await waitFor(() => expect(onBulk).toHaveBeenCalledTimes(1));
-    expect(onBulk.mock.calls[0][0].map(p => p.key)).toEqual(["k1", "k2"]);
-    expect(await screen.findByText(/2 adicionados/)).toBeInTheDocument();
-  });
-
-  it("o que caiu no tempo de espera fica num aviso só, com reenvio em lote", async () => {
-    const onBulk = vi.fn()
-      .mockResolvedValueOnce({ added: 1, duplicates: 0, cooldown: [doisProdutos[1]], errors: [] })
-      .mockResolvedValueOnce({ added: 1, duplicates: 0, cooldown: [], errors: [] });
-    browseCatalog.mockResolvedValue({ items: doisProdutos, total: 2, page: 1, pageSize: 24 });
-    render(<Harness onAddCatalogProducts={onBulk} cooldownLabel="1 dia" />);
-
-    fireEvent.click(await screen.findByLabelText("Selecionar todos os produtos da lista"));
-    fireEvent.click(screen.getByRole("button", { name: "Adicionar 2 à fila" }));
-
-    expect(await screen.findByText(/1 produto foi enviado há pouco/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Adicionar assim mesmo" }));
-    await waitFor(() => expect(onBulk).toHaveBeenCalledTimes(2));
-    // Segunda rodada só com o que faltou, e forçando.
-    expect(onBulk.mock.calls[1][0].map(p => p.key)).toEqual(["k2"]);
-    expect(onBulk.mock.calls[1][1]).toBe(true);
-  });
 });
 
-describe("ProductSearchTab — lista carregada aos poucos", () => {
-  it("Carregar mais acumula a página seguinte sem apagar a primeira", async () => {
+describe("ProductSearchTab — lista por páginas", () => {
+  it("Próxima troca a página inteira, e o rodapé mostra em qual está", async () => {
+    // 30 no total com página de 24 = duas páginas.
     browseCatalog
-      .mockResolvedValueOnce({ items: [makeProduct()], total: 2, page: 1, pageSize: 1 })
-      .mockResolvedValueOnce({ items: [makeProduct({ key: "k2", name: "Mouse ABC" })], total: 2, page: 2, pageSize: 1 });
+      .mockResolvedValueOnce({ items: [makeProduct()], total: 30, page: 1, pageSize: 24 })
+      .mockResolvedValueOnce({ items: [makeProduct({ key: "k2", name: "Mouse ABC" })], total: 30, page: 2, pageSize: 24 });
     render(<Harness />);
 
     await screen.findByText("Headset Gamer XYZ");
-    fireEvent.click(screen.getByRole("button", { name: "Carregar mais" }));
+    expect(screen.getByText("1 / 2")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "← Anterior" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Próxima →" }));
 
     expect(await screen.findByText("Mouse ABC")).toBeInTheDocument();
-    expect(screen.getByText("Headset Gamer XYZ")).toBeInTheDocument();
-    // Tudo carregado: o botão sai e sobra o contador.
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Carregar mais" })).not.toBeInTheDocument());
-    expect(screen.getByText(/2 de 2 carregados/)).toBeInTheDocument();
+    // Substitui, não acumula: a página 1 saiu da tela.
+    expect(screen.queryByText("Headset Gamer XYZ")).not.toBeInTheDocument();
+    expect(browseCatalog.mock.calls[1][0].page).toBe(2);
+    expect(screen.getByText("2 / 2")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Próxima →" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "← Anterior" })).not.toBeDisabled();
+  });
+
+  it("com uma página só, os controles não aparecem", async () => {
+    render(<Harness />);
+    await screen.findByText("Headset Gamer XYZ");
+    expect(screen.queryByRole("button", { name: "Próxima →" })).not.toBeInTheDocument();
+  });
+
+  it("volta pra última página existente quando o total encolhe", async () => {
+    browseCatalog
+      .mockResolvedValueOnce({ items: [makeProduct()], total: 60, page: 1, pageSize: 24 })
+      .mockResolvedValueOnce({ items: [makeProduct({ key: "k2", name: "Mouse ABC" })], total: 60, page: 2, pageSize: 24 })
+      // Produtos entraram na fila: agora só cabe uma página.
+      .mockResolvedValueOnce({ items: [makeProduct({ key: "k3", name: "Teclado QWE" })], total: 10, page: 3, pageSize: 24 })
+      .mockResolvedValueOnce({ items: [makeProduct()], total: 10, page: 1, pageSize: 24 });
+    render(<Harness />);
+
+    await screen.findByText("Headset Gamer XYZ");
+    fireEvent.click(screen.getByRole("button", { name: "Próxima →" }));
+    await screen.findByText("Mouse ABC");
+    fireEvent.click(screen.getByRole("button", { name: "Próxima →" }));
+
+    await waitFor(() => expect(browseCatalog).toHaveBeenCalledTimes(4));
+    expect(browseCatalog.mock.calls[3][0].page).toBe(1);
   });
 
   it("erro do catálogo tem botão de tentar de novo", async () => {

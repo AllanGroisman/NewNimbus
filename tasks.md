@@ -615,5 +615,48 @@ No Onde buscar quando clicar em alterar que abre as opções, quero que abra com
 
 No preenchimento automatico mesma coisa ao clicar em configurar. Em ambos, quando apertar pra configurar um, esconde o outro.
 
-86. [] Na aba de busca de produtos troca a busca de produtos para ser por páginas. Sempre quero que fique preenchido automaticamente. Tb o que tu acha que da pra melhorar e tirar das coisas escritas pra ficar mais clean? Vai me perguntando pra fazermos um plano legal.
+86. [x] Na aba de busca de produtos troca a busca de produtos para ser por páginas. Sempre quero que fique preenchido automaticamente. Tb o que tu acha que da pra melhorar e tirar das coisas escritas pra ficar mais clean? Vai me perguntando pra fazermos um plano legal.
 
+    O "Carregar mais" virou paginação de verdade ("← Anterior · 3 / 17 ·
+    Próxima →"), e a página vem sempre cheia. Pra isso o corte de "já na fila"
+    e "enviado há pouco" saiu do navegador e foi pro /api/ofertas, que agora
+    recebe o groupId da campanha — antes os cards eram escondidos DEPOIS de
+    receber, o que com páginas numeradas deixaria a página 3 com 4 de 24
+    produtos e ainda faria o contador incluir o que a tela escondia. As duas
+    chaves continuam ali, agora ligando/desligando o filtro no servidor. De
+    quebra, a lista virou exatamente o que o preenchimento vai pegar.
+
+    Limpeza de texto: o seletor de ordem existia em dois lugares (painel de
+    Preenchimento e em cima da lista) — ficou só o de cima; a explicação do
+    "Preencher fila agora" saiu da tela porque o pop-up de confirmação já diz
+    a mesma coisa; as três menções à "ordem que o preenchimento usa" viraram
+    uma; e as dicas longas do painel viraram uma linha cada.
+
+    Os controles de página viraram um componente (ui/Pagination), trocando as
+    três cópias que existiam no /produtos, no admin de repasse e no admin do
+    scraper.
+
+87. [x] Na aba de busca de produtos quero um botão para salvar os filtros. Quero que os filtros também sejam mais editaveis, que de pra escrever os numeros. Também quero que a ordem de maior desconto, preço etc fique ao lado e antes do preencher fila agora. Tira o selecionar todos e tira o quadradinho de selecionar deles.
+
+    Desconto, avaliação e vendas deixaram de ser listas fechadas: agora são
+    campos onde se digita o número (dá pra pedir 35%, nota 4,2). Ao sair do
+    campo o valor encosta no teto quando passa dele — 50 na nota viraria uma
+    lista vazia sem dizer por quê.
+
+    O painel de Filtros ganhou o próprio "Salvar filtros", com uma linha
+    dizendo se há alteração pendente. É o mesmo salvar da aba, só que ali em
+    cima: os filtros ficam no topo e a barra de salvar mora depois da lista
+    inteira.
+
+    A "Ordem" saiu do cabeçalho da lista e foi pra linha do "Preencher fila
+    agora", logo antes do botão — encostada nele, não precisa mais da legenda
+    "também é a ordem que o preenchimento usa" (virou title).
+
+    Saiu a seleção múltipla: a barra de "Selecionar todos", os quadradinhos dos
+    cards e o "Adicionar N à fila" (com o resumo e o aviso de cooldown do
+    lote). Junto foram o `addCatalogProducts` do GroupDashboard e a prop
+    `select` do ProductGridCard, que não tinham outro uso.
+
+88. [] Na busca de produtos testa se todos os filtros estão funcionando.
+
+89. [] Pense como se tu fosse um usuário, o que da pra melhorar na aba de busca de produtos? Em tudo, incluindo cores, destaques

@@ -4,6 +4,7 @@ import Badge from "../components/ui/Badge";
 import Toggle from "../components/ui/Toggle";
 import Modal from "../components/ui/Modal";
 import ScheduleField from "../components/ui/ScheduleField";
+import Pagination from "../components/ui/Pagination";
 import {
   adminScraperConfig,
   adminSaveScraperConfig,
@@ -439,13 +440,7 @@ export default function PageAdminScraper() {
           </div>
         )}
 
-        {catTotal > 50 && (
-          <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 14 }}>
-            <button onClick={() => setCatPage(p => Math.max(1, p - 1))} disabled={catPage <= 1} style={{ padding: "5px 10px", borderRadius: 6, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: catPage <= 1 ? "not-allowed" : "pointer", opacity: catPage <= 1 ? 0.5 : 1 }}>← Anterior</button>
-            <span style={{ fontSize: 12, alignSelf: "center" }}>{catPage} / {Math.ceil(catTotal / 50)}</span>
-            <button onClick={() => setCatPage(p => p + 1)} disabled={catPage >= Math.ceil(catTotal / 50)} style={{ padding: "5px 10px", borderRadius: 6, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: catPage >= Math.ceil(catTotal / 50) ? "not-allowed" : "pointer", opacity: catPage >= Math.ceil(catTotal / 50) ? 0.5 : 1 }}>Próxima →</button>
-          </div>
-        )}
+        <Pagination page={catPage} totalPages={Math.ceil(catTotal / 50)} onChange={setCatPage} disabled={catLoading} />
       </div>
 
       {confirmClear && (

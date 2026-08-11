@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, categoryIcon } from "../data/constants";
 import { adminCatalog, adminScraperConfig, adminRunScraper, adminScraperStatus, errText} from "../data/api";
 import { ProductGridCard } from "../components/ui/ProductCard";
+import Pagination from "../components/ui/Pagination";
 
 const STATUS_POLL_MS = 4000;
 
@@ -318,13 +319,7 @@ ${cards}
             {products.map((p, i) => <ProductGridCard key={p.key || (p.link + i)} product={p} />)}
           </div>
 
-          {totalPages > 1 && (
-            <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 18 }}>
-              <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1} style={pagBtnStyle(page <= 1)}>← Anterior</button>
-              <span style={{ fontSize: 12, alignSelf: "center", padding: "0 10px" }}>{page} / {totalPages}</span>
-              <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages} style={pagBtnStyle(page >= totalPages)}>Próxima →</button>
-            </div>
-          )}
+          <Pagination page={page} totalPages={totalPages} onChange={setPage} />
         </>
       )}
     </div>
@@ -350,13 +345,5 @@ function storeBtnStyle(active) {
     background: active ? "var(--color-background-secondary)" : "transparent",
     color: active ? "var(--color-text-primary)" : "var(--color-text-secondary)",
     fontSize: 12, cursor: "pointer", fontWeight: active ? 500 : 400,
-  };
-}
-function pagBtnStyle(disabled) {
-  return {
-    padding: "6px 14px", borderRadius: 7,
-    border: "0.5px solid var(--color-border-secondary)",
-    background: "transparent", fontSize: 12,
-    cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1,
   };
 }

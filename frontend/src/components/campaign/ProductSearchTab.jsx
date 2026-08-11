@@ -7,7 +7,9 @@ import { browseCatalog, errText } from "../../data/api";
 import Toggle from "../ui/Toggle";
 import Modal from "../ui/Modal";
 import UsageBadge from "../ui/UsageBadge";
-import { ProductRow, ProductGridCard } from "../ui/ProductCard";
+import Badge from "../ui/Badge";
+import { ProductGridCard } from "../ui/ProductCard";
+import Pagination from "../ui/Pagination";
 
 // Ordens aceitas pelo catálogo (backend/catalog/pg.js). O mesmo valor vai pro
 // `scraping.sortBy` da campanha, então a prévia e o preenchimento da fila
@@ -23,11 +25,10 @@ export const DEFAULT_SORT = "discount_desc";
 export const DEFAULT_BATCH = 20;
 export const MAX_BATCH = 50;
 
-// Filtros como listas fechadas em vez de sliders: o valor fica explícito e não
-// depende de acertar o pixel do arraste.
-const DISCOUNT_OPTIONS = [0, 10, 20, 30, 40, 50, 60, 70];
-const RATING_OPTIONS = [0, 3, 3.5, 4, 4.5];
-const SALES_OPTIONS = [0, 10, 50, 100, 500, 1000];
+// Tetos dos filtros que têm um: nota vai até 5 e desconto até 100%. Vendas não
+// tem teto — o catálogo chega em dezenas de milhares.
+const MAX_RATING = 5;
+const MAX_DISCOUNT = 100;
 
 const PAGE_SIZE = 24;
 const DEBOUNCE_MS = 350;
@@ -61,6 +62,15 @@ function itemKeys(item) {
 
 const num = (v) => (v === "" || v == null ? null : Number(v));
 
+// Valor final de um filtro numérico digitado à mão: vazio e lixo viram 0
+// (filtro desligado), negativo vira 0 e o que passa do teto encosta nele — um
+// "50" digitado na nota zeraria a lista sem dizer por quê.
+const clampFilter = (raw, max) => {
+  const n = Number(raw);
+  if (raw === "" || !Number.isFinite(n) || n <= 0) return 0;
+  return max == null ? n : Math.min(max, n);
+};
+
 // Painéis que abrem num botão: onde buscar (lojas/categorias), os filtros (ao
 // lado da busca) e os ajustes do preenchimento automático. Fechados por padrão —
 // a busca e a lista de produtos são o que importa no dia a dia, e ficam no topo.
@@ -84,14 +94,15 @@ function loadView() {
 }
 
 export default function ProductSearchTab({
+  groupId,
   scraping, setScraping,
   // Categorias e lojas da campanha — moram no grupo, editados aqui.
   categories = [], onToggleCategory, categoryLimit,
   selectedSources = [], onToggleSource, lockMessageFor = () => null,
   refilling, triggerRefill, refillMsg,
-  save, dirty, saved, saveBtnStyle,
-  pending = [], queue = [], history = [], cooldownMinutes = 0, cooldownLabel,
-  onAddCatalogProduct, onAddCatalogProducts,
+  save, dirty, filtersDirty, saved, saveBtnStyle,
+  pending = [], queue = [], history = [], cooldownMinutes = 0,
+  onAddCatalogProduct,
 }) {
   const filters = scraping.filters || {};
   const sortBy = SORT_OPTIONS.some(o => o.id === scraping.sortBy) ? scraping.sortBy : DEFAULT_SORT;
@@ -106,9 +117,6 @@ export default function ProductSearchTab({
   const [page, setPage] = useState(1);
   const [sections, setSections] = useState(loadSections);
   const [view, setView] = useState(loadView);
-  // Produtos que o usuário acabou de mandar pra fila continuam visíveis mesmo
-  // que a chave "Já na fila" esteja desligada — senão o card sumiria no clique.
-  const [justAdded, setJustAdded] = useState(() => new Set());
 
   // "Onde buscar" e "Preenchimento" abrem no mesmo lugar, logo abaixo da faixa:
   // abrir um fecha o outro, pra a página não crescer duas vezes.
@@ -135,10 +143,6 @@ export default function ProductSearchTab({
   // Confirmação do "Preencher fila agora": o botão salva a configuração e sai
   // buscando no catálogo, então um clique sem querer custa caro.
   const [askRefill, setAskRefill] = useState(false);
-  // Seleção múltipla da lista.
-  const [selected, setSelected] = useState(() => new Set());
-  const [bulk, setBulk] = useState(null); // { running, done, total } | { done: resumo }
-  const [bulkCooldown, setBulkCooldown] = useState([]);
 
   // Lojas que a busca realmente usa: as escolhidas menos as trancadas pelo admin.
   const usableSources = useMemo(
@@ -181,9 +185,12 @@ export default function ProductSearchTab({
   const resetFilters = () => setScraping(s => ({ ...s, filters: { ...EMPTY_FILTERS } }));
 
   // Assinatura dos parâmetros: muda ⇒ refaz a busca (com debounce, pra não
-  // disparar uma request por tecla digitada).
+  // disparar uma request por tecla digitada). As chaves de visibilidade entram
+  // aqui porque agora são filtro de servidor, não de tela.
   const paramsSig = JSON.stringify({
-    categories, sources: usableSources, sortBy,
+    groupId, categories, sources: usableSources, sortBy,
+    hideQueued: !view.queued,
+    hideRecent: !view.recent,
     q: filters.keywords || "",
     minPrice: Number(filters.minPrice) || 0,
     maxPrice: filters.maxPrice ?? null,
@@ -192,20 +199,16 @@ export default function ProductSearchTab({
     minSales: Number(filters.minSales) || 0,
   });
   // Busca nova: volta pra primeira página e esquece o que era daquela busca —
-  // seleção, adicionados e mensagens não valem pra outra lista.
+  // as mensagens dos cards não valem pra outra lista.
   useEffect(() => {
     setPage(1);
-    setSelected(new Set());
-    setJustAdded(new Set());
     setAddMsgs(new Map());
-    setBulk(null);
-    setBulkCooldown([]);
   }, [paramsSig]);
 
   const abortRef = useRef(null);
-  // A lista cresce com o "Carregar mais": a página 1 substitui, as seguintes
-  // acumulam. Assim as chaves que escondem itens filtram um conjunto cada vez
-  // maior, em vez de esvaziar uma página.
+  // Uma página de cada vez: a lista é substituída, nunca acumulada. O que a
+  // campanha já tem na fila (ou mandou há pouco) sai no backend, então a página
+  // vem cheia em vez de encolher depois de carregada.
   const runSearch = useCallback(async () => {
     if (abortRef.current) abortRef.current.abort();
     const ctrl = new AbortController();
@@ -215,11 +218,15 @@ export default function ProductSearchTab({
     const p = JSON.parse(paramsSig);
     try {
       const r = await browseCatalog({ ...p, page, pageSize: PAGE_SIZE }, { signal: ctrl.signal });
-      setPreview(prev => ({
-        items: page > 1 ? [...prev.items, ...(r.items || [])] : (r.items || []),
+      setPreview({
+        items: r.items || [],
         total: r.total || 0,
         approximate: !!r.approximateTotal,
-      }));
+      });
+      // O total encolhe quando produtos entram na fila (o backend passa a
+      // excluí-los), e a página em que o usuário está pode deixar de existir.
+      const maxPage = Math.max(1, Math.ceil((r.total || 0) / PAGE_SIZE));
+      if (page > maxPage) setPage(maxPage);
     } catch (err) {
       if (err.name === "AbortError") return;
       setPreviewError(errText(err, "Não foi possível carregar a prévia do catálogo."));
@@ -231,19 +238,41 @@ export default function ProductSearchTab({
     }
   }, [paramsSig, page]);
 
+  // O debounce existe pra não disparar uma request por tecla digitada. Virar de
+  // página é um clique só — esperar meio segundo por ele incomoda —, então só
+  // segura quando os parâmetros da busca mudaram de verdade.
+  // A marca é gravada na HORA DE DISPARAR, não quando o efeito roda: mudar de
+  // filtro estando na página 3 rearma o efeito duas vezes (o sig muda, e depois
+  // o page volta pra 1), e gravar antes faria a segunda passada achar que só a
+  // página tinha mudado — buscando sem esperar o debounce.
+  const firedSigRef = useRef(null);
   useEffect(() => {
     if (noSources) {
       setPreview({ items: [], total: 0, approximate: false });
       setLoadingPreview(false);
       return;
     }
-    // O debounce existe pra não disparar uma request por tecla digitada; o
-    // "Carregar mais" é um clique só, e esperar meio segundo por ele incomoda.
-    const timer = setTimeout(runSearch, page > 1 ? 0 : DEBOUNCE_MS);
+    const sigChanged = firedSigRef.current !== paramsSig;
+    const timer = setTimeout(() => {
+      firedSigRef.current = paramsSig;
+      runSearch();
+    }, sigChanged ? DEBOUNCE_MS : 0);
     return () => clearTimeout(timer);
-  }, [runSearch, noSources, page]);
+  }, [runSearch, noSources, paramsSig]);
 
   useEffect(() => () => { if (abortRef.current) abortRef.current.abort(); }, []);
+
+  const totalPages = Math.max(1, Math.ceil((preview.total || 0) / PAGE_SIZE));
+
+  // Virar de página troca a lista inteira: sem isso a tela continua no meio da
+  // rolagem, mostrando produtos diferentes dos que estavam ali.
+  const resultsRef = useRef(null);
+  const firstPageRender = useRef(true);
+  useEffect(() => {
+    if (firstPageRender.current) { firstPageRender.current = false; return; }
+    // scrollIntoView não existe no jsdom dos testes — daí o `?.` no método.
+    resultsRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  }, [page]);
 
   // Selos "já está na fila / aguardando / já enviado" nos cards da prévia.
   const statusByKey = useMemo(() => {
@@ -280,7 +309,6 @@ export default function ProductSearchTab({
 
   const cardKey = (p) => p.key || p.link;
 
-  const markAdded = (ck) => setJustAdded(s => new Set(s).add(ck));
   const setAddMsg = (ck, msg) => setAddMsgs(m => {
     const next = new Map(m);
     if (msg) next.set(ck, msg); else next.delete(ck);
@@ -301,7 +329,6 @@ export default function ProductSearchTab({
         return;
       }
       setCooldownAsk(null);
-      markAdded(ck);
       const alvo = r?.target === "pending" ? "aguardando revisão" : "fila";
       setAddMsg(ck, { type: "ok", text: `Foi pra ${alvo}.` });
       setTimeout(() => setAddMsg(ck, null), 4000);
@@ -313,46 +340,6 @@ export default function ProductSearchTab({
         next.delete(ck);
         return next;
       });
-    }
-  };
-
-  // ── Seleção múltipla ────────────────────────────────────────────────
-  const toggleSelected = (ck) => setSelected(s => {
-    const next = new Set(s);
-    if (next.has(ck)) next.delete(ck); else next.add(ck);
-    return next;
-  });
-
-  const runBulkAdd = async (products, force = false) => {
-    if (!products.length || bulk?.running) return;
-    setBulk({ running: true, done: 0, total: products.length });
-    setBulkCooldown([]);
-    const adder = onAddCatalogProducts
-      // Sem o handler de lote (uso antigo do componente), cai no de um só.
-      || (async (list, f) => {
-        const out = { added: 0, duplicates: 0, cooldown: [], errors: [] };
-        for (const p of list) {
-          const r = await onAddCatalogProduct(p, f);
-          if (r?.inCooldown) out.cooldown.push(p); else out.added++;
-        }
-        return out;
-      });
-    try {
-      const r = await adder(products, force, (done, total) => setBulk({ running: true, done, total }));
-      // O que ficou em cooldown não entrou em lugar nenhum: continua marcado e
-      // visível, à espera do "adicionar assim mesmo".
-      const pendingCooldown = new Set((r.cooldown || []).map(cardKey));
-      const resolved = products.filter(p => !pendingCooldown.has(cardKey(p)));
-      for (const p of resolved) markAdded(cardKey(p));
-      setSelected(s => {
-        const next = new Set(s);
-        for (const p of resolved) next.delete(cardKey(p));
-        return next;
-      });
-      setBulkCooldown(r.cooldown || []);
-      setBulk({ running: false, result: r });
-    } catch (err) {
-      setBulk({ running: false, error: errText(err, "Não foi possível adicionar os produtos.") });
     }
   };
 
@@ -399,28 +386,12 @@ export default function ProductSearchTab({
     `${categories.length} ${categories.length === 1 ? "categoria" : "categorias"}`,
   ].join(" · ");
 
-  // Duas chaves independentes escondem linhas da lista. O que acabou de ser
-  // adicionado escapa das duas, pra não sumir debaixo do clique.
-  let hiddenRecent = 0;
-  let hiddenQueued = 0;
-  const visibleItems = preview.items.filter(p => {
-    if (justAdded.has(cardKey(p))) return true;
-    const st = statusOf(p);
-    if (!view.queued && (st === "queue" || st === "pending")) { hiddenQueued++; return false; }
-    if (!view.recent && isRecent(p)) { hiddenRecent++; return false; }
-    return true;
-  });
+  // As chaves "Já na fila" e "Enviados recentemente" agora são filtro de
+  // servidor (vão no paramsSig), então a página chega pronta. O que ainda pode
+  // aparecer com elas desligadas é o que o usuário acabou de adicionar nesta
+  // sessão — a lista só é rebuscada quando ele troca de página ou de filtro.
+  const visibleItems = preview.items;
 
-  // Só entra na seleção o que dá pra adicionar: o que já está na fila ou
-  // aguardando revisão não tem pra onde ir.
-  const selectableItems = visibleItems.filter(p => {
-    const st = statusOf(p);
-    return st !== "queue" && st !== "pending";
-  });
-  const selectedProducts = selectableItems.filter(p => selected.has(cardKey(p)));
-  const allSelected = selectableItems.length > 0 && selectedProducts.length === selectableItems.length;
-
-  const hasMore = preview.items.length < preview.total;
   const showSkeleton = loadingPreview && preview.items.length === 0 && !noSources;
 
   return (
@@ -457,7 +428,7 @@ export default function ProductSearchTab({
             onClick={() => toggleSection("queue")}
             aria-expanded={queueOpen}
             aria-controls="sec-queue"
-            title="Quando preencher, quantos produtos por vez e em que ordem"
+            title="Quando preencher e quantos produtos por vez"
             style={{ ...chipStyle({ active: false }), padding: "7px 12px", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 6 }}
           >
             Configurar <span style={caretStyle(queueOpen)}>▼</span>
@@ -615,8 +586,8 @@ export default function ProductSearchTab({
         <div id="sec-queue" className="sec-panel join-right" style={panelStyle}>
         <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 4 }}>
           {autoRefill
-            ? "Ligado: o sistema faz sozinho o mesmo que o botão \"Preencher fila agora\" — busca os produtos e joga direto na fila."
-            : "Desligado: a fila só recebe produtos quando você clicar em \"Preencher fila agora\" ou adicionar um produto da lista."}
+            ? "O sistema preenche a fila sozinho."
+            : "Desligado: só o botão \"Preencher fila agora\" e o que você adicionar da lista."}
         </div>
         {autoRefill && (
           <div style={{ padding: "14px 0", borderBottom: "0.5px solid var(--color-border-tertiary)" }}>
@@ -649,10 +620,7 @@ export default function ProductSearchTab({
                   onBlur={e => { if (e.target.value === "") setScraping(s => ({ ...s, refillThreshold: DEFAULT_REFILL_THRESHOLD })); }}
                   style={inputStyle}
                 />
-                <div style={hintStyle}>
-                  Produtos na fila. Sobrando menos que isso, o sistema busca mais — só dentro das
-                  janelas de envio da campanha.
-                </div>
+                <div style={hintStyle}>Produtos na fila. Só dentro das janelas de envio.</div>
               </div>
             ) : (
               <div>
@@ -691,8 +659,7 @@ export default function ProductSearchTab({
                   )}
                 </div>
                 <div style={hintStyle}>
-                  Em cada horário o sistema preenche a fila uma vez, mesmo fora das janelas de envio.
-                  Os produtos ficam guardados e saem nos horários de envio da campanha.
+                  Uma vez em cada horário, mesmo fora das janelas de envio.
                 </div>
                 {refillTimes.length === 0 && (
                   <div style={{ ...noteStyle("warn"), marginTop: 10 }}>
@@ -705,40 +672,27 @@ export default function ProductSearchTab({
           </div>
         )}
 
-        <div className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, paddingTop: 14 }}>
-          <div>
-            <label style={fieldLabelStyle} htmlFor="pr-batch">Produtos por vez</label>
-            <input
-              id="pr-batch" type="number" min={1} max={MAX_BATCH} value={batch}
-              onChange={e => {
-                const raw = e.target.value;
-                if (raw === "") return setScraping(s => ({ ...s, batchSize: "" }));
-                setScraping(s => ({ ...s, batchSize: Math.min(MAX_BATCH, Math.max(1, Number(raw))) }));
-              }}
-              onBlur={e => { if (e.target.value === "") setScraping(s => ({ ...s, batchSize: DEFAULT_BATCH })); }}
-              style={inputStyle}
-            />
-            <div style={hintStyle}>Quantos produtos cada preenchimento traz, de 1 a {MAX_BATCH}.</div>
-          </div>
-          <div>
-            <label style={fieldLabelStyle} htmlFor="pr-sort">Ordem de escolha</label>
-            <select
-              id="pr-sort" value={sortBy}
-              onChange={e => setScraping(s => ({ ...s, sortBy: e.target.value }))}
-              style={inputStyle}
-            >
-              {SORT_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-            </select>
-            <div style={hintStyle}>Pega de cima pra baixo da lista, nesta ordem — é a mesma ordem da lista de produtos.</div>
-          </div>
+        {/* A ordem não fica aqui: é o mesmo `scraping.sortBy` do seletor que
+            está em cima da lista de produtos, onde dá pra ver o efeito. */}
+        <div style={{ maxWidth: 280, paddingTop: 14 }}>
+          <label style={fieldLabelStyle} htmlFor="pr-batch">Produtos por vez</label>
+          <input
+            id="pr-batch" type="number" min={1} max={MAX_BATCH} value={batch}
+            onChange={e => {
+              const raw = e.target.value;
+              if (raw === "") return setScraping(s => ({ ...s, batchSize: "" }));
+              setScraping(s => ({ ...s, batchSize: Math.min(MAX_BATCH, Math.max(1, Number(raw))) }));
+            }}
+            onBlur={e => { if (e.target.value === "") setScraping(s => ({ ...s, batchSize: DEFAULT_BATCH })); }}
+            style={inputStyle}
+          />
+          <div style={hintStyle}>De 1 a {MAX_BATCH}.</div>
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 12, paddingTop: 14 }}>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 13, fontWeight: 500 }}>Misturar a fila depois de preencher</div>
-            <div style={hintStyle}>
-              Embaralha a fila inteira a cada preenchimento, pra não sair uma sequência de ofertas parecidas na ordem em que foram achadas.
-            </div>
+            <div style={hintStyle}>Pra não sair uma sequência de ofertas parecidas.</div>
           </div>
           <Toggle
             label="Misturar a fila depois de preencher"
@@ -784,9 +738,7 @@ export default function ProductSearchTab({
             <span style={{ fontSize: 10 }}>{sections.filters ? "▲" : "▼"}</span>
           </button>
         </div>
-        <div style={hintStyle}>
-          Separe vários termos por vírgula — traz produtos cujo nome tenha <strong>pelo menos um</strong> deles. Vazio = todos.
-        </div>
+        <div style={hintStyle}>Vários termos separados por vírgula. Vazio = todos.</div>
 
         {sections.filters && (
         <div id="sec-filters" style={{ marginTop: 16, paddingTop: 14, borderTop: "0.5px solid var(--color-border-tertiary)" }}>
@@ -819,33 +771,44 @@ export default function ProductSearchTab({
           </div>
           <div>
             <label style={fieldLabelStyle} htmlFor="pr-min-discount">Desconto mínimo</label>
-            <select
-              id="pr-min-discount" value={Number(filters.minDiscount) || 0}
-              onChange={e => setFilter("minDiscount", Number(e.target.value))}
-              style={inputStyle}
-            >
-              {DISCOUNT_OPTIONS.map(v => <option key={v} value={v}>{v === 0 ? "Qualquer desconto" : `${v}% ou mais`}</option>)}
-            </select>
+            <div style={{ position: "relative" }}>
+              <span style={prefixStyle}>%</span>
+              <input
+                id="pr-min-discount" type="number" min={0} max={MAX_DISCOUNT} step={5}
+                value={filters.minDiscount || ""}
+                onChange={e => setFilter("minDiscount", num(e.target.value) ?? 0)}
+                // O teto só entra ao sair do campo: prender enquanto digita
+                // trocaria o "1" de "100" por "100" na frente dos olhos.
+                onBlur={e => setFilter("minDiscount", clampFilter(e.target.value, MAX_DISCOUNT))}
+                placeholder="Sem mínimo"
+                style={{ ...inputStyle, paddingLeft: 36 }}
+              />
+            </div>
           </div>
           <div>
             <label style={fieldLabelStyle} htmlFor="pr-min-rating">Avaliação mínima</label>
-            <select
-              id="pr-min-rating" value={Number(filters.minRating) || 0}
-              onChange={e => setFilter("minRating", Number(e.target.value))}
-              style={inputStyle}
-            >
-              {RATING_OPTIONS.map(v => <option key={v} value={v}>{v === 0 ? "Qualquer nota" : `★ ${String(v).replace(".", ",")} ou mais`}</option>)}
-            </select>
+            <div style={{ position: "relative" }}>
+              <span style={prefixStyle}>★</span>
+              <input
+                id="pr-min-rating" type="number" min={0} max={MAX_RATING} step={0.5}
+                value={filters.minRating || ""}
+                onChange={e => setFilter("minRating", num(e.target.value) ?? 0)}
+                onBlur={e => setFilter("minRating", clampFilter(e.target.value, MAX_RATING))}
+                placeholder="Qualquer nota"
+                style={{ ...inputStyle, paddingLeft: 36 }}
+              />
+            </div>
           </div>
           <div>
             <label style={fieldLabelStyle} htmlFor="pr-min-sales">Vendas mínimas</label>
-            <select
-              id="pr-min-sales" value={Number(filters.minSales) || 0}
-              onChange={e => setFilter("minSales", Number(e.target.value))}
+            <input
+              id="pr-min-sales" type="number" min={0} step={10}
+              value={filters.minSales || ""}
+              onChange={e => setFilter("minSales", num(e.target.value) ?? 0)}
+              onBlur={e => setFilter("minSales", clampFilter(e.target.value, null))}
+              placeholder="Sem mínimo"
               style={inputStyle}
-            >
-              {SALES_OPTIONS.map(v => <option key={v} value={v}>{v === 0 ? "Qualquer quantidade" : `${v.toLocaleString("pt-BR")} ou mais`}</option>)}
-            </select>
+            />
           </div>
         </div>
 
@@ -860,6 +823,27 @@ export default function ProductSearchTab({
             Avaliação e vendas excluem produtos sem essa informação — parte dos produtos da Amazon não traz nota.
           </div>
         )}
+
+        {/* Salvar sem sair daqui: os filtros ficam no topo da aba e a barra de
+            salvar mora lá no rodapé, depois da lista inteira. É o mesmo `save`
+            (grava as escolhas da aba toda), só que aceso pelos filtros. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 16, paddingTop: 12, borderTop: "0.5px solid var(--color-border-tertiary)" }}>
+          <span style={{ flex: 1, fontSize: 11, color: "var(--color-text-secondary)" }}>
+            {saved
+              ? "Filtros salvos."
+              : filtersDirty
+                ? "Filtros alterados e ainda não salvos."
+                : "A campanha usa estes filtros pra preencher a fila."}
+          </span>
+          <button
+            onClick={save}
+            disabled={!filtersDirty}
+            title={filtersDirty ? "Salvar as escolhas desta aba" : "Sem alterações pra salvar"}
+            style={{ ...saveBtnStyle(filtersDirty), padding: "7px 16px", fontSize: 12 }}
+          >
+            {saved ? "✓ Salvo!" : "Salvar filtros"}
+          </button>
+        </div>
         </div>
         )}
 
@@ -877,7 +861,7 @@ export default function ProductSearchTab({
       </div>
 
       {/* ── 4. Prévia do catálogo ─────────────────────────────────────── */}
-      <div data-tour="pr-results" style={{ marginBottom: 24 }}>
+      <div ref={resultsRef} data-tour="pr-results" style={{ marginBottom: 24 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
           <div>
             <div style={{ fontSize: 14, fontWeight: 500 }}>Produtos encontrados</div>
@@ -886,7 +870,7 @@ export default function ProductSearchTab({
                 ? "Nenhuma loja ativa nesta campanha."
                 : loadingPreview && preview.items.length === 0
                   ? "Carregando..."
-                  : `${preview.approximate ? "~" : ""}${preview.total.toLocaleString("pt-BR")} no catálogo · o preenchimento pega os primeiros desta lista`}
+                  : `${preview.approximate ? "~" : ""}${preview.total.toLocaleString("pt-BR")} no catálogo`}
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -898,25 +882,24 @@ export default function ProductSearchTab({
               <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Já na fila</span>
               <Toggle label="Mostrar os que já estão na fila" value={view.queued} onChange={v => setViewFlag("queued", v)} />
             </div>
-            <div>
-              <select
-                aria-label="Ordenar a lista"
-                value={sortBy}
-                onChange={e => setScraping(s => ({ ...s, sortBy: e.target.value }))}
-                style={{ ...inputStyle, width: "auto", padding: "7px 10px" }}
-              >
-                {SORT_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-              </select>
-              <div style={{ ...hintStyle, marginTop: 4, textAlign: "right" }}>
-                Também é a ordem que o preenchimento usa
-              </div>
-            </div>
           </div>
         </div>
 
         {/* Preencher agora age sobre esta lista, e precisa ficar acessível com
-            o painel de preenchimento fechado. */}
+            o painel de preenchimento fechado. A ordem vem logo antes dele: é o
+            `scraping.sortBy` da campanha, então é a mesma ordem que o
+            preenchimento pega — encostada no botão, isso se vê sem legenda. */}
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+          <label style={{ fontSize: 12, color: "var(--color-text-secondary)" }} htmlFor="pr-sort">Ordem</label>
+          <select
+            id="pr-sort"
+            value={sortBy}
+            onChange={e => setScraping(s => ({ ...s, sortBy: e.target.value }))}
+            title="Também é a ordem que o preenchimento usa"
+            style={{ ...inputStyle, width: "auto", padding: "8px 10px" }}
+          >
+            {SORT_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+          </select>
           <button
             data-tour="pr-run"
             onClick={() => setAskRefill(true)}
@@ -926,10 +909,8 @@ export default function ProductSearchTab({
           >
             {refilling ? "⟳ Preenchendo..." : `Preencher fila agora (até ${batch})`}
           </button>
-          <span style={{ ...hintStyle, marginTop: 0, flex: 1, minWidth: 220 }}>
-            Pega os primeiros desta lista e salva as escolhas da aba. Pula o que já está na fila
-            ou foi enviado há pouco.
-          </span>
+          {/* O que o botão faz está no pop-up de confirmação, que é onde a
+              informação chega na hora de decidir. */}
           {refillMsg && (
             <span style={{ fontSize: 12, color: refillMsg.type === "err" ? "var(--danger-text)" : refillMsg.type === "warn" ? "var(--warn-text)" : PRIMARY_DARK }}>
               {refillMsg.text}
@@ -952,112 +933,17 @@ export default function ProductSearchTab({
           </div>
         )}
 
-        {(hiddenRecent > 0 || hiddenQueued > 0) && (
-          <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 10 }}>
-            Escondidos:
-            {hiddenRecent > 0 && (
-              <> {hiddenRecent} enviado{hiddenRecent !== 1 ? "s" : ""} há pouco
-              {cooldownLabel ? ` (menos de ${cooldownLabel})` : ""}</>
-            )}
-            {hiddenRecent > 0 && hiddenQueued > 0 ? " ·" : ""}
-            {hiddenQueued > 0 && <> {hiddenQueued} já na fila desta campanha</>}
-            . Use as chaves acima para mostrar.
-          </div>
-        )}
-
-        {/* Barra de seleção múltipla */}
-        {selectableItems.length > 0 && (
-          <div style={{
-            display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
-            marginBottom: 12, padding: "8px 12px", borderRadius: 10,
-            border: `0.5px solid ${selectedProducts.length > 0 ? PRIMARY : "var(--color-border-tertiary)"}`,
-            background: selectedProducts.length > 0 ? PRIMARY_LIGHT : "transparent",
-          }}>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                checked={allSelected}
-                onChange={() => setSelected(s => {
-                  if (allSelected) return new Set();
-                  const next = new Set(s);
-                  for (const p of selectableItems) next.add(cardKey(p));
-                  return next;
-                })}
-                aria-label="Selecionar todos os produtos da lista"
-                style={{ accentColor: PRIMARY, width: 15, height: 15, cursor: "pointer" }}
-              />
-              <span style={{ color: selectedProducts.length > 0 ? PRIMARY_DARK : "var(--color-text-secondary)", fontWeight: selectedProducts.length > 0 ? 500 : 400 }}>
-                {selectedProducts.length > 0
-                  ? `${selectedProducts.length} selecionado${selectedProducts.length !== 1 ? "s" : ""}`
-                  : "Selecionar todos"}
-              </span>
-            </label>
-            {selectedProducts.length > 0 && (
-              <>
-                <button
-                  onClick={() => runBulkAdd(selectedProducts)}
-                  disabled={bulk?.running}
-                  style={{
-                    padding: "6px 14px", borderRadius: 8, border: "none", background: PRIMARY, color: "#fff",
-                    fontSize: 12, fontWeight: 500, fontFamily: "inherit",
-                    cursor: bulk?.running ? "wait" : "pointer", opacity: bulk?.running ? 0.6 : 1,
-                  }}
-                >
-                  {bulk?.running
-                    ? `Adicionando ${bulk.done} de ${bulk.total}...`
-                    : `Adicionar ${selectedProducts.length} à fila`}
-                </button>
-                <button onClick={() => setSelected(new Set())} style={linkBtnStyle}>Limpar seleção</button>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* O resumo do lote fica fora da barra de seleção: no fim de um lote
-            bem-sucedido os cards viram "já na fila" e a barra some — o aviso
-            do que aconteceu não pode sumir junto. */}
-        {bulk && !bulk.running && (bulk.result || bulk.error) && (
-          <div style={{
-            ...(bulk.error ? noteStyle("danger") : {}),
-            marginBottom: 12, fontSize: 12,
-            color: bulk.error ? undefined : PRIMARY_DARK,
-            display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
-          }}>
-            <span style={{ flex: 1 }}>{bulk.error || bulkResultText(bulk.result)}</span>
-            <button onClick={() => setBulk(null)} style={linkBtnStyle}>Ok</button>
-          </div>
-        )}
-
-        {bulkCooldown.length > 0 && (
-          <div style={{ ...noteStyle("warn"), marginBottom: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <span style={{ flex: 1 }}>
-              {bulkCooldown.length} produto{bulkCooldown.length !== 1 ? "s" : ""} foi enviado há pouco
-              {cooldownLabel ? ` (espera de ${cooldownLabel})` : ""} e ficou de fora.
-            </span>
-            <button
-              onClick={() => runBulkAdd(bulkCooldown, true)}
-              disabled={bulk?.running}
-              style={{ ...chipStyle({ active: true }), padding: "5px 12px", fontSize: 12 }}
-            >
-              Adicionar assim mesmo
-            </button>
-            <button onClick={() => setBulkCooldown([])} style={linkBtnStyle}>Deixar de fora</button>
-          </div>
-        )}
-
+        {/* Sem itens agora quer dizer sem itens mesmo: as chaves de visibilidade
+            já foram aplicadas no backend, não sobra nada escondido na tela. */}
         {!noSources && !loadingPreview && !previewError && visibleItems.length === 0 && (
           <div style={{ ...cardStyle, fontSize: 13, color: "var(--color-text-secondary)" }}>
-            {preview.items.length > 0 ? (
-              "Todos os produtos desta busca estão escondidos pelas chaves \"Enviados recentemente\" e \"Já na fila\". Ligue uma delas para vê-los."
-            ) : (
-              <>
-                <div>Nenhum produto do catálogo passa nesses filtros. Afrouxe algum critério ou marque mais categorias.</div>
-                {hasAnyFilter && (
-                  <button onClick={resetFilters} style={{ ...chipStyle({ active: false }), marginTop: 10, fontSize: 12 }}>
-                    Limpar filtros
-                  </button>
-                )}
-              </>
+            {/* Numa string só: quebrar em {expressões} espalharia o texto por
+                vários nós e o findByText dos testes deixaria de achar a frase. */}
+            <div>{emptyListText(view)}</div>
+            {hasAnyFilter && (
+              <button onClick={resetFilters} style={{ ...chipStyle({ active: false }), marginTop: 10, fontSize: 12 }}>
+                Limpar filtros
+              </button>
             )}
           </div>
         )}
@@ -1078,23 +964,12 @@ export default function ProductSearchTab({
               <ProductGridCard
                 key={p.key || `${p.link}-${i}`}
                 product={p}
-                select={!blocked ? (
-                  <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--color-text-secondary)", cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={selected.has(ck)}
-                      onChange={() => toggleSelected(ck)}
-                      aria-label={`Selecionar ${p.name}`}
-                      style={{ accentColor: PRIMARY, width: 15, height: 15, cursor: "pointer" }}
-                    />
-                  </label>
-                ) : null}
-                badge={status ? <span style={statusChipStyle}>{
-                  status === "queue" ? "Já está na fila"
-                    : status === "pending" ? "Aguardando revisão"
-                    : recent ? "Enviado há pouco"
-                    : "Já enviado"
-                }</span> : null}
+                // "Na fila" e "aguardando revisão" já estão escritos no botão
+                // logo abaixo — o selo em cima só repetia. Fica o que o botão
+                // não diz: que este produto já foi ao ar antes.
+                badge={status === "sent"
+                  ? <Badge color={recent ? "amber" : "gray"}>{recent ? "Enviado há pouco" : "Já enviado"}</Badge>
+                  : null}
                 footer={
                   // A confirmação de reenvio nasce no próprio card: o usuário
                   // clicou aqui embaixo na lista, um aviso no topo da página
@@ -1140,19 +1015,26 @@ export default function ProductSearchTab({
                     <button
                       onClick={() => addProduct(p)}
                       disabled={blocked || busy}
-                      title={blocked ? "Este produto já está na fila desta campanha" : "Adicionar este produto à fila da campanha"}
+                      title={status === "pending"
+                        ? "Este produto está aguardando sua revisão na aba Fila"
+                        : blocked ? "Este produto já está na fila desta campanha"
+                        : "Adicionar este produto à fila da campanha"}
+                      // Bloqueado não é botão apagado, é estado: contorno leve
+                      // e um sinalzinho, em vez do bloco cinza chapado.
                       style={{
-                        width: "100%", padding: "7px 10px", borderRadius: 8, border: "none",
-                        background: blocked ? "var(--color-background-secondary)" : PRIMARY_LIGHT,
+                        width: "100%", padding: "7px 10px", borderRadius: 8,
+                        display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5,
+                        border: blocked ? "0.5px solid var(--color-border-tertiary)" : "0.5px solid transparent",
+                        background: blocked ? "transparent" : PRIMARY_LIGHT,
                         color: blocked ? "var(--color-text-secondary)" : PRIMARY_DARK,
-                        fontSize: 12, fontWeight: 500,
-                        cursor: blocked ? "not-allowed" : "pointer",
+                        fontSize: 12, fontWeight: 500, fontFamily: "inherit",
+                        cursor: blocked ? "default" : "pointer",
                         opacity: busy ? 0.6 : 1,
                       }}
                     >
                       {busy ? "Adicionando..."
-                        : status === "pending" ? "Aguardando revisão"
-                        : blocked ? "Já na fila"
+                        : status === "pending" ? <><span aria-hidden="true">⏳</span>Aguardando revisão</>
+                        : blocked ? <><span aria-hidden="true">✓</span>Já na fila</>
                         : status === "sent" ? "Adicionar de novo"
                         : "Adicionar à fila"}
                     </button>
@@ -1164,24 +1046,7 @@ export default function ProductSearchTab({
         </div>
 
         {!noSources && !previewError && preview.items.length > 0 && (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginTop: 16 }}>
-            {hasMore ? (
-              <button
-                onClick={() => setPage(p => p + 1)}
-                disabled={loadingPreview}
-                style={{
-                  padding: "9px 20px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)",
-                  background: "transparent", color: "inherit", fontSize: 13, fontFamily: "inherit",
-                  cursor: loadingPreview ? "wait" : "pointer", opacity: loadingPreview ? 0.6 : 1,
-                }}
-              >
-                {loadingPreview ? "Carregando..." : "Carregar mais"}
-              </button>
-            ) : null}
-            <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
-              {preview.items.length} de {preview.approximate ? "~" : ""}{preview.total.toLocaleString("pt-BR")} carregados
-            </span>
-          </div>
+          <Pagination page={page} totalPages={totalPages} onChange={setPage} disabled={loadingPreview} />
         )}
       </div>
 
@@ -1247,14 +1112,13 @@ export default function ProductSearchTab({
   );
 }
 
-// Resumo de um "adicionar vários": só entra o que aconteceu de verdade.
-function bulkResultText(r) {
-  if (!r) return "";
-  const parts = [];
-  if (r.added) parts.push(`${r.added} adicionado${r.added !== 1 ? "s" : ""}`);
-  if (r.duplicates) parts.push(`${r.duplicates} já ${r.duplicates !== 1 ? "estavam" : "estava"} na fila`);
-  if (r.errors?.length) parts.push(`${r.errors.length} com erro`);
-  return parts.length ? parts.join(" · ") : "Nada foi adicionado.";
+// Lista vazia. As chaves de visibilidade agora cortam no backend, então elas
+// entram na sugestão do que afrouxar quando estão desligadas.
+function emptyListText(view) {
+  const base = "Nenhum produto do catálogo passa nesses filtros. Afrouxe algum critério, marque mais categorias";
+  return (!view.queued || !view.recent)
+    ? `${base}, ou ligue as chaves acima pra ver os que já estão na fila.`
+    : `${base}.`;
 }
 
 // Placeholder cinza do mesmo tamanho do card, pra primeira carga não ser um

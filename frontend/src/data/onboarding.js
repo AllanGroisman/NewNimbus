@@ -75,7 +75,7 @@ export const TOURS = {
       //    líderes ficam na aba Grupos e a revisão dos links, na aba Fila)
       { tab: "products", anchor: "tab-products", title: "De onde vêm os produtos", text: "É aqui que você diz o que procurar no catálogo: categorias, palavras-chave e filtros de preço, desconto e avaliação. Colar um link na mão não é aqui — isso fica na aba Fila." },
       { tab: "products", anchor: "pr-where", title: "Onde buscar", text: "As lojas e as categorias que esta campanha vasculha. Aparecem só as categorias ligadas; o botão \"Adicionar categoria\" abre a lista pra marcar mais, até o limite do seu plano." },
-      { tab: "products", anchor: "pr-queue", title: "Preenchimento automático", text: "A chave liga e desliga o preenchimento sozinho. Em \"Configurar\" você escolhe quando ele acontece — quando a fila estiver acabando ou em horários fixos do dia —, quantos produtos entram por vez e em que ordem." },
+      { tab: "products", anchor: "pr-queue", title: "Preenchimento automático", text: "A chave liga e desliga o preenchimento sozinho. Em \"Configurar\" você escolhe quando ele acontece — quando a fila estiver acabando ou em horários fixos do dia — e quantos produtos entram por vez. A ordem fica no seletor em cima da lista de produtos." },
 
       // ── Fila
       { tab: "queue", anchor: "tab-queue", title: "Fila", text: "A ordem de quem vai ser enviado — é aqui que você vê o que está esperando pra sair." },

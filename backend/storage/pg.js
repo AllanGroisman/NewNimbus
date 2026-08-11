@@ -406,6 +406,54 @@ async function updateGroupOps(userId, groupId, patch) {
   return groupRowToObject(fresh, queue, pending, history);
 }
 
+// Keys que a busca de produtos não deve mostrar pra uma campanha: o que já está
+// na fila / aguardando revisão (`queued`) e o que foi enviado dentro do tempo de
+// espera pra reenvio (`recent`).
+//
+// Puxa só a coluna productKey, escopada nesse grupo, e corta o cooldown no
+// próprio WHERE. É de propósito bem mais magro que loadState(), que traz o
+// estado inteiro do usuário em 7 queries: isso aqui roda a cada busca da aba
+// (uma por tecla digitada, depois do debounce, e uma por página virada).
+//
+// `cooldownMinutesFor` recebe o schedule da campanha e devolve os minutos de
+// espera — a regra mora no scheduler, não aqui.
+//
+// Devolve null se o grupo não é desse usuário — quem chama trata como "sem
+// exclusão", nunca como erro.
+async function loadExcludeKeys(userId, groupId, { queued = true, recent = true, cooldownMinutesFor } = {}) {
+  let id;
+  try {
+    id = BigInt(groupId);
+  } catch {
+    return null;   // id não-numérico (o id legado é Date.now())
+  }
+  const group = await prisma().group.findFirst({
+    where: { id, userId },
+    select: { schedule: true },
+  });
+  if (!group) return null;
+
+  const cdMin = recent && cooldownMinutesFor ? Number(cooldownMinutesFor(group.schedule || {})) || 0 : 0;
+  const since = cdMin > 0 ? new Date(Date.now() - cdMin * 60000) : null;
+
+  const [queueRows, pendingRows, historyRows] = await Promise.all([
+    queued ? prisma().groupQueueItem.findMany({ where: { groupId: id }, select: { productKey: true } }) : [],
+    queued ? prisma().groupPendingItem.findMany({ where: { groupId: id }, select: { productKey: true } }) : [],
+    since
+      ? prisma().groupHistory.findMany({
+          where: { groupId: id, sentAt: { gte: since } },
+          select: { productKey: true },
+        })
+      : [],
+  ]);
+
+  const out = new Set();
+  for (const rows of [queueRows, pendingRows, historyRows]) {
+    for (const r of rows) out.add(r.productKey);
+  }
+  return out;
+}
+
 async function loadOps(userId) {
   const [groupRows, queueRows, pendingRows, historyRows] = await Promise.all([
     prisma().group.findMany({ where: { userId } }),
@@ -489,6 +537,7 @@ module.exports = {
   saveState,
   updateGroupOps,
   loadOps,
+  loadExcludeKeys,
   clearState,
   listAllUserIds,
   loadPlanPaused,

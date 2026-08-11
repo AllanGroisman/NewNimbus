@@ -602,33 +602,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     return r;
   };
 
-  // Versão em lote (seleção múltipla da aba de busca). Vai um a um pra
-  // aproveitar o mesmo caminho de validação do servidor, mas recarrega as ops
-  // uma vez só no fim. Devolve o resumo pra tela montar a mensagem.
-  const addCatalogProducts = async (products, force = false, onProgress) => {
-    const result = { added: 0, duplicates: 0, cooldown: [], errors: [] };
-    let done = 0;
-    for (const product of products) {
-      try {
-        const r = await manualAddToQueue(group.id, {
-          url: product.link,
-          force,
-          overrides: catalogOverrides(product),
-        });
-        if (r?.inCooldown) result.cooldown.push(product);
-        else result.added++;
-      } catch (err) {
-        // Duplicata não é falha: o produto já está onde o usuário queria.
-        if (err?.code === "duplicate_queue" || err?.code === "duplicate_pending") result.duplicates++;
-        else result.errors.push({ product, message: err?.message || "Não foi possível adicionar." });
-      }
-      done++;
-      if (onProgress) onProgress(done, products.length);
-    }
-    if (result.added > 0) await reloadGroupOps();
-    return result;
-  };
-
   // A aba de busca precisa saber quais lojas o admin trancou pra desenhar o
   // cadeado e pra tirá-las da prévia (o refill também as ignora).
   const lockMessageForStore = (src) => storeLockMessage(storeLocks, src);
@@ -1322,9 +1295,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const windowsDirty = stableJSON(sched?.windows) !== stableJSON(group.schedule?.windows);
   // Tempo de espera para reenvio em minutos — a aba de busca usa pra esconder da
   // lista os produtos enviados há pouco (os mesmos que o preenchimento pula).
-  const cooldownLabel = sched?.cooldownValue
-    ? `${sched.cooldownValue} ${sched.cooldownUnit || "horas"}`
-    : null;
   const cooldownMins = (() => {
     const v = Number(sched?.cooldownValue) || 0;
     const u = String(sched?.cooldownUnit || "horas").toLowerCase();
@@ -2686,6 +2656,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
       {tab === "products" && !isRepasse && (
         <ProductSearchTab
+          groupId={group.id}
           scraping={scraping}
           setScraping={setScraping}
           categories={groupInfo.categories}
@@ -2698,6 +2669,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           triggerRefill={triggerRefill}
           save={save}
           dirty={searchTabDirty}
+          filtersDirty={filtersDirty}
           saved={saved}
           saveBtnStyle={saveBtnStyle}
           refillMsg={refillMsg}
@@ -2705,9 +2677,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           queue={queue}
           history={group.history || []}
           cooldownMinutes={cooldownMins}
-          cooldownLabel={cooldownLabel}
           onAddCatalogProduct={addCatalogProduct}
-          onAddCatalogProducts={addCatalogProducts}
         />
       )}
 
