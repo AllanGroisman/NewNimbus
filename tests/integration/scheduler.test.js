@@ -124,6 +124,45 @@ describe("scheduler.refillNow — popa do catalogo", () => {
   });
 });
 
+// A busca da aba filtra em SQL (catalog.buildWhere) e o scheduler refiltra em
+// JS (itemMatchesCampaign) pra limpar da fila o que deixou de servir. São duas
+// implementações da mesma regra: se discordarem, o produto entra na fila pela
+// busca e é expulso pela limpeza no tick seguinte — ou o contrário.
+describe("filtros: catálogo (SQL) e itemMatchesCampaign (JS) concordam", () => {
+  const cenario = [
+    mlProduct(451, { category: "gamer", name: "Teclado mecanico 451", discount: 60, price: 300, rating: 4.8, sold: "2 mil vendidos" }),
+    mlProduct(452, { category: "gamer", name: "Teclado barato 452", discount: 10, price: 40, rating: 3.0, sold: "5 vendidos" }),
+    mlProduct(453, { category: "gamer", name: "Mouse sem preco 453", discount: 60, price: null, rating: 4.8, sold: "2 mil vendidos" }),
+    mlProduct(454, { category: "gamer", name: "Monitor sem nota 454", discount: 60, price: 300, rating: null, sold: "2 mil vendidos" }),
+    mlProduct(455, { category: "casa", name: "Teclado de casa 455", discount: 60, price: 300, rating: 4.8, sold: "2 mil vendidos" }),
+    amazonProduct(456, { category: "gamer", name: "Teclado amazon 456", discount: 60, price: 300, rating: 4.8, sold: null }),
+  ];
+
+  const combinacoes = [
+    ["desconto", { minDiscount: 50 }],
+    ["faixa de preço", { minPrice: 100, maxPrice: 500 }],
+    ["nota", { minRating: 4.5 }],
+    ["vendas", { minSales: 1000 }],
+    ["palavra-chave", { keywords: "teclado" }],
+    ["tudo junto", { minDiscount: 50, minPrice: 100, maxPrice: 500, minRating: 4.5, minSales: 1000, keywords: "teclado, mouse" }],
+  ];
+
+  it.each(combinacoes)("mesma resposta pro filtro de %s", async (_nome, filters) => {
+    await catalog.upsertProducts(cenario);
+    const group = makeGroup({ id: 460, categories: ["gamer"], sources: ["ml"], filters });
+
+    const doSql = await catalog.query({
+      categories: ["gamer"], sources: ["ml"], filters, limit: 100,
+    });
+    const todos = await catalog.query({ limit: 100 });
+    const ctx = scheduler.campaignFilterCtx(group);
+    const doJs = todos.filter(p => scheduler.itemMatchesCampaign(p, ctx));
+
+    expect(doJs.map(p => p.name).sort()).toEqual(doSql.map(p => p.name).sort());
+    expect(doSql.length).toBeGreaterThan(0);
+  });
+});
+
 describe("scheduler.manualAdd — adicionar produto via URL", () => {
   it("adiciona na queue quando auto=true", async () => {
     const { user, auth } = await createUserWithMLAffiliate();

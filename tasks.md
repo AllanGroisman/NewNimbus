@@ -657,7 +657,44 @@ No preenchimento automatico mesma coisa ao clicar em configurar. Em ambos, quand
     lote). Junto foram o `addCatalogProducts` do GroupDashboard e a prop
     `select` do ProductGridCard, que não tinham outro uso.
 
-88. [] Na busca de produtos testa se todos os filtros e ordenação estão funcionando. Tem mais algo pra testar ali?
+88. [x] Na busca de produtos testa se todos os filtros e ordenação estão funcionando. Tem mais algo pra testar ali?
+
+    Estão funcionando — os seis filtros, as lojas, as categorias, as duas
+    chaves de visibilidade e as cinco ordens. O que faltava era teste: preço
+    mínimo/máximo, nota, vendas, as ordens "menor preço", "melhor avaliação" e
+    "mais recentes" e as combinações não tinham nenhum. Agora cada um tem, com
+    o produto que passa, o que não passa e o que tem o campo vazio — é onde
+    filtro costuma escorregar (o "até R$ 200" não pode trazer junto quem não
+    diz o preço).
+
+    Testando apareceram dois defeitos de paginação, os dois corrigidos:
+
+    Nenhuma das ordens tinha critério de desempate, e empate é a regra aqui
+    (dezenas de produtos com 50%, a cauda inteira sem desconto). Sem desempate
+    o Postgres não promete a mesma ordem em duas consultas, então a página 2
+    podia repetir um produto da 1 — e sumir com outro. A key entrou como último
+    critério nas cinco.
+
+    O "vendas mínimas" era filtrado em JavaScript depois da consulta, porque o
+    número de vendas só existia como texto ("+1,5 mil vendidos"). O contador
+    rodava no banco e não enxergava esse corte: com o filtro ligado, o total
+    contava produtos que a lista não mostrava e as últimas páginas vinham
+    vazias. O número de vendas virou coluna (`soldCount`, preenchida na
+    gravação e retroativa por migração), o filtro voltou pro SQL e o total é
+    exato de novo — saiu junto o "~" que avisava que o número era chute.
+
+    Do que mais valia testar ali, ficou coberto:
+
+    - A busca (SQL) e a limpeza da fila (JavaScript) implementam a mesma regra
+      de filtro em dois lugares. Um teste agora exige que as duas concordem —
+      senão o produto entra na fila pela busca e é expulso no tick seguinte.
+    - A lista de ordens existe em três arquivos (aba, rota, preenchimento).
+      Renomear um id em um só devolveria "maior desconto" calado no lugar do que
+      foi pedido; agora cada id é conferido nos três.
+    - Exclusão por campanha somada a filtro, no total também.
+    - Na tela: teto do desconto (100) e das vendas (0) ao sair do campo, aviso
+      de preço mínimo maior que o máximo, a página de 24, e que trocar a ordem
+      não arrasta junto o filtro digitado que ainda não foi buscado.
 
 89. [x] Pense como se tu fosse um usuário, o que da pra melhorar na aba de busca de produtos? Em tudo, incluindo cores, destaques
 

@@ -387,7 +387,7 @@ export async function fetchOfertas({ category, minDiscount = 0, minPrice = 0, ma
 
 // Navega o catálogo com os mesmos filtros/ordem que a busca da campanha usa.
 // Alimenta a prévia da aba "Busca de Produtos" (paginada).
-// Retorna { items, total, page, pageSize, approximateTotal, catalogStats }.
+// Retorna { items, total, page, pageSize, catalogStats }.
 // Com `groupId`, o backend já tira da lista o que essa campanha tem na fila
 // (hideQueued) e o que ela mandou dentro do tempo de espera (hideRecent).
 export async function browseCatalog({

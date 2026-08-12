@@ -159,7 +159,7 @@ export default function ProductSearchTab({
     try { localStorage.setItem(VIEW_KEY, JSON.stringify(next)); } catch { /* modo privado */ }
     return next;
   });
-  const [preview, setPreview] = useState({ items: [], total: 0, approximate: false });
+  const [preview, setPreview] = useState({ items: [], total: 0 });
   const [loadingPreview, setLoadingPreview] = useState(true);
   const [previewError, setPreviewError] = useState(null);
   // Vários produtos podem estar sendo adicionados ao mesmo tempo: cada card
@@ -256,11 +256,7 @@ export default function ProductSearchTab({
     const p = JSON.parse(paramsSig);
     try {
       const r = await browseCatalog({ ...p, page, pageSize: PAGE_SIZE }, { signal: ctrl.signal });
-      setPreview({
-        items: r.items || [],
-        total: r.total || 0,
-        approximate: !!r.approximateTotal,
-      });
+      setPreview({ items: r.items || [], total: r.total || 0 });
       // O total encolhe quando produtos entram na fila (o backend passa a
       // excluí-los), e a página em que o usuário está pode deixar de existir.
       const maxPage = Math.max(1, Math.ceil((r.total || 0) / PAGE_SIZE));
@@ -283,7 +279,7 @@ export default function ProductSearchTab({
   const timerRef = useRef(null);
   useEffect(() => {
     if (noSources) {
-      setPreview({ items: [], total: 0, approximate: false });
+      setPreview({ items: [], total: 0 });
       setLoadingPreview(false);
       return;
     }
@@ -1263,8 +1259,7 @@ export default function ProductSearchTab({
 // o usuário procura, e os testes o encontram por ele.
 function countText(preview, page, totalPages, loading) {
   const total = preview.total || 0;
-  const tilde = preview.approximate ? "~" : "";
-  const parts = [`${preview.items.length} de ${tilde}${total.toLocaleString("pt-BR")} no catálogo`];
+  const parts = [`${preview.items.length} de ${total.toLocaleString("pt-BR")} no catálogo`];
   if (totalPages > 1) parts.push(`página ${page} de ${totalPages}`);
   if (loading) parts.push("buscando...");
   return parts.join(" · ");

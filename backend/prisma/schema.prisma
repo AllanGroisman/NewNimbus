@@ -281,6 +281,10 @@ model CatalogProduct {
   category      String?
   rating        Float?
   sold          String?
+  // Número de vendas já parseado do `sold` ("+1,5 mil vendidos" → 1500). Coluna
+  // própria porque o filtro "vendas mínimas" precisa rodar no SQL: com o corte
+  // em JS depois da query, o count() ignorava o filtro e a paginação mentia.
+  soldCount     Int?
   payload       Json     @default("{}")
   firstSeenAt   DateTime @default(now())
   lastSeenAt    DateTime @default(now())
@@ -289,6 +293,7 @@ model CatalogProduct {
   @@index([store])
   @@index([lastSeenAt(sort: Desc)])
   @@index([discount(sort: Desc)])
+  @@index([soldCount(sort: Desc)])
   @@map("catalog_products")
 }
 

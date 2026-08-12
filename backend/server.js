@@ -1742,8 +1742,6 @@ app.get("/api/ofertas", auth.requireAuth, async (req, res) => {
       total: paginated ? total : products.length,
       page: paginated ? page : 1,
       pageSize: paginated ? pageSize : products.length,
-      // total aproximado quando minSales corta pós-query (ver catalog.count)
-      approximateTotal: minSales > 0,
       category: categories && categories.length === 1 ? categories[0] : null,
       categories,
       sources,

@@ -24,7 +24,7 @@ function parseSold(s) {
 // Separa campos "indexáveis" (colunas) de campos extras (jsonb payload).
 const INDEXED_FIELDS = new Set([
   "key", "name", "link", "img", "price", "originalPrice",
-  "discount", "store", "category", "rating", "sold",
+  "discount", "store", "category", "rating", "sold", "soldCount",
   "firstSeenAt", "lastSeenAt",
 ]);
 
@@ -46,6 +46,12 @@ function toRow(p, key, now) {
     category: cat,
     rating: p.rating ?? null,
     sold: p.sold || null,
+    // Shopee manda a contagem exata em soldCount; ML só tem o texto ("+1,5 mil
+    // vendidos"). O parse acontece aqui, na gravação, pra o filtro de vendas
+    // mínimas poder rodar no SQL.
+    soldCount: p.soldCount != null && p.soldCount !== "" && Number.isFinite(Number(p.soldCount))
+      ? Math.round(Number(p.soldCount))
+      : parseSold(p.sold),
     payload,
     lastSeenAt: now,
   };
@@ -69,6 +75,9 @@ function fromRow(r) {
     firstSeenAt: r.firstSeenAt?.toISOString?.() || r.firstSeenAt,
     lastSeenAt: r.lastSeenAt?.toISOString?.() || r.lastSeenAt,
     ...(r.payload || {}),
+    // Depois do payload de propósito: linhas gravadas antes da coluna existir
+    // ainda carregam um `soldCount` antigo lá dentro, e quem manda é a coluna.
+    soldCount: r.soldCount ?? null,
   };
 }
 
@@ -151,13 +160,16 @@ function buildWhere({ categories, sources, excludeKeys, filters = {} }) {
     where.AND.push({ price: { lte: maxPrice, not: null } });
   }
   if (minRating > 0) where.AND.push({ rating: { gte: minRating } });
+  // soldCount é gravado já parseado (0 quando o produto não diz quantas vendeu),
+  // então o corte de vendas mínimas cabe no WHERE junto com os outros — é o que
+  // mantém o count() honesto e a paginação sem páginas vazias no fim.
+  if (minSales > 0) where.AND.push({ soldCount: { gte: minSales } });
   if (keywords && String(keywords).trim()) {
     const terms = String(keywords).toLowerCase().split(",").map(t => t.trim()).filter(Boolean);
     if (terms.length) {
       where.AND.push({ OR: terms.map(t => ({ name: { contains: t, mode: "insensitive" } })) });
     }
   }
-  // minSales depende do parseSold do payload — filtramos pós-query (campo não-indexado).
 
   return where.AND.length ? where : undefined;
 }
@@ -167,48 +179,37 @@ async function query({
   sortBy = "discount_desc",
 } = {}) {
   const where = buildWhere({ categories, sources, excludeKeys, filters });
-  const { minSales = 0 } = filters;
   const skip = Math.max(0, Number(offset) || 0);
 
   // `nulls: "last"` é obrigatório: price/discount/rating são colunas opcionais e
   // no Postgres o DESC joga NULL na frente — "maior desconto" abria a lista com
   // os produtos que nem têm desconto.
+  //
+  // O `key` no fim desempata: empate é a regra aqui (dezenas de produtos com 50%
+  // de desconto, a cauda inteira com desconto nulo) e sem critério estável o
+  // Postgres pode devolver a mesma linha na página 1 e na 2 — e sumir com outra.
   const orderBy = (() => {
     switch (sortBy) {
-      case "price_asc":     return [{ price: { sort: "asc", nulls: "last" } }];
-      case "price_desc":    return [{ price: { sort: "desc", nulls: "last" } }];
-      case "rating_desc":   return [{ rating: { sort: "desc", nulls: "last" } }];
-      case "lastSeen_desc": return [{ lastSeenAt: "desc" }];
+      case "price_asc":     return [{ price: { sort: "asc", nulls: "last" } }, { key: "asc" }];
+      case "price_desc":    return [{ price: { sort: "desc", nulls: "last" } }, { key: "asc" }];
+      case "rating_desc":   return [{ rating: { sort: "desc", nulls: "last" } }, { key: "asc" }];
+      case "lastSeen_desc": return [{ lastSeenAt: "desc" }, { key: "asc" }];
       case "discount_desc":
-      default:              return [{ discount: { sort: "desc", nulls: "last" } }];
+      default:              return [{ discount: { sort: "desc", nulls: "last" } }, { key: "asc" }];
     }
   })();
 
-  // Com minSales o corte é pós-query, então o offset também precisa ser aplicado
-  // depois do filtro — buscamos com folga e paginamos em memória. Sem minSales,
-  // skip/take vão direto pro banco.
-  const postFilter = minSales > 0;
-  const fetchLimit = limit > 0
-    ? (postFilter ? (skip + limit) * 5 : limit)
-    : undefined;
   const rows = await prisma().catalogProduct.findMany({
     where,
     orderBy,
-    skip: postFilter ? undefined : (skip || undefined),
-    take: fetchLimit,
+    skip: skip || undefined,
+    take: limit > 0 ? limit : undefined,
   });
-
-  let out = rows.map(fromRow);
-  if (postFilter) {
-    out = out.filter(p => parseSold(p.sold) >= minSales);
-    out = limit > 0 ? out.slice(skip, skip + limit) : out.slice(skip);
-  }
-  return out;
+  return rows.map(fromRow);
 }
 
 // Total de produtos que batem com os filtros (pro contador/paginação da UI).
-// Com minSales o número é aproximado: esse filtro é pós-query e o count roda no
-// banco, então ele ignora o corte de vendas.
+// Mesmo `where` do query(), então o número é exato — inclusive com minSales.
 async function count({ categories, sources, excludeKeys, filters = {} } = {}) {
   const where = buildWhere({ categories, sources, excludeKeys, filters });
   return prisma().catalogProduct.count({ where });

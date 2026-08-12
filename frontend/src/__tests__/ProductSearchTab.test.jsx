@@ -12,7 +12,7 @@ vi.mock("../data/api", () => ({
 }));
 
 import { browseCatalog } from "../data/api";
-import ProductSearchTab from "../components/campaign/ProductSearchTab.jsx";
+import ProductSearchTab, { SORT_OPTIONS } from "../components/campaign/ProductSearchTab.jsx";
 
 function makeProduct(over = {}) {
   return {
@@ -298,6 +298,82 @@ describe("ProductSearchTab — filtros", () => {
     abrirFiltros();
     fireEvent.click(screen.getByRole("button", { name: "Salvar filtros" }));
     expect(save).toHaveBeenCalledTimes(1);
+  });
+});
+
+// O que chega no catálogo: cada ordem da lista, o tamanho da página e os
+// números que não podem passar do teto. É o contrato entre a aba e a rota
+// /api/ofertas — se um id de ordenação mudar de nome só de um lado, cai aqui.
+describe("ProductSearchTab — o que a aba pede ao catálogo", () => {
+  const abrirFiltros = () => fireEvent.click(screen.getByRole("button", { name: /^Filtros/ }));
+  const ultimaChamada = () => browseCatalog.mock.calls[browseCatalog.mock.calls.length - 1][0];
+
+  it.each(SORT_OPTIONS.map(o => [o.id, o.label]))(
+    "a ordem '%s' (%s) vai inteira pra busca",
+    async (id) => {
+      render(<Harness />);
+      await waitFor(() => expect(browseCatalog).toHaveBeenCalled());
+
+      fireEvent.change(screen.getByLabelText("Ordenar Por"), { target: { value: id } });
+      await waitFor(() => expect(ultimaChamada().sortBy).toBe(id));
+    },
+  );
+
+  it("pede a primeira página com 24 produtos", async () => {
+    render(<Harness />);
+    await waitFor(() => expect(browseCatalog).toHaveBeenCalled());
+    expect(ultimaChamada()).toMatchObject({ page: 1, pageSize: 24 });
+  });
+
+  it("desconto acima de 100% encosta no teto ao sair do campo", async () => {
+    render(<Harness />);
+    await waitFor(() => expect(browseCatalog).toHaveBeenCalled());
+
+    abrirFiltros();
+    const desconto = screen.getByLabelText("Desconto mínimo");
+    fireEvent.change(desconto, { target: { value: "300" } });
+    fireEvent.blur(desconto, { target: { value: "300" } });
+    fireEvent.click(screen.getByRole("button", { name: "Buscar" }));
+
+    await waitFor(() => expect(ultimaChamada().minDiscount).toBe(100));
+    expect(desconto).toHaveValue(100);
+  });
+
+  it("vendas negativas viram sem mínimo", async () => {
+    render(<Harness />);
+    await waitFor(() => expect(browseCatalog).toHaveBeenCalled());
+
+    abrirFiltros();
+    const vendas = screen.getByLabelText("Vendas mínimas");
+    fireEvent.change(vendas, { target: { value: "-50" } });
+    fireEvent.blur(vendas, { target: { value: "-50" } });
+    fireEvent.click(screen.getByRole("button", { name: "Buscar" }));
+
+    await waitFor(() => expect(ultimaChamada().minSales).toBe(0));
+  });
+
+  it("avisa quando o preço mínimo passa do máximo", async () => {
+    render(<Harness />);
+    await waitFor(() => expect(browseCatalog).toHaveBeenCalled());
+
+    abrirFiltros();
+    fireEvent.change(screen.getByLabelText("Preço mínimo"), { target: { value: "500" } });
+    fireEvent.change(screen.getByLabelText("Preço máximo"), { target: { value: "100" } });
+    expect(await screen.findByText(/preço mínimo está maior que o máximo/)).toBeInTheDocument();
+  });
+
+  it("trocar a ordem não leva junto o filtro que ainda não foi buscado", async () => {
+    // A ordem vale na hora; o que está digitado só entra no Buscar. Se as duas
+    // coisas saíssem juntas, mudar a ordem aplicaria um filtro pela metade.
+    render(<Harness />);
+    await waitFor(() => expect(browseCatalog).toHaveBeenCalled());
+
+    abrirFiltros();
+    fireEvent.change(screen.getByLabelText("Desconto mínimo"), { target: { value: "70" } });
+    fireEvent.change(screen.getByLabelText("Ordenar Por"), { target: { value: "price_asc" } });
+
+    await waitFor(() => expect(ultimaChamada().sortBy).toBe("price_asc"));
+    expect(ultimaChamada().minDiscount).toBe(0);
   });
 });
 

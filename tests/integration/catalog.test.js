@@ -1,7 +1,7 @@
 // Catalogo: upsert, query (filtros, sort), prune, /api/ofertas.
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { request, app, createTestUser, catalog, storage } from "../helpers/app.js";
+import { request, app, createTestUser, catalog, storage, scheduler } from "../helpers/app.js";
 import { mlProduct, amazonProduct, shopeeProduct } from "../helpers/fixtures.js";
 
 describe("catalog.upsertProducts", () => {
@@ -111,6 +111,151 @@ describe("catalog.query — filtros", () => {
   });
 });
 
+// Os filtros de faixa (preço, nota, vendas) e as ordenações que faltavam:
+// cada um com um produto que passa, um que não passa e um com o campo nulo —
+// coluna opcional é onde o filtro costuma escorregar.
+// O catálogo é truncado entre os testes (helpers/setup-each.js), então cada
+// teste semeia o próprio cenário.
+describe("catalog.query — preço, nota e vendas", () => {
+  const seed = () => catalog.upsertProducts([
+    mlProduct(601, { category: "casa", name: "Barato 601", price: 20, rating: 3.0, sold: "10 vendidos" }),
+    mlProduct(602, { category: "casa", name: "Medio 602", price: 150, rating: 4.2, sold: "1,5 mil vendidos" }),
+    mlProduct(603, { category: "casa", name: "Caro 603", price: 900, rating: 5.0, sold: "+2 mi vendidos" }),
+    mlProduct(604, { category: "casa", name: "Sem dados 604", price: null, rating: null, sold: null }),
+  ]);
+  const names = (items) => items.map(p => p.name).sort();
+
+  it("minPrice corta o que está abaixo (e o preço nulo)", async () => {
+    await seed();
+    const items = await catalog.query({ categories: ["casa"], filters: { minPrice: 100 }, limit: 100 });
+    expect(names(items)).toEqual(["Caro 603", "Medio 602"]);
+  });
+
+  it("maxPrice corta o que está acima — e produto sem preço não passa", async () => {
+    await seed();
+    // O `not: null` do maxPrice existe pra isso: sem ele, "até R$ 200" traria
+    // junto todo produto de preço desconhecido.
+    const items = await catalog.query({ categories: ["casa"], filters: { maxPrice: 200 }, limit: 100 });
+    expect(names(items)).toEqual(["Barato 601", "Medio 602"]);
+  });
+
+  it("minPrice + maxPrice viram faixa, e faixa invertida devolve vazio", async () => {
+    await seed();
+    const faixa = await catalog.query({ categories: ["casa"], filters: { minPrice: 100, maxPrice: 200 }, limit: 100 });
+    expect(names(faixa)).toEqual(["Medio 602"]);
+
+    const invertida = await catalog.query({ categories: ["casa"], filters: { minPrice: 500, maxPrice: 100 }, limit: 100 });
+    expect(invertida).toHaveLength(0);
+  });
+
+  it("minRating corta nota menor e nota ausente", async () => {
+    await seed();
+    const items = await catalog.query({ categories: ["casa"], filters: { minRating: 4.2 }, limit: 100 });
+    expect(names(items)).toEqual(["Caro 603", "Medio 602"]);
+  });
+
+  it("minSales entende o texto de vendas (mil, mi) e descarta quem não diz", async () => {
+    await seed();
+    const mil = await catalog.query({ categories: ["casa"], filters: { minSales: 1000 }, limit: 100 });
+    expect(names(mil)).toEqual(["Caro 603", "Medio 602"]);
+
+    const milhao = await catalog.query({ categories: ["casa"], filters: { minSales: 1000000 }, limit: 100 });
+    expect(names(milhao)).toEqual(["Caro 603"]);
+  });
+
+  it("minSales usa o número exato da Shopee quando ele existe", async () => {
+    // Shopee manda soldCount (número); ML só tem o texto. Os dois têm que cair
+    // na mesma coluna, senão o filtro vale só pra metade do catálogo.
+    await catalog.upsertProducts([
+      shopeeProduct(611, { category: "pet", name: "Shopee 611", soldCount: 30 }),
+      shopeeProduct(612, { category: "pet", name: "Shopee 612", soldCount: 4000 }),
+    ]);
+    const items = await catalog.query({ categories: ["pet"], filters: { minSales: 1000 }, limit: 100 });
+    expect(names(items)).toEqual(["Shopee 612"]);
+  });
+
+  it("filtros combinados se somam (categoria + loja + desconto + palavra)", async () => {
+    await catalog.upsertProducts([
+      mlProduct(621, { category: "gamer", name: "Teclado gamer 621", discount: 60, price: 300 }),
+      mlProduct(622, { category: "gamer", name: "Mouse gamer 622", discount: 60, price: 300 }),
+      mlProduct(623, { category: "casa", name: "Teclado casa 623", discount: 60, price: 300 }),
+      amazonProduct(624, { category: "gamer", name: "Teclado amazon 624", discount: 60, price: 300 }),
+      mlProduct(625, { category: "gamer", name: "Teclado barato 625", discount: 10, price: 300 }),
+    ]);
+    const items = await catalog.query({
+      categories: ["gamer"], sources: ["ml"],
+      filters: { minDiscount: 50, keywords: "teclado" }, limit: 100,
+    });
+    expect(names(items)).toEqual(["Teclado gamer 621"]);
+  });
+
+  it("palavras-chave ignoram maiúsculas, espaços em volta e casam em OR", async () => {
+    await catalog.upsertProducts([
+      mlProduct(631, { category: "casa", name: "Cafeteira Expressa" }),
+      mlProduct(632, { category: "casa", name: "Liquidificador Turbo" }),
+      mlProduct(633, { category: "casa", name: "Ferro de passar" }),
+    ]);
+    const items = await catalog.query({
+      categories: ["casa"], filters: { keywords: "  CAFETEIRA , liquidificador  " }, limit: 100,
+    });
+    expect(names(items)).toEqual(["Cafeteira Expressa", "Liquidificador Turbo"]);
+
+    const nada = await catalog.query({ categories: ["casa"], filters: { keywords: "geladeira" }, limit: 100 });
+    expect(nada).toHaveLength(0);
+  });
+});
+
+describe("catalog.query — ordenações", () => {
+  const seed = () => catalog.upsertProducts([
+    mlProduct(701, { category: "casa", name: "A 701", price: 10, rating: 3.1, discount: 10 }),
+    mlProduct(702, { category: "casa", name: "B 702", price: 90, rating: 4.9, discount: 80 }),
+    mlProduct(703, { category: "casa", name: "C 703", price: null, rating: null, discount: null }),
+  ]);
+
+  it("price_asc vai do mais barato ao mais caro, com o preço nulo no fim", async () => {
+    await seed();
+    const items = await catalog.query({ categories: ["casa"], limit: 100, sortBy: "price_asc" });
+    expect(items.map(p => p.price)).toEqual([10, 90, null]);
+  });
+
+  it("rating_desc vai da melhor nota pra pior, com a nota ausente no fim", async () => {
+    await seed();
+    const items = await catalog.query({ categories: ["casa"], limit: 100, sortBy: "rating_desc" });
+    expect(items.map(p => p.rating)).toEqual([4.9, 3.1, null]);
+  });
+
+  it("lastSeen_desc traz o visto mais recentemente primeiro", async () => {
+    // Upserts separados: o lastSeenAt é o momento da gravação.
+    await catalog.upsertProducts([mlProduct(711, { category: "livros", name: "Antigo 711" })]);
+    await new Promise(r => setTimeout(r, 20));
+    await catalog.upsertProducts([mlProduct(712, { category: "livros", name: "Novo 712" })]);
+    const items = await catalog.query({ categories: ["livros"], limit: 100, sortBy: "lastSeen_desc" });
+    expect(items.map(p => p.name)).toEqual(["Novo 712", "Antigo 711"]);
+  });
+
+  it("empate na ordenação não repete nem some com produto entre as páginas", async () => {
+    // Regressão: sem critério de desempate, o Postgres não promete a mesma ordem
+    // em duas queries. Com o catálogo inteiro empatado em 50% de desconto (o
+    // caso real de "Maior desconto"), a página 2 podia repetir uma linha da 1.
+    const empatados = Array.from({ length: 30 }, (_, i) =>
+      mlProduct(730 + i, { category: "esportes", name: `Empatado ${730 + i}`, discount: 50, price: 100 }));
+    await catalog.upsertProducts(empatados);
+
+    const vistos = [];
+    for (let page = 0; page < 3; page++) {
+      const items = await catalog.query({
+        categories: ["esportes"], limit: 10, offset: page * 10, sortBy: "discount_desc",
+      });
+      expect(items).toHaveLength(10);
+      vistos.push(...items.map(p => p.key));
+    }
+    expect(new Set(vistos).size).toBe(30);
+    // E a ordem entre empatados é a da key: é o critério que torna as páginas
+    // reproduzíveis, não uma coincidência do plano de execução.
+    expect(vistos).toEqual([...vistos].sort());
+  });
+});
+
 describe("GET /api/ofertas — endpoint HTTP", () => {
   it("retorna produtos do catalogo", async () => {
     await catalog.upsertProducts([mlProduct(301, { category: "eletronicos", discount: 30 })]);
@@ -177,12 +322,48 @@ describe("GET /api/ofertas — navegação paginada do catálogo", () => {
     for (let i = 1; i < prices.length; i++) expect(prices[i - 1] <= prices[i]).toBe(true);
   });
 
+  // A lista de ordenações existe em três lugares: SORT_OPTIONS (a aba),
+  // OFERTAS_SORTS (a rota) e SORT_MODES (o preenchimento). Renomear um id em um
+  // só faz a aba pedir "melhor avaliação" e receber "maior desconto" sem erro
+  // nenhum — este teste é o que grita.
+  it.each(["discount_desc", "price_asc", "price_desc", "rating_desc", "lastSeen_desc"])(
+    "a ordem '%s' é aceita pela rota e pelo preenchimento",
+    async (sortBy) => {
+      await seed();
+      const { auth } = await createTestUser();
+      const res = await auth("get", `/api/ofertas?page=1&pageSize=5&sortBy=${sortBy}`);
+      expect(res.status).toBe(200);
+      expect(res.body.sortBy).toBe(sortBy);
+      expect(scheduler.sortMode({ sortBy })).toBe(sortBy);
+    },
+  );
+
   it("sortBy inválido cai no padrão em vez de estourar", async () => {
     await seed();
     const { auth } = await createTestUser();
     const res = await auth("get", "/api/ofertas?page=1&pageSize=5&sortBy=drop-table");
     expect(res.status).toBe(200);
     expect(res.body.sortBy).toBe("discount_desc");
+  });
+
+  it("com minSales o total conta só quem passou, e a última página vem cheia", async () => {
+    // Regressão: o corte de vendas rodava em JS depois da query, então o count()
+    // do banco não o enxergava — o total contava o catálogo inteiro e as últimas
+    // páginas vinham vazias. Agora o filtro está no WHERE (coluna soldCount).
+    await catalog.upsertProducts([
+      ...Array.from({ length: 5 }, (_, i) =>
+        mlProduct(410 + i, { category: "brinquedos", name: `Vendido ${i}`, sold: "2mil vendidos" })),
+      ...Array.from({ length: 20 }, (_, i) =>
+        mlProduct(430 + i, { category: "brinquedos", name: `Parado ${i}`, sold: "3 vendidos" })),
+    ]);
+    const { auth } = await createTestUser();
+    const res = await auth("get", "/api/ofertas?categories=brinquedos&minSales=1000&page=1&pageSize=3");
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(5);
+
+    const ultima = await auth("get", "/api/ofertas?categories=brinquedos&minSales=1000&page=2&pageSize=3");
+    expect(ultima.body.items).toHaveLength(2);
+    expect(ultima.body.items.every(p => p.name.startsWith("Vendido"))).toBe(true);
   });
 
   it("pageSize tem teto (não dá pra pedir o catálogo inteiro numa página)", async () => {
@@ -267,6 +448,21 @@ describe("GET /api/ofertas — exclusão por campanha (groupId)", () => {
 
     const comRecentes = await auth("get", `/api/ofertas?categories=gamer&page=1&pageSize=24&groupId=${GID}&hideRecent=0`);
     expect(comRecentes.body.items.map(p => p.name)).toContain("Mouse Nimbus 502");
+  });
+
+  it("exclusão e filtros valem juntos, no total também", async () => {
+    // A fila corta um produto e o desconto mínimo corta outro: o total tem que
+    // refletir os dois, senão a paginação promete página que não existe.
+    await seed();
+    const todos = await catalog.query({ categories: ["gamer"], limit: 100 });
+    const naFila = todos.find(p => p.name === "Mouse Nimbus 502");   // 55% off
+    const auth = await setup({ queue: [itemFor(naFila)] });
+
+    const res = await auth("get", `/api/ofertas?categories=gamer&minDiscount=30&page=1&pageSize=24&groupId=${GID}`);
+    expect(res.status).toBe(200);
+    // Sobra só o Monitor (35%): o Teclado tem 15% e o Mouse está na fila.
+    expect(res.body.items.map(p => p.name)).toEqual(["Monitor Nimbus 503"]);
+    expect(res.body.total).toBe(1);
   });
 
   it("groupId de outro usuário (ou inexistente) é ignorado, não vaza nem estoura", async () => {
