@@ -31,7 +31,16 @@ const MAX_RATING = 5;
 const MAX_DISCOUNT = 100;
 
 const PAGE_SIZE = 24;
-const DEBOUNCE_MS = 350;
+// Placeholders da primeira carga: metade da página, o bastante pra tela não
+// nascer vazia sem fingir um total que ainda não se sabe.
+const SKELETON_CARDS = 12;
+
+// Idade máxima pra um produto ainda ser "novo" no catálogo.
+const NEW_HOURS = 24;
+
+// Aviso de que o que está na tela ainda não virou lista. Numa constante porque
+// aparece em dois lugares (embaixo da busca e dentro do painel de filtros).
+const PENDING_HINT = "Você mudou a busca — clique em Buscar (ou aperte Enter) pra atualizar a lista.";
 
 // Preenchimento automático: quando ele acontece.
 export const DEFAULT_REFILL_THRESHOLD = 5;
@@ -41,6 +50,18 @@ const SECTIONS_KEY = "nimbus.searchTab.sections";
 const VIEW_KEY = "nimbus.searchTab.view";
 
 const EMPTY_FILTERS = { keywords: "", minPrice: 0, maxPrice: null, minDiscount: 0, minRating: 0, minSales: 0 };
+
+// Só o que o catálogo entende dos filtros. Serve pra duas coisas ao mesmo tempo:
+// é o que vai na request, e é o que se compara pra saber se o que está escrito
+// na tela ainda não foi buscado (assim "" e 0 não passam por mudança).
+const filterSig = (f = {}) => JSON.stringify({
+  q: f.keywords || "",
+  minPrice: Number(f.minPrice) || 0,
+  maxPrice: f.maxPrice ?? null,
+  minDiscount: Number(f.minDiscount) || 0,
+  minRating: Number(f.minRating) || 0,
+  minSales: Number(f.minSales) || 0,
+});
 
 // Chaves de comparação com fila/pendentes/histórico.
 //
@@ -104,7 +125,10 @@ export default function ProductSearchTab({
   pending = [], queue = [], history = [], cooldownMinutes = 0,
   onAddCatalogProduct,
 }) {
-  const filters = scraping.filters || {};
+  // No useMemo por causa do `|| {}`: sem ele, uma campanha sem filtros criaria
+  // um objeto novo por render e o `searchNow` (que depende dele) nunca pararia
+  // de mudar de identidade.
+  const filters = useMemo(() => scraping.filters || {}, [scraping.filters]);
   const sortBy = SORT_OPTIONS.some(o => o.id === scraping.sortBy) ? scraping.sortBy : DEFAULT_SORT;
   const batch = Number(scraping.batchSize) > 0 ? Math.min(MAX_BATCH, Number(scraping.batchSize)) : DEFAULT_BATCH;
   const autoRefill = scraping.autoRefill !== false;
@@ -115,6 +139,9 @@ export default function ProductSearchTab({
   const refillTimes = Array.isArray(scraping.refillTimes) ? scraping.refillTimes : [];
 
   const [page, setPage] = useState(1);
+  // Os filtros que a lista atual reflete. Nascem iguais aos da campanha, pra a
+  // primeira busca sair com o que estava salvo.
+  const [applied, setApplied] = useState(() => ({ ...EMPTY_FILTERS, ...(scraping.filters || {}) }));
   const [sections, setSections] = useState(loadSections);
   const [view, setView] = useState(loadView);
 
@@ -181,23 +208,34 @@ export default function ProductSearchTab({
     setPicking(null);
   };
 
+  // Digitar não busca: o que está no campo (`filters`) é o que o usuário está
+  // escrevendo, e `applied` é o que a lista na tela está mostrando. Só o botão
+  // Buscar (ou Enter) leva um pro outro.
   const setFilter = (key, value) => setScraping(s => ({ ...s, filters: { ...s.filters, [key]: value } }));
-  const resetFilters = () => setScraping(s => ({ ...s, filters: { ...EMPTY_FILTERS } }));
+  // Pros cliques que TIRAM filtro (chips "✕", "Tirar X", o ✕ da busca): ali o
+  // usuário não está digitando, está mandando refazer a lista sem aquilo.
+  const applyFilter = (key, value) => {
+    setFilter(key, value);
+    setApplied(a => ({ ...a, [key]: value }));
+  };
+  const resetFilters = () => {
+    setScraping(s => ({ ...s, filters: { ...EMPTY_FILTERS } }));
+    setApplied({ ...EMPTY_FILTERS });
+  };
 
-  // Assinatura dos parâmetros: muda ⇒ refaz a busca (com debounce, pra não
-  // disparar uma request por tecla digitada). As chaves de visibilidade entram
-  // aqui porque agora são filtro de servidor, não de tela.
+  // Assinatura dos parâmetros: muda ⇒ refaz a busca. Os filtros entram pelo
+  // `applied` (o que foi buscado), não pelo que está sendo digitado; lojas,
+  // categorias, ordem e as chaves de visibilidade entram direto — são um clique
+  // só, e valem na hora. As chaves estão aqui porque viraram filtro de
+  // servidor, não de tela.
   const paramsSig = JSON.stringify({
     groupId, categories, sources: usableSources, sortBy,
     hideQueued: !view.queued,
     hideRecent: !view.recent,
-    q: filters.keywords || "",
-    minPrice: Number(filters.minPrice) || 0,
-    maxPrice: filters.maxPrice ?? null,
-    minDiscount: Number(filters.minDiscount) || 0,
-    minRating: Number(filters.minRating) || 0,
-    minSales: Number(filters.minSales) || 0,
+    ...JSON.parse(filterSig(applied)),
   });
+  // Tem coisa escrita na tela que ainda não foi buscada.
+  const pendingSearch = filterSig(filters) !== filterSig(applied);
   // Busca nova: volta pra primeira página e esquece o que era daquela busca —
   // as mensagens dos cards não valem pra outra lista.
   useEffect(() => {
@@ -238,40 +276,58 @@ export default function ProductSearchTab({
     }
   }, [paramsSig, page]);
 
-  // O debounce existe pra não disparar uma request por tecla digitada. Virar de
-  // página é um clique só — esperar meio segundo por ele incomoda —, então só
-  // segura quando os parâmetros da busca mudaram de verdade.
-  // A marca é gravada na HORA DE DISPARAR, não quando o efeito roda: mudar de
-  // filtro estando na página 3 rearma o efeito duas vezes (o sig muda, e depois
-  // o page volta pra 1), e gravar antes faria a segunda passada achar que só a
-  // página tinha mudado — buscando sem esperar o debounce.
-  const firedSigRef = useRef(null);
+  // Não há mais debounce: nada aqui muda por tecla digitada. O timer de 0ms
+  // fica porque mudar de filtro rearma este efeito duas vezes seguidas (o sig
+  // muda, e logo depois o `page` volta pra 1) — o cleanup mata a primeira antes
+  // de ela virar request.
+  const timerRef = useRef(null);
   useEffect(() => {
     if (noSources) {
       setPreview({ items: [], total: 0, approximate: false });
       setLoadingPreview(false);
       return;
     }
-    const sigChanged = firedSigRef.current !== paramsSig;
-    const timer = setTimeout(() => {
-      firedSigRef.current = paramsSig;
-      runSearch();
-    }, sigChanged ? DEBOUNCE_MS : 0);
-    return () => clearTimeout(timer);
-  }, [runSearch, noSources, paramsSig]);
+    timerRef.current = setTimeout(runSearch, 0);
+    return () => clearTimeout(timerRef.current);
+  }, [runSearch, noSources]);
 
   useEffect(() => () => { if (abortRef.current) abortRef.current.abort(); }, []);
+
+  // Buscar / Enter: é o único jeito de o que está escrito virar lista.
+  const keywordsRef = useRef(null);
+  const searchNow = useCallback(() => {
+    if (noSources) return;
+    // Nada mudou desde a última busca: aí o botão é só "atualizar a lista".
+    if (!pendingSearch) {
+      clearTimeout(timerRef.current);
+      runSearch();
+      return;
+    }
+    setApplied({ ...EMPTY_FILTERS, ...filters });
+  }, [noSources, pendingSearch, filters, runSearch]);
+
+  // Enter em qualquer campo do painel de filtros busca, como no campo de cima —
+  // ninguém precisa voltar até o botão depois de digitar "30" no desconto.
+  const onFilterKeyDown = (e) => {
+    if (e.key === "Enter") { e.preventDefault(); searchNow(); }
+  };
 
   const totalPages = Math.max(1, Math.ceil((preview.total || 0) / PAGE_SIZE));
 
   // Virar de página troca a lista inteira: sem isso a tela continua no meio da
-  // rolagem, mostrando produtos diferentes dos que estavam ali.
+  // rolagem, mostrando produtos diferentes dos que estavam ali. A página nova
+  // começa no topo da tela, e não no topo da lista: os controles da busca ficam
+  // acima dela, e é de lá que se muda de ideia sobre o que procurar.
   const resultsRef = useRef(null);
   const firstPageRender = useRef(true);
   useEffect(() => {
     if (firstPageRender.current) { firstPageRender.current = false; return; }
-    // scrollIntoView não existe no jsdom dos testes — daí o `?.` no método.
-    resultsRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    // Quem pediu menos animação no sistema recebe o pulo direto, como no
+    // scroll-to-top do App.
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const behavior = reduce ? "auto" : "smooth";
+    // `?.` nos métodos: o jsdom dos testes não implementa scroll.
+    window.scrollTo?.({ top: 0, left: 0, behavior });
   }, [page]);
 
   // Selos "já está na fila / aguardando / já enviado" nos cards da prévia.
@@ -343,25 +399,26 @@ export default function ProductSearchTab({
     }
   };
 
-  // Resumo do que está filtrando agora — cada chip tira o próprio filtro.
+  // Resumo do que está filtrando agora — cada chip tira o próprio filtro, e
+  // tirar vale na hora (`applyFilter`): é um clique, não é digitar.
   const activeChips = [];
   if (String(filters.keywords || "").trim()) {
-    activeChips.push({ kind: "keywords", label: `"${filters.keywords}"`, clear: () => setFilter("keywords", "") });
+    activeChips.push({ kind: "keywords", label: `"${filters.keywords}"`, clear: () => applyFilter("keywords", "") });
   }
   if (Number(filters.minPrice) > 0) {
-    activeChips.push({ label: `a partir de ${formatPrice(Number(filters.minPrice))}`, clear: () => setFilter("minPrice", 0) });
+    activeChips.push({ label: `a partir de ${formatPrice(Number(filters.minPrice))}`, clear: () => applyFilter("minPrice", 0) });
   }
   if (filters.maxPrice != null && Number(filters.maxPrice) > 0) {
-    activeChips.push({ label: `até ${formatPrice(Number(filters.maxPrice))}`, clear: () => setFilter("maxPrice", null) });
+    activeChips.push({ label: `até ${formatPrice(Number(filters.maxPrice))}`, clear: () => applyFilter("maxPrice", null) });
   }
   if (Number(filters.minDiscount) > 0) {
-    activeChips.push({ label: `${filters.minDiscount}% ou mais de desconto`, clear: () => setFilter("minDiscount", 0) });
+    activeChips.push({ label: `${filters.minDiscount}% ou mais de desconto`, clear: () => applyFilter("minDiscount", 0) });
   }
   if (Number(filters.minRating) > 0) {
-    activeChips.push({ label: `nota ${String(filters.minRating).replace(".", ",")}+`, clear: () => setFilter("minRating", 0) });
+    activeChips.push({ label: `nota ${String(filters.minRating).replace(".", ",")}+`, clear: () => applyFilter("minRating", 0) });
   }
   if (Number(filters.minSales) > 0) {
-    activeChips.push({ label: `${filters.minSales}+ vendas`, clear: () => setFilter("minSales", 0) });
+    activeChips.push({ label: `${filters.minSales}+ vendas`, clear: () => applyFilter("minSales", 0) });
   }
 
   // A palavra-chave já aparece no campo de busca — o resumo abaixo dele mostra
@@ -712,13 +769,57 @@ export default function ProductSearchTab({
             <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14, color: "var(--color-text-secondary)", pointerEvents: "none" }}>🔍</span>
             <input
               id="pr-keywords"
+              ref={keywordsRef}
               type="text"
               value={filters.keywords || ""}
               onChange={e => setFilter("keywords", e.target.value)}
+              // Enter busca. Esc limpa o campo (só o campo — a lista continua
+              // como está até o próximo Buscar), como em qualquer busca.
+              onKeyDown={e => {
+                if (e.key === "Enter") { e.preventDefault(); searchNow(); }
+                if (e.key === "Escape") setFilter("keywords", "");
+              }}
               placeholder="Ex: notebook, monitor, fone bluetooth"
-              style={{ ...inputStyle, paddingLeft: 36 }}
+              style={{ ...inputStyle, paddingLeft: 36, paddingRight: filters.keywords ? 34 : 11 }}
             />
+            {filters.keywords && (
+              <button
+                type="button"
+                // Limpar a busca é um clique de "quero a lista sem isso": vale na
+                // hora, sem passar pelo Buscar.
+                onClick={() => { applyFilter("keywords", ""); keywordsRef.current?.focus(); }}
+                aria-label="Limpar a busca"
+                title="Limpar a busca"
+                style={{
+                  position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
+                  background: "transparent", border: "none", padding: 4, lineHeight: 1,
+                  color: "var(--color-text-secondary)", fontSize: 13, fontFamily: "inherit", cursor: "pointer",
+                }}
+              >
+                ✕
+              </button>
+            )}
           </div>
+          {/* A lista só muda aqui: digitar não busca mais nada sozinho, então
+              o botão precisa ser o mais visível do bloco. */}
+          <button
+            type="button"
+            onClick={searchNow}
+            disabled={noSources}
+            title={noSources
+              ? "Escolha ao menos uma loja disponível"
+              : "Buscar no catálogo com o que está escrito e com os filtros escolhidos"}
+            style={{
+              padding: "9px 18px", borderRadius: 8, border: "none",
+              background: PRIMARY, color: "#fff",
+              fontSize: 13, fontWeight: 500, fontFamily: "inherit",
+              whiteSpace: "nowrap",
+              cursor: noSources ? "not-allowed" : "pointer",
+              opacity: noSources ? 0.6 : 1,
+            }}
+          >
+            Buscar
+          </button>
           <button
             data-tour="pr-filters"
             type="button"
@@ -738,10 +839,18 @@ export default function ProductSearchTab({
             <span style={{ fontSize: 10 }}>{sections.filters ? "▲" : "▼"}</span>
           </button>
         </div>
-        <div style={hintStyle}>Vários termos separados por vírgula. Vazio = todos.</div>
+        <div style={pendingSearch ? { ...hintStyle, color: "var(--warn-text)" } : hintStyle}>
+          {pendingSearch
+            ? PENDING_HINT
+            : "Vários termos separados por vírgula. Vazio = todos."}
+        </div>
 
         {sections.filters && (
         <div id="sec-filters" style={{ marginTop: 16, paddingTop: 14, borderTop: "0.5px solid var(--color-border-tertiary)" }}>
+        {/* Quem está mexendo aqui dentro não vê a dica lá de cima. */}
+        {pendingSearch && (
+          <div style={{ ...noteStyle("warn"), marginBottom: 14 }}>{PENDING_HINT}</div>
+        )}
         <div className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
           <div>
             <label style={fieldLabelStyle} htmlFor="pr-min-price">Preço mínimo</label>
@@ -751,6 +860,7 @@ export default function ProductSearchTab({
                 id="pr-min-price" type="number" min={0} step={10}
                 value={filters.minPrice || ""}
                 onChange={e => setFilter("minPrice", num(e.target.value) ?? 0)}
+                onKeyDown={onFilterKeyDown}
                 placeholder="Sem mínimo"
                 style={{ ...inputStyle, paddingLeft: 36 }}
               />
@@ -764,6 +874,7 @@ export default function ProductSearchTab({
                 id="pr-max-price" type="number" min={0} step={10}
                 value={filters.maxPrice ?? ""}
                 onChange={e => setFilter("maxPrice", num(e.target.value))}
+                onKeyDown={onFilterKeyDown}
                 placeholder="Sem máximo"
                 style={{ ...inputStyle, paddingLeft: 36 }}
               />
@@ -780,6 +891,7 @@ export default function ProductSearchTab({
                 // O teto só entra ao sair do campo: prender enquanto digita
                 // trocaria o "1" de "100" por "100" na frente dos olhos.
                 onBlur={e => setFilter("minDiscount", clampFilter(e.target.value, MAX_DISCOUNT))}
+                onKeyDown={onFilterKeyDown}
                 placeholder="Sem mínimo"
                 style={{ ...inputStyle, paddingLeft: 36 }}
               />
@@ -794,6 +906,7 @@ export default function ProductSearchTab({
                 value={filters.minRating || ""}
                 onChange={e => setFilter("minRating", num(e.target.value) ?? 0)}
                 onBlur={e => setFilter("minRating", clampFilter(e.target.value, MAX_RATING))}
+                onKeyDown={onFilterKeyDown}
                 placeholder="Qualquer nota"
                 style={{ ...inputStyle, paddingLeft: 36 }}
               />
@@ -806,6 +919,7 @@ export default function ProductSearchTab({
               value={filters.minSales || ""}
               onChange={e => setFilter("minSales", num(e.target.value) ?? 0)}
               onBlur={e => setFilter("minSales", clampFilter(e.target.value, null))}
+              onKeyDown={onFilterKeyDown}
               placeholder="Sem mínimo"
               style={inputStyle}
             />
@@ -828,7 +942,7 @@ export default function ProductSearchTab({
             salvar mora lá no rodapé, depois da lista inteira. É o mesmo `save`
             (grava as escolhas da aba toda), só que aceso pelos filtros. */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 16, paddingTop: 12, borderTop: "0.5px solid var(--color-border-tertiary)" }}>
-          <span style={{ flex: 1, fontSize: 11, color: "var(--color-text-secondary)" }}>
+          <span style={{ flex: 1, fontSize: 12, color: "var(--color-text-secondary)" }}>
             {saved
               ? "Filtros salvos."
               : filtersDirty
@@ -849,7 +963,7 @@ export default function ProductSearchTab({
 
         {otherChips.length > 0 && (
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 14, paddingTop: 12, borderTop: "0.5px solid var(--color-border-tertiary)" }}>
-            <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Filtrando por:</span>
+            <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Filtrando por:</span>
             {otherChips.map((c, i) => (
               <button key={i} onClick={c.clear} title="Remover este filtro" style={activeChipStyle}>
                 {c.label} <span style={{ opacity: 0.6, marginLeft: 2 }}>✕</span>
@@ -862,24 +976,28 @@ export default function ProductSearchTab({
 
       {/* ── 4. Prévia do catálogo ─────────────────────────────────────── */}
       <div ref={resultsRef} data-tour="pr-results" style={{ marginBottom: 24 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
+        {/* Cabeçalho + controles num card igual aos outros da tela (mesmo
+            `cardStyle`). Já foi uma barra grudada no topo: ficava sem cantos
+            arredondados no meio da rolagem e destoava de tudo em volta. */}
+        <div style={{ ...cardStyle, marginBottom: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
           <div>
             <div style={{ fontSize: 14, fontWeight: 500 }}>Produtos encontrados</div>
-            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>
+            <div aria-live="polite" style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>
               {noSources
                 ? "Nenhuma loja ativa nesta campanha."
                 : loadingPreview && preview.items.length === 0
                   ? "Carregando..."
-                  : `${preview.approximate ? "~" : ""}${preview.total.toLocaleString("pt-BR")} no catálogo`}
+                  : countText(preview, page, totalPages, loadingPreview)}
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-              <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Enviados recentemente</span>
+              <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Mostrar enviados recentemente</span>
               <Toggle label="Mostrar enviados recentemente" value={view.recent} onChange={v => setViewFlag("recent", v)} />
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-              <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Já na fila</span>
+              <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Mostrar já na fila</span>
               <Toggle label="Mostrar os que já estão na fila" value={view.queued} onChange={v => setViewFlag("queued", v)} />
             </div>
           </div>
@@ -889,8 +1007,8 @@ export default function ProductSearchTab({
             o painel de preenchimento fechado. A ordem vem logo antes dele: é o
             `scraping.sortBy` da campanha, então é a mesma ordem que o
             preenchimento pega — encostada no botão, isso se vê sem legenda. */}
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
-          <label style={{ fontSize: 12, color: "var(--color-text-secondary)" }} htmlFor="pr-sort">Ordem</label>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <label style={{ fontSize: 12, color: "var(--color-text-secondary)" }} htmlFor="pr-sort">Ordenar Por</label>
           <select
             id="pr-sort"
             value={sortBy}
@@ -917,9 +1035,10 @@ export default function ProductSearchTab({
             </span>
           )}
         </div>
+        </div>
 
         {previewError && (
-          <div style={{ ...noteStyle("danger"), marginBottom: 10, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div role="alert" style={{ ...noteStyle("danger"), marginBottom: 10, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <span style={{ flex: 1 }}>{previewError}</span>
             <button onClick={runSearch} style={{ ...chipStyle({ active: false }), padding: "5px 12px", fontSize: 12 }}>
               Tentar de novo
@@ -941,15 +1060,30 @@ export default function ProductSearchTab({
                 vários nós e o findByText dos testes deixaria de achar a frase. */}
             <div>{emptyListText(view)}</div>
             {hasAnyFilter && (
-              <button onClick={resetFilters} style={{ ...chipStyle({ active: false }), marginTop: 10, fontSize: 12 }}>
-                Limpar filtros
-              </button>
+              // Tirar um filtro de cada vez, sem ter que abrir o painel e
+              // adivinhar qual deles está apertado demais.
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 10 }}>
+                {activeChips.map((c, i) => (
+                  <button key={i} onClick={c.clear} style={{ ...chipStyle({ active: false }), fontSize: 12 }}>
+                    Tirar {c.label}
+                  </button>
+                ))}
+                {activeChips.length > 1 && (
+                  <button onClick={resetFilters} style={{ ...linkBtnStyle, marginLeft: 4 }}>Limpar todos os filtros</button>
+                )}
+              </div>
             )}
           </div>
         )}
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12, opacity: loadingPreview && preview.items.length > 0 ? 0.5 : 1, transition: "opacity 0.15s" }}>
-          {showSkeleton && Array.from({ length: 8 }).map((_, i) => <SkeletonCard key={`sk-${i}`} />)}
+        <div style={{
+          display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12,
+          transition: "opacity 0.15s",
+          // Enquanto a próxima página não chega, a atual fica apagada e sem
+          // clique: adicionar um card que está de saída confunde.
+          ...(loadingPreview && preview.items.length > 0 ? { opacity: 0.6, pointerEvents: "none" } : null),
+        }}>
+          {showSkeleton && Array.from({ length: SKELETON_CARDS }).map((_, i) => <SkeletonCard key={`sk-${i}`} />)}
           {visibleItems.map((p, i) => {
             const ck = cardKey(p);
             const status = statusOf(p);
@@ -964,12 +1098,23 @@ export default function ProductSearchTab({
               <ProductGridCard
                 key={p.key || `${p.link}-${i}`}
                 product={p}
+                // Com as três lojas ligadas, saber de onde veio a oferta muda a
+                // escolha; e a ordem padrão é por desconto, então ele merece
+                // mais que um selo no rodapé.
+                showStore
+                emphasizeDiscount
                 // "Na fila" e "aguardando revisão" já estão escritos no botão
                 // logo abaixo — o selo em cima só repetia. Fica o que o botão
-                // não diz: que este produto já foi ao ar antes.
-                badge={status === "sent"
-                  ? <Badge color={recent ? "amber" : "gray"}>{recent ? "Enviado há pouco" : "Já enviado"}</Badge>
-                  : null}
+                // não diz: que este produto já foi ao ar antes, e que ele é
+                // novidade no catálogo.
+                badge={
+                  <>
+                    {isNew(p) && <Badge color="blue">Novo</Badge>}
+                    {status === "sent" && (
+                      <Badge color={recent ? "amber" : "gray"}>{recent ? "Enviado há pouco" : "Já enviado"}</Badge>
+                    )}
+                  </>
+                }
                 footer={
                   // A confirmação de reenvio nasce no próprio card: o usuário
                   // clicou aqui embaixo na lista, um aviso no topo da página
@@ -1019,13 +1164,14 @@ export default function ProductSearchTab({
                         ? "Este produto está aguardando sua revisão na aba Fila"
                         : blocked ? "Este produto já está na fila desta campanha"
                         : "Adicionar este produto à fila da campanha"}
-                      // Bloqueado não é botão apagado, é estado: contorno leve
-                      // e um sinalzinho, em vez do bloco cinza chapado.
+                      // Bloqueado não é botão apagado, é estado: fundo neutro e
+                      // um sinalzinho, em vez do bloco cinza chapado — nem
+                      // convida ao clique, nem some no fundo do card.
                       style={{
                         width: "100%", padding: "7px 10px", borderRadius: 8,
                         display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5,
                         border: blocked ? "0.5px solid var(--color-border-tertiary)" : "0.5px solid transparent",
-                        background: blocked ? "transparent" : PRIMARY_LIGHT,
+                        background: blocked ? "var(--color-background-secondary)" : PRIMARY_LIGHT,
                         color: blocked ? "var(--color-text-secondary)" : PRIMARY_DARK,
                         fontSize: 12, fontWeight: 500, fontFamily: "inherit",
                         cursor: blocked ? "default" : "pointer",
@@ -1112,6 +1258,25 @@ export default function ProductSearchTab({
   );
 }
 
+// Linha embaixo de "Produtos encontrados": quantos vieram, de quantos, e em que
+// página. O "N no catálogo" fica no meio da frase de propósito — é o número que
+// o usuário procura, e os testes o encontram por ele.
+function countText(preview, page, totalPages, loading) {
+  const total = preview.total || 0;
+  const tilde = preview.approximate ? "~" : "";
+  const parts = [`${preview.items.length} de ${tilde}${total.toLocaleString("pt-BR")} no catálogo`];
+  if (totalPages > 1) parts.push(`página ${page} de ${totalPages}`);
+  if (loading) parts.push("buscando...");
+  return parts.join(" · ");
+}
+
+// Produto que entrou no catálogo nas últimas horas. `firstSeenAt` vem do
+// catálogo (backend/catalog/pg.js → fromRow).
+function isNew(product) {
+  const t = new Date(product?.firstSeenAt).getTime();
+  return Number.isFinite(t) && Date.now() - t < NEW_HOURS * 3600 * 1000;
+}
+
 // Lista vazia. As chaves de visibilidade agora cortam no backend, então elas
 // entram na sugestão do que afrouxar quando estão desligadas.
 function emptyListText(view) {
@@ -1190,8 +1355,10 @@ const caretStyle = (open) => ({
   transform: open ? "rotate(180deg)" : "none",
 });
 
+// 12px é o menor tamanho que ainda se lê bem em cinza secundário — os rótulos,
+// as dicas e os avisos desta aba viviam em 11px.
 const fieldLabelStyle = {
-  fontSize: 11, color: "var(--color-text-secondary)",
+  fontSize: 12, color: "var(--color-text-secondary)",
   display: "block", marginBottom: 6,
 };
 
@@ -1208,7 +1375,7 @@ const prefixStyle = {
   fontSize: 12, color: "var(--color-text-secondary)", pointerEvents: "none",
 };
 
-const hintStyle = { fontSize: 11, color: "var(--color-text-secondary)", marginTop: 6 };
+const hintStyle = { fontSize: 12, color: "var(--color-text-secondary)", marginTop: 6 };
 
 const chipStyle = ({ active, disabled }) => ({
   padding: "6px 14px", borderRadius: 8,
@@ -1224,12 +1391,12 @@ const chipStyle = ({ active, disabled }) => ({
 const activeChipStyle = {
   padding: "3px 10px", borderRadius: 6, border: `0.5px solid ${PRIMARY}`,
   background: PRIMARY_LIGHT, color: PRIMARY_DARK,
-  fontSize: 11, fontWeight: 500, cursor: "pointer", fontFamily: "inherit",
+  fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "inherit",
 };
 
 const linkBtnStyle = {
   background: "transparent", border: "none", padding: "3px 4px",
-  color: "var(--color-text-secondary)", fontSize: 11, fontFamily: "inherit",
+  color: "var(--color-text-secondary)", fontSize: 12, fontFamily: "inherit",
   cursor: "pointer", textDecoration: "underline",
 };
 
@@ -1240,7 +1407,7 @@ const statusChipStyle = {
 };
 
 const noteStyle = (kind) => ({
-  fontSize: 11,
+  fontSize: 12,
   color: kind === "danger" ? "var(--danger-text)" : "var(--warn-text)",
   background: kind === "danger" ? "var(--danger-bg)" : "var(--warn-bg)",
   border: `0.5px solid ${kind === "danger" ? "var(--danger-border)" : "var(--warn-border)"}`,

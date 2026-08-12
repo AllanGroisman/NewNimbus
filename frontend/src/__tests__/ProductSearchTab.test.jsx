@@ -229,6 +229,7 @@ describe("ProductSearchTab — filtros", () => {
     fireEvent.change(screen.getByLabelText("Desconto mínimo"), { target: { value: "30" } });
     fireEvent.change(screen.getByLabelText("Avaliação mínima"), { target: { value: "4" } });
     fireEvent.change(screen.getByLabelText("Vendas mínimas"), { target: { value: "100" } });
+    fireEvent.click(screen.getByRole("button", { name: "Buscar" }));
 
     await waitFor(() => {
       const last = browseCatalog.mock.calls[browseCatalog.mock.calls.length - 1][0];
@@ -261,6 +262,7 @@ describe("ProductSearchTab — filtros", () => {
 
     abrirFiltros();
     fireEvent.change(screen.getByLabelText("Desconto mínimo"), { target: { value: "35" } });
+    fireEvent.click(screen.getByRole("button", { name: "Buscar" }));
 
     await waitFor(() => {
       const last = browseCatalog.mock.calls[browseCatalog.mock.calls.length - 1][0];
@@ -277,8 +279,15 @@ describe("ProductSearchTab — filtros", () => {
     const nota = screen.getByLabelText("Avaliação mínima");
     fireEvent.change(nota, { target: { value: "50" } });
     fireEvent.blur(nota, { target: { value: "50" } });
+    // O que vale é o que vai pro catálogo quando se busca — o campo mostra o
+    // teto junto, na mesma rodada.
+    fireEvent.click(screen.getByRole("button", { name: "Buscar" }));
 
-    await waitFor(() => expect(nota).toHaveValue(5));
+    await waitFor(() => {
+      const last = browseCatalog.mock.calls[browseCatalog.mock.calls.length - 1][0];
+      expect(last.minRating).toBe(5);
+    });
+    expect(nota).toHaveValue(5);
   });
 
   it("o painel de filtros tem o próprio Salvar", async () => {
@@ -396,7 +405,7 @@ describe("ProductSearchTab — preenchimento automático", () => {
     abrirConfig();
     expect(screen.queryByLabelText("Ordem de escolha")).not.toBeInTheDocument();
 
-    fireEvent.change(await screen.findByLabelText("Ordem"), { target: { value: "rating_desc" } });
+    fireEvent.change(await screen.findByLabelText("Ordenar Por"), { target: { value: "rating_desc" } });
     await waitFor(() => expect(browseCatalog).toHaveBeenCalledTimes(2));
     expect(browseCatalog.mock.calls[1][0].sortBy).toBe("rating_desc");
   });
@@ -532,6 +541,103 @@ describe("ProductSearchTab — lista de produtos", () => {
   });
 });
 
+describe("ProductSearchTab — destaques do card", () => {
+  it("mostra a loja do produto, o vendedor e quanto se economiza", async () => {
+    browseCatalog.mockResolvedValue({
+      items: [makeProduct({ seller: "Loja do Zé" })], total: 1, page: 1, pageSize: 24,
+    });
+    render(<Harness />);
+    expect(await screen.findByText("Mercado Livre")).toBeInTheDocument();
+    expect(screen.getByText("Loja do Zé")).toBeInTheDocument();
+    // 400 → 200.
+    expect(screen.getByText(/Economize R\$ 200,00/)).toBeInTheDocument();
+  });
+
+  it("com imagem, o desconto vira faixa e some do rodapé", async () => {
+    browseCatalog.mockResolvedValue({
+      items: [makeProduct({ img: "https://img/1.jpg" })], total: 1, page: 1, pageSize: 24,
+    });
+    render(<Harness />);
+    // Um "-50%" só na tela: a faixa da imagem.
+    await waitFor(() => expect(screen.getAllByText("-50%")).toHaveLength(1));
+  });
+
+  it("produto novo no catálogo ganha selo, produto antigo não", async () => {
+    browseCatalog.mockResolvedValue({
+      items: [makeProduct({ firstSeenAt: new Date(Date.now() - 3600 * 1000).toISOString() })],
+      total: 1, page: 1, pageSize: 24,
+    });
+    const { unmount } = render(<Harness />);
+    expect(await screen.findByText("Novo")).toBeInTheDocument();
+    unmount();
+
+    browseCatalog.mockResolvedValue({
+      items: [makeProduct({ firstSeenAt: new Date(Date.now() - 5 * 86400000).toISOString() })],
+      total: 1, page: 1, pageSize: 24,
+    });
+    render(<Harness />);
+    await screen.findByText("Headset Gamer XYZ");
+    expect(screen.queryByText("Novo")).not.toBeInTheDocument();
+  });
+});
+
+describe("ProductSearchTab — busca por palavras-chave", () => {
+  it("digitar não busca sozinho; Enter busca", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<Harness />);
+      await waitFor(() => expect(browseCatalog).toHaveBeenCalledTimes(1));
+
+      const campo = screen.getByLabelText("Busca por palavras-chave");
+      fireEvent.change(campo, { target: { value: "monitor" } });
+      // Nada de debounce: por mais que se espere, a lista não se refaz sozinha.
+      vi.advanceTimersByTime(2000);
+      expect(browseCatalog).toHaveBeenCalledTimes(1);
+      expect(screen.getByText(/clique em Buscar/)).toBeInTheDocument();
+
+      fireEvent.keyDown(campo, { key: "Enter" });
+      await waitFor(() => expect(browseCatalog).toHaveBeenCalledTimes(2));
+      expect(browseCatalog.mock.calls[1][0]).toMatchObject({ q: "monitor" });
+
+      vi.advanceTimersByTime(2000);
+      expect(browseCatalog).toHaveBeenCalledTimes(2);
+      expect(screen.queryByText(/clique em Buscar/)).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("o botão Buscar manda o que está escrito", async () => {
+    render(<Harness />);
+    await waitFor(() => expect(browseCatalog).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(screen.getByLabelText("Busca por palavras-chave"), { target: { value: "fone" } });
+    fireEvent.click(screen.getByRole("button", { name: "Buscar" }));
+
+    await waitFor(() => expect(browseCatalog).toHaveBeenCalledTimes(2));
+    expect(browseCatalog.mock.calls[1][0]).toMatchObject({ q: "fone" });
+  });
+
+  it("a ordem não espera o Buscar — vale no clique", async () => {
+    render(<Harness />);
+    await waitFor(() => expect(browseCatalog).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(screen.getByLabelText("Ordenar Por"), { target: { value: "price_asc" } });
+    await waitFor(() => expect(browseCatalog).toHaveBeenCalledTimes(2));
+    expect(browseCatalog.mock.calls[1][0].sortBy).toBe("price_asc");
+  });
+
+  it("o ✕ limpa o campo de busca", async () => {
+    render(<Harness />);
+    const campo = await screen.findByLabelText("Busca por palavras-chave");
+    fireEvent.change(campo, { target: { value: "monitor" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Limpar a busca" }));
+    expect(screen.getByLabelText("Busca por palavras-chave")).toHaveValue("");
+    expect(screen.queryByRole("button", { name: "Limpar a busca" })).not.toBeInTheDocument();
+  });
+});
+
 describe("ProductSearchTab — painéis que abrem em botão", () => {
   it("o resumo do preenchimento fica visível com o painel fechado", async () => {
     render(<Harness />);
@@ -653,20 +759,24 @@ describe("ProductSearchTab — lista por páginas", () => {
     expect(await screen.findByText("Headset Gamer XYZ")).toBeInTheDocument();
   });
 
-  it("lista vazia com filtro ligado oferece limpar os filtros", async () => {
+  it("lista vazia oferece tirar cada filtro, um a um", async () => {
     browseCatalog.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 24 });
     render(<Harness initialScraping={{
-      auto: true, sources: ["Mercado Livre"], filters: { minDiscount: 70 },
+      auto: true, sources: ["Mercado Livre"], filters: { minDiscount: 70, minRating: 4 },
     }} />);
 
     expect(await screen.findByText(/Nenhum produto do catálogo passa nesses filtros/)).toBeInTheDocument();
-    // O outro "Limpar filtros" é o dos chips, em cima; aqui interessa o do vazio.
-    const limpar = screen.getAllByRole("button", { name: "Limpar filtros" });
-    fireEvent.click(limpar[limpar.length - 1]);
+    fireEvent.click(screen.getByRole("button", { name: /Tirar 70% ou mais de desconto/ }));
     await waitFor(() => {
       const last = browseCatalog.mock.calls[browseCatalog.mock.calls.length - 1][0];
       expect(last.minDiscount).toBe(0);
+      // O outro filtro continua de pé — era só o desconto que estava apertado.
+      expect(last.minRating).toBe(4);
     });
+
+    // Sobrou um filtro só: tirar tudo de uma vez deixa de fazer sentido.
+    expect(screen.getByRole("button", { name: /Tirar nota 4\+/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Limpar todos os filtros" })).not.toBeInTheDocument();
   });
 });
 

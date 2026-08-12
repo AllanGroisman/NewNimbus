@@ -1137,7 +1137,12 @@ export default function App() {
         mobileOpen={mobileMenu}
         onToggleMobile={setMobileMenu}
       />
-      <div className="main-content" ref={mainRef} style={{ flex: 1, padding: "20px 24px", minWidth: 0, overflowY: "auto" }}>
+      {/* Sem `overflowY: auto` aqui: a altura deste bloco é automática (o pai só
+          tem min-height), então ele nunca rolava sozinho — quem rola é a janela.
+          O que o `auto` fazia era criar um contêiner de rolagem parado, e todo
+          `position: sticky` de dentro (a barra da busca de produtos, por exemplo)
+          ficava preso nele e nunca grudava no topo. */}
+      <div className="main-content" ref={mainRef} style={{ flex: 1, padding: "20px 24px", minWidth: 0 }}>
         {/* Sem conexão tem precedência: com o servidor fora, os outros avisos
             (falha de save, poll lento) são só sintoma da mesma causa. */}
         {!net.online && (

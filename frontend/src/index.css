@@ -123,6 +123,20 @@
   --info-border: #bfdbfe;
   --info-text: #1e40af;
 
+  /* Selos (ui/Badge). Mesma história dos avisos acima: eram hex claros fixos no
+     JS, e no tema escuro ficavam pastilhas claras num fundo escuro. */
+  --badge-green-bg: #EAF3DE;  --badge-green-text: #3B6D11;
+  --badge-red-bg: #FCEBEB;    --badge-red-text: #A32D2D;
+  --badge-amber-bg: #FAEEDA;  --badge-amber-text: #854F0B;
+  --badge-blue-bg: #E6F1FB;   --badge-blue-text: #185FA5;
+  --badge-teal-bg: #E1F5EE;   --badge-teal-text: #0F6E56;
+  --badge-gray-bg: #F1EFE8;   --badge-gray-text: #5F5E5A;
+  --badge-purple-bg: #EEEDFE; --badge-purple-text: #3C3489;
+  --badge-rose-bg: #FCE7F0;   --badge-rose-text: #9D2B5E;
+  --badge-indigo-bg: #E7E9FB; --badge-indigo-text: #34409A;
+  --badge-cyan-bg: #DFF4F6;   --badge-cyan-text: #0E6E78;
+  --badge-orange-bg: #FBE9DA; --badge-orange-text: #9A4A0B;
+
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   font-size: 14px;
   line-height: 1.5;
@@ -159,6 +173,18 @@
     --info-bg: #16233a;
     --info-border: #2c4570;
     --info-text: #9dc0f5;
+
+    --badge-green-bg: #1b3316;  --badge-green-text: #a9d98b;
+    --badge-red-bg: #3a1c1c;    --badge-red-text: #f0a3a2;
+    --badge-amber-bg: #3a2c0d;  --badge-amber-text: #f2c96b;
+    --badge-blue-bg: #16233a;   --badge-blue-text: #9dc0f5;
+    --badge-teal-bg: #10322a;   --badge-teal-text: #7fd8bd;
+    --badge-gray-bg: #2a2926;   --badge-gray-text: #b8b5ad;
+    --badge-purple-bg: #221f3d; --badge-purple-text: #b4aefb;
+    --badge-rose-bg: #3a1a28;   --badge-rose-text: #f2a0c0;
+    --badge-indigo-bg: #1c1f3d; --badge-indigo-text: #a8b0f7;
+    --badge-cyan-bg: #10303a;   --badge-cyan-text: #7fd0dc;
+    --badge-orange-bg: #38210f; --badge-orange-text: #f0b183;
   }
 }
 
@@ -187,6 +213,18 @@
   --info-bg: #eff6ff;
   --info-border: #bfdbfe;
   --info-text: #1e40af;
+
+  --badge-green-bg: #EAF3DE;  --badge-green-text: #3B6D11;
+  --badge-red-bg: #FCEBEB;    --badge-red-text: #A32D2D;
+  --badge-amber-bg: #FAEEDA;  --badge-amber-text: #854F0B;
+  --badge-blue-bg: #E6F1FB;   --badge-blue-text: #185FA5;
+  --badge-teal-bg: #E1F5EE;   --badge-teal-text: #0F6E56;
+  --badge-gray-bg: #F1EFE8;   --badge-gray-text: #5F5E5A;
+  --badge-purple-bg: #EEEDFE; --badge-purple-text: #3C3489;
+  --badge-rose-bg: #FCE7F0;   --badge-rose-text: #9D2B5E;
+  --badge-indigo-bg: #E7E9FB; --badge-indigo-text: #34409A;
+  --badge-cyan-bg: #DFF4F6;   --badge-cyan-text: #0E6E78;
+  --badge-orange-bg: #FBE9DA; --badge-orange-text: #9A4A0B;
   color-scheme: light;
 }
 :root[data-theme="dark"] {
@@ -212,6 +250,18 @@
   --info-bg: #16233a;
   --info-border: #2c4570;
   --info-text: #9dc0f5;
+
+  --badge-green-bg: #1b3316;  --badge-green-text: #a9d98b;
+  --badge-red-bg: #3a1c1c;    --badge-red-text: #f0a3a2;
+  --badge-amber-bg: #3a2c0d;  --badge-amber-text: #f2c96b;
+  --badge-blue-bg: #16233a;   --badge-blue-text: #9dc0f5;
+  --badge-teal-bg: #10322a;   --badge-teal-text: #7fd8bd;
+  --badge-gray-bg: #2a2926;   --badge-gray-text: #b8b5ad;
+  --badge-purple-bg: #221f3d; --badge-purple-text: #b4aefb;
+  --badge-rose-bg: #3a1a28;   --badge-rose-text: #f2a0c0;
+  --badge-indigo-bg: #1c1f3d; --badge-indigo-text: #a8b0f7;
+  --badge-cyan-bg: #10303a;   --badge-cyan-text: #7fd0dc;
+  --badge-orange-bg: #38210f; --badge-orange-text: #f0b183;
   color-scheme: dark;
 }
 

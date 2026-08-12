@@ -657,6 +657,58 @@ No preenchimento automatico mesma coisa ao clicar em configurar. Em ambos, quand
     lote). Junto foram o `addCatalogProducts` do GroupDashboard e a prop
     `select` do ProductGridCard, que não tinham outro uso.
 
-88. [] Na busca de produtos testa se todos os filtros estão funcionando.
+88. [] Na busca de produtos testa se todos os filtros e ordenação estão funcionando. Tem mais algo pra testar ali?
 
-89. [] Pense como se tu fosse um usuário, o que da pra melhorar na aba de busca de produtos? Em tudo, incluindo cores, destaques
+89. [x] Pense como se tu fosse um usuário, o que da pra melhorar na aba de busca de produtos? Em tudo, incluindo cores, destaques
+
+    O card agora diz de onde veio a oferta: um selo com cor por loja (Mercado
+    Livre âmbar, Amazon índigo, Shopee laranja) no lugar do cinza de 11px que
+    misturava loja e vendedor. Com as três lojas ligadas ao mesmo tempo, dava
+    pra ler a lista inteira sem saber quem vendia o quê.
+
+    O desconto virou faixa no canto da imagem (verde forte a partir de 40%, com
+    🔥 a partir de 60%) e o preço riscado ganhou embaixo "Economize R$ X" — a
+    ordem padrão é "Maior desconto" e ele morava num selinho no rodapé. Produto
+    que entrou no catálogo nas últimas 24h ganha selo "Novo" (o `firstSeenAt` já
+    vinha do /api/ofertas e não aparecia em lugar nenhum). Os dois destaques são
+    props do ProductGridCard, desligadas por padrão: o /produtos segue igual.
+
+    A faixa dos selos passou a ser reservada em todo card que tem botão —
+    só quem tinha selo ficava 26px mais baixo, e a grade nascia serrilhada.
+
+    O cabeçalho da lista, as chaves e a linha "Ordem + Preencher fila agora"
+    viraram um card com os mesmos cantos arredondados dos outros blocos da tela.
+    Chegaram a ser uma barra grudada no topo, mas no meio da rolagem ela ficava
+    achatada nas pontas e destoava de tudo em volta — e o `.main-content` tinha
+    um `overflowY: auto` num bloco de altura automática, ou seja, um contêiner
+    de rolagem parado que desativava todo `position: sticky` de dentro dele (a
+    barra de salvar do rodapé desta mesma aba incluída). O `overflowY` saiu; a
+    barra grudada, também. A contagem virou "24 de 1.234 no catálogo · página 2
+    de 52 · buscando...", em vez de só o total. As chaves agora dizem "Mostrar
+    já na fila" e "Mostrar enviados recentemente" — ligada, a chave mostra.
+    Virar de página leva a tela de volta pro topo.
+
+    A busca deixou de acontecer sozinha. Antes cada tecla digitada no campo ou
+    num filtro disparava uma request depois de 350ms, e a lista se refazia
+    debaixo do dedo. Agora existe um botão "Buscar" (e Enter, tanto no campo de
+    palavras-chave quanto nos filtros): o que está escrito só vira lista quando
+    se pede. Por dentro são dois estados — os filtros que estão na tela e os que
+    a lista reflete —, e enquanto os dois diferem a dica embaixo do campo avisa
+    que falta buscar. O que é um clique só continua valendo na hora: ordem,
+    chaves, lojas, categorias, e tirar um filtro pelo chip ✕ ou pelo "Tirar
+    <filtro>" da lista vazia. No campo de busca: ✕ pra limpar (e já rebuscar) e
+    Esc pra limpar o texto sem mexer na lista.
+
+    A lista vazia deixou de ser só texto: cada filtro ligado vira um botão
+    "Tirar <filtro>", então dá pra afrouxar um critério de cada vez sem abrir o
+    painel e adivinhar qual está apertado. Enquanto a próxima página não chega,
+    a atual fica apagada e sem clique, e o esqueleto da primeira carga passou de
+    8 pra 12 cards.
+
+    Cores: os selos (ui/Badge) tinham hex claros fixos e no tema escuro viravam
+    pastilhas claras — os 11 pares foram pro index.css, com conjunto próprio por
+    tema, como já era com --warn-bg/--danger-bg. O "Já na fila" ganhou fundo
+    neutro em vez de transparente, e os rótulos/dicas/avisos da aba subiram de
+    11 pra 12px.
+
+90. [] Tem alguma forma de testar cupons nos produtos do Mercado livre? Se precisa de login, da pra usar o cookie que nem no scraping do hub.

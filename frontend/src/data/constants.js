@@ -22,6 +22,17 @@ export const SOURCE_LABEL_TO_ID = {
   "Shopee": "shopee",
 };
 
+// Cor do selo da loja nos cards de produto (nomes da paleta de ui/Badge). Cada
+// loja com a sua, pra bater o olho e saber de onde veio a oferta quando a
+// campanha busca nas três ao mesmo tempo.
+const STORE_BADGE_COLOR = { ml: "amber", amazon: "indigo", shopee: "orange" };
+
+// Aceita o label ("Mercado Livre", como o catálogo grava em `store`) ou o id.
+export function storeBadgeColor(store) {
+  const id = SOURCE_LABEL_TO_ID[store] || store;
+  return STORE_BADGE_COLOR[id] || "gray";
+}
+
 // id da loja → id da aba correspondente no sidebar.
 export const STORE_ID_TO_PAGE = {
   ml: "mercado-livre",
