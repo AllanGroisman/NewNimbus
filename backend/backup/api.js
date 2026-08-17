@@ -16,6 +16,7 @@ const {
 
 const { mode } = require("../config/loadEnv");
 const backupCrypto = require("../scripts/backup-crypto");
+const { purgeKey } = require("../scripts/purge-remote-versions");
 
 const BACKUPS_DIR = path.join(__dirname, "..", "backups");
 const CONTAINER   = process.env.POSTGRES_CONTAINER || "nimbus-postgres";
@@ -159,7 +160,12 @@ async function deleteRemote(filename) {
   if (!B2_OK) throw new Error("Backblaze não configurado");
   if (!REMOTE_NAME_RE.test(filename)) throw new Error("Arquivo inválido");
   const client = makeClient();
-  await client.send(new DeleteObjectCommand({ Bucket: s3cfg.bucket, Key: s3cfg.prefix + filename }));
+  // Num bucket versionado (o do B2 é), DeleteObject só empilha um hide marker: o
+  // arquivo some da lista mas continua ocupando o cap. purgeKey apaga por VersionId.
+  const removidos = await purgeKey(client, { bucket: s3cfg.bucket, key: s3cfg.prefix + filename });
+  if (!removidos) {
+    await client.send(new DeleteObjectCommand({ Bucket: s3cfg.bucket, Key: s3cfg.prefix + filename }));
+  }
   return { ok: true };
 }
 

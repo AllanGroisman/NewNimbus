@@ -202,7 +202,16 @@ BACKUP_ENC_KEY=...                 # 64 chars hex — cifra os dumps antes de su
 
 **Guarde uma cópia da `BACKUP_ENC_KEY` fora do servidor** (gerenciador de senhas, anotação segura). Os backups na nuvem são cifrados com essa chave — se o servidor for perdido e a chave estiver só nele, os backups do B2 ficam **irrecuperáveis**.
 
-Opcional, mas recomendado: no console web do Backblaze, ative em `nimbus-backups` → Lifecycle Settings a opção "Keep only the last version" e considere Object Lock — protege os backups caso a app key vaze.
+**Ative "Keep only the last version"** no console web do Backblaze (`nimbus-backups` → Lifecycle Settings). O bucket é versionado: sem essa regra, todo delete (da rotação, do admin ou feito na mão no site) só empilha um *hide marker* e os bytes continuam contando no cap da conta — foi assim que 70 snapshots vivos (~1 GB) viraram 9,6 GB e o upload passou a falhar com `storage cap exceeded`. O código já expurga as versões mortas a cada execução (`purge-remote-versions.js`), a regra do B2 é a rede de segurança.
+
+Para limpar manualmente as versões mortas de uma vez:
+
+```bash
+node backend/scripts/purge-remote-versions.js --dry-run   # quanto seria liberado
+node backend/scripts/purge-remote-versions.js             # apaga por VersionId
+```
+
+Opcional: considere Object Lock — protege os backups caso a app key vaze.
 
 ### Restaurar um backup
 

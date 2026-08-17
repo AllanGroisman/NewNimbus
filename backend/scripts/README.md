@@ -35,7 +35,8 @@ Esse script:
 |---|---|
 | **`backup-all.sh`** | Orquestrador — o cron chama esse. Dump local + upload B2, resolvendo o node do nvm (o node do sistema pode ser antigo demais). Loga em `backend/logs/backup.log`. |
 | **`backup-db.sh`** | `pg_dump` do container `nimbus-postgres`, salva `.sql.gz` em `backend/backups/`. Rotaciona mantendo os últimos 48 (`BACKUP_RETAIN_LOCAL`). |
-| **`backup-remote.js`** | Sobe os `db-*.sql.gz` pro bucket S3-compatível, cifrados quando `BACKUP_ENC_KEY` existe. Sem as envs `BACKUP_S3_*`, sai exit 0. Rotação GFS via `backup-retention.js`. |
+| **`backup-remote.js`** | Sobe **só os dumps novos** (o que nunca foi enviado, histórico em `backend/backups/.remote-sent.json`) pro bucket S3-compatível, cifrados quando `BACKUP_ENC_KEY` existe. Sem as envs `BACKUP_S3_*`, sai exit 0. Rotação GFS + expurgo de versões **antes** do upload. `--backfill` ignora o histórico e reenvia o que faltar. |
+| **`purge-remote-versions.js`** | Apaga permanentemente (por `VersionId`) versões não-atuais e hide markers do bucket versionado — sem isso, delete no B2 não libera espaço. `--dry-run` mostra quanto liberaria. |
 | **`backup-retention.js`** | Regra de retenção remota (função pura, testada em `tests/unit/backup-retention.test.js`): mantém tudo das últimas 48h + o snapshot mais recente de cada dia até 30 dias. |
 | **`backup-crypto.js`** | Cifra AES-256-GCM dos dumps que saem da máquina (`BACKUP_ENC_KEY`, 64 chars hex). |
 | **`restore-remote.js`** | Baixa do B2, decifra e restaura (`--list`, `--latest`, `--file <nome>`). |
@@ -51,8 +52,12 @@ bash backend/scripts/backup-all.sh
 # Só dump local:
 bash backend/scripts/backup-db.sh
 
-# Só upload pro B2 (sobe o que ainda não está lá):
+# Só upload pro B2 (sobe só backup novo — o que você apagou na mão no B2 não volta):
 node backend/scripts/backup-remote.js
+
+# Liberar espaço: apaga de vez as versões escondidas do bucket versionado
+node backend/scripts/purge-remote-versions.js --dry-run
+node backend/scripts/purge-remote-versions.js
 
 # Prever uploads e rotação sem executar nada:
 node backend/scripts/backup-remote.js --dry-run

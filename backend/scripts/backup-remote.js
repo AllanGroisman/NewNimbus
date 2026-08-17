@@ -17,8 +17,9 @@
 //   BACKUP_RETAIN_REMOTE_DAYS  — depois da janela, 1 por dia até N dias (default: 30)
 //
 // Uso:
-//   node scripts/backup-remote.js               # sobe os que ainda não estão em remoto
+//   node scripts/backup-remote.js               # sobe só os dumps que nunca foram enviados
 //   node scripts/backup-remote.js --latest      # sobe só o último snapshot local
+//   node scripts/backup-remote.js --backfill    # reenvia o que falta no remoto (ignora o histórico)
 //   node scripts/backup-remote.js --dry-run     # mostra o que faria
 
 require("../config/loadEnv"); // .env + override por modo (honra BACKUP_S3_PREFIX do ngrok)
@@ -28,8 +29,13 @@ const fsp = require("fs/promises");
 const path = require("path");
 const backupCrypto = require("./backup-crypto");
 const { computeRemoteKeep } = require("./backup-retention");
+const { purgeOldVersions } = require("./purge-remote-versions");
 
 const BACKUPS_DIR = path.join(__dirname, "..", "backups");
+// Histórico do que já foi enviado com sucesso. Sem ele, apagar um snapshot na mão no
+// B2 fazia a execução seguinte re-subir o mesmo arquivo (ele ainda está em disco por
+// 48h) — a limpeza manual era desfeita sozinha.
+const SENT_STATE = path.join(BACKUPS_DIR, ".remote-sent.json");
 
 const config = {
   endpoint: process.env.BACKUP_S3_ENDPOINT || undefined,
@@ -45,6 +51,7 @@ const config = {
 const args = new Set(process.argv.slice(2));
 const LATEST_ONLY = args.has("--latest");
 const DRY = args.has("--dry-run");
+const BACKFILL = args.has("--backfill");
 
 // BACKUP_REMOTE_AUTO_UPLOAD=0 desliga o upload automático sem desconfigurar o S3
 // (assim o restore/download remoto continua funcionando). Usado no modo ngrok pra
@@ -60,6 +67,34 @@ async function listLocalDumps() {
     .filter(e => e.isFile() && DUMP_RE.test(e.name))
     .map(e => ({ name: e.name, path: path.join(BACKUPS_DIR, e.name) }))
     .sort((a, b) => b.name.localeCompare(a.name));
+}
+
+// Nomes já enviados com sucesso. Arquivo corrompido/ausente = conjunto vazio: o pior
+// caso é reenviar, nunca perder backup.
+async function loadSentState() {
+  try {
+    const raw = JSON.parse(await fsp.readFile(SENT_STATE, "utf8"));
+    return new Set(Array.isArray(raw?.sent) ? raw.sent : []);
+  } catch {
+    return new Set();
+  }
+}
+
+// Guarda só nomes ainda relevantes (os que existem em disco + os recém-enviados),
+// senão o arquivo cresceria pra sempre.
+async function saveSentState(sent, localNames) {
+  const keep = [...sent].filter(n => localNames.has(n)).sort();
+  const tmp = `${SENT_STATE}.tmp`;
+  await fsp.writeFile(tmp, JSON.stringify({ sent: keep }, null, 2));
+  await fsp.rename(tmp, SENT_STATE);
+}
+
+// Quais dumps locais subir. Regra: só o que ainda não está no bucket E que nunca
+// foi enviado antes — apagar um snapshot na mão no B2 não deve fazê-lo voltar.
+// `--backfill` volta ao comportamento antigo (repõe tudo que falta no remoto).
+function selectUploads(local, remote, sent, { latestOnly = false, backfill = false } = {}) {
+  const candidates = latestOnly ? local.slice(0, 1) : local;
+  return candidates.filter(d => !remote.has(d.name) && (backfill || !sent.has(d.name)));
 }
 
 function validateConfig() {
@@ -181,25 +216,55 @@ async function main() {
   }
 
   const client = await makeClient();
-  const remote = new Set((await listRemoteDumps(client)).map(d => d.name));
+  const allRemote = await listRemoteDumps(client);
+  const remote = new Set(allRemote.map(d => d.name));
   console.log(`[backup-remote] local=${local.length} remote=${remote.size} target=${config.bucket}/${config.prefix}`);
 
-  const candidates = LATEST_ONLY ? [local[0]] : local;
-  const toUpload = candidates.filter(d => !remote.has(d.name));
-  if (!toUpload.length) {
-    console.log("[backup-remote] nada a subir — tudo já em remoto");
-  }
-  for (const d of toUpload) {
-    await uploadDump(client, d);
-  }
-
-  const allRemote = await listRemoteDumps(client);
+  // Limpeza ANTES do upload: se o cap da conta estourar, o upload falha e mata o
+  // processo — com a rotação no fim, ela nunca rodava e o cap nunca era liberado.
   await rotateRemote(client, allRemote);
+  // O delete do S3 só esconde num bucket versionado; isto libera os bytes de verdade.
+  await purgeOldVersions(client, {
+    bucket: config.bucket,
+    prefix: config.prefix,
+    dryRun: DRY,
+    log: msg => console.log(`[backup-remote] ${msg}`),
+  });
 
+  const localNames = new Set(local.map(d => d.name));
+  const sent = await loadSentState();
+  // Primeira execução com histórico: o que já está no bucket conta como enviado.
+  for (const name of localNames) if (remote.has(name)) sent.add(name);
+
+  const toUpload = selectUploads(local, remote, sent, { latestOnly: LATEST_ONLY, backfill: BACKFILL });
+  if (!toUpload.length) {
+    console.log("[backup-remote] nada a subir — nenhum backup novo");
+  }
+  let falhas = 0;
+  for (const d of toUpload) {
+    try {
+      await uploadDump(client, d);
+      if (!DRY) sent.add(d.name);
+    } catch (err) {
+      falhas++;
+      console.error(`[backup-remote] falha ao subir ${d.name}: ${err.message}`);
+    }
+  }
+  if (!DRY) await saveSentState(sent, localNames);
+
+  if (falhas) {
+    console.error(`[backup-remote] ${falhas} upload(s) falharam`);
+    process.exitCode = 1;
+    return;
+  }
   console.log("[backup-remote] done");
 }
 
-main().catch(err => {
-  console.error("[backup-remote] falha:", err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch(err => {
+    console.error("[backup-remote] falha:", err);
+    process.exit(1);
+  });
+}
+
+module.exports = { selectUploads };
