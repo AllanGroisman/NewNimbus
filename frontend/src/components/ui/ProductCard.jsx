@@ -29,8 +29,10 @@ function reviewsText(product) {
   return formatCompact(Number(raw));
 }
 
-// Card compacto para filas/pendentes (horizontal)
-export function ProductRow({ product, actions, index }) {
+// Card compacto para filas/pendentes (horizontal).
+// `extra` (opcional) entra na linha dos selos — quem usa hoje é a revisão de
+// pendentes do GroupDashboard, que põe ali o cupom editável do item.
+export function ProductRow({ product, actions, index, extra }) {
   const hasLink = !!product.link;
   return (
     <div style={{
@@ -87,6 +89,7 @@ export function ProductRow({ product, actions, index }) {
           {product.rating && <Badge color="amber">★ {product.rating}</Badge>}
           {product.discount && <Badge color="green">-{typeof product.discount === "number" ? `${product.discount}%` : product.discount}</Badge>}
           {product.freeShipping && <Badge color="teal">Frete grátis</Badge>}
+          {extra}
         </div>
       </div>
       <div style={{ textAlign: "right", flexShrink: 0, marginRight: 4 }}>

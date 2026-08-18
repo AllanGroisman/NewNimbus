@@ -172,6 +172,9 @@ model RepasseCaptureLog {
   originalPrice       Float?
   discount            Int?
   sold                Int?
+  // Cupom lido da legenda do grupo líder (extractCoupon). Null = a mensagem não
+  // trazia código nenhum — é o caso mais comum, e o log precisa distinguir os dois.
+  coupon              String?
   outcome             String
   reason              String?
   createdAt           DateTime @default(now())

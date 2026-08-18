@@ -24,11 +24,12 @@ vi.mock("../data/api", () => ({
   manualAddToQueue: vi.fn(),
   clearGroupQueue: vi.fn(),
   saveGroupQueue: vi.fn().mockResolvedValue({}),
+  saveItemCoupon: vi.fn(),
   approveAllPending: vi.fn(),
   rejectAllPending: vi.fn(),
 }));
 
-import { saveGroupQueue } from "../data/api";
+import { saveGroupQueue, saveItemCoupon } from "../data/api";
 import GroupDashboard from "../components/GroupDashboard.jsx";
 
 function makeItem(overrides = {}) {
@@ -239,6 +240,80 @@ describe("GroupDashboard — aba Fila com itens", () => {
     fireEvent.click(screen.getByRole("button", { name: /Fila/ }));
     expect(screen.getByText(/Aguardando revisão/)).toBeInTheDocument();
     expect(screen.getByText("Fone Pendente")).toBeInTheDocument();
+  });
+});
+
+// Task 91: o cupom capturado no repasse não aparecia em lugar nenhum antes do
+// envio, e não dava pra corrigir um código errado sem descartar o produto.
+describe("GroupDashboard — cupom na fila e na revisão", () => {
+  beforeEach(() => {
+    saveItemCoupon.mockReset();
+    saveItemCoupon.mockImplementation(async (_gid, _list, _id, coupon) => ({
+      ok: true, coupon: coupon ? coupon.toUpperCase() : null,
+    }));
+  });
+
+  function renderWithCoupon(overrides = {}) {
+    const out = renderDashboard({ group: overrides });
+    fireEvent.click(screen.getByRole("button", { name: /Fila/ }));
+    return out;
+  }
+
+  it("mostra o cupom do item no card da fila", () => {
+    renderWithCoupon({ queue: [makeItem({ id: "q1", name: "Mouse Gamer", coupon: "JBL20" })] });
+    expect(screen.getByText("JBL20")).toBeInTheDocument();
+  });
+
+  it("editar e salvar manda só o cupom daquele item pro servidor", async () => {
+    const { props } = renderWithCoupon({ queue: [makeItem({ id: "q1", name: "Mouse Gamer", coupon: "JBL20" })] });
+    fireEvent.click(screen.getByRole("button", { name: "✎" }));
+    fireEvent.change(screen.getByLabelText("Cupom"), { target: { value: "novo10" } });
+    fireEvent.click(screen.getByRole("button", { name: "✓" }));
+
+    await waitFor(() => expect(saveItemCoupon).toHaveBeenCalledTimes(1));
+    expect(saveItemCoupon).toHaveBeenCalledWith(1, "queue", "q1", "NOVO10");
+    // A fila do App também acompanha, senão o card volta ao valor velho no re-render.
+    const call = props.onUpdate.mock.calls.reverse().find(([, patch]) => patch.queue);
+    expect(call[1].queue[0].coupon).toBe("NOVO10");
+    await waitFor(() => expect(screen.getByText("NOVO10")).toBeInTheDocument());
+  });
+
+  it("o 🗑 apaga o cupom (salva vazio)", async () => {
+    renderWithCoupon({ queue: [makeItem({ id: "q1", name: "Mouse Gamer", coupon: "JBL20" })] });
+    fireEvent.click(screen.getByRole("button", { name: "✎" }));
+    fireEvent.click(screen.getByRole("button", { name: "🗑" }));
+    await waitFor(() => expect(saveItemCoupon).toHaveBeenCalledWith(1, "queue", "q1", ""));
+  });
+
+  it("item sem cupom mostra o campo vazio e deixa escrever um à mão", async () => {
+    renderWithCoupon({ queue: [makeItem({ id: "q1", name: "Mouse Gamer" })] });
+    fireEvent.click(screen.getByRole("button", { name: "✎" }));
+    // Sem cupom não tem o que apagar — o 🗑 só aparece depois que existe um código.
+    expect(screen.queryByRole("button", { name: "🗑" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("Cupom"), { target: { value: "PROMO15" } });
+    fireEvent.click(screen.getByRole("button", { name: "✓" }));
+    await waitFor(() => expect(saveItemCoupon).toHaveBeenCalledWith(1, "queue", "q1", "PROMO15"));
+  });
+
+  it("na revisão de pendentes o cupom aparece e salva na lista certa", async () => {
+    renderWithCoupon({ pending: [makeItem({ id: "p1", name: "Pendente A", coupon: "TECH-10" })] });
+    fireEvent.click(screen.getByRole("button", { name: /TECH-10/ }));
+    fireEvent.change(screen.getByLabelText("Cupom"), { target: { value: "BLACK25" } });
+    fireEvent.click(screen.getByRole("button", { name: "✓" }));
+    await waitFor(() => expect(saveItemCoupon).toHaveBeenCalledWith(1, "pending", "p1", "BLACK25"));
+  });
+
+  it("quando o servidor recusa, avisa e devolve o cupom antigo", async () => {
+    // Erro sem mensagem própria — o errText do mock cai no texto de fallback.
+    saveItemCoupon.mockRejectedValue(new Error(""));
+    renderWithCoupon({ queue: [makeItem({ id: "q1", name: "Mouse Gamer", coupon: "JBL20" })] });
+    fireEvent.click(screen.getByRole("button", { name: "✎" }));
+    fireEvent.change(screen.getByLabelText("Cupom"), { target: { value: "NOVO10" } });
+    fireEvent.click(screen.getByRole("button", { name: "✓" }));
+
+    await waitFor(() => expect(screen.getByText(/Não foi possível salvar o cupom/)).toBeInTheDocument());
+    // A edição segue aberta pra tentar de novo, com o valor digitado no campo.
+    expect(screen.getByLabelText("Cupom")).toHaveValue("NOVO10");
   });
 });
 

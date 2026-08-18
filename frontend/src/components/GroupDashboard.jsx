@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, storeLockMessage, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, soldText, getGroupCategories, getGroupStats, computeQueueETA, formatETA, formatTimeBR, formatDateBR, isSameDayBR } from "../data/constants";
-import { createWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupQueue, saveGroupQueue, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue, errText } from "../data/api";
+import { createWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupQueue, saveGroupQueue, saveItemCoupon, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue, errText } from "../data/api";
 import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
 import { leadersOf, withLeaders } from "../data/repasseLeaders";
 import { useUnsavedGuard, useRequestNavigation } from "../data/navGuard";
@@ -163,7 +163,115 @@ function QueueField({ label, value, mono, link }) {
   );
 }
 
-function QueueItemCard({ item, idx, eta, onRemove, onMoveToTop, onDragStart, onDragOver, onDragEnd, onDrop, isDragOver, isDragging }) {
+// Cupom do item — o único campo editável do card. Mora aqui (e não no ui/ProductCard)
+// porque salvar é responsabilidade do dashboard: o componente só devolve o texto no
+// onSave, que resolve `false` quando o servidor recusa (aí a edição segue aberta).
+// No repasse o valor vem do que o extractCoupon pescou na legenda do grupo líder;
+// na campanha de busca nasce vazio e pode ser escrito à mão.
+// `compact` é a versão da linha de "Aguardando revisão", que não tem a grade de
+// campos do card da fila.
+function CouponField({ value, onSave, compact = false }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const has = !isEmpty(value);
+
+  const open = () => { setDraft(has ? String(value) : ""); setEditing(true); };
+  const commit = async (next) => {
+    if (saving) return;
+    setSaving(true);
+    const ok = await onSave(next);
+    setSaving(false);
+    if (ok !== false) setEditing(false);
+  };
+
+  const iconBtn = (extra = {}) => ({
+    border: "none", background: "transparent", cursor: saving ? "wait" : "pointer",
+    padding: "0 3px", fontSize: 12, lineHeight: 1, color: "var(--color-text-secondary)",
+    ...extra,
+  });
+
+  if (editing) {
+    return (
+      // draggable=false + stopPropagation: o card da fila inteiro é arrastável, e sem
+      // isso o navegador começa um drag em vez de deixar digitar/selecionar no input.
+      <div
+        draggable={false}
+        onDragStart={e => e.stopPropagation()}
+        onMouseDown={e => e.stopPropagation()}
+        style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}
+      >
+        {!compact && (
+          <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 500 }}>Cupom</div>
+        )}
+        <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+          <input
+            autoFocus
+            value={draft}
+            disabled={saving}
+            aria-label="Cupom"
+            placeholder="SEM CUPOM"
+            onChange={e => setDraft(e.target.value.toUpperCase())}
+            onKeyDown={e => {
+              if (e.key === "Enter") { e.preventDefault(); commit(draft.trim()); }
+              if (e.key === "Escape") { e.preventDefault(); setEditing(false); }
+            }}
+            style={{
+              width: compact ? 108 : "100%", minWidth: 0, padding: "3px 6px", borderRadius: 6,
+              border: "0.5px solid var(--color-border-secondary)", background: "var(--color-background-primary)",
+              color: "var(--color-text-primary)", fontSize: 12, fontFamily: "monospace",
+            }}
+          />
+          <button onClick={() => commit(draft.trim())} disabled={saving} title="Salvar cupom" style={iconBtn({ color: PRIMARY_DARK })}>✓</button>
+          <button onClick={() => setEditing(false)} disabled={saving} title="Cancelar" style={iconBtn()}>✕</button>
+          {has && (
+            <button onClick={() => commit("")} disabled={saving} title="Tirar o cupom deste produto" style={iconBtn({ color: "var(--danger-text)" })}>🗑</button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (compact) {
+    return (
+      <button
+        onClick={open}
+        title={has ? "Editar o cupom deste produto" : "Adicionar um cupom a este produto"}
+        style={{
+          display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 6,
+          border: "none", cursor: "pointer", fontSize: 11, fontWeight: 500,
+          background: has ? "var(--badge-purple-bg)" : "var(--color-background-secondary)",
+          color: has ? "var(--badge-purple-text)" : "var(--color-text-secondary)",
+          fontFamily: has ? "monospace" : "inherit",
+        }}
+      >
+        🎟️ {has ? String(value) : "+ cupom"} <span style={{ opacity: 0.7 }}>✎</span>
+      </button>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 500 }}>
+        Cupom
+        <button onClick={open} title={has ? "Editar o cupom deste produto" : "Adicionar um cupom a este produto"} style={iconBtn({ padding: 0 })}>✎</button>
+      </div>
+      <div style={{
+        fontSize: 12,
+        color: has ? "var(--color-text-primary)" : "var(--color-text-secondary)",
+        fontStyle: has ? "normal" : "italic",
+        opacity: has ? 1 : 0.7,
+        fontFamily: has ? "monospace" : "inherit",
+        wordBreak: "break-word",
+        overflowWrap: "anywhere",
+      }}>
+        {has ? String(value) : NULL_LABEL}
+      </div>
+    </div>
+  );
+}
+
+function QueueItemCard({ item, idx, eta, onRemove, onMoveToTop, onSaveCoupon, onDragStart, onDragOver, onDragEnd, onDrop, isDragOver, isDragging }) {
   const addedAt = item.addedAt ? new Date(item.addedAt) : null;
   const addedAtStr = addedAt && !isNaN(addedAt.getTime()) ? addedAt.toLocaleString("pt-BR") : null;
   const discountStr = !isEmpty(item.discount) ? (typeof item.discount === "number" ? `${item.discount}%` : String(item.discount)) : null;
@@ -240,6 +348,7 @@ function QueueItemCard({ item, idx, eta, onRemove, onMoveToTop, onDragStart, onD
           <QueueField label="Preço" value={fmtBR(item.price)} />
           <QueueField label="Preço antigo" value={fmtBR(item.originalPrice)} />
           <QueueField label="Desconto" value={discountStr} />
+          <CouponField value={item.coupon} onSave={onSaveCoupon} />
           <QueueField label="Vendidos" value={soldText(item)} />
           <QueueField label="Avaliação" value={item.rating ? `★ ${item.rating}${item.reviewsCount ? ` (${item.reviewsCount})` : ""}` : null} />
           <QueueField label="Frete grátis" value={item.freeShipping ? "Sim" : null} />
@@ -1193,6 +1302,34 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         const o = (ops.groups || []).find(g => g.id === group.id);
         if (o) onUpdate(group.id, { queue: o.queue, pending: o.pending });
       } catch { /* ignora — próximo poll corrige */ }
+    }
+  };
+
+  // Salva (ou apaga, com "") o cupom de um item da fila ou da revisão. Vai só o
+  // cupom pro servidor, item a item — devolver a lista inteira, como faz o
+  // persistQueue, apagaria o que a captura do repasse enfileirou enquanto a tela
+  // estava aberta. Devolve false quando falha: aí o CouponField deixa a edição
+  // aberta pra tentar de novo, em vez de fechar fingindo que salvou.
+  const saveCoupon = async (list, itemId, coupon) => {
+    const setList = list === "queue" ? setQueue : setPending;
+    const prev = list === "queue" ? queue : pending;
+    const sameItem = i => String(i.id ?? i.key) === String(itemId);
+    const apply = (l, value) => l.map(i => (sameItem(i) ? { ...i, coupon: value } : i));
+
+    setList(apply(prev, coupon || null));
+    onUpdate(group.id, { [list]: apply(prev, coupon || null) });
+    try {
+      const r = await saveItemCoupon(group.id, list, itemId, coupon);
+      // O servidor normaliza (UPPER, corta espaço) — mostra o que ele gravou.
+      const saved = r?.coupon ?? null;
+      setList(apply(prev, saved));
+      onUpdate(group.id, { [list]: apply(prev, saved) });
+      return true;
+    } catch (err) {
+      setList(prev);
+      onUpdate(group.id, { [list]: prev });
+      setActionError(errText(err, "Não foi possível salvar o cupom deste produto."));
+      return false;
     }
   };
 
@@ -2782,6 +2919,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                     <ProductRow
                       key={pid}
                       product={p}
+                      extra={<CouponField value={p.coupon} compact onSave={c => saveCoupon("pending", pid, c)} />}
                       actions={<>
                         <button onClick={() => approveProduct(pid)} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY_LIGHT, color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Adicionar na fila</button>
                         <button onClick={() => rejectProduct(pid)} style={{ padding: "5px 10px", borderRadius: 7, border: "0.5px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", fontSize: 12, cursor: "pointer" }}>Rejeitar</button>
@@ -2830,6 +2968,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                     eta={etas[idx]}
                     onRemove={() => setConfirmRemoveQueueItem(item)}
                     onMoveToTop={handleQueueMoveToTop(idx)}
+                    onSaveCoupon={c => saveCoupon("queue", item.id ?? item.key, c)}
                     onDragStart={handleQueueDragStart(idx)}
                     onDragOver={handleQueueDragOver(idx)}
                     onDragEnd={handleQueueDragEnd}

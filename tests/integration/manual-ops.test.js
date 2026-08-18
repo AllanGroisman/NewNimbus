@@ -202,6 +202,64 @@ describe("POST/DELETE /pending — aprovar/rejeitar", () => {
   });
 });
 
+describe("PATCH /coupon — cupom do item na fila e na revisão", () => {
+  const opsGroup = async (auth, gid) => {
+    const ops = await auth("get", "/api/state/ops");
+    return ops.body.groups.find(g => g.id === gid);
+  };
+
+  it("grava o cupom no item da fila, normalizando pra maiúscula", async () => {
+    const { user, auth } = await userWithGroup({ id: 801 });
+    await storage.updateGroupOps(user.id, 801, {
+      queue: [{ id: "q1", key: "q1", name: "A" }, { id: "q2", key: "q2", name: "B" }],
+    });
+    const r = await auth("patch", "/api/state/groups/801/queue/q1/coupon").send({ coupon: "  jbl20 " });
+    expect(r.status).toBe(200);
+    expect(r.body.coupon).toBe("JBL20");
+    const g = await opsGroup(auth, 801);
+    expect(g.queue.find(i => i.id === "q1").coupon).toBe("JBL20");
+    // O vizinho não pode ser tocado — a rota altera um item só.
+    expect(g.queue.find(i => i.id === "q2").coupon ?? null).toBeNull();
+  });
+
+  it("grava o cupom no item pendente", async () => {
+    const { user, auth } = await userWithGroup({ id: 802, auto: false });
+    await storage.updateGroupOps(user.id, 802, { pending: [{ id: "p1", key: "p1", name: "A" }] });
+    const r = await auth("patch", "/api/state/groups/802/pending/p1/coupon").send({ coupon: "TECH-10" });
+    expect(r.status).toBe(200);
+    const g = await opsGroup(auth, 802);
+    expect(g.pending[0].coupon).toBe("TECH-10");
+  });
+
+  it("cupom vazio apaga (vira null)", async () => {
+    const { user, auth } = await userWithGroup({ id: 803 });
+    await storage.updateGroupOps(user.id, 803, { queue: [{ id: "q1", key: "q1", name: "A", coupon: "JBL20" }] });
+    const r = await auth("patch", "/api/state/groups/803/queue/q1/coupon").send({ coupon: "" });
+    expect(r.status).toBe(200);
+    expect(r.body.coupon).toBeNull();
+    const g = await opsGroup(auth, 803);
+    expect(g.queue[0].coupon).toBeNull();
+  });
+
+  it("404 em item e grupo inexistentes, 400 em coupon que não é texto", async () => {
+    const { user, auth } = await userWithGroup({ id: 804 });
+    await storage.updateGroupOps(user.id, 804, { queue: [{ id: "q1", key: "q1", name: "A" }] });
+    expect((await auth("patch", "/api/state/groups/804/queue/naoexiste/coupon").send({ coupon: "X1" })).status).toBe(404);
+    expect((await auth("patch", "/api/state/groups/9999/queue/q1/coupon").send({ coupon: "X1" })).status).toBe(404);
+    expect((await auth("patch", "/api/state/groups/804/queue/q1/coupon").send({ coupon: { a: 1 } })).status).toBe(400);
+  });
+
+  it("não deixa editar item de campanha de outro usuário", async () => {
+    const { user, auth } = await userWithGroup({ id: 805 });
+    await storage.updateGroupOps(user.id, 805, { queue: [{ id: "q1", key: "q1", name: "A" }] });
+    const { auth: outro } = await createTestUser({ plan: "pro" });
+    const r = await outro("patch", "/api/state/groups/805/queue/q1/coupon").send({ coupon: "HACK1" });
+    expect(r.status).toBe(404);
+    const g = await opsGroup(auth, 805);
+    expect(g.queue[0].coupon ?? null).toBeNull();
+  });
+});
+
 describe("DELETE /history — limpa cooldown", () => {
   it("zera history, sentToday, sentWeek, weekData e lastSend", async () => {
     const { user, auth } = await userWithGroup({ id: 701 });

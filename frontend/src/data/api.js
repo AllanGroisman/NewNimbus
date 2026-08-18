@@ -241,6 +241,11 @@ export async function manualAddToQueue(groupId, payload) {
 export async function saveGroupQueue(groupId, queue) {
   return http("PUT", `/api/state/groups/${groupId}/queue`, { queue });
 }
+// Salva o cupom de um item da fila ou dos pendentes (list: "queue" | "pending").
+// coupon "" apaga o cupom do item.
+export async function saveItemCoupon(groupId, list, itemId, coupon) {
+  return http("PATCH", `/api/state/groups/${groupId}/${list}/${encodeURIComponent(itemId)}/coupon`, { coupon });
+}
 // Limpa a fila de envios da campanha
 export async function clearGroupQueue(groupId) {
   return http("DELETE", `/api/state/groups/${groupId}/queue`);

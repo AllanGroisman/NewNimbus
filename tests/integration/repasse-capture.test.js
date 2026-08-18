@@ -4,11 +4,27 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import path from "path";
-import { createTestUser, storage, affiliate, billing } from "../helpers/app.js";
+import { createTestUser, storage, affiliate, billing, auth as authMod } from "../helpers/app.js";
 
 const backendDir = path.resolve(__dirname, "..", "..", "backend");
 const scraper = require(path.join(backendDir, "scraping", "scraper.js"));
 const capture = require(path.join(backendDir, "repasse", "capture.js"));
+const { prisma } = require(path.join(backendDir, "db.js"));
+
+const logsOf = (userId) =>
+  prisma().repasseCaptureLog.findMany({ where: { userId }, orderBy: { createdAt: "desc" } });
+
+// logCapture() roda solto no capture.js (sem await, pra não segurar a captura),
+// então a linha entra pouco depois do onUpsert resolver. Espera curta pra o teste
+// não depender desse timing — no caminho do descarte não sobra nada pra aguardar.
+async function waitForLogs(userId, n, timeoutMs = 5000) {
+  const t0 = Date.now();
+  for (;;) {
+    const rows = await logsOf(userId);
+    if (rows.length >= n || Date.now() - t0 > timeoutMs) return rows;
+    await new Promise(r => setTimeout(r, 50));
+  }
+}
 
 const LEADER_JID = "120363999999@g.us";
 const LEADER_2_JID = "120363888888@g.us";
@@ -228,5 +244,75 @@ describe("repasse capture — grupo líder", () => {
     } finally {
       appConfig.set(storeLocks.STORE_LOCKS_KEY, {});
     }
+  });
+
+  // O cupom já seguia junto do produto até o envio, mas não aparecia no log de
+  // captura — não dava pra saber depois se a mensagem trazia código nenhum.
+  it("log de captura guarda o cupom lido da legenda", async () => {
+    const { user } = await createTestUser({ plan: "pro" });
+    affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
+    await storage.saveState(user.id, { groups: [repasseGroup(5012, { auto: true })] });
+    await capture.rebuildLeaderIndex();
+
+    await capture.onUpsert(user.id, NUMBER_ID, [
+      msgWithText("Fone JBL https://www.mercadolivre.com.br/p/MLB777 use o cupom JBL20"),
+    ]);
+
+    const logs = await waitForLogs(user.id, 1);
+    expect(logs.length).toBe(1);
+    expect(logs[0].outcome).toBe("queued");
+    expect(logs[0].coupon).toBe("JBL20");
+  });
+
+  it("sem cupom na legenda, o log grava null", async () => {
+    const { user } = await createTestUser({ plan: "pro" });
+    affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
+    await storage.saveState(user.id, { groups: [repasseGroup(5013, { auto: true })] });
+    await capture.rebuildLeaderIndex();
+
+    await capture.onUpsert(user.id, NUMBER_ID, [
+      msgWithText("https://www.mercadolivre.com.br/p/MLB778"),
+    ]);
+
+    const logs = await waitForLogs(user.id, 1);
+    expect(logs.length).toBe(1);
+    expect(logs[0].coupon).toBeNull();
+  });
+
+  // Descarte é justamente onde o cupom some sem deixar rastro: não vira produto
+  // nenhum, então o log é o único lugar onde ele pode aparecer.
+  it("link descartado também registra o cupom da mensagem", async () => {
+    const { user } = await createTestUser({ plan: "pro" });
+    affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
+    await storage.saveState(user.id, { groups: [repasseGroup(5014, { auto: true })] });
+    await capture.rebuildLeaderIndex();
+
+    await capture.onUpsert(user.id, NUMBER_ID, [
+      msgWithText("https://www.magazineluiza.com.br/produto/123 cupom: TECH-10"),
+    ]);
+
+    const logs = await waitForLogs(user.id, 1);
+    expect(logs.length).toBe(1);
+    expect(logs[0].outcome).toBe("discarded");
+    expect(logs[0].coupon).toBe("TECH-10");
+  });
+
+  it("o log do admin devolve o cupom junto da linha", async () => {
+    const { user } = await createTestUser({ plan: "pro" });
+    affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
+    await storage.saveState(user.id, { groups: [repasseGroup(5015, { auto: true })] });
+    await capture.rebuildLeaderIndex();
+    await capture.onUpsert(user.id, NUMBER_ID, [
+      msgWithText("https://www.mercadolivre.com.br/p/MLB779 aplique o código GALAXY10"),
+    ]);
+
+    await waitForLogs(user.id, 1);
+
+    const admin = await createTestUser({ plan: "pro" });
+    await authMod.setUserRole(admin.user.id, "admin");
+    const r = await admin.auth("get", "/api/admin/repasse/logs");
+    expect(r.status).toBe(200);
+    const linha = r.body.items.find(i => i.userId === user.id);
+    expect(linha.coupon).toBe("GALAXY10");
   });
 });

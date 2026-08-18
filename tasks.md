@@ -749,3 +749,52 @@ No preenchimento automatico mesma coisa ao clicar em configurar. Em ambos, quand
     11 pra 12px.
 
 90. [] Tem alguma forma de testar cupons nos produtos do Mercado livre? Se precisa de login, da pra usar o cookie que nem no scraping do hub.
+
+91. [x] O cupom capturado no repasse não aparece em lugar nenhum antes do envio. Quero ver ele no card da fila e na revisão de pendentes, e poder editar ou apagar antes de sair.
+
+    O cupom virou um campo CUPOM no card da fila, junto de Loja/Preço/Desconto, e
+    um selo 🎟️ na linha de "Aguardando revisão". Os dois abrem no ✎: dá pra
+    escrever outro código, salvar no ✓ (ou Enter), desistir no ✕ (ou Esc) e apagar
+    no 🗑 — sem cupom o campo mostra "—" e a linha do {cupom} some da mensagem,
+    como já acontecia. O que é digitado sai em maiúscula, igual ao que o repasse
+    captura da legenda.
+
+    Vale nas duas campanhas: no repasse o campo já nasce com o código pescado do
+    grupo líder, e na busca nasce vazio e pode ser preenchido à mão — o envio
+    sempre leu o {cupom} do item, então isso passou a funcionar sem mais nada.
+
+    Por baixo é um PATCH por item (`/api/state/groups/:gid/queue|pending/:iid/coupon`)
+    que faz read-modify-write no servidor, e não o PUT que regrava a fila inteira:
+    no repasse a captura escreve nessas listas o tempo todo, e mandar a lista de
+    volta apagaria o que entrou enquanto a tela estava aberta. Quando o servidor
+    recusa, a edição continua aberta com o texto digitado e o aviso aparece no topo.
+
+92. [] Quando a mensagem do líder vem com vários links, o mesmo cupom é colado em todos os produtos. Ver se dá pra amarrar o cupom no produto certo (ou pelo menos avisar quando for mais de um).
+
+93. [] Deixar colocar cupom à mão: no "adicionar produto" da campanha e na edição de um item que já está na fila.
+
+94. [] Cupom que a loja aplica sozinha na página (o "clipado" do ML e da Shopee) não é detectado. Ver se dá pra pegar no scraping — anda junto com o 90.
+
+95. [] Validar o cupom antes de enviar, pra não mandar cupom morto pro grupo. No mínimo marcar como suspeito/expirado. Depende do 90 e do 94.
+
+96. [x] Guardar o cupom no log de captura do repasse. Hoje o logCapture não salva o campo, então não dá pra auditar depois o que foi enviado.
+
+    O log de captura (Admin → Repasse) agora mostra "cupom: JBL20" em cada linha,
+    ou "—" quando a mensagem do líder não trazia código nenhum. Os dois casos
+    aparecem de propósito: saber que NÃO veio cupom é metade da resposta.
+
+    O cupom é gravado nos cinco desfechos do logCapture — fila, revisão, cooldown,
+    duplicata/erro e descarte. O descarte é o que mais importa: link de loja não
+    suportada ou sem afiliado não vira produto nenhum, então o log é o único lugar
+    onde o cupom daquela mensagem pode aparecer.
+
+    Achado no caminho: os bancos de dev e de teste desta máquina JÁ tinham as
+    colunas coupon, couponStatus e couponReason em repasse_capture_log, criadas em
+    12/08/2026 pelas migrations 20260812135540_ml_coupons e 20260812200229_ml_coupon_codes
+    — que constam como aplicadas mas ficaram com a pasta vazia (o migration.sql
+    sumiu e nunca entrou no git). O dev ainda tem 10 linhas antigas com cupom
+    preenchido. A migration nova usa ADD COLUMN IF NOT EXISTS pra funcionar nos
+    dois casos, e o schema.prisma só declara `coupon` — couponStatus/couponReason
+    seguem existindo no banco sem ninguém ler (provável esboço da validação da 95).
+
+97. [] Revisar a regex do extractCoupon com mensagens de verdade dos grupos líderes. Hoje ela exige gatilho (cupom/código/voucher) e passa batido em coisas tipo "CUPOM10" solto ou o código sozinho numa linha.

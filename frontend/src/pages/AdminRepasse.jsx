@@ -147,6 +147,11 @@ export default function PageAdminRepasse() {
                     <span>fonte habilitada: <Flag ok={r.sourceAllowed} /></span>
                     <span>afiliado: <Flag ok={r.affiliateConfigured} /></span>
                     <span>scrape: <Flag ok={r.scrapeOk} /></span>
+                    {/* Cupom da legenda do grupo líder. Sempre visível, inclusive o
+                        "—": saber que a mensagem NÃO trazia cupom é metade da resposta. */}
+                    <span>cupom: {r.coupon
+                      ? <strong style={{ fontFamily: "monospace" }}>{r.coupon}</strong>
+                      : <span style={{ color: "var(--color-text-secondary)" }}>—</span>}</span>
                     <span style={{ color: outcome.color, fontWeight: 500 }}>{outcome.label}</span>
                     {r.reason && <span style={{ color: "var(--color-text-secondary)" }}>({r.reason})</span>}
                   </div>

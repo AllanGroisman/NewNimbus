@@ -1553,6 +1553,45 @@ app.delete("/api/state/groups/:gid/pending/:pid", auth.requireAuth, async (req, 
   }
 });
 
+// Cupom digitado à mão na fila/revisão: normaliza como o extractCoupon do repasse
+// (UPPER, sem espaço nas pontas). Vazio vira null e apaga o cupom — renderTemplate
+// já some com a linha inteira do {cupom} quando não tem código.
+function normalizeCoupon(v) {
+  const s = String(v ?? "").trim().toUpperCase();
+  return s ? s.slice(0, 40) : null;
+}
+
+// Edita SÓ o cupom de um item da fila ou do pending, com read-modify-write no
+// servidor. Não reusa o PUT /queue (replace-all mandado pelo cliente) de propósito:
+// no repasse a captura escreve nessas listas o tempo todo, e devolver a lista
+// inteira apagaria o que entrou entre o carregamento da tela e o clique.
+async function patchItemCoupon(req, res, list) {
+  try {
+    const groupId = isNaN(Number(req.params.gid)) ? req.params.gid : Number(req.params.gid);
+    const raw = req.body?.coupon;
+    if (raw != null && typeof raw !== "string") {
+      return res.status(400).json({ error: "coupon deve ser texto (ou vazio pra apagar)" });
+    }
+    const coupon = normalizeCoupon(raw);
+    const state = await storage.loadState(req.user.id);
+    const group = (state.groups || []).find(g => g.id === groupId);
+    if (!group) return res.status(404).json({ error: "Campanha não encontrada" });
+    const items = group[list] || [];
+    const idx = items.findIndex(i => String(i.id ?? i.key) === String(req.params.iid));
+    if (idx < 0) return res.status(404).json({ error: "Produto não encontrado" });
+    const newItems = items.map((i, n) => (n === idx ? { ...i, coupon } : i));
+    await storage.updateGroupOps(req.user.id, groupId, { [list]: newItems });
+    res.json({ ok: true, coupon });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+app.patch("/api/state/groups/:gid/queue/:iid/coupon", auth.requireAuth, requireActiveSubscription,
+  (req, res) => patchItemCoupon(req, res, "queue"));
+app.patch("/api/state/groups/:gid/pending/:iid/coupon", auth.requireAuth, requireActiveSubscription,
+  (req, res) => patchItemCoupon(req, res, "pending"));
+
 // Aprovar TODOS os pendentes de uma vez: move tudo pra queue numa única escrita.
 // Evita o race de disparar N aprovações em paralelo (cada uma fazia replace-all
 // do pending/queue, colidindo no unique [groupId, productKey]).
@@ -2482,6 +2521,7 @@ app.get("/api/admin/repasse/logs", auth.requireAuth, auth.requireAdmin, async (r
       originalPrice: r.originalPrice,
       discount: r.discount,
       sold: r.sold,
+      coupon: r.coupon,
       outcome: r.outcome,
       reason: r.reason,
       createdAt: r.createdAt,

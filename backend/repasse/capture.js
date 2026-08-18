@@ -41,6 +41,9 @@ async function logCapture(fields) {
         // A coluna é Int; o produto carrega o TEXTO das vendas ("+1.000 vendidos")
         // pra mensagem preservar o "+". Converte só aqui, pro log.
         sold: fields.sold != null ? affiliate.parseSoldText(fields.sold) : null,
+        // Cupom que veio na legenda do grupo líder. Null = a mensagem não trazia
+        // nenhum — o log precisa mostrar os dois casos, não só quando pescou algo.
+        coupon: fields.coupon || null,
         outcome: fields.outcome,
         reason: fields.reason || null,
       },
@@ -416,6 +419,7 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null) {
         groupId, userId, waJid,
         rawUrl: d.rawUrl, resolvedUrl: d.resolved, store: d.store,
         affiliateConfigured: d.affiliateConfigured ?? null,
+        coupon,
         outcome: "discarded", reason: d.reason,
       });
     }
@@ -451,7 +455,8 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null) {
           rawUrl: base.rawUrl, resolvedUrl: base.link, store: base.store,
           sourceAllowed: false, affiliateConfigured: base.affiliateConfigured, scrapeOk: base.scrapeOk,
           productName: base.name, productImg: base.img, price: base.price, originalPrice: base.originalPrice,
-          discount: base.discount, sold: base.sold, outcome: "discarded", reason: "fonte não habilitada",
+          discount: base.discount, sold: base.sold, coupon: base.coupon,
+          outcome: "discarded", reason: "fonte não habilitada",
         });
         continue;
       }
@@ -467,7 +472,8 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null) {
             groupId, userId, waJid,
             rawUrl: base.rawUrl, resolvedUrl: base.link, store: base.store,
             sourceAllowed: true, affiliateConfigured: base.affiliateConfigured, scrapeOk: base.scrapeOk,
-            productName: base.name, outcome: r.target === "queue" ? "queued" : "pending",
+            productName: base.name, coupon: base.coupon,
+          outcome: r.target === "queue" ? "queued" : "pending",
           });
           // Recarrega o grupo pra refletir a inserção anterior (dedup correto).
           const fresh = await storage.loadState(userId);
@@ -478,7 +484,8 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null) {
             groupId, userId, waJid,
             rawUrl: base.rawUrl, resolvedUrl: base.link, store: base.store,
             sourceAllowed: true, affiliateConfigured: base.affiliateConfigured, scrapeOk: base.scrapeOk,
-            productName: base.name, outcome: "cooldown",
+            productName: base.name, coupon: base.coupon,
+          outcome: "cooldown",
           });
         }
       } catch (err) {
@@ -494,7 +501,8 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null) {
           rawUrl: base.rawUrl, resolvedUrl: base.link, store: base.store,
           sourceAllowed: true, affiliateConfigured: base.affiliateConfigured, scrapeOk: base.scrapeOk,
           productName: base.name, productImg: base.img, price: base.price, originalPrice: base.originalPrice,
-          discount: base.discount, sold: base.sold, outcome: isDup ? "duplicate" : "error", reason: isDup ? err.code : err.message,
+          discount: base.discount, sold: base.sold, coupon: base.coupon,
+          outcome: isDup ? "duplicate" : "error", reason: isDup ? err.code : err.message,
         });
       }
     }
