@@ -22,6 +22,7 @@ const scrapTester = require("./scraping/tester");
 const mlCoupon = require("./scraping/ml-coupon");
 const mlCupons = require("./coupons/sync");
 const couponsStore = require("./coupons");
+const tutorials = require("./tutorials");
 const appConfig = require("./config");
 const cpfUtil = require("./utils/cpf");
 const repasseLeaders = require("./repasse/leaders");
@@ -2805,6 +2806,36 @@ app.post("/api/admin/notifications/templates/preview", auth.requireAuth, auth.re
     res.json({ text: adminNotifier.renderPreview(key, text) });
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+
+// ────────────────────────────────────────────────────────────────────────
+// Tutoriais (tela "Tutoriais" + Admin › Editar Tutoriais)
+//
+// Antes as seções e tutoriais eram constantes no JSX do front. Agora vêm daqui,
+// e o admin edita pela tela sem precisar de deploy.
+// ────────────────────────────────────────────────────────────────────────
+
+// Leitura: qualquer usuário logado, INCLUSIVE sem assinatura ativa. Tutorial é
+// material de ajuda — quem está travado na assinatura é justamente quem precisa.
+app.get("/api/tutoriais", auth.requireAuth, async (req, res) => {
+  try {
+    res.json(await tutorials.getTree());
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/tutoriais" });
+  }
+});
+
+// Escrita: a árvore inteira de uma vez (a ordem do array vira o `sort`).
+// Erro de validação vem com `status: 400` de tutorials/pg.js e a mensagem já
+// está em português, pronta pra tela.
+app.put("/api/admin/tutoriais", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    res.json(await tutorials.saveTree(req.body || {}));
+  } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "PUT /api/admin/tutoriais" });
   }
 });
 

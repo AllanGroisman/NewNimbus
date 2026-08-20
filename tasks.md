@@ -1021,4 +1021,4 @@ No preenchimento automatico mesma coisa ao clicar em configurar. Em ambos, quand
     já existe muda de comportamento sozinha. 
 
 
-    102. [] Quero adicionar 2 links nos tutoriais. Cria uma aba de ADMIN de "EDITAR TUTORIAIS", onde eu consigo editar a pagina de tutoriais que aparece para todo mundo. La quero editar os topicos que ja tem, poder excluir e criar novos e adicionar os respectivos vídeos.
+    102. [x] Quero adicionar 2 links nos tutoriais. Cria uma aba de ADMIN de "EDITAR TUTORIAIS", onde eu consigo editar a pagina de tutoriais que aparece para todo mundo. La quero editar os topicos que ja tem, poder excluir e criar novos e adicionar os respectivos vídeos.

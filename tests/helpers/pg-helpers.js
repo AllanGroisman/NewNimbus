@@ -39,6 +39,10 @@ const TABLES = [
   "ml_coupons",
   "ml_coupon_codes",
   "app_config",
+  // Tutoriais (task 102): o conteúdo é editável, então um teste que reescreve a
+  // árvore não pode deixar as seções dele para o arquivo seguinte.
+  "tutorials",
+  "tutorial_sections",
 ];
 
 async function truncateAll() {

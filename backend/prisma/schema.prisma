@@ -488,3 +488,44 @@ model MlCouponCode {
   @@index([checkedAt])
   @@map("ml_coupon_codes")
 }
+
+// ────────────────────────────────────────────────────────────────────────
+// Tutoriais (tela "Tutoriais" do app + Admin › Editar Tutoriais)
+// ────────────────────────────────────────────────────────────────────────
+
+// Antes as seções e tutoriais viviam hardcoded em frontend/src/pages/Tutoriais.jsx,
+// então publicar um vídeo ou corrigir um título exigia deploy. Agora o admin edita
+// pela tela e a página pública lê daqui.
+model TutorialSection {
+  id          String   @id @default(uuid())
+  slug        String   @unique
+  title       String
+  description String   @default("")
+  icon        String   @default("▶")
+  sort        Int      @default(0)
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  tutorials Tutorial[]
+
+  @@index([sort])
+  @@map("tutorial_sections")
+}
+
+// `slug` é o que casa com TUTORIAL_IDS no front — as páginas de afiliado fazem
+// deep-link por ele (onOpenTutorial("afiliado-ml")). Renomear slug quebra o link.
+model Tutorial {
+  id        String   @id @default(uuid())
+  sectionId String   @map("section_id")
+  slug      String   @unique
+  title     String
+  duration  String   @default("")
+  content   String   @default("") // passo a passo em texto puro (renderizado pre-wrap)
+  videoUrl  String   @default("") @map("video_url") // URL do YouTube; vazio = sem player
+  sort      Int      @default(0)
+  updatedAt DateTime @default(now()) @updatedAt
+
+  section TutorialSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  @@index([sectionId, sort])
+  @@map("tutorials")
+}

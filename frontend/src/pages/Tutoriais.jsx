@@ -1,16 +1,16 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../data/constants";
 import { TOURS } from "../data/onboarding";
+import { tutoriaisGet, errText } from "../data/api";
 
 // ─── ESTRUTURA DE TUTORIAIS ──────────────────────────────────────────────
-// Cada tutorial tem `id` (slug) usado pra deep-link das outras páginas.
-// Pra criar tutorial novo: adicionar entry em TUTORIAL_SECTIONS abaixo.
-// Pra escrever o conteúdo: trocar o `content` (atualmente é um placeholder)
-// por JSX/markdown — pode ser uma função que retorna JSX.
+// O conteúdo NÃO mora mais aqui: as seções e os tutoriais vêm de
+// GET /api/tutoriais e são editados em Admin › Editar Tutoriais (task 102).
 //
-// Pra linkar de outra página (ex: AffiliateML): chamar onNavigate("tutorials", { tutorialId: "afiliado-ml" })
-//
-// IDs exportados em TUTORIAL_IDS pra evitar erros de digitação nos chamadores.
+// O que continua sendo código é o `id` (slug) dos tutoriais que outras páginas
+// referenciam por deep-link — TUTORIAL_IDS abaixo. Ele casa com a coluna `slug`
+// do banco; renomear o slug pela tela do admin quebra o link de quem chama
+// onNavigate("tutorials", { tutorialId: "afiliado-ml" }).
 // ─────────────────────────────────────────────────────────────────────────
 
 export const TUTORIAL_IDS = {
@@ -33,7 +33,7 @@ export const TUTORIAL_IDS = {
   RESET_SENHA: "reset-senha",
 };
 
-// Placeholder padrão pra cada tutorial — substituir pelo conteúdo real depois.
+// Mostrado quando o tutorial ainda não tem nem texto nem vídeo cadastrado.
 function Placeholder({ title }) {
   return (
     <div style={{ background: "var(--color-background-secondary)", border: "0.5px dashed var(--color-border-secondary)", borderRadius: 8, padding: 16, fontSize: 12, color: "var(--color-text-secondary)", lineHeight: 1.6 }}>
@@ -45,62 +45,61 @@ function Placeholder({ title }) {
   );
 }
 
-const TUTORIAL_SECTIONS = [
-  {
-    id: "comecando",
-    title: "Começando",
-    description: "Configure sua conta e crie sua primeira campanha",
-    icon: "▶",
-    tutorials: [
-      { id: TUTORIAL_IDS.CRIAR_CONTA,        title: "Criar conta e verificar email", duration: "2 min" },
-      { id: TUTORIAL_IDS.CONECTAR_WHATSAPP,  title: "Conectar um número de WhatsApp", duration: "3 min" },
-      { id: TUTORIAL_IDS.PRIMEIRA_CAMPANHA,  title: "Criar sua primeira campanha", duration: "5 min" },
-    ],
-  },
-  {
-    id: "afiliados",
-    title: "Configurar afiliados (gerar comissão)",
-    description: "Sem afiliado configurado, a campanha fica pausada — links não geram comissão.",
-    icon: "◆",
-    tutorials: [
-      { id: TUTORIAL_IDS.AFILIADO_ML,     title: "Configurar afiliado do Mercado Livre", duration: "4 min" },
-      { id: TUTORIAL_IDS.AFILIADO_AMAZON, title: "Configurar afiliado da Amazon",         duration: "3 min" },
-      { id: TUTORIAL_IDS.AFILIADO_SHOPEE, title: "Configurar afiliado da Shopee",         duration: "5 min" },
-    ],
-  },
-  {
-    id: "campanhas",
-    title: "Gerenciar campanhas",
-    description: "Filtros, fila, agendamento e templates de mensagem",
-    icon: "◎",
-    tutorials: [
-      { id: TUTORIAL_IDS.BUSCAR_CATALOGO,       title: "Buscar produtos do catálogo", duration: "3 min" },
-      { id: TUTORIAL_IDS.ADICIONAR_LINK_MANUAL, title: "Adicionar link manualmente (URL)", duration: "2 min" },
-      { id: TUTORIAL_IDS.FILTROS_CATALOGO,      title: "Filtros avançados do catálogo", duration: "4 min" },
-      { id: TUTORIAL_IDS.TEMPLATES_MENSAGEM,    title: "Personalizar templates de mensagem", duration: "3 min" },
-      { id: TUTORIAL_IDS.AGENDAMENTO,           title: "Configurar janelas de envio", duration: "3 min" },
-    ],
-  },
-  {
-    id: "conta",
-    title: "Conta e cobrança",
-    description: "Plano, pagamento e recuperação de senha",
-    icon: "★",
-    tutorials: [
-      { id: TUTORIAL_IDS.TROCAR_PLANO, title: "Mudar de plano ou cancelar", duration: "2 min" },
-      { id: TUTORIAL_IDS.RESET_SENHA,  title: "Recuperar/trocar senha", duration: "1 min" },
-    ],
-  },
-];
-
-// Lookup id → { section, tutorial } pra deep-link rápido.
-const TUTORIAL_INDEX = (() => {
-  const m = new Map();
-  for (const s of TUTORIAL_SECTIONS) {
-    for (const t of s.tutorials) m.set(t.id, { section: s, tutorial: t });
+// URL de embed do YouTube a partir do que o admin colou. Aceita as três formas
+// que as pessoas copiam na prática (watch?v=, youtu.be/ e /embed/). Devolve null
+// quando não reconhece — aí a UI mostra um link em vez de um iframe quebrado.
+export function youtubeEmbedUrl(url) {
+  if (!url) return null;
+  let u;
+  try { u = new URL(url); } catch { return null; }
+  const host = u.hostname.replace(/^www\./, "");
+  let id = null;
+  if (host === "youtu.be") id = u.pathname.slice(1);
+  else if (host === "youtube.com" || host === "m.youtube.com" || host === "youtube-nocookie.com") {
+    if (u.pathname === "/watch") id = u.searchParams.get("v");
+    else if (u.pathname.startsWith("/embed/")) id = u.pathname.slice("/embed/".length);
+    else if (u.pathname.startsWith("/shorts/")) id = u.pathname.slice("/shorts/".length);
   }
-  return m;
-})();
+  if (!id) return null;
+  id = id.split("/")[0];
+  if (!/^[\w-]{6,20}$/.test(id)) return null;
+  return `https://www.youtube.com/embed/${id}`;
+}
+
+// Corpo do tutorial aberto: player (quando tem vídeo) + passo a passo em texto.
+// O iframe só existe quando o acordeão está aberto — montar os 13 de uma vez
+// custaria uma requisição ao YouTube por tutorial só pra abrir a página.
+export function TutorialBody({ tutorial }) {
+  const embed = youtubeEmbedUrl(tutorial.videoUrl);
+  const temTexto = !!(tutorial.content || "").trim();
+  if (!embed && !tutorial.videoUrl && !temTexto) return <Placeholder title={tutorial.title} />;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {embed && (
+        <div style={{ position: "relative", width: "100%", aspectRatio: "16 / 9", borderRadius: 8, overflow: "hidden", background: "#000" }}>
+          <iframe
+            src={embed}
+            title={tutorial.title}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: "none" }}
+          />
+        </div>
+      )}
+      {!embed && tutorial.videoUrl && (
+        <a href={tutorial.videoUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, color: PRIMARY, fontWeight: 500 }}>
+          Assistir o vídeo ↗
+        </a>
+      )}
+      {temTexto && (
+        <div style={{ fontSize: 13, lineHeight: 1.7, color: "var(--color-text-primary)", whiteSpace: "pre-wrap" }}>
+          {tutorial.content}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─── TOURS (task 39) ─────────────────────────────────────────────────────
 // Os tours que rodam em cima do sistema podem ser refeitos daqui a qualquer
@@ -177,12 +176,29 @@ function GuiasInterativos({ onboarding, onStartTour, onArmCampaignTour }) {
 export default function PageTutoriais({ targetTutorialId = null, onboarding = null, onStartTour, onArmCampaignTour }) {
   const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState(targetTutorialId);
+  const [allSections, setAllSections] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const refs = useRef(new Map());
 
+  const load = useCallback(async () => {
+    setLoading(true); setError(null);
+    try {
+      const r = await tutoriaisGet();
+      setAllSections(r.sections || []);
+    } catch (err) {
+      setError(errText(err, "Não foi possível carregar os tutoriais. Tente novamente."));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
   // Deep-link: ao receber targetTutorialId (vindo de outra página), abre
-  // o tutorial e rola até ele.
+  // o tutorial e rola até ele. Depende de `allSections` porque o conteúdo chega
+  // por rede — antes dele carregar a linha do tutorial ainda não existe no DOM.
   useEffect(() => {
-    if (!targetTutorialId) return;
+    if (!targetTutorialId || !allSections.length) return;
     setOpenId(targetTutorialId);
     // pequeno delay pra garantir que o DOM montou antes do scroll
     const t = setTimeout(() => {
@@ -190,26 +206,26 @@ export default function PageTutoriais({ targetTutorialId = null, onboarding = nu
       if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 100);
     return () => clearTimeout(t);
-  }, [targetTutorialId]);
+  }, [targetTutorialId, allSections]);
 
   // Filtragem por busca — match em title da seção, do tutorial e na description da seção.
   const sections = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return TUTORIAL_SECTIONS;
-    return TUTORIAL_SECTIONS
+    if (!q) return allSections;
+    return allSections
       .map(s => {
-        const sectionMatch = s.title.toLowerCase().includes(q) || s.description.toLowerCase().includes(q);
+        const sectionMatch = s.title.toLowerCase().includes(q) || (s.description || "").toLowerCase().includes(q);
         const tutorials = sectionMatch
           ? s.tutorials
           : s.tutorials.filter(t => t.title.toLowerCase().includes(q));
         return tutorials.length ? { ...s, tutorials } : null;
       })
       .filter(Boolean);
-  }, [query]);
+  }, [query, allSections]);
 
   const totalCount = useMemo(
-    () => TUTORIAL_SECTIONS.reduce((n, s) => n + s.tutorials.length, 0),
-    []
+    () => allSections.reduce((n, s) => n + s.tutorials.length, 0),
+    [allSections]
   );
 
   return (
@@ -252,9 +268,27 @@ export default function PageTutoriais({ targetTutorialId = null, onboarding = nu
         )}
       </div>
 
-      {sections.length === 0 && (
+      {loading && (
+        <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10, padding: 24, textAlign: "center", fontSize: 13, color: "var(--color-text-secondary)" }}>
+          Carregando tutoriais…
+        </div>
+      )}
+
+      {!loading && error && (
+        <div style={{ background: "var(--danger-bg, var(--color-background-secondary))", border: "0.5px solid var(--color-border-secondary)", borderRadius: 10, padding: 20, fontSize: 13, color: "var(--color-text-primary)" }}>
+          {error}
+          <button
+            onClick={load}
+            style={{ marginLeft: 12, padding: "5px 12px", borderRadius: 6, background: PRIMARY, color: "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}
+          >Tentar de novo</button>
+        </div>
+      )}
+
+      {!loading && !error && sections.length === 0 && (
         <div style={{ background: "var(--color-background-primary)", border: "0.5px dashed var(--color-border-secondary)", borderRadius: 10, padding: 24, textAlign: "center", fontSize: 13, color: "var(--color-text-secondary)" }}>
-          Nada encontrado pra <strong style={{ color: "var(--color-text-primary)" }}>"{query}"</strong>.
+          {query
+            ? <>Nada encontrado pra <strong style={{ color: "var(--color-text-primary)" }}>"{query}"</strong>.</>
+            : "Nenhum tutorial publicado ainda."}
         </div>
       )}
 
@@ -271,11 +305,14 @@ export default function PageTutoriais({ targetTutorialId = null, onboarding = nu
 
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {section.tutorials.map(t => {
-              const isOpen = openId === t.id;
+              // Chaveado por `slug`, não pelo uuid: é o slug que as outras
+              // páginas mandam em onOpenTutorial().
+              const isOpen = openId === t.slug;
+              const pronto = !!(t.videoUrl || (t.content || "").trim());
               return (
                 <div
                   key={t.id}
-                  ref={el => { if (el) refs.current.set(t.id, el); }}
+                  ref={el => { if (el) refs.current.set(t.slug, el); }}
                   style={{
                     background: "var(--color-background-primary)",
                     border: `0.5px solid ${isOpen ? PRIMARY : "var(--color-border-tertiary)"}`,
@@ -285,7 +322,7 @@ export default function PageTutoriais({ targetTutorialId = null, onboarding = nu
                   }}
                 >
                   <button
-                    onClick={() => setOpenId(isOpen ? null : t.id)}
+                    onClick={() => setOpenId(isOpen ? null : t.slug)}
                     style={{
                       display: "flex", alignItems: "center", justifyContent: "space-between",
                       gap: 10, padding: "12px 14px",
@@ -306,13 +343,15 @@ export default function PageTutoriais({ targetTutorialId = null, onboarding = nu
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
                       <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{t.duration}</span>
-                      <span style={{
-                        fontSize: 10, padding: "2px 7px", borderRadius: 5,
-                        background: "var(--color-background-secondary)",
-                        color: "var(--color-text-secondary)",
-                        border: "0.5px solid var(--color-border-tertiary)",
-                        fontWeight: 500,
-                      }}>Em breve</span>
+                      {!pronto && (
+                        <span style={{
+                          fontSize: 10, padding: "2px 7px", borderRadius: 5,
+                          background: "var(--color-background-secondary)",
+                          color: "var(--color-text-secondary)",
+                          border: "0.5px solid var(--color-border-tertiary)",
+                          fontWeight: 500,
+                        }}>Em breve</span>
+                      )}
                       <span style={{ fontSize: 12, color: "var(--color-text-secondary)", width: 12, textAlign: "center" }}>
                         {isOpen ? "▾" : "▸"}
                       </span>
@@ -320,7 +359,7 @@ export default function PageTutoriais({ targetTutorialId = null, onboarding = nu
                   </button>
                   {isOpen && (
                     <div style={{ padding: "0 14px 14px" }}>
-                      {t.content ? t.content : <Placeholder title={t.title} />}
+                      <TutorialBody tutorial={t} />
                     </div>
                   )}
                 </div>
@@ -340,7 +379,9 @@ export default function PageTutoriais({ targetTutorialId = null, onboarding = nu
 }
 
 // Helper exportado pra outras páginas validarem deep-links em tempo de
-// desenvolvimento (TUTORIAL_INDEX é só interno).
+// desenvolvimento. Confere contra TUTORIAL_IDS, não contra o banco: é uma
+// checagem de erro de digitação no código, e o conteúdo agora é editável pelo
+// admin (um slug renomeado por lá só deixa o acordeão não abrir).
 export function hasTutorial(id) {
-  return TUTORIAL_INDEX.has(id);
+  return Object.values(TUTORIAL_IDS).includes(id);
 }

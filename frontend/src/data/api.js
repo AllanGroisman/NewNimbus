@@ -617,6 +617,12 @@ export async function adminNotifTemplates()               { return http("GET",  
 export async function adminNotifTemplatesSave(t)         { return http("PUT",  "/api/admin/notifications/templates", { templates: t }); }
 export async function adminNotifTemplatePreview(key, text) { return http("POST", "/api/admin/notifications/templates/preview", { key, text }); }
 
+// ─── Tutoriais ─────────────────────────────────────────────────────────────
+// A leitura é de qualquer usuário logado; a escrita manda a árvore INTEIRA
+// (seções + tutoriais na ordem em que devem aparecer) e só o admin passa.
+export async function tutoriaisGet()                 { return http("GET", "/api/tutoriais"); }
+export async function adminTutoriaisSave(sections)   { return http("PUT", "/api/admin/tutoriais", { sections }); }
+
 // ─── Admin / Modelos de e-mail ─────────────────────────────────────────────
 export async function adminEmailTemplates()          { return http("GET",  "/api/admin/emails/templates"); }
 export async function adminEmailTemplatesSave(t)     { return http("PUT",  "/api/admin/emails/templates", { templates: t }); }
