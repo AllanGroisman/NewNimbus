@@ -19,6 +19,9 @@ const adminScraper = require("./scraping/admin");
 const storeLocks = require("./scraping/store-locks");
 const mlHub = require("./scraping/ml-hub");
 const scrapTester = require("./scraping/tester");
+const mlCoupon = require("./scraping/ml-coupon");
+const mlCupons = require("./coupons/sync");
+const couponsStore = require("./coupons");
 const appConfig = require("./config");
 const cpfUtil = require("./utils/cpf");
 const repasseLeaders = require("./repasse/leaders");
@@ -2180,6 +2183,150 @@ app.get("/api/admin/scrap-tester/history", auth.requireAuth, auth.requireAdmin, 
   res.json({ history: scrapTester.readHistory() });
 });
 
+// ── Teste de cupom do Mercado Livre (Admin › Cupom) ────────────────────────
+//
+// Abre a página do produto com a sessão da conta do sistema e, no modo
+// "checkout", leva o item até a tela de pagamento pra aplicar o código e ler o
+// que o ML responde. Diagnóstico: não grava nada na fila, não envia nada e
+// NUNCA finaliza compra. Demora ~40-60s. Body: { url, code, mode }.
+app.post("/api/admin/ml-coupon/test", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const result = await mlCoupon.testCoupon({
+      url: req.body?.url,
+      code: req.body?.code,
+      mode: req.body?.mode,
+    });
+    res.json({ result });
+  } catch (err) {
+    console.error("[ml-coupon.test]", err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/ml-coupon/history", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json({ history: mlCoupon.readHistory(), running: mlCoupon.isRunning() });
+});
+
+// ── Cupons do Mercado Livre (Admin › Cupom › Cupons do ML) ─────────────────
+//
+// Puxa a lista de cupons da conta do sistema (mercadolivre.com.br/cupons) e,
+// para cada cupom, os produtos da vitrine dele — é o que permite dizer "este
+// produto tem cupom de 20%" na fila do repasse.
+//
+// A rodada demora minutos (uma página por cupom), então ela roda SOLTA: esta
+// rota dispara e responde na hora; a tela acompanha pelo /status.
+
+app.get("/api/admin/ml-cupons/status", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    res.json({ ...mlCupons.status(), stats: await couponsStore.stats() });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/ml-cupons/status" });
+  }
+});
+
+app.put("/api/admin/ml-cupons/config", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const config = mlCupons.writeConfig(req.body || {});
+    if (!await confirmConfigSaved(res)) return;
+    res.json({ config });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/ml-cupons/run", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  if (mlCupons.status().running) {
+    return res.status(409).json({ error: "Já tem uma rodada de cupons rodando." });
+  }
+  try {
+    // Dispara e devolve: a rodada abre um Chrome e visita uma página por cupom.
+    // O erro dela não se perde — vai parar no status, que é o que a tela lê.
+    mlCupons.runOnce(req.body || {}).catch(() => {});
+    res.status(202).json({ started: true, ...mlCupons.status() });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/ml-cupons/run/cancel", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json(mlCupons.cancel());
+});
+
+// Apaga TODOS os cupons guardados (botão "Apagar todos" da aba): a lista, os
+// vínculos com produto e o carimbo no catálogo. As PALAVRAS testadas ficam — cada
+// uma custou um Chrome aberto com a conta do sistema, e elas voltam a carimbar o
+// cupom na próxima rodada.
+app.delete("/api/admin/ml-cupons", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  // Apagar no meio de uma rodada é apagar o que ela está gravando: ela ainda tem
+  // os cupons em memória e segue escrevendo vínculo em cima do vazio.
+  if (mlCupons.status().running) {
+    return res.status(409).json({ error: "Tem uma rodada de cupons rodando — cancele e espere ela terminar." });
+  }
+  try {
+    res.json({ ok: true, ...await couponsStore.clearAll() });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "DELETE /api/admin/ml-cupons" });
+  }
+});
+
+app.get("/api/admin/ml-cupons", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const out = await couponsStore.listCoupons({
+      page: Number(req.query.page) || 1,
+      pageSize: Number(req.query.pageSize) || 50,
+      q: req.query.q || "",
+      scope: req.query.scope || null,
+      onlyActive: req.query.onlyActive === "true",
+      onlyValid: req.query.onlyValid === "true",
+      withCode: req.query.withCode === "true",
+      sortBy: req.query.sortBy || "lastSeen_desc",
+    });
+    res.json(out);
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/ml-cupons" });
+  }
+});
+
+app.get("/api/admin/ml-cupons/codes", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    res.json({ codes: await couponsStore.listCodeChecks({ limit: Number(req.query.limit) || 50 }) });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/ml-cupons/codes" });
+  }
+});
+
+app.get("/api/admin/ml-cupons/:campaignId/produtos", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    res.json(await couponsStore.couponProducts(String(req.params.campaignId), {
+      page: Number(req.query.page) || 1,
+      pageSize: Number(req.query.pageSize) || 50,
+    }));
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/ml-cupons/:id/produtos" });
+  }
+});
+
+app.post("/api/admin/ml-cupons/:campaignId/sync-produtos", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    res.json(await mlCupons.syncOneCoupon(String(req.params.campaignId)));
+  } catch (err) {
+    console.error("[ml-cupons.sync-produtos]", err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Testar uma PALAVRA (tipo BRINQUEDOS) no campo "Inserir código do cupom" do ML.
+// É a única forma de descobrir a que campanha uma palavra pertence — a página não
+// lista as palavras em lugar nenhum.
+app.post("/api/admin/ml-cupons/code", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    res.json({ result: await mlCupons.checkWord(req.body?.word, { source: "admin", force: !!req.body?.force }) });
+  } catch (err) {
+    console.error("[ml-cupons.code]", err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // Credenciais Shopee globais (usadas pelo admin-scraper).
 // Override per-user fica intacto; isso aqui sobrescreve só o fallback do scraper.
 app.get("/api/admin/scraper/shopee", auth.requireAuth, auth.requireAdmin, (req, res) => {
@@ -3062,6 +3209,10 @@ async function boot() {
     scheduler.start();
     adminScraper.start();
     scrapTester.start();
+    // Cupons do ML não têm agenda ainda (a rodada é o botão do admin), mas o
+    // resultado da última precisa sobreviver ao reboot — senão a tela abre dizendo
+    // que nunca rodou.
+    mlCupons.loadPersistedStatus();
     backupMonitor.start();
     billingReminders.start();
     // Fire-and-forget — falha silenciosa se sessão WA ainda não estiver conectada

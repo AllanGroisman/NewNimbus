@@ -288,10 +288,17 @@ model CatalogProduct {
   // própria porque o filtro "vendas mínimas" precisa rodar no SQL: com o corte
   // em JS depois da query, o count() ignorava o filtro e a paginação mentia.
   soldCount     Int?
+  // Campanha de cupom do ML que cobre este produto (ml_coupons.campaign_id).
+  // Coluna, e não payload: o upsert do scraping reescreve o payload inteiro
+  // (catalog/pg.js:toRow), então o cupom sumiria na rodada seguinte. Quem escreve
+  // aqui é SÓ a sincronização de cupons (backend/coupons/pg.js) — o `toRow` nem
+  // conhece este campo, e é isso que o mantém vivo entre as raspagens.
+  couponCampaignId String?
   payload       Json     @default("{}")
   firstSeenAt   DateTime @default(now())
   lastSeenAt    DateTime @default(now())
 
+  @@index([couponCampaignId])
   @@index([category, discount(sort: Desc)])
   @@index([store])
   @@index([lastSeenAt(sort: Desc)])
@@ -394,4 +401,90 @@ model EmailLog {
 
   @@index([userId, kind, createdAt])
   @@map("email_log")
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Cupons do Mercado Livre (a aba mercadolivre.com.br/cupons)
+// ────────────────────────────────────────────────────────────────────────
+
+// Um cupom da aba de cupons do ML, do jeito que o modelo da página entrega.
+//
+// `code` é a PALAVRA (tipo BRINQUEDOS), quando alguém descobriu qual é — e ela só
+// se descobre TESTANDO no campo "Inserir código do cupom" (MlCouponCode). O token
+// base64 que o ML manda no modelo NÃO é isso e não vira código público: fica no
+// `raw`, para diagnóstico.
+//
+// `origin`: "page" = veio da varredura da aba; "code" = a campanha só apareceu
+// porque uma palavra testada apontou para ela.
+model MlCoupon {
+  campaignId       String    @id @map("campaign_id")
+  title            String
+  subtitle         String?
+  kind             String    @default("unknown") // percent | fixed | unknown
+  value            Float?
+  minPurchase      Float?
+  maxDiscount      Float?
+  scope            String    @default("campaign") // campaign | store
+  sellerName       String?
+  containerUrl     String?
+  activated        Boolean   @default(false)
+  activationType   String? // EU_QUERO | AUTOMATIC
+  startsAt         DateTime?
+  expiresAt        DateTime?
+  expiresText      String?
+  iconUrl          String?
+  groupings        Json      @default("[]")
+  sampleItems      Json      @default("[]")
+  raw              Json      @default("{}")
+  firstSeenAt      DateTime  @default(now())
+  lastSeenAt       DateTime  @default(now())
+  productsSyncedAt DateTime?
+  code             String?
+  origin           String    @default("page")
+
+  products MlCouponProduct[]
+
+  @@index([expiresAt])
+  @@index([lastSeenAt(sort: Desc)])
+  @@index([scope])
+  @@index([code])
+  @@map("ml_coupons")
+}
+
+// O vínculo cupom ↔ produto, colhido da vitrine do cupom (_Container_).
+// `productKey` é o mesmo hash do catálogo (catalog/product-key.js), então dá pra
+// cruzar com catalog_products sem depender da URL — que vem cheia de tracking.
+model MlCouponProduct {
+  id          BigInt   @id @default(autoincrement())
+  campaignId  String   @map("campaign_id")
+  productKey  String
+  productUrl  String
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  coupon MlCoupon @relation(fields: [campaignId], references: [campaignId], onDelete: Cascade)
+
+  @@unique([campaignId, productKey])
+  @@index([productKey])
+  @@map("ml_coupon_products")
+}
+
+// Palavra testada no campo "Inserir código do cupom" do ML e o que ele respondeu.
+// É o dicionário palavra → campanha: a página não lista as palavras em lugar
+// nenhum, então ele só cresce por teste (do admin ou do repasse).
+model MlCouponCode {
+  code         String   @id
+  verdict      String // valid | invalid | indeterminado
+  campaignId   String?  @map("campaign_id")
+  message      String?
+  responseCode String?  @map("response_code")
+  source       String? // admin | repasse
+  checkedAt    DateTime @map("checked_at")
+  checkCount   Int      @default(1) @map("check_count")
+  firstSeenAt  DateTime @default(now()) @map("first_seen_at")
+  raw          Json     @default("{}")
+
+  @@index([campaignId])
+  @@index([checkedAt])
+  @@map("ml_coupon_codes")
 }

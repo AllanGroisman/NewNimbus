@@ -1787,4 +1787,7 @@ async function autoScroll(page) {
 module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, upgradeMLImageUrl, upgradeShopeeImageUrl, upgradeImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, extractShopeeIds, parseMLReviewCompacted, mergeNewProducts, parseAmazonSold, parseRatingText, parseReviewsCount, reconcilePricing, normalizeSoldText,
   parseBrlPrice, parseDiscountLabel, parseAmazonPdpPricing, selectVerifiedAmazonProducts, CATEGORIES, STORES,
   // Reusados por ml-hub.js (navegar logado em páginas do ML)
-  launchAmazonBrowser, applyAmazonStealth, parseMLCookies, autoScroll, detectBlockPage, UA };
+  launchAmazonBrowser, applyAmazonStealth, parseMLCookies, autoScroll, detectBlockPage, UA,
+  // Reusado por ml-cupons.js: a vitrine de um cupom é uma listagem comum do ML,
+  // e ler os cards dela com outro seletor seria a terceira cópia dos mesmos.
+  harvestMLCards };

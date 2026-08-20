@@ -418,3 +418,38 @@ describe("scheduler.resolveSources — normalização", () => {
     expect(scheduler.resolveSources(null)).toEqual(["ml"]);
   });
 });
+
+// Produtos que têm cupom do ML (tarefa 100). O "off" é o default e não muda nada
+// em campanha nenhuma — é o que garante que ligar isso não mexe com quem já roda.
+describe("couponMode", () => {
+  it("config sem o campo, ou com lixo, é 'off'", () => {
+    expect(scheduler.couponMode(undefined)).toBe("off");
+    expect(scheduler.couponMode({})).toBe("off");
+    expect(scheduler.couponMode({ couponBoost: "sim" })).toBe("off");
+    expect(scheduler.couponMode({ couponBoost: null })).toBe("off");
+  });
+
+  it("os três modos válidos passam", () => {
+    expect(scheduler.couponMode({ couponBoost: "off" })).toBe("off");
+    expect(scheduler.couponMode({ couponBoost: "prefer" })).toBe("prefer");
+    expect(scheduler.couponMode({ couponBoost: "only" })).toBe("only");
+  });
+});
+
+describe("sortByCoupon", () => {
+  const produtos = [
+    { key: "a", discount: 50 },
+    { key: "b", discount: 40 },
+    { key: "c", discount: 30 },
+    { key: "d", discount: 20 },
+  ];
+
+  it("os com cupom vêm na frente, sem embaralhar a ordem da campanha", () => {
+    const comCupom = new Map([["c", {}], ["b", {}]]);
+    expect(scheduler.sortByCoupon(produtos, comCupom).map(p => p.key)).toEqual(["b", "c", "a", "d"]);
+  });
+
+  it("ninguém com cupom = lista intacta", () => {
+    expect(scheduler.sortByCoupon(produtos, new Map()).map(p => p.key)).toEqual(["a", "b", "c", "d"]);
+  });
+});

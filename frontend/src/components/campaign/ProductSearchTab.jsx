@@ -742,6 +742,32 @@ export default function ProductSearchTab({
           <div style={hintStyle}>De 1 a {MAX_BATCH}.</div>
         </div>
 
+        {/* Cupom do ML: vale só para o preenchimento AUTOMÁTICO da fila. A lista
+            de produtos aqui de baixo continua mostrando tudo — o cupom é uma
+            preferência de quem entra na fila sozinho, não um filtro de busca. */}
+        <div style={{ paddingTop: 14 }}>
+          <div style={{ fontSize: 13, fontWeight: 500 }}>Produtos com cupom do Mercado Livre</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+            {[
+              ["off", "Tanto faz"],
+              ["prefer", "Preferir com cupom"],
+              ["only", "Só com cupom"],
+            ].map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => setScraping(s => ({ ...s, couponBoost: id }))}
+                style={chipStyle({ active: (scraping.couponBoost || "off") === id })}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div style={hintStyle}>
+            Vale no preenchimento automático da fila. Os cupons vêm de Admin › Cupom › Cupons do ML;
+            com “só com cupom”, a fila pode vir vazia se nenhum produto da campanha estiver num cupom.
+          </div>
+        </div>
+
         <div style={{ display: "flex", alignItems: "center", gap: 12, paddingTop: 14 }}>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 13, fontWeight: 500 }}>Misturar a fila depois de preencher</div>

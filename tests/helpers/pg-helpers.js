@@ -32,6 +32,12 @@ const TABLES = [
   "user_state",
   "users",
   "catalog_products",
+  // Cupons do ML. Faltavam aqui: sem elas, cupom semeado num arquivo sobrevivia
+  // ao truncate e vazava pro teste seguinte — e o carimbo em catalog_products
+  // (que É truncado) ficava fora de sincronia com os vínculos.
+  "ml_coupon_products",
+  "ml_coupons",
+  "ml_coupon_codes",
   "app_config",
 ];
 

@@ -2,6 +2,7 @@ const { normalizeSource, upgradeImageUrl } = require("./scraping/scraper");
 const wa = require("./whatsapp");
 const storage = require("./storage");
 const catalog = require("./catalog");
+const coupons = require("./coupons");
 const affiliate = require("./scraping/affiliate");
 const queueMod = require("./infra/queue");
 const { productKey } = require("./catalog/product-key");
@@ -147,6 +148,29 @@ function batchSize(scraping) {
   const n = Number(scraping && scraping.batchSize);
   if (!Number.isFinite(n) || n <= 0) return DEFAULT_BATCH;
   return Math.min(MAX_BATCH, Math.max(1, Math.round(n)));
+}
+
+// O que fazer com os produtos que têm cupom do ML (coupons/pg.js):
+//   "off"    — nada, é como sempre foi (default; campanha antiga não muda de comportamento);
+//   "prefer" — os com cupom vêm primeiro, e o resto completa o lote;
+//   "only"   — só produtos com cupom.
+//
+// Puro, e defensivo de propósito: config velha (sem o campo) e config com lixo
+// caem no "off", que é o único valor que não muda nada em campanha nenhuma.
+const COUPON_MODES = new Set(["off", "prefer", "only"]);
+
+function couponMode(scraping) {
+  const m = scraping && scraping.couponBoost;
+  return COUPON_MODES.has(m) ? m : "off";
+}
+
+// Os que têm cupom primeiro, mantendo a ordem original dentro de cada bloco (a
+// campanha já escolheu "maior desconto" ou "menor preço" — o cupom desempata,
+// não reordena tudo).
+function sortByCoupon(produtos, comCupom) {
+  const com = [], sem = [];
+  for (const p of produtos) (comCupom.has(p.key) ? com : sem).push(p);
+  return [...com, ...sem];
 }
 
 // Quando o preenchimento automático dispara:
@@ -462,18 +486,28 @@ async function refillQueue(userId, group) {
   // sources vazio = todas as lojas da campanha trancadas. Não dá pra chamar
   // catalog.query assim: lista vazia lá significa "sem filtro de loja" e traria
   // produtos de lojas que a campanha não escolheu.
+  // Com cupom em jogo, o SQL faz o corte quando dá ("only") e a busca vem mais
+  // larga quando não dá ("prefer"): reordenar só os 20 que já vieram quase nunca
+  // encontraria um com cupom.
+  const cupom = couponMode(group.scraping);
+  const lote = batchSize(group.scraping);
   const candidates = sources.length
     ? await catalog.query({
         categories: cats.length ? cats : null,
         sources,
         excludeKeys,
-        filters,
-        limit: batchSize(group.scraping),
+        filters: cupom === "only" ? { ...filters, hasCoupon: true } : filters,
+        limit: cupom === "prefer" ? lote * 3 : lote,
         sortBy: sortMode(group.scraping),
       })
     : [];
 
-  const rawItems = candidates.map(p => ({
+  // Os cupons dos candidatos, em uma consulta só. Cupom vencido não vem (a query
+  // filtra por expiresAt), então nada aqui promete desconto que já acabou.
+  const cupons = cupom === "off" ? new Map() : await coupons.couponsForKeys(candidates.map(p => p.key));
+  const escolhidos = (cupom === "prefer" ? sortByCoupon(candidates, cupons) : candidates).slice(0, lote);
+
+  const rawItems = escolhidos.map(p => ({
     id: p.key,    // a UI de pending busca por `id`
     key: p.key,
     name: p.name,
@@ -490,6 +524,15 @@ async function refillQueue(userId, group) {
     soldCount: p.soldCount ?? null,   // Shopee guarda o nº de vendas aqui (ML usa `sold`)
     freeShipping: p.freeShipping ?? false,
     seller: p.seller ?? null,
+    // O cupom do ML que cobre o produto. `coupon` é a PALAVRA e só existe quando
+    // alguém já descobriu qual é (ml_coupons.code) — sem ela, renderTemplate
+    // apaga a linha do {cupom}, que é o certo: não há o que o cliente digitar.
+    // O resto vai junto pra tela saber que o cupom existe mesmo sem palavra.
+    coupon: cupons.get(p.key)?.code || null,
+    couponCampaignId: cupons.get(p.key)?.campaignId || null,
+    couponLabel: cupons.get(p.key)
+      ? (cupons.get(p.key).kind === "percent" ? `${cupons.get(p.key).value}% OFF` : `R$ ${cupons.get(p.key).value} OFF`)
+      : null,
     addedAt: new Date().toISOString(),
   }));
 
@@ -1170,5 +1213,6 @@ module.exports = {
   inWindow, activeWindow, windowGate, cooldownMinutes, renderTemplate, itemMatchesCampaign, campaignFilterCtx,
   affiliateGate,
   sortMode, batchSize, refillMode, refillThreshold, refillTimes, autoRefillDue, markAutoRefill,
+  couponMode, sortByCoupon,
   shuffleArray, shuffleAfterRefill,
 };

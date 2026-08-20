@@ -748,7 +748,125 @@ No preenchimento automatico mesma coisa ao clicar em configurar. Em ambos, quand
     neutro em vez de transparente, e os rótulos/dicas/avisos da aba subiram de
     11 pra 12px.
 
-90. [] Tem alguma forma de testar cupons nos produtos do Mercado livre? Se precisa de login, da pra usar o cookie que nem no scraping do hub.
+90. [x] Tem alguma forma de testar cupons nos produtos do Mercado livre? Se precisa de login, da pra usar o cookie que nem no scraping do hub.
+
+    Tem, e são dois cupons diferentes. O que a loja oferece na própria página (o
+    "clipado") dá pra ler direto na PDP: num produto do catálogo o teste achou
+    "R$113 com Cupom" — o mesmo dado que o scraper joga fora de propósito, pra
+    "10% com cupom" não virar o desconto do item. Já o CÓDIGO que vem na legenda do
+    grupo líder não existe em lugar nenhum da página: a única forma de saber se ele
+    vale naquele produto é levar o item ao checkout e aplicar lá.
+
+    Virou uma aba nova, Admin › Cupom: cola o link e o código, escolhe "Só leitura"
+    ou "Leitura + checkout" e vê o veredito na hora. Não grava nada na fila, não
+    envia nada e nunca finaliza compra — o fluxo para antes de pagar, o navegador
+    fecha no finally e, se tiver passado pelo carrinho (plano B), o item sai de lá.
+    Por baixo é o mesmo caminho do Hub: Chrome de verdade + o cookie da conta do
+    sistema, agora num `withMLSessionPage` que os dois compartilham.
+
+    O veredito é função pura (`classifyCouponResult`), com desfechos válido,
+    inválido, expirado, usado, não-aplicável, mínimo-não-atingido, login,
+    verificação-de-conta, captcha e indeterminado. A prova mais forte é o TOTAL DO PEDIDO CAIR: "cupom aplicado"
+    escrito na tela sem o total mudar vira indeterminado, não aprovação. O
+    indeterminado existe de propósito — fingir veredito aqui é cupom morto indo pro
+    grupo lá na frente (95).
+
+    O que a sonda (`scripts/ml-coupon-dump.js`, irmã do ml-hub-dump) ensinou, cada
+    lição custando uma tentativa na conta de verdade:
+
+    - "Comprar agora" não é link nem botão comum: é o submit de um `<form
+      method=get>` com item_id, quantity e _csrf ocultos e o alvo no `formaction`.
+      Montar a URL a partir do form é firme; clicar por texto não é.
+    - Produto com variação (tamanho/cor) tem esse botão DESABILITADO, e clicar nele
+      não faz nada nem dá erro. Agora é detectado, e a resposta manda colar o link
+      já com a variação escolhida.
+    - `/gz/checkout/buy` não é a tela de compra: é um interstitial ("Preparando tudo
+      para sua compra"). Conferir só a URL fazia a ferramenta fotografar uma tela de
+      carregamento achando que tinha chegado.
+    - O rádio da forma de entrega é um `<input>` escondido atrás do desenho do
+      Andes: quem recebe o clique é o `<label for=...>`. Clicar no input marca a
+      bolinha sem avisar o React, o "Continuar" vai sem forma de entrega e o
+      checkout morre com "Ocorreu um problema".
+
+    O teste do Allan (18/08, 17:30) andou mais que a sonda: chegou no checkout de
+    verdade, via form-compra, e parou depois de 4 passos sem achar o campo. Daí
+    saíram mais três coisas:
+
+    - "Parei depois de 4 passo(s)" não serve de diagnóstico. Agora cada passo é
+      anotado (tela, se marcou opção, o que clicou, por que parou) e essa trilha
+      aparece no resultado do admin — "Escolha a forma de entrega → Como você quer
+      pagar?" diz onde consertar; um número não diz.
+    - "Continuar COMPRANDO" casava com a regex de avançar. Esse é o link de VOLTAR
+      pra loja: clicar nele joga a automação pra fora do checkout gastando um passo.
+      A regex agora aceita "Continuar" e "Continuar para o pagamento", e o teto
+      subiu de 4 pra 6 telas.
+    - `/gz/` sozinho estava valendo como muro de login, mas `/gz/checkout` e
+      `/gz/cart` são o caminho normal da compra — um veredito bom podia ser lido
+      como "sessão caiu". Só as telas de identificação contam agora.
+
+    Com a trilha ligada, o caminho apareceu inteiro: Escolha a forma de entrega →
+    Escolha quando sua compra chegará → Escolha como pagar. O cupom mora na última,
+    e são DUAS telas — "Inserir código do cupom" leva pra outra, onde se digita e se
+    confirma em "Adicionar". Daí saíram mais três correções: esperar até 12s a tela
+    do cupom montar (1,5s fotografava a anterior), subir até 4 ancestrais atrás de
+    quem escuta o clique (o texto fica num <span> no fundo, que não escuta nada), e
+    ler os dois totais NA MESMA TELA — o "antes" vinha da tela de entrega e o
+    "depois" da de pagamento, números de coisas diferentes (com e sem frete), e uma
+    queda dessas viraria "cupom válido" sem cupom nenhum ter entrado.
+
+    18/08 (3a rodada): a sonda gastou os 6 passos na PRIMEIRA tela — "Escolha a
+    forma de entrega" quatro vezes, mesma URL. O "Continuar" do ML fica desabilitado
+    enquanto o frete recalcula: o clique não fazia nada e era contado como avanço.
+    Agora um passo só conta quando a TELA MUDA de verdade (foto do texto antes e
+    depois, até 15s), com uma segunda tentativa de clique antes de desistir, e o
+    clickByPattern ignora elementos disabled/aria-disabled. O motivo novo
+    "tela-nao-mudou" diz isso em português no resultado. Confirmado pelo uso manual:
+    nas duas primeiras telas o endereço e a data já vêm escolhidos (é só continuar) e
+    o cupom abre um POPUP na tela de pagar, com o botão "Inserir" — que entrou na
+    regex de confirmar (ancorada, pra não casar com a linha "Inserir código do
+    cupom", que só abre o popup).
+
+    18/08 (prints das 3 telas): as telas de entrega e de data já vêm com tudo
+    escolhido — só "Continuar". O "Inserir código do cupom" fica no RESUMO DA COMPRA,
+    coluna da direita, abaixo do frete (não na lista de meios de pagamento). E o
+    resumo dessa tela não diz "Total", diz "VOCÊ PAGARÁ", com o preço riscado ao lado
+    do que se paga: extractCheckoutTotal aprendeu o rótulo novo e fica com o último
+    valor do par. Sem isso o antes/depois vinha null bem na única tela onde o cupom
+    entra — a prova mais forte do veredito ia pro lixo —, e lendo o riscado o total
+    "não mudaria" nem com o cupom pegando.
+
+    18/08 (prints em toda rodada): o teste do admin passou a salvar print de cada
+    etapa em backend/logs/ml-coupon/<ts>/, com o caminho no resultado, guardando as
+    5 rodadas mais novas. Antes só o dump manual salvava — e ele é rodado DEPOIS que
+    o teste já falhou, quando a tela pode estar outra. Agora dá pra olhar a tela que
+    o robô viu na rodada que deu errado, sem repetir o teste (cada repetição gasta
+    atrito com a conta do ML).
+
+    18/08 (checkout caiu): com os prints deu pra ver o que aconteceu. As duas
+    primeiras telas andaram certo (entrega → data), e no clique da segunda o ML
+    devolveu a tela "Ocorreu um problema" (CHS37-BTYRGHDTKEOZ) — checkout DELES
+    caindo, não falta de botão. Duas correções: (a) espera a tela parar de se mexer
+    antes de clicar em Continuar, porque marcar entrega dispara recálculo de frete e
+    clicar no meio disso é o que derruba o checkout; (b) a tela de erro é reconhecida,
+    a sonda recarrega e tenta mais uma vez, e se cair de novo o motivo é
+    "checkout-quebrou" com o código do erro, em vez do diagnóstico errado de antes
+    ("não existe botão Continuar"). Outro detalhe do print: nessa rodada o checkout
+    abriu com NENHUMA opção de entrega marcada — não dá pra assumir que já vem
+    escolhido.
+    O print da PDP também mostrou o cupom saindo como "com Cupom", sem número: o
+    texto mais curto da página é só isso, e o valor ("R$ 486,70 23% OFF com Cupom")
+    é IRMÃO, não pai. Dentro do mesmo cupom, agora o mais curto COM valor ganha.
+
+    FALTA CONFIRMAR: digitar o código e ler a resposta do ML ainda não foi visto de
+    ponta a ponta. O ML pediu verificação de CONTA (`/gz/account-verification`) de
+    novo, logo depois desse teste — e agora já na página do produto. Isso não é
+    cookie vencido: o cookie está bom, a conta é que ficou de castigo por parecer
+    robô, e virou um status próprio (`verificacao`) pra ninguém sair caçando cookie
+    novo à toa. Como é a MESMA conta do scraping do Hub, vale conferir se o Hub
+    ainda entra. É o atrito esperado, e a razão de a ferramenta ser manual, um teste
+    por vez, e não um loop — o que também explica por que a 95 não sai junto.
+    Quando a conta liberar: rodar o dump num produto SEM variação e olhar os
+    `passo-N.png` (um print por tela do checkout) pra ver onde o cupom aparece.
 
 91. [x] O cupom capturado no repasse não aparece em lugar nenhum antes do envio. Quero ver ele no card da fila e na revisão de pendentes, e poder editar ou apagar antes de sair.
 
@@ -768,8 +886,6 @@ No preenchimento automatico mesma coisa ao clicar em configurar. Em ambos, quand
     no repasse a captura escreve nessas listas o tempo todo, e mandar a lista de
     volta apagaria o que entrou enquanto a tela estava aberta. Quando o servidor
     recusa, a edição continua aberta com o texto digitado e o aviso aparece no topo.
-
-92. [] Quando a mensagem do líder vem com vários links, o mesmo cupom é colado em todos os produtos. Ver se dá pra amarrar o cupom no produto certo (ou pelo menos avisar quando for mais de um).
 
 93. [] Deixar colocar cupom à mão: no "adicionar produto" da campanha e na edição de um item que já está na fila.
 
@@ -798,3 +914,60 @@ No preenchimento automatico mesma coisa ao clicar em configurar. Em ambos, quand
     seguem existindo no banco sem ninguém ler (provável esboço da validação da 95).
 
 97. [] Revisar a regex do extractCoupon com mensagens de verdade dos grupos líderes. Hoje ela exige gatilho (cupom/código/voucher) e passa batido em coisas tipo "CUPOM10" solto ou o código sozinho numa linha.
+
+98. [] Revisar login com google.
+
+99. [] Como ele detecta os cupons? Por texto? Se sim, quero poder editar essa lista de textos.
+
+100. [x] Quero puxar os cupons que tem no ML para o sistema a partir da aba de cupons que tem la. Pode usar a credencial do cookie do ML. Os cupons que tem lá conseguem ser ativados pela palavra CUPOM100 por exemplo? Se sim, como descobro a palavra de cada um? Tb, queria fazer um scraping dos produtos de cada um para poder vincular cupom com o produto.
+
+    Sim e não — e a diferença é o coração da tarefa. **Os cupons dessa aba não têm
+    palavra.** Cada um é "Eu quero" (o cliente clica e ele entra na conta dele) ou
+    automático; o `code` que vem no JSON da página é um token base64 de ativação
+    amarrado à conta logada, não um CUPOM100. Não existe lista de palavras pra puxar.
+
+    A palavra existe em OUTRO lugar: o campo "Inserir código do cupom" da mesma
+    página. Ela não pode ser enumerada, só TESTADA — e aí o ML responde de qual
+    campanha ela é (`campaign_id` + `response_code`). Virou o botão "Descobrir a
+    campanha de uma palavra", e é o que fecha o ciclo com a 95/97: a palavra que veio
+    na legenda do grupo líder vira uma campanha, e a campanha já tem a lista de
+    produtos. As respostas ficam em `ml_coupon_codes` (com contador), e quando a
+    palavra resolve, ela é carimbada no cupom.
+
+    O puxão: Admin › Cupom ganhou a aba "Cupons do ML". A rodada lê a página com a
+    conta do sistema (a mesma do Hub), abre a vitrine de cada cupom e guarda quais
+    produtos ele cobre. Como demora minutos, roda solta — a rota responde na hora e a
+    tela acompanha pelo status, com botão de cancelar.
+
+    O que a página ensinou (tudo em backend/scraping/README.md):
+    - ela não é raspada do DOM: o conteúdo inteiro vem num JSON dentro da página
+      (`_n.ctx.r.appProps.pageProps`), com campanha, valor, mínimo, teto, validade e
+      a URL da vitrine de cada cupom;
+    - o "Ver mais 368 cupons" não abre modal nem busca por XHR: NAVEGA para
+      `/cupons/filter?all=true&<categoria>=true`, que pagina de 30 em 30 com
+      `&page=N`. É por aí que se passa dos ~42 da vitrine inicial pros ~2.600 da
+      conta — e é por isso que o limite por categoria existe;
+    - **só cupom ATIVADO tem vitrine.** O não ativado não traz URL nenhuma, e a URL
+      não é montável: usa um slug do ML (`_Container_toys-e-babys`), não o id da
+      campanha — montar na mão devolve lista vazia (testado). Ver a vitrine dele
+      exigiria clicar "Eu quero", o que ATIVA o cupom na conta do sistema. O robô não
+      faz isso; o cupom fica registrado sem produtos, com o motivo à mostra.
+
+    Duas armadilhas que custaram sonda: aba nova não herda o disfarce do Chrome (sem
+    `applyAmazonStealth` a vitrine responde "Hubo un error accediendo a esta pagina" e
+    a rodada leria 0 produtos numa página que no navegador mostra 48), e a paginação
+    do `lista.mercadolivre.com.br` é `_Desde_49` no caminho, não `?page=`.
+
+    O vínculo cupom↔produto vale em três lugares: a tela do admin (quantos produtos
+    cada cupom cobre, quantos já estão no catálogo, com "raspar" por linha), o
+    catálogo (coluna `couponCampaignId` em `catalog_products` — coluna, e não payload,
+    porque o upsert do scraping reescreve o payload inteiro e apagaria o cupom na
+    rodada seguinte) e a fila do repasse: a campanha ganhou "Produtos com cupom do
+    Mercado Livre" com três opções — tanto faz (default, nada muda), preferir com
+    cupom, só com cupom.
+
+    Sobre as tabelas: `ml_coupons`, `ml_coupon_products` e `ml_coupon_codes` já
+    existiam no banco desta máquina, criadas pelas duas migrations de 12/08 que
+    ficaram com a pasta vazia (o mesmo caso da 96). A migration nova recria tudo com
+    `CREATE TABLE IF NOT EXISTS`: funciona no banco limpo e não encosta nos 1.122
+    vínculos antigos do dev.

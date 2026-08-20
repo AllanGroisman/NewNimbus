@@ -36,6 +36,8 @@ describe("Admin — gating", () => {
       ["put", "/api/admin/emails/templates"],
       ["post", "/api/admin/emails/preview"],
       ["post", "/api/admin/emails/test"],
+      // Destrutiva: apaga a tabela de cupons inteira.
+      ["delete", "/api/admin/ml-cupons"],
     ];
     for (const [method, url] of rotas) {
       const res = await auth(method, url);

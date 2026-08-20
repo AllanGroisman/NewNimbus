@@ -11,17 +11,10 @@
 // carregar mais. O que a gente lê é exatamente o que o navegador recebeu.
 const fs = require("fs");
 const path = require("path");
-const {
-  launchAmazonBrowser,
-  applyAmazonStealth,
-  parseMLCookies,
-  autoScroll,
-  detectBlockPage,
-  parseMLReviewCompacted,
-} = require("./scraper");
+const { autoScroll, parseMLReviewCompacted } = require("./scraper");
+const { withMLSessionPage, clickByText } = require("./ml-session-page");
 
 const HUB_URL = "https://www.mercadolivre.com.br/afiliados/hub";
-const NAV_TIMEOUT_MS = 45000;
 const MAX_BODY_CHARS = 200 * 1024;   // corpo de XHR guardado no dump
 
 // A API interna que serve os cards do Hub.
@@ -203,45 +196,16 @@ function polycardToProduct(card, context = {}, category = null) {
   };
 }
 
-// Abre o Hub com o cookie dado e chama `onPage(page)` antes de fechar o navegador.
+// Abre o Hub com o cookie dado e chama `onPage(page)` antes de navegar (é onde
+// os listeners de resposta são instalados). O trabalho pesado — cookie, stealth,
+// muro de login/CAPTCHA — é o mesmo de qualquer página logada do ML e mora no
+// ml-session-page.js; aqui sobra só o que é do Hub: a URL e a contagem de cards.
 // Devolve { finalUrl, title, bodyText, cardCount, blocked } + o que onPage retornar em `extra`.
-async function withHubPage(cookie, onPage) {
-  if (!cookie) throw new Error("Sem sessão do Mercado Livre — cole o cookie da conta do sistema em Admin › Mercado Livre.");
-
-  const browser = await launchAmazonBrowser();
-  try {
-    const page = await browser.newPage();
-    await applyAmazonStealth(page);
-
-    const cookies = parseMLCookies(cookie);
-    if (!cookies.length) throw new Error("Cookie em formato inesperado — esperado \"nome=valor; outro=valor\".");
-    await page.setCookie(...cookies);
-
-    const extra = onPage ? await onPage(page) : null;   // listeners precisam existir antes do goto
-
-    await page.goto(HUB_URL, { waitUntil: "networkidle2", timeout: NAV_TIMEOUT_MS });
-    await autoScroll(page);
-
-    const snapshot = await page.evaluate((selectors) => {
-      let cards = 0;
-      for (const sel of selectors) {
-        const n = document.querySelectorAll(sel).length;
-        if (n > cards) cards = n;
-      }
-      return {
-        title: document.title || "",
-        bodyText: (document.body?.innerText || "").slice(0, 5000),
-        cardCount: cards,
-      };
-    }, CARD_SELECTORS);
-
-    const blocked = await detectBlockPage(page, "Mercado Livre");
-
-    return { page, browser, finalUrl: page.url(), blocked, extra, ...snapshot };
-  } catch (err) {
-    await browser.close();
-    throw err;
-  }
+function withHubPage(cookie, onPage) {
+  return withMLSessionPage(cookie, HUB_URL, onPage, {
+    scrollAfterLoad: true,
+    countSelectors: CARD_SELECTORS,
+  });
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -264,21 +228,6 @@ function collectHubCards(page, state) {
       for (const card of model.polycards || []) state.cards.push(card);
     } catch { /* resposta descartada pelo Chrome ou não-JSON — ignora */ }
   });
-}
-
-// Clica num elemento pelo texto exato. Devolve true se achou algo pra clicar.
-// O Hub é uma SPA sem ids estáveis, então o texto visível é a âncora menos frágil.
-function clickByText(page, text) {
-  return page.evaluate((wanted) => {
-    const norm = (s) => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
-    const alvo = norm(wanted);
-    const matches = Array.from(document.querySelectorAll("button, [role='button'], li, label, a, span, div"))
-      .filter(el => norm(el.textContent) === alvo && el.offsetParent !== null);
-    const el = matches[matches.length - 1];   // o mais interno (ordem do documento)
-    if (!el) return false;
-    (el.closest("button, [role='button'], li, label, a") || el).click();
-    return true;
-  }, text);
 }
 
 // Aplica o filtro de categoria pela interface (o ML não aceita filtro por URL nem

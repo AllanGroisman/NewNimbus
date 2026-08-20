@@ -528,6 +528,44 @@ export async function adminScrapTesterRun()          { return http("POST", "/api
 export async function adminScrapTesterCancel()       { return http("POST", "/api/admin/scrap-tester/cancel"); }
 export async function adminScrapTesterHistory()      { return http("GET",  "/api/admin/scrap-tester/history"); }
 export async function adminScrapTesterLink(url)      { return http("POST", "/api/admin/scrap-tester/link", { url }, { timeoutMs: SLOW_TIMEOUT_MS }); }
+
+// Teste de cupom do ML (Admin › Cupom). Abre um Chrome de verdade e pode ir até o
+// checkout, então demora tanto quanto o teste de acesso ao Hub — daí o SLOW.
+export async function adminCouponTest(body)          { return http("POST", "/api/admin/ml-coupon/test", body, { timeoutMs: SLOW_TIMEOUT_MS }); }
+export async function adminCouponHistory()           { return http("GET",  "/api/admin/ml-coupon/history"); }
+
+// Cupons que o ML oferece para a conta do sistema (Admin › Cupom › Cupons do ML).
+// A rodada demora minutos e roda solta no servidor: o /run responde na hora e a
+// tela acompanha pelo /status. Só o teste de PALAVRA abre Chrome na hora (SLOW).
+export async function adminMlCuponsStatus()          { return http("GET",  "/api/admin/ml-cupons/status"); }
+export async function adminMlCuponsSaveConfig(cfg)   { return http("PUT",  "/api/admin/ml-cupons/config", cfg); }
+export async function adminMlCuponsRun(body)         { return http("POST", "/api/admin/ml-cupons/run", body || {}); }
+export async function adminMlCuponsCancel()          { return http("POST", "/api/admin/ml-cupons/run/cancel"); }
+// Apaga tudo que a aba guardou: cupons, vínculos e o carimbo no catálogo. As
+// palavras já testadas ficam. Varre o catálogo inteiro, daí o SLOW.
+export async function adminMlCuponsClearAll() { return http("DELETE", "/api/admin/ml-cupons", undefined, { timeoutMs: SLOW_TIMEOUT_MS }); }
+export async function adminMlCuponsCodes(limit = 50) { return http("GET",  `/api/admin/ml-cupons/codes?limit=${limit}`); }
+export async function adminMlCuponsTestWord(word, force = false) {
+  return http("POST", "/api/admin/ml-cupons/code", { word, force }, { timeoutMs: SLOW_TIMEOUT_MS });
+}
+export async function adminMlCuponsSyncProducts(campaignId) {
+  return http("POST", `/api/admin/ml-cupons/${encodeURIComponent(campaignId)}/sync-produtos`, undefined, { timeoutMs: SLOW_TIMEOUT_MS });
+}
+export async function adminMlCuponsProducts(campaignId, { page = 1, pageSize = 50 } = {}) {
+  return http("GET", `/api/admin/ml-cupons/${encodeURIComponent(campaignId)}/produtos?page=${page}&pageSize=${pageSize}`);
+}
+export async function adminMlCupons({ page = 1, pageSize = 50, q, scope, onlyActive, onlyValid, withCode, sortBy } = {}) {
+  const params = new URLSearchParams();
+  params.set("page", page);
+  params.set("pageSize", pageSize);
+  if (q) params.set("q", q);
+  if (scope) params.set("scope", scope);
+  if (onlyActive) params.set("onlyActive", "true");
+  if (onlyValid) params.set("onlyValid", "true");
+  if (withCode) params.set("withCode", "true");
+  if (sortBy) params.set("sortBy", sortBy);
+  return http("GET", `/api/admin/ml-cupons?${params}`);
+}
 export async function adminCatalog({ page = 1, pageSize = 50, category, source, q, sortBy } = {}) {
   const params = new URLSearchParams();
   params.set("page", page);

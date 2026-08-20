@@ -46,6 +46,7 @@ import PageAdminWhatsNimbus from "./pages/AdminWhatsNimbus";
 import PageAdminLayout from "./pages/AdminLayout";
 import PageAdminStripe from "./pages/AdminStripe";
 import PageAdminRepasse from "./pages/AdminRepasse";
+import PageAdminCupom from "./pages/AdminCupom";
 import PageTutoriais from "./pages/Tutoriais";
 import Login from "./pages/Login";
 import PageAssinar from "./pages/Assinar";
@@ -1066,6 +1067,7 @@ export default function App() {
     "admin-amazon":   user?.role === "admin" ? <PageAdminAmazon /> : fallbackPage,
     "admin-shopee":   user?.role === "admin" ? <PageAdminShopee /> : fallbackPage,
     "admin-repasse":  user?.role === "admin" ? <PageAdminRepasse /> : fallbackPage,
+    "admin-cupom":    user?.role === "admin" ? <PageAdminCupom /> : fallbackPage,
     "admin-users":          user?.role === "admin" ? <PageAdminUsers currentUser={user} /> : fallbackPage,
     "admin-backups":        user?.role === "admin" ? <PageAdminBackups /> : fallbackPage,
     "admin-notifications":  user?.role === "admin" ? <PageAdminNotifications onGoToWhatsNimbus={() => requestNavigation(() => setPage("admin-whatsnimbus"))} /> : fallbackPage,

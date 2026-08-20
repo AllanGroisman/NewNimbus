@@ -78,6 +78,9 @@ function fromRow(r) {
     // Depois do payload de propósito: linhas gravadas antes da coluna existir
     // ainda carregam um `soldCount` antigo lá dentro, e quem manda é a coluna.
     soldCount: r.soldCount ?? null,
+    // Mesma regra: a campanha de cupom é coluna (só a sincronização de cupons
+    // escreve nela), e o payload não tem voz nisso.
+    couponCampaignId: r.couponCampaignId ?? null,
   };
 }
 
@@ -153,7 +156,12 @@ function buildWhere({ categories, sources, excludeKeys, filters = {} }) {
     if (arr.length) where.AND.push({ key: { notIn: arr } });
   }
 
-  const { minDiscount = 0, minPrice = 0, maxPrice, minRating = 0, minSales = 0, keywords = "" } = filters;
+  const { minDiscount = 0, minPrice = 0, maxPrice, minRating = 0, minSales = 0, keywords = "", hasCoupon = false } = filters;
+  // "só produtos com cupom do ML". Cabe no WHERE porque o vínculo mora numa
+  // COLUNA (couponCampaignId, escrita só pela sincronização de cupons) — filtrar
+  // isso em JS depois da query deixaria o count() e a paginação mentindo, que é
+  // o mesmo motivo do soldCount ter virado coluna.
+  if (hasCoupon) where.AND.push({ couponCampaignId: { not: null } });
   if (minDiscount > 0) where.AND.push({ discount: { gte: minDiscount } });
   if (minPrice > 0) where.AND.push({ price: { gte: minPrice } });
   if (maxPrice != null && Number.isFinite(maxPrice) && maxPrice > 0) {
