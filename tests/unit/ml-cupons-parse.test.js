@@ -331,4 +331,93 @@ describe("classifyCodeCheck (a resposta do ML a uma PALAVRA digitada)", () => {
     expect(ml.classifyCodeCheck(null).verdict).toBe("indeterminado");
     expect(ml.classifyCodeCheck({ algo: "outro" }).verdict).toBe("indeterminado");
   });
+
+  // O caso do BRINCADEIRAS: o JSON abaixo é exatamente o que ficou gravado em
+  // ml_coupon_codes. Ele foi lido como "o ML não reconheceu" e ainda apagou a
+  // campanha 13471229 que a palavra já tinha resolvido no dia anterior.
+  it("\"Tivemos um problema\" é o ML engasgando, não a palavra sendo negada", () => {
+    const r = ml.classifyCodeCheck({
+      responseMessage: { text: "Tivemos um problema", type: "error" },
+    });
+    expect(r.verdict).toBe("indeterminado");
+    expect(r.campaignId).toBe(null);
+    expect(r.responseCode).toBe(null);
+  });
+
+  it("o que separa os dois é o ML ter avaliado: response_code ou o objeto coupon", () => {
+    // Sem tracking, mas com o coupon zerado: ele avaliou e a palavra não existe.
+    expect(ml.classifyCodeCheck({
+      coupon: { campaignId: "0" },
+      responseMessage: { text: "Confira se o cupom está correto", type: "error" },
+    }).verdict).toBe("invalid");
+
+    // Só o response_code, sem coupon nenhum: também é avaliação.
+    expect(ml.classifyCodeCheck({
+      responseMessage: { text: "qualquer coisa", type: "error" },
+      tracking: { event: { eventData: { response_code: "SOME_ERROR" } } },
+    }).verdict).toBe("invalid");
+  });
+
+  it("erro sem avaliação nenhuma nunca vira invalid", () => {
+    expect(ml.classifyCodeCheck({ message: "falhou", response_code: null, responseMessage: { type: "error" } }).verdict)
+      .toBe("indeterminado");
+  });
+});
+
+describe("crawlFilter — a varredura de UMA campanha (findCampaignId)", () => {
+  // O mesmo duplo de página do bloco acima, mas contando as navegações: é o que
+  // prova que a busca não varre as 13 páginas para achar algo na primeira.
+  const fakePage = (paginas) => {
+    const estado = { gotos: 0 };
+    let n = 0;
+    return {
+      estado,
+      page: { goto: async () => { estado.gotos++; }, evaluate: async () => paginas[n++] ?? {} },
+    };
+  };
+
+  // A fixture tem uma página só. Para a segunda, os ids são reescritos — assim
+  // existe um cupom que SÓ aparece depois de virar a página.
+  const paginaDois = () => {
+    const c = JSON.parse(JSON.stringify(filterProps));
+    // A fixture da /cupons/filter é camelCase (é o que o ML serve ali) — mexer no
+    // `campaign_id` em vez do `campaignId` jogaria o parseFilterProps no ramo errado.
+    for (const cupom of c.filteredCouponsData.coupons) cupom.campaignId = `77${cupom.campaignId}`;
+    c.activeCouponsData = null;
+    return c;
+  };
+
+  it("para na página em que a campanha aparece", async () => {
+    const f = fakePage([filterProps, paginaDois()]);
+    const r = await ml.crawlFilter(f.page, { limit: 500, findCampaignId: "14030498" });
+
+    expect(r.achou).toBe(true);
+    expect(f.estado.gotos).toBe(1);
+    expect(r.coupons.some(c => c.campaignId === "14030498")).toBe(true);
+  });
+
+  it("sem findCampaignId a mesma lista vira a página — é o contraste do teste acima", async () => {
+    const f = fakePage([filterProps, paginaDois()]);
+    const r = await ml.crawlFilter(f.page, { limit: 500 });
+
+    expect(f.estado.gotos).toBeGreaterThan(1);
+    expect(r.achou).toBe(false);
+  });
+
+  it("acha na página 2 quando não estava na 1", async () => {
+    const f = fakePage([filterProps, paginaDois()]);
+    const r = await ml.crawlFilter(f.page, { limit: 500, findCampaignId: "7714030498" });
+
+    expect(r.achou).toBe(true);
+    expect(f.estado.gotos).toBe(2);
+  });
+
+  it("cupom de loja não é descartado quando ele é o alvo — por isso findCampaign não usa skipStore", async () => {
+    const f = fakePage([filterProps]);
+    // 13422085 é um dos cupons de loja da fixture (ver o bloco do skipStore acima).
+    const r = await ml.crawlFilter(f.page, { limit: 500, skipStore: false, findCampaignId: "13422085" });
+
+    expect(r.achou).toBe(true);
+    expect(r.coupons.find(c => c.campaignId === "13422085").scope).toBe("store");
+  });
 });

@@ -2235,8 +2235,14 @@ app.put("/api/admin/ml-cupons/config", auth.requireAuth, auth.requireAdmin, asyn
 });
 
 app.post("/api/admin/ml-cupons/run", auth.requireAuth, auth.requireAdmin, (req, res) => {
-  if (mlCupons.status().running) {
+  const st = mlCupons.status();
+  if (st.running) {
     return res.status(409).json({ error: "Já tem uma rodada de cupons rodando." });
+  }
+  // A busca de UMA campanha usa a mesma conta do ML: começar a rodada por cima dela
+  // é o segundo Chrome na conta, que é o caminho curto pro CAPTCHA.
+  if (st.importing) {
+    return res.status(409).json({ error: "Estou buscando uma campanha agora — espere ela terminar." });
   }
   try {
     // Dispara e devolve: a rodada abre um Chrome e visita uma página por cupom.
@@ -2313,6 +2319,31 @@ app.post("/api/admin/ml-cupons/:campaignId/sync-produtos", auth.requireAuth, aut
     console.error("[ml-cupons.sync-produtos]", err.message);
     res.status(400).json({ error: err.message });
   }
+});
+
+// Trazer UMA campanha que o teste de palavra apontou e o sistema não tem. É o
+// passo seguinte ao POST /code: aquele descobre o id da campanha, este vai buscá-la
+// na lista da conta e gravar — sem precisar rodar a coleta inteira.
+//
+// Dispara e devolve, como o /run: a varredura da lista do ML passa dos 90s do
+// proxy_read_timeout do nginx. A primeira versão esperava pela busca e morria no
+// proxy com "não foi possível conectar", com o Chrome ainda trabalhando do outro lado.
+app.post("/api/admin/ml-cupons/:campaignId/importar", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const r = await mlCupons.startImport(String(req.params.campaignId), {
+      withProducts: req.body?.withProducts !== false,
+    });
+    // A campanha já estava aqui: desfecho na hora, sem nada pra acompanhar.
+    res.status(r.already ? 200 : 202).json(r);
+  } catch (err) {
+    console.error("[ml-cupons.importar]", err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Onde está a busca de campanha que foi disparada acima.
+app.get("/api/admin/ml-cupons/importar/status", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json(mlCupons.importStatus());
 });
 
 // Testar uma PALAVRA (tipo BRINQUEDOS) no campo "Inserir código do cupom" do ML.

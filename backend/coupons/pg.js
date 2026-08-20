@@ -163,16 +163,29 @@ async function syncCatalogCoupons() {
 async function recordCodeCheck({ code, verdict, campaignId = null, message = null, responseCode = null, source = "admin", raw = {} }) {
   if (!code) return null;
   const agora = nowish();
+
+  // Este dicionário é a ÚNICA cópia do "palavra → campanha": a página do ML não
+  // lista palavra nenhuma, e a resposta só se descobre digitando. Um engasgo do ML
+  // ("Tivemos um problema", que chega como indeterminado) não é motivo para apagar
+  // uma resposta boa — foi assim que BRINCADEIRAS perdeu a campanha 13471229 e
+  // passou a aparecer na tela como "o ML não reconheceu". Guarda o que se sabe e
+  // registra só que houve mais uma tentativa.
+  const anterior = await prisma().mlCouponCode.findUnique({ where: { code } });
+  const preservar = verdict === "indeterminado" && anterior?.verdict === "valid";
+
   const r = await prisma().mlCouponCode.upsert({
     where: { code },
     create: { code, verdict, campaignId, message, responseCode, source, raw: raw || {}, checkedAt: agora, checkCount: 1, firstSeenAt: agora },
-    update: { verdict, campaignId, message, responseCode, source, raw: raw || {}, checkedAt: agora, checkCount: { increment: 1 } },
+    update: preservar
+      ? { checkedAt: agora, checkCount: { increment: 1 } }
+      : { verdict, campaignId, message, responseCode, source, raw: raw || {}, checkedAt: agora, checkCount: { increment: 1 } },
   });
 
   // A palavra resolveu para uma campanha: carimba nela, que é o que fecha o ciclo
-  // "palavra do grupo líder → produtos do cupom".
-  if (campaignId) {
-    await prisma().mlCoupon.updateMany({ where: { campaignId, code: null }, data: { code } }).catch(() => {});
+  // "palavra do grupo líder → produtos do cupom". Quem manda é a campanha que ficou
+  // na linha (`r`), não a da resposta — no caso preservado elas diferem.
+  if (r.campaignId) {
+    await prisma().mlCoupon.updateMany({ where: { campaignId: r.campaignId, code: null }, data: { code } }).catch(() => {});
   }
   return r;
 }
@@ -295,8 +308,37 @@ async function getCoupon(campaignId) {
   return prisma().mlCoupon.findUnique({ where: { campaignId } });
 }
 
+// O cupom que carrega esta palavra, se algum. É o que o sistema sabe por conta
+// própria quando o ML não responde — a coluna `code` só é escrita a partir de um
+// teste `valid`, então o que estiver lá já foi confirmado pelo ML algum dia.
+async function findCouponByCode(code) {
+  if (!code) return null;
+  return prisma().mlCoupon.findFirst({ where: { code }, orderBy: { lastSeenAt: "desc" } });
+}
+
+// As palavras testadas, com o que o sistema sabe da campanha de cada uma.
+//
+// `inSystem` é o que a tela usa pra oferecer "buscar e adicionar esta campanha":
+// a palavra pode ter resolvido pra uma campanha que nunca foi raspada, e aí não
+// existe linha em `ml_coupons` (não há FK entre as duas tabelas de propósito —
+// ver o comentário do clearAll). Sem esta coluna o front teria que adivinhar.
 async function listCodeChecks({ limit = 50 } = {}) {
-  return prisma().mlCouponCode.findMany({ orderBy: { checkedAt: "desc" }, take: Math.min(200, Math.max(1, limit)) });
+  const rows = await prisma().mlCouponCode.findMany({
+    orderBy: { checkedAt: "desc" },
+    take: Math.min(200, Math.max(1, limit)),
+  });
+
+  const ids = [...new Set(rows.map(r => r.campaignId).filter(Boolean))];
+  const cupons = ids.length
+    ? await prisma().mlCoupon.findMany({ where: { campaignId: { in: ids } }, select: { campaignId: true, title: true } })
+    : [];
+  const mapa = new Map(cupons.map(c => [c.campaignId, c.title]));
+
+  return rows.map(r => ({
+    ...r,
+    inSystem: r.campaignId ? mapa.has(r.campaignId) : null,
+    couponTitle: r.campaignId ? (mapa.get(r.campaignId) || null) : null,
+  }));
 }
 
 // Uma palavra já conhecida — evita ir ao ML de novo por algo que já foi testado
@@ -306,6 +348,9 @@ async function findCodeCheck(code, { maxAgeHours = 24 } = {}) {
   if (!code) return null;
   const r = await prisma().mlCouponCode.findUnique({ where: { code } });
   if (!r) return null;
+  // Engasgo do ML não é resposta: guardá-lo em cache prenderia a palavra num
+  // "não deu pra saber" por horas, quando repetir custa só um Chrome.
+  if (r.verdict === "indeterminado") return null;
   const idadeH = (Date.now() - new Date(r.checkedAt).getTime()) / 36e5;
   return idadeH <= maxAgeHours ? r : null;
 }
@@ -368,10 +413,28 @@ async function restampCodesFromChecks() {
   return { recarimbados: Number(n || 0) };
 }
 
+// O caminho de volta do `restampCodesFromChecks`: devolve à palavra a campanha que
+// só sobrou carimbada no cupom. Existe porque um engasgo do ML já zerou linhas boas
+// antes desta correção — e a coluna `ml_coupons.code` é escrita exclusivamente a
+// partir de um teste `valid` (aqui e no `recordCodeCheck`), então ela é fonte
+// confiável para reconstruir o que se perdeu.
+async function recoverCodesFromCoupons() {
+  const n = await prisma().$executeRaw`
+    UPDATE "ml_coupon_codes" k
+       SET "campaign_id" = c."campaign_id", "verdict" = 'valid',
+           "message" = NULL, "response_code" = NULL
+      FROM "ml_coupons" c
+     WHERE c."code" = k."code"
+       AND k."campaign_id" IS NULL`;
+  return { recuperados: Number(n || 0) };
+}
+
 module.exports = {
   upsertCoupons,
   clearAll,
   restampCodesFromChecks,
+  findCouponByCode,
+  recoverCodesFromCoupons,
   replaceCouponProducts,
   syncCatalogCoupons,
   recordCodeCheck,

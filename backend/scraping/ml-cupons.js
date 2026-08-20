@@ -422,10 +422,18 @@ function classifyCodeCheck(json) {
   const campaignId = campaignRaw && String(campaignRaw) !== "0" ? String(campaignRaw) : null;
 
   const tipo = evt.response_type || json.responseMessage?.type || null;
+
+  // O ML tem DUAS respostas negativas, e confundi-las põe na tela o oposto da
+  // verdade. "Confira se o cupom está correto" vem com response_code INVALID_1 e
+  // coupon.campaign_id "0": ele avaliou a palavra e ela não existe. "Tivemos um
+  // problema" vem sozinho — sem tracking, sem coupon, sem código nenhum: ele nem
+  // chegou a avaliar. O segundo é engasgo do ML, não veredito sobre a palavra.
+  const avaliou = !!responseCode || !!(json.coupon || evt.coupon);
+
   let verdict = "indeterminado";
   if (/^INVALID/i.test(responseCode || "")) verdict = "invalid";
   else if (campaignId) verdict = "valid";
-  else if (tipo === "error") verdict = "invalid";
+  else if (tipo === "error") verdict = avaliou ? "invalid" : "indeterminado";
   else if (tipo === "success") verdict = "valid";
 
   return { verdict, campaignId, message, responseCode };
@@ -497,12 +505,19 @@ function withCuponsPage(cookie, onPage) {
 //
 // Não existe clique nenhum aqui de propósito — a sonda mostrou que o "Ver mais"
 // só navega para esta URL, e navegar direto é mais firme do que caçar botão.
-async function crawlFilter(page, { grouping = null, limit = 200, skipStore = false, onProgress = null } = {}) {
+//
+// `findCampaignId` é a varredura de UMA campanha: para na página em que ela
+// aparecer, em vez de ir até o `limit`. Sem isso, procurar um cupom que está na
+// página 2 custaria as 40 páginas do teto — navegação com a conta do Hub, que é
+// justamente o que se economiza aqui.
+async function crawlFilter(page, { grouping = null, limit = 200, skipStore = false, onProgress = null, findCampaignId = null } = {}) {
+  const alvo = findCampaignId ? String(findCampaignId) : null;
   const porId = new Map();
   let total = null;
   let pages = 1;
   let ignoradosLoja = 0;
   let paginasSemNovidade = 0;
+  let achou = false;
 
   for (let n = 1; n <= MAX_FILTER_PAGES && porId.size < limit; n++) {
     await page.goto(filterUrl({ grouping, page: n }), { waitUntil: "networkidle2", timeout: NAV_TIMEOUT_MS });
@@ -534,17 +549,19 @@ async function crawlFilter(page, { grouping = null, limit = 200, skipStore = fal
       }
       porId.set(c.campaignId, c);
       novosNaPagina++;
+      if (alvo && c.campaignId === alvo) { achou = true; break; }
       if (porId.size >= limit) break;
     }
 
     if (onProgress) await onProgress({ etapa: "cupons", pagina: n, de: pages, cupons: porId.size, ignoradosLoja, grouping });
+    if (achou) break;
     paginasSemNovidade = novosNaPagina ? 0 : paginasSemNovidade + 1;
     if (paginasSemNovidade >= MAX_PAGINAS_SEM_NOVIDADE) break;
     if (n >= pages) break;
     await sleep(FILTER_PAUSE_MS + Math.floor(Math.random() * 500));
   }
 
-  return { total, pages, ignoradosLoja, coupons: [...porId.values()] };
+  return { total, pages, ignoradosLoja, achou, coupons: [...porId.values()] };
 }
 
 // A vitrine de UM cupom: os produtos que aquele cupom cobre.
@@ -671,8 +688,86 @@ async function checkCouponWord(cookie, word) {
       responseCode: resposta.responseCode,
       message: resposta.message,
       raw: resposta.json,
-      reason: resposta.message || (resposta.verdict === "valid" ? "O ML reconheceu a palavra." : "O ML não reconheceu a palavra."),
+      // "Não reconheceu" só vale quando o ML de fato avaliou a palavra. No engasgo
+      // (verdict indeterminado) a mensagem dele — "Tivemos um problema" — sozinha
+      // parece veredito sobre a palavra, então vem acompanhada do que ela é.
+      reason: resposta.verdict === "indeterminado"
+        ? `O ML respondeu ${resposta.message ? `"${resposta.message}"` : "com um erro"} — ele não chegou a avaliar a palavra.`
+        : (resposta.message || (resposta.verdict === "valid" ? "O ML reconheceu a palavra." : "O ML não reconheceu a palavra.")),
     };
+  } finally {
+    await r.browser.close().catch(() => {});
+  }
+}
+
+// Acha UMA campanha na lista da conta e, se pedido, raspa a vitrine dela.
+//
+// É o par do `checkCouponWord`: ele descobre QUE campanha a palavra é, este traz a
+// campanha. Vale a pena procurar na lista de verdade em vez de montar a linha com o
+// JSON da resposta porque digitar a palavra ATIVA o cupom na conta — e cupom ativado
+// é o único que vem com `containerUrl`, que é o que permite ler os produtos.
+//
+// Não mexe no `_running` da rodada, mesmo padrão do `syncOneCoupon`: abre o próprio
+// Chrome e fecha no fim. Quem chama é que decide não fazer isso no meio de uma rodada.
+//
+// `onProgress(parcial)` é o mesmo do `runPull`: a varredura pode levar minutos e é
+// por ele que a tela mostra onde ela está.
+async function findCampaign(cookie, campaignId, { withProducts = true, maxProducts = 100, onProgress = null } = {}) {
+  const alvo = String(campaignId || "").trim();
+  if (!alvo) throw new Error("Sem campanha para buscar.");
+
+  if (onProgress) await onProgress({ etapa: "abrindo" });
+  const r = await withCuponsPage(cookie, null);
+  try {
+    // 1. A aba: os ~40 cupons que ela mostra de cara. O cupom recém-ativado pela
+    //    palavra costuma estar aqui, e esta parada não custa navegação nenhuma —
+    //    a página já está aberta.
+    const landing = await readLanding(r.page);
+    const daAba = parseLanding(landing);
+    const snap = await snapshotPage(r.page);
+    const veredito = verdictFor({
+      finalUrl: r.page.url(), title: snap.title, bodyText: snap.bodyText,
+      modelFound: !!landing, couponCount: daAba.coupons.length, blocked: r.blocked,
+    });
+    if (!veredito.ok && veredito.kind !== "empty") {
+      return { coupon: null, blocked: true, reason: veredito.reason };
+    }
+
+    let cupom = daAba.coupons.find(c => c.campaignId === alvo) || null;
+
+    // 2. A lista cheia, parando na página em que ele aparecer. `skipStore: false`
+    //    porque a campanha pedida PODE ser de loja — descartá-la aqui responderia
+    //    "não achei" para algo que estava na página.
+    if (!cupom) {
+      const lista = await crawlFilter(r.page, {
+        grouping: null,
+        limit: MAX_FILTER_PAGES * 30,
+        skipStore: false,
+        findCampaignId: alvo,
+        onProgress,
+      });
+      cupom = lista.coupons.find(c => c.campaignId === alvo) || null;
+    }
+
+    if (!cupom) {
+      return {
+        coupon: null,
+        reason: "O ML reconheceu a palavra, mas essa campanha não aparece na lista de cupons da conta — ela pode ter vencido ou não valer para esta conta.",
+      };
+    }
+
+    // 3. A vitrine. Falhar aqui NÃO invalida a importação: a campanha em si já é
+    //    ganho, e o botão "Sincronizar produtos" da linha tenta de novo depois.
+    let products = [];
+    let reasonVitrine = null;
+    if (withProducts) {
+      if (onProgress) await onProgress({ etapa: "vitrine", campaignId: alvo, title: cupom.title });
+      const res = await scrapeCouponProducts(r.browser, cupom, { maxProducts });
+      if (res.ok) products = res.products || [];
+      else reasonVitrine = res.reason;
+    }
+
+    return { coupon: cupom, products, reasonVitrine };
   } finally {
     await r.browser.close().catch(() => {});
   }
@@ -929,6 +1024,7 @@ module.exports = {
   withCuponsPage,
   scrapeCouponProducts,
   checkCouponWord,
+  findCampaign,
   dumpCupons,
   isRunning,
   cancel,

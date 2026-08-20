@@ -75,3 +75,157 @@ describe("clearAll — apagar todos os cupons", () => {
     expect((await coupons.getCoupon(CAMPANHA)).code).toBe(PALAVRA);
   });
 });
+
+// A palavra pode apontar para uma campanha que nunca foi raspada — o ML responde o
+// id da campanha, e não existe FK entre `ml_coupon_codes` e `ml_coupons`. É esse
+// buraco que a tela oferece preencher ("buscar e adicionar esta campanha"), e ela
+// precisa saber quais palavras estão nessa situação.
+describe("listCodeChecks — quais palavras apontam para campanha que falta", () => {
+  const ORFA = "9900002";
+  const PALAVRA_ORFA = `ORFA${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+
+  beforeEach(async () => {
+    await semear();
+    await coupons.recordCodeCheck({ code: PALAVRA, verdict: "valid", campaignId: CAMPANHA, source: "admin" });
+    await coupons.recordCodeCheck({ code: PALAVRA_ORFA, verdict: "valid", campaignId: ORFA, source: "admin" });
+  });
+
+  it("campanha no sistema vem com inSystem e título; a que falta vem false", async () => {
+    const palavras = await coupons.listCodeChecks({ limit: 50 });
+
+    const daCampanha = palavras.find(p => p.code === PALAVRA);
+    expect(daCampanha.inSystem).toBe(true);
+    expect(daCampanha.couponTitle).toBe("20% OFF TESTE");
+
+    const orfa = palavras.find(p => p.code === PALAVRA_ORFA);
+    expect(orfa.inSystem).toBe(false);
+    expect(orfa.couponTitle).toBe(null);
+  });
+
+  it("depois que a campanha entra, a mesma palavra passa a inSystem", async () => {
+    await coupons.upsertCoupons([{ campaignId: ORFA, title: "Campanha achada pela palavra", kind: "percent", value: 15 }], { origin: "code" });
+
+    const orfa = (await coupons.listCodeChecks({ limit: 50 })).find(p => p.code === PALAVRA_ORFA);
+    expect(orfa.inSystem).toBe(true);
+    expect(orfa.couponTitle).toBe("Campanha achada pela palavra");
+  });
+
+  it("palavra sem campanha nenhuma não vira 'falta a campanha'", async () => {
+    const invalida = `NADA${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+    await coupons.recordCodeCheck({ code: invalida, verdict: "invalid", campaignId: null, source: "admin" });
+
+    const linha = (await coupons.listCodeChecks({ limit: 50 })).find(p => p.code === invalida);
+    expect(linha.inSystem).toBe(null);
+  });
+});
+
+// A busca de UMA campanha e a rodada disputam a MESMA conta do ML. Dois Chromes
+// nela ao mesmo tempo dobram a chance de CAPTCHA — e o CAPTCHA vale pra conta,
+// então derruba o Hub junto. Uma tem que recusar a outra, nos dois sentidos.
+describe("startImport — a guarda contra dois Chromes na mesma conta", () => {
+  const mlCupons = require(path.join(backendDir, "coupons", "sync.js"));
+  const scraping = require(path.join(backendDir, "scraping", "ml-cupons.js"));
+
+  it("recusa quando uma rodada de cupons está em andamento", async () => {
+    const original = scraping.isRunning;
+    scraping.isRunning = () => true;
+    try {
+      await expect(mlCupons.startImport("9900003")).rejects.toThrow(/rodada de cupons rodando/i);
+    } finally {
+      scraping.isRunning = original;
+    }
+  });
+
+  it("campanha que já está no sistema volta na hora, sem abrir navegador", async () => {
+    await semear();
+    const r = await mlCupons.startImport(CAMPANHA);
+
+    expect(r.already).toBe(true);
+    expect(r.coupon.campaignId).toBe(CAMPANHA);
+    // Não disparou busca nenhuma: nada para acompanhar.
+    expect(mlCupons.importStatus().running).toBe(false);
+  });
+
+  it("sem campanha não dispara nada", async () => {
+    await expect(mlCupons.startImport("  ")).rejects.toThrow(/Sem campanha/i);
+  });
+
+  it("o status começa limpo e é o que a tela lê", () => {
+    const s = mlCupons.importStatus();
+    expect(s).toHaveProperty("running");
+    expect(s).toHaveProperty("progress");
+    expect(s).toHaveProperty("result");
+    expect(s).toHaveProperty("error");
+  });
+});
+
+// O dicionário palavra → campanha é a única cópia dessa informação: a página do ML
+// não lista palavra nenhuma. Um engasgo do ML ("Tivemos um problema") já chegou a
+// apagar uma linha boa — BRINCADEIRAS perdeu a campanha 13471229 e passou a
+// aparecer na tela como "o ML não reconheceu".
+describe("o dicionário de palavras sobrevive a um engasgo do ML", () => {
+  const PALAVRA_BOA = `BOA${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+
+  beforeEach(async () => {
+    await semear();
+  });
+
+  it("indeterminado não apaga a campanha que a palavra já tinha", async () => {
+    await coupons.recordCodeCheck({ code: PALAVRA_BOA, verdict: "valid", campaignId: CAMPANHA, source: "admin" });
+
+    await coupons.recordCodeCheck({
+      code: PALAVRA_BOA, verdict: "indeterminado", campaignId: null,
+      message: "Tivemos um problema", source: "admin",
+      raw: { responseMessage: { text: "Tivemos um problema", type: "error" } },
+    });
+
+    const linha = (await coupons.listCodeChecks({ limit: 50 })).find(p => p.code === PALAVRA_BOA);
+    expect(linha.verdict).toBe("valid");
+    expect(linha.campaignId).toBe(CAMPANHA);
+    // A tentativa continua contada: o engasgo não some do histórico, só não manda.
+    expect(linha.checkCount).toBe(2);
+  });
+
+  it("um veredito de verdade continua sobrescrevendo o anterior", async () => {
+    await coupons.recordCodeCheck({ code: PALAVRA_BOA, verdict: "valid", campaignId: CAMPANHA, source: "admin" });
+    await coupons.recordCodeCheck({
+      code: PALAVRA_BOA, verdict: "invalid", campaignId: null,
+      message: "Confira se o cupom está correto", responseCode: "INVALID_1", source: "admin",
+    });
+
+    const linha = (await coupons.listCodeChecks({ limit: 50 })).find(p => p.code === PALAVRA_BOA);
+    expect(linha.verdict).toBe("invalid");
+    expect(linha.campaignId).toBe(null);
+  });
+
+  it("engasgo não fica em cache: a próxima tentativa vai ao ML de novo", async () => {
+    const nova = `NOVA${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+    await coupons.recordCodeCheck({ code: nova, verdict: "indeterminado", campaignId: null, source: "admin" });
+    expect(await coupons.findCodeCheck(nova, { maxAgeHours: 12 })).toBe(null);
+
+    // O contraste: veredito de verdade continua servindo do cache.
+    await coupons.recordCodeCheck({ code: nova, verdict: "invalid", campaignId: null, responseCode: "INVALID_1", source: "admin" });
+    expect((await coupons.findCodeCheck(nova, { maxAgeHours: 12 }))?.verdict).toBe("invalid");
+  });
+
+  it("recoverCodesFromCoupons devolve à palavra a campanha que só sobrou no cupom", async () => {
+    // O estado exato em que BRINCADEIRAS ficou: a linha perdeu a campanha, mas o
+    // cupom ainda carrega o carimbo — e ele só é escrito a partir de um teste válido.
+    await coupons.recordCodeCheck({ code: PALAVRA_BOA, verdict: "valid", campaignId: CAMPANHA, source: "admin" });
+    expect((await coupons.getCoupon(CAMPANHA)).code).toBe(PALAVRA_BOA);
+    await coupons.recordCodeCheck({ code: PALAVRA_BOA, verdict: "invalid", campaignId: null, source: "admin" });
+
+    const r = await coupons.recoverCodesFromCoupons();
+    expect(r.recuperados).toBeGreaterThan(0);
+
+    const linha = (await coupons.listCodeChecks({ limit: 50 })).find(p => p.code === PALAVRA_BOA);
+    expect(linha.verdict).toBe("valid");
+    expect(linha.campaignId).toBe(CAMPANHA);
+  });
+
+  it("findCouponByCode é o que o sistema sabe quando o ML não responde", async () => {
+    await coupons.recordCodeCheck({ code: PALAVRA_BOA, verdict: "valid", campaignId: CAMPANHA, source: "admin" });
+    expect((await coupons.findCouponByCode(PALAVRA_BOA)).campaignId).toBe(CAMPANHA);
+    expect(await coupons.findCouponByCode("PALAVRA_QUE_NINGUEM_TESTOU")).toBe(null);
+  });
+});

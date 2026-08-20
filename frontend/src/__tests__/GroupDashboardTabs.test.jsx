@@ -411,6 +411,31 @@ describe("GroupDashboard — aba Modelos Mensagens (prévia)", () => {
     renderMessagesTab();
     expect(screen.queryByText(/Cupom fixo da campanha/)).toBeNull();
   });
+
+  // Task 101: {preco_com_cupom} nunca apaga a linha — sem cupom ele vira o preço
+  // normal, que é o mesmo fallback do renderTemplate do scheduler.
+  it("{preco_com_cupom} mostra o preço com desconto na campanha de repasse", () => {
+    const { container } = renderMessagesTab({
+      group: { scraping: { kind: "repasse", sources: ["Mercado Livre"], filters: {} }, messageTemplate: "Com cupom: {preco_com_cupom}" },
+    });
+    expect(container.querySelector(".wa-preview").textContent).toContain("Com cupom: R$ 1.709");
+  });
+
+  it("sem cupom na prévia, {preco_com_cupom} vira o preço normal e a linha fica", () => {
+    const { container } = renderMessagesTab();
+    const textarea = container.querySelector("textarea");
+    fireEvent.change(textarea, { target: { value: "Cupom: {cupom}\nCom cupom: {preco_com_cupom}" } });
+    const preview = container.querySelector(".wa-preview");
+    // A linha do {cupom} some (não há cupom); a do {preco_com_cupom} fica, com o {preco}.
+    expect(preview.textContent).not.toContain("Cupom:");
+    expect(preview.textContent).toContain("Com cupom: R$ 1.899");
+  });
+
+  it("o chip {preco_com_cupom} insere a variável no editor", () => {
+    const { container } = renderMessagesTab({ group: { messageTemplate: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "{preco_com_cupom}" }));
+    expect(container.querySelector("textarea").value).toContain("{preco_com_cupom}");
+  });
 });
 
 describe("GroupDashboard — aba Modelos Mensagens (Salvar / Salvar Como)", () => {

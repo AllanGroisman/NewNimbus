@@ -102,6 +102,10 @@ function renderTemplate(template, p) {
   return t
     .replace(/\{produto\}/g, p.name || "")
     .replace(/\{preco\}/g, fmt(p.price))
+    // {preco_com_cupom} NÃO apaga linha nenhuma: quando o cupom não vale (ou nem
+    // existe), ele vira exatamente o {preco}. Quem calcula é o sendItem, que lê o
+    // cupom no banco na hora do envio; aqui só chega o número pronto (ou null).
+    .replace(/\{preco_com_cupom\}/g, fmt(p.priceWithCoupon != null ? p.priceWithCoupon : p.price))
     .replace(/\{preco_antigo\}/g, fmt(p.originalPrice))
     .replace(/\{desconto\}/g, p.discount ? `${p.discount}%` : "—")
     .replace(/\{loja\}/g, p.store || "")
@@ -591,6 +595,47 @@ function bumpMetrics(group, ok) {
   };
 }
 
+// A regra do cupom que vale AGORA pra este item — o que o {preco_com_cupom} usa.
+//
+// A leitura é aqui, no envio, e não no refill de propósito: o item fica dias na
+// fila e o cupom vence nesse meio-tempo. Guardar valor/validade no payload da fila
+// seria anunciar promessa velha; o banco é o único lugar onde "vale hoje" é
+// verdade. Custa uma consulta por envio, contra os 4s de espera que já existem
+// entre um grupo e outro.
+//
+// Ordem: a PALAVRA primeiro. É ela que a mensagem manda o cliente digitar (no
+// repasse vem da legenda do grupo líder, ou digitada à mão na fila), então é o
+// desconto dela que o cliente vai ver no checkout. Só depois o vínculo de campanha.
+//
+// O terceiro passo não é redundância: `couponCampaignId` só é preenchido no refill
+// quando `couponBoost` ≠ "off" (e "off" é o default), então na campanha comum o
+// item chega sem campanha nenhuma mesmo tendo cupom no catálogo.
+//
+// Só Mercado Livre: `ml_coupons` é a aba de cupons do ML, e o desconto de lá não
+// vale num produto da Amazon ou da Shopee. Sem essa trava, um produto da Amazon com
+// a palavra "SAVE10" na legenda do grupo líder colidiria com um cupom do ML de
+// mesmo nome e a mensagem anunciaria um preço que não existe.
+//
+// Nada encontrado, ou banco fora do ar → null → preço normal. É o silêncio certo.
+async function couponRuleForItem(item) {
+  if (item?.store !== "Mercado Livre") return null;
+  const word = (item?.coupon || "").toString().trim();
+  if (word) {
+    const c = await coupons.findCouponByCode(word).catch(() => null);
+    if (c) return c;
+  }
+  if (item?.couponCampaignId) {
+    const c = await coupons.getCoupon(item.couponCampaignId).catch(() => null);
+    if (c) return c;
+  }
+  if (item?.key) {
+    const mapa = await coupons.couponsForKeys([item.key]).catch(() => null);
+    const c = mapa && mapa.get(item.key);
+    if (c) return c;
+  }
+  return null;
+}
+
 // Faz o envio de UM item para todos os grupos vinculados
 async function sendItem(userId, group, whatsappGroups, item) {
   const linkedIds = group.whatsappGroupIds || [];
@@ -643,7 +688,11 @@ async function sendItem(userId, group, whatsappGroups, item) {
   // repasse (capture.js). Não existe mais cupom fixo por campanha — sem cupom no
   // item, renderTemplate apaga a linha inteira que contém {cupom}.
   const coupon = (itemForSend.coupon || "").toString().trim();
-  itemForSend = { ...itemForSend, coupon };
+  // O preço com o desconto do cupom, calculado agora contra o que o banco diz do
+  // cupom neste instante. `null` = não deu pra calcular, e aí o {preco_com_cupom}
+  // sai igual ao {preco}.
+  const regraCupom = await couponRuleForItem(itemForSend);
+  itemForSend = { ...itemForSend, coupon, priceWithCoupon: coupons.precoComCupom(itemForSend.price, regraCupom) };
 
   const text = renderTemplate(group.messageTemplate, itemForSend);
 

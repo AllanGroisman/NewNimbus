@@ -15,7 +15,8 @@ import { PRIMARY, PRIMARY_DARK } from "../data/constants";
 import {
   adminMlCupons, adminMlCuponsStatus, adminMlCuponsRun, adminMlCuponsCancel,
   adminMlCuponsSaveConfig, adminMlCuponsProducts, adminMlCuponsSyncProducts,
-  adminMlCuponsTestWord, adminMlCuponsCodes, adminMlCuponsClearAll, errText,
+  adminMlCuponsTestWord, adminMlCuponsCodes, adminMlCuponsClearAll,
+  adminMlCuponsImportCampaign, adminMlCuponsImportStatus, errText,
 } from "../data/api";
 import Modal from "../components/ui/Modal";
 
@@ -32,7 +33,9 @@ function desconto(c) {
 const VERDICT = {
   valid: { label: "✅ palavra existe", color: PRIMARY_DARK },
   invalid: { label: "❌ o ML não reconheceu", color: "var(--danger-text)" },
-  indeterminado: { label: "❓ não deu pra saber", color: "var(--warn-text)" },
+  // Não é veredito sobre a palavra: é o ML que não respondeu ("Tivemos um problema").
+  // Dizer "não reconheceu" aqui era mostrar o oposto da verdade.
+  indeterminado: { label: "❓ o ML não respondeu", color: "var(--warn-text)" },
 };
 
 export default function CuponsDoML() {
@@ -428,6 +431,145 @@ function Config({ config, onSaved }) {
   );
 }
 
+// Onde a busca de uma campanha está agora. As etapas vêm do `crawlFilter` e do
+// `findCampaign` — a mesma redação da barra da rodada, lá em cima.
+function textoProgresso(p) {
+  if (!p) return "começando...";
+  if (p.etapa === "abrindo") return "abrindo a página de cupons do ML...";
+  if (p.etapa === "vitrine") return `lendo a vitrine de ${p.title || "cupom"}...`;
+  if (p.etapa === "cupons") return `procurando na lista — página ${p.pagina}${p.de ? `/${p.de}` : ""}, ${p.cupons} cupons vistos`;
+  return "procurando...";
+}
+
+// O convite pra trazer a campanha que a palavra apontou.
+//
+// O ML só responde o ID da campanha; se ela nunca foi raspada, não existe linha
+// nenhuma aqui e a resposta fica sendo um número solto. Este modal é o atalho que
+// evita rodar a coleta inteira só pra descobrir o que aquele número é.
+// A busca roda SOLTA no servidor (varrer a lista do ML passa dos 90s do nginx), então
+// o botão só dispara e este modal acompanha pelo status — mesmo desenho do "Puxar
+// cupons agora" lá em cima.
+function ImportarCampanhaModal({ campaignId, word, onClose, onDone }) {
+  const [comProdutos, setComProdutos] = useState(true);
+  const [enviando, setEnviando] = useState(false);
+  const [rodando, setRodando] = useState(false);
+  const [progresso, setProgresso] = useState(null);
+  const [feito, setFeito] = useState(null);
+  const [erro, setErro] = useState(null);
+
+  const fechar = () => {
+    if (feito) onDone?.(feito);
+    onClose();
+  };
+
+  const buscar = async () => {
+    setEnviando(true); setErro(null); setProgresso(null);
+    try {
+      const r = await adminMlCuponsImportCampaign(campaignId, comProdutos);
+      // Já estava no sistema: desfecho na hora, sem acompanhar nada. Só entra no
+      // modo "acompanhando" quando existe de fato uma busca correndo lá.
+      if (r.already) setFeito(r);
+      else setRodando(true);
+    } catch (err) {
+      setErro(errText(err, "Não deu pra começar a busca dessa campanha."));
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  // Acompanha enquanto a busca corre. O `vivo` evita gravar depois que o modal
+  // fechou — a busca dura minutos e a tela pode sair antes.
+  useEffect(() => {
+    if (!rodando || feito) return undefined;
+    let vivo = true;
+    const ler = async () => {
+      try {
+        const s = await adminMlCuponsImportStatus();
+        if (!vivo) return;
+        setProgresso(s.progress || null);
+        if (s.running) return;
+        if (s.error) setErro(s.error);
+        else if (s.result?.ok) setFeito(s.result);
+        else if (s.result) setErro(s.result.reason || "O ML não devolveu essa campanha.");
+        setRodando(false);
+      } catch { /* uma leitura que falhou não derruba o acompanhamento */ }
+    };
+    const id = setInterval(ler, 3000);
+    ler();
+    return () => { vivo = false; clearInterval(id); };
+  }, [rodando, feito]);
+
+  return (
+    <Modal title="Essa campanha não está no sistema" onClose={fechar}>
+      <div style={{ fontSize: 13, lineHeight: 1.6, marginBottom: 14 }}>
+        O ML reconheceu {word ? <>a palavra <code>{word}</code> e </> : null}disse que ela é da campanha{" "}
+        <code>{campaignId}</code> — mas esse cupom nunca foi raspado, então não sabemos o título dele,
+        o desconto nem quais produtos ele cobre. Dá pra ir buscar essa campanha agora, sem rodar a
+        coleta inteira.
+      </div>
+
+      {!feito && (
+        <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12, marginBottom: 16, cursor: (enviando || rodando) ? "default" : "pointer" }}>
+          <input
+            type="checkbox"
+            checked={comProdutos}
+            disabled={enviando || rodando}
+            onChange={e => setComProdutos(e.target.checked)}
+            style={{ marginTop: 2 }}
+          />
+          <span>
+            Trazer também os produtos da vitrine
+            <span style={{ display: "block", color: "var(--color-text-secondary)" }}>
+              Sem isto a campanha entra sem lista de produtos — dá pra puxar depois no
+              “Sincronizar produtos” da linha dela na tabela.
+            </span>
+          </span>
+        </label>
+      )}
+
+      {rodando && (
+        <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14, lineHeight: 1.6 }}>
+          ⟳ {textoProgresso(progresso)}
+          <div style={{ marginTop: 4 }}>
+            Pode fechar esta janela — a busca continua no servidor e o cupom aparece na tabela
+            quando terminar.
+          </div>
+        </div>
+      )}
+
+      {erro && <div style={{ fontSize: 12, color: "var(--danger-text)", marginBottom: 14 }}>{erro}</div>}
+
+      {feito && (
+        <div style={{ fontSize: 13, marginBottom: 14 }}>
+          {feito.already
+            ? <>Essa campanha já estava no sistema: <b>{feito.coupon?.title || campaignId}</b>.</>
+            : <>✅ <b>{feito.coupon?.title || campaignId}</b> adicionada · {feito.produtos} produto{feito.produtos === 1 ? "" : "s"}.</>}
+          {feito.avisoVitrine && (
+            <div style={{ color: "var(--color-text-secondary)", fontSize: 12, marginTop: 6 }}>
+              Os produtos não vieram: {feito.avisoVitrine}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        {feito ? (
+          <button onClick={fechar} style={botaoPrimario(false)}>Fechar</button>
+        ) : (
+          <>
+            <button onClick={fechar} style={botaoSecundario}>
+              {rodando ? "Fechar (a busca continua)" : "Agora não"}
+            </button>
+            <button onClick={buscar} disabled={enviando || rodando} style={botaoPrimario(enviando || rodando)}>
+              {enviando || rodando ? "procurando..." : "Buscar e adicionar"}
+            </button>
+          </>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 // O testador de palavra. É o que responde "esse CUPOM10 que veio no grupo líder
 // existe? de qual campanha ele é?".
 function TestarPalavra({ onDone }) {
@@ -436,6 +578,7 @@ function TestarPalavra({ onDone }) {
   const [res, setRes] = useState(null);
   const [erro, setErro] = useState(null);
   const [historico, setHistorico] = useState([]);
+  const [importar, setImportar] = useState(null);
 
   const [tick, setTick] = useState(0);
   const carregar = useCallback(() => setTick(t => t + 1), []);
@@ -451,14 +594,20 @@ function TestarPalavra({ onDone }) {
     return () => { vivo = false; };
   }, [tick]);
 
-  const testar = async () => {
+  const testar = async (force = false) => {
     if (!word.trim()) return;
     setRodando(true); setErro(null); setRes(null);
     try {
-      const r = await adminMlCuponsTestWord(word.trim().toUpperCase());
+      const r = await adminMlCuponsTestWord(word.trim().toUpperCase(), force);
       setRes(r.result);
       carregar();
       onDone?.();
+      // A palavra existe, o ML disse de que campanha ela é — e a campanha não está
+      // aqui. Vale também pra resposta vinda do cache: ele guarda o veredito da
+      // palavra, não diz nada sobre a campanha ter entrado no sistema desde então.
+      if (r.result?.verdict === "valid" && r.result.campaignId && !r.result.coupon) {
+        setImportar({ campaignId: r.result.campaignId, word: r.result.word });
+      }
     } catch (err) {
       setErro(errText(err, "Não deu pra testar essa palavra."));
     } finally {
@@ -483,7 +632,7 @@ function TestarPalavra({ onDone }) {
           onKeyDown={e => { if (e.key === "Enter" && !rodando) testar(); }}
           style={{ ...inputStyle, width: 220, textTransform: "uppercase" }}
         />
-        <button onClick={testar} disabled={rodando || !word.trim()} style={botaoPrimario(rodando || !word.trim())}>
+        <button onClick={() => testar()} disabled={rodando || !word.trim()} style={botaoPrimario(rodando || !word.trim())}>
           {rodando ? "⟳ testando (~40s)..." : "Testar palavra"}
         </button>
       </div>
@@ -496,6 +645,20 @@ function TestarPalavra({ onDone }) {
           {res.campaignId && <> · campanha <code>{res.campaignId}</code>{res.coupon?.title ? ` (${res.coupon.title})` : ""}</>}
           {res.cached && <span style={{ color: "var(--color-text-secondary)" }}> · resposta guardada de {new Date(res.checkedAt).toLocaleString("pt-BR")}</span>}
           <div style={{ color: "var(--color-text-secondary)", fontSize: 12, marginTop: 4 }}>{res.message || res.reason}</div>
+          {res.knownLocally && (
+            <div style={{ color: "var(--color-text-secondary)", fontSize: 12, marginTop: 4 }}>
+              Quem sabe dessa campanha é o sistema, não o ML: a palavra já está carimbada nela por um teste anterior.
+            </div>
+          )}
+          {res.verdict === "indeterminado" && (
+            <div style={{ marginTop: 8, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <button onClick={() => testar(true)} disabled={rodando} style={botaoLink}>⟳ testar de novo</button>
+              <span style={{ color: "var(--color-text-secondary)", fontSize: 11, flex: "1 1 260px" }}>
+                Isso costuma acontecer com cupom que a conta do sistema já aceitou (“Eu quero” dado):
+                o ML engasga ao ver o código de novo em vez de responder a que campanha ele é.
+              </span>
+            </div>
+          )}
         </div>
       )}
 
@@ -508,6 +671,11 @@ function TestarPalavra({ onDone }) {
                 <span style={{ fontFamily: "monospace", minWidth: 120 }}>{h.code}</span>
                 <span style={{ color: (VERDICT[h.verdict] || {}).color }}>{(VERDICT[h.verdict] || {}).label || h.verdict}</span>
                 {h.campaignId && <span style={{ color: "var(--color-text-secondary)" }}>campanha {h.campaignId}</span>}
+                {h.campaignId && h.inSystem === false && (
+                  <button onClick={() => setImportar({ campaignId: h.campaignId, word: h.code })} style={botaoLink}>
+                    ＋ adicionar
+                  </button>
+                )}
                 <span style={{ color: "var(--color-text-secondary)", flex: "1 1 200px", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {h.message || "—"}
                 </span>
@@ -516,6 +684,23 @@ function TestarPalavra({ onDone }) {
             ))}
           </div>
         </div>
+      )}
+
+      {importar && (
+        <ImportarCampanhaModal
+          campaignId={importar.campaignId}
+          word={importar.word}
+          onClose={() => setImportar(null)}
+          onDone={(feito) => {
+            carregar();
+            onDone?.();
+            // A campanha entrou: a linha do resultado acima passa a ter título em vez
+            // de só o número, sem precisar testar a palavra de novo (que é um Chrome).
+            if (feito?.coupon) {
+              setRes(atual => (atual && atual.campaignId === feito.coupon.campaignId ? { ...atual, coupon: feito.coupon } : atual));
+            }
+          }}
+        />
       )}
     </div>
   );

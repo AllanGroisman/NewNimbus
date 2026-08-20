@@ -388,6 +388,31 @@ describe("scheduler.renderTemplate — mensagem do envio", () => {
     expect(scheduler.renderTemplate(tpl, produto)).toBe("Mouse Pro\n🛒 https://amzn.to/x");
     expect(scheduler.renderTemplate(tpl, { ...produto, coupon: "  " })).toBe("Mouse Pro\n🛒 https://amzn.to/x");
   });
+
+  // {preco_com_cupom}: quem calcula é o sendItem (lê o cupom no banco na hora do
+  // envio) e passa o número pronto em priceWithCoupon. Sem número, o placeholder
+  // vira o {preco} — nunca "—", nunca linha apagada.
+  it("{preco_com_cupom} mostra o preço com desconto quando ele foi calculado", () => {
+    const out = scheduler.renderTemplate("{preco} → {preco_com_cupom}", { ...produto, priceWithCoupon: 134.91 });
+    expect(out).toBe("R$ 149,90 → R$ 134,91");
+  });
+
+  it("cupom que não vale: {preco_com_cupom} sai igual ao {preco} e a linha fica", () => {
+    const tpl = "🔥 {produto}\n💸 Com cupom: {preco_com_cupom}\n{link}";
+    expect(scheduler.renderTemplate(tpl, produto))
+      .toBe("🔥 Mouse Pro\n💸 Com cupom: R$ 149,90\nhttps://amzn.to/x");
+    // priceWithCoupon explicitamente nulo é o caso comum (sendItem não achou cupom).
+    expect(scheduler.renderTemplate(tpl, { ...produto, priceWithCoupon: null }))
+      .toBe("🔥 Mouse Pro\n💸 Com cupom: R$ 149,90\nhttps://amzn.to/x");
+  });
+
+  it("sem preço nenhum, {preco_com_cupom} vira — como o {preco}", () => {
+    expect(scheduler.renderTemplate("{preco}|{preco_com_cupom}", {})).toBe("—|—");
+  });
+
+  it("{preco} não come o {preco_com_cupom} na substituição", () => {
+    expect(scheduler.renderTemplate("{preco_com_cupom}", { price: 10, priceWithCoupon: 8 })).toBe("R$ 8,00");
+  });
 });
 
 describe("scheduler.isAutoApprove / isRepasse", () => {

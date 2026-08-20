@@ -51,6 +51,20 @@ let _status = {
 
 let _promise = null;
 
+// A busca de UMA campanha (o "buscar e adicionar" do teste de palavra). Estado
+// separado do da rodada porque são coisas diferentes na tela, mas as duas disputam
+// a mesma conta do ML — por isso uma recusa a outra.
+let _import = {
+  running: false,
+  campaignId: null,
+  startedAt: null,
+  progress: null,
+  result: null,
+  error: null,
+};
+
+let _importPromise = null;
+
 function loadPersistedStatus() {
   const saved = appConfig.get(STATUS_KEY);
   if (saved && typeof saved === "object") {
@@ -91,7 +105,14 @@ function writeConfig(cfg) {
 }
 
 function status() {
-  return { config: readConfig(), ..._status, running: _status.running || mlCupons.isRunning() };
+  return {
+    config: readConfig(),
+    ..._status,
+    running: _status.running || mlCupons.isRunning(),
+    // A rodada não pode começar com uma busca de campanha em andamento: é a mesma
+    // conta do ML, e é a rota /run que lê isto pra recusar.
+    importing: _import.running,
+  };
 }
 
 // Grava o que a rodada colheu. Separado do scraping de propósito: dá pra testar a
@@ -121,6 +142,9 @@ async function persistRun(result) {
   // todos", ou por ter vencido e reaparecido. A palavra em `ml_coupon_codes`
   // continua valendo; sem isto ela ficaria guardada e invisível.
   const palavras = await coupons.restampCodesFromChecks();
+  // E o caminho inverso: palavra que perdeu a campanha num engasgo do ML volta a
+  // apontar para o cupom que ainda carrega o carimbo dela.
+  await coupons.recoverCodesFromCoupons();
   // Faxina: cupom vencido há mais de um mês não interessa a ninguém e os
   // vínculos dele vão junto (a FK é ON DELETE CASCADE). Sem isso a tabela de
   // vínculos só cresce — a rodada antiga já tinha deixado 1.122 linhas de 26
@@ -225,6 +249,127 @@ async function syncOneCoupon(campaignId, { maxProducts = null } = {}) {
   }
 }
 
+// Traz para o sistema UMA campanha que ainda não está aqui — a que uma palavra
+// testada apontou. É o outro lado do `checkWord`: ele descobre o id da campanha, e
+// o `recordCodeCheck` não consegue fazer mais nada com ele porque só sabe CARIMBAR
+// uma linha existente. Sem isto, a única saída era rodar a coleta inteira.
+//
+// Procura na lista de verdade em vez de montar a linha com o JSON da resposta
+// porque digitar a palavra ATIVA o cupom na conta, e cupom ativado é o único que
+// vem com `containerUrl` — sem ela não há vitrine para ler.
+//
+// Roda SOLTA, como a rodada: a varredura da lista pode passar de 90s, que é onde o
+// nginx corta (deploy/nginx.conf) — a primeira versão disto era síncrona e morria
+// no proxy com "não foi possível conectar", já com o Chrome trabalhando à toa.
+async function importCampaign(campaignId, { withProducts = true, maxProducts = null, onProgress = null } = {}) {
+  const id = String(campaignId || "").trim();
+  if (!id) throw new Error("Sem campanha para buscar.");
+
+  const affiliate = require("../scraping/affiliate");
+  const session = affiliate.getScraperMLSession();
+  if (!session) throw new Error("Sem sessão do Mercado Livre do sistema — cole o cookie em Admin › Mercado Livre.");
+
+  const cfg = readConfig();
+  const achado = await mlCupons.findCampaign(session.cookie, id, {
+    withProducts,
+    maxProducts: maxProducts || cfg.maxProductsPerCoupon,
+    onProgress,
+  });
+  if (!achado.coupon) return { ok: false, reason: achado.reason };
+
+  // A ordem é a da rodada (persistRun): cupom, palavra, produtos, carimbo. Fazer o
+  // carimbo antes dos vínculos deixaria o catálogo apontando pra cupom sem produto.
+  await coupons.upsertCoupons([achado.coupon], { origin: "code" });
+  // Devolve a palavra à campanha: o `recordCodeCheck` tentou carimbar no momento do
+  // teste e não achou linha nenhuma para carimbar.
+  const palavras = await coupons.restampCodesFromChecks();
+  await coupons.recoverCodesFromCoupons();
+
+  let produtos = 0;
+  let vinculos = 0;
+  if (achado.products?.length) {
+    const itens = achado.products.map(p => ({ ...p, key: productKey(p) }));
+    await catalog.upsertProducts(itens);
+    const v = await coupons.replaceCouponProducts(id, itens.map(p => ({ productKey: p.key, productUrl: p.link })));
+    produtos = itens.length;
+    vinculos = v.vinculados;
+  }
+  await coupons.syncCatalogCoupons();
+
+  return {
+    ok: true,
+    coupon: await coupons.getCoupon(id),
+    produtos,
+    vinculos,
+    palavrasRecarimbadas: palavras.recarimbados,
+    avisoVitrine: achado.reasonVitrine || null,
+  };
+}
+
+// Dispara a busca de uma campanha e devolve na hora. O desfecho fica no
+// `importStatus()`, que é o que a tela lê enquanto acompanha — mesmo desenho do
+// `runOnce`, e pelo mesmo motivo: quem espera por isso numa requisição bate no
+// teto do proxy.
+function importStatus() {
+  return { ..._import };
+}
+
+async function startImport(campaignId, { withProducts = true } = {}) {
+  const id = String(campaignId || "").trim();
+  if (!id) throw new Error("Sem campanha para buscar.");
+
+  // As recusas ficam aqui, ANTES de disparar: elas viram 400 com mensagem na tela.
+  // Depois que a promessa larga não há mais para quem responder.
+  //
+  // Uma conta só: dois Chromes nela ao mesmo tempo dobram a chance de CAPTCHA, e o
+  // CAPTCHA derruba o Hub junto. Mesmo motivo do DELETE /api/admin/ml-cupons.
+  if (mlCupons.isRunning()) {
+    throw new Error("Tem uma rodada de cupons rodando — espere ela terminar para buscar uma campanha.");
+  }
+  if (_import.running) {
+    throw new Error(`Já estou buscando a campanha ${_import.campaignId} — espere essa terminar.`);
+  }
+
+  // Já está aqui: responde na hora, sem abrir Chrome nenhum.
+  const existente = await coupons.getCoupon(id);
+  if (existente) return { ok: true, already: true, coupon: existente, produtos: 0, vinculos: 0 };
+
+  _import = {
+    running: true,
+    campaignId: id,
+    startedAt: new Date().toISOString(),
+    progress: null,
+    result: null,
+    error: null,
+  };
+
+  _importPromise = (async () => {
+    try {
+      const r = await importCampaign(id, {
+        withProducts,
+        onProgress: (p) => { _import.progress = p; },
+      });
+      _import.result = r;
+      if (r.ok) {
+        console.log(`[ml-cupons] campanha ${id} importada: ${r.produtos} produtos${r.avisoVitrine ? ` (vitrine: ${r.avisoVitrine})` : ""}`);
+      } else {
+        console.log(`[ml-cupons] campanha ${id} não veio: ${r.reason}`);
+      }
+    } catch (err) {
+      // O erro não sobe: quem pediu já foi embora. Ele fica no status, que é onde
+      // a tela procura.
+      _import.error = err.message;
+      console.error("[ml-cupons.importar]", err.message);
+    } finally {
+      _import.running = false;
+      _import.progress = null;
+      _importPromise = null;
+    }
+  })();
+
+  return { started: true, ...importStatus() };
+}
+
 // Testa uma PALAVRA no campo "Inserir código do cupom" e guarda a resposta.
 //
 // `maxAgeHours` evita ir ao ML por algo testado há pouco: cada teste abre um
@@ -250,17 +395,30 @@ async function checkWord(word, { source = "admin", maxAgeHours = 12, force = fal
   if (!session) throw new Error("Sem sessão do Mercado Livre do sistema — cole o cookie em Admin › Mercado Livre.");
 
   const r = await mlCupons.checkCouponWord(session.cookie, code);
-  await coupons.recordCodeCheck({
+  const linha = await coupons.recordCodeCheck({
     code, verdict: r.verdict, campaignId: r.campaignId || null,
     message: r.message || r.reason || null, responseCode: r.responseCode || null,
     source, raw: r.raw || {},
   });
 
+  // O ML engasgou e não disse nada sobre a palavra. Antes de responder "não deu pra
+  // saber", vale olhar o que já está aqui: se algum cupom carrega esse carimbo, a
+  // campanha é conhecida — só não foi o ML que contou agora. `knownLocally` diz à
+  // tela de onde veio, para ela não passar isso como resposta do ML.
+  let campaignId = r.campaignId || linha?.campaignId || null;
+  let knownLocally = false;
+  if (!campaignId) {
+    const daqui = await coupons.findCouponByCode(code);
+    if (daqui) { campaignId = daqui.campaignId; knownLocally = true; }
+  } else if (!r.campaignId) {
+    knownLocally = true;
+  }
+
   return {
-    word: code, verdict: r.verdict, campaignId: r.campaignId || null,
+    word: code, verdict: r.verdict, campaignId,
     message: r.message || null, responseCode: r.responseCode || null,
-    reason: r.reason, cached: false,
-    coupon: r.campaignId ? await coupons.getCoupon(r.campaignId) : null,
+    reason: r.reason, cached: false, knownLocally,
+    coupon: campaignId ? await coupons.getCoupon(campaignId) : null,
   };
 }
 
@@ -272,6 +430,9 @@ module.exports = {
   writeConfig,
   persistRun,
   syncOneCoupon,
+  importCampaign,
+  startImport,
+  importStatus,
   checkWord,
   loadPersistedStatus,
   CONFIG_KEY,

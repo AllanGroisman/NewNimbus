@@ -36,6 +36,7 @@ export function writeSavedTab(groupId, tabId) {
 const TEMPLATE_VARS = [
   { token: "{produto}", desc: "Nome do produto" },
   { token: "{preco}", desc: "Preço com desconto" },
+  { token: "{preco_com_cupom}", desc: "Preço já com o desconto do cupom (vira o preço normal quando o cupom não valer)" },
   { token: "{preco_antigo}", desc: "Preço original (a linha some quando não houver promoção)" },
   { token: "{desconto}", desc: "% de desconto (a linha some quando não houver promoção)" },
   { token: "{loja}", desc: "Nome da loja" },
@@ -47,6 +48,7 @@ const TEMPLATE_VARS = [
 const TEMPLATE_PREVIEW_DATA = {
   produto: "Smartphone Samsung Galaxy A55 256GB",
   preco: "R$ 1.899",
+  preco_com_cupom: "R$ 1.709",   // o exemplo é o GALAXY10 abaixo: 10% sobre o {preco}
   preco_antigo: "R$ 2.499",
   desconto: "24%",
   loja: "Mercado Livre",
@@ -59,9 +61,14 @@ const TEMPLATE_PREVIEW_DATA = {
 // contém {cupom} some — pra o preview bater com a mensagem realmente enviada.
 const renderTemplate = (tpl, { cupom, promo = true } = {}) => {
   if (!tpl) return "";
-  const data = cupom != null ? { ...TEMPLATE_PREVIEW_DATA, cupom } : TEMPLATE_PREVIEW_DATA;
+  // Sempre uma cópia: o fallback do {preco_com_cupom} logo abaixo escreve no
+  // objeto, e TEMPLATE_PREVIEW_DATA é compartilhado entre todas as prévias.
+  const data = cupom != null ? { ...TEMPLATE_PREVIEW_DATA, cupom } : { ...TEMPLATE_PREVIEW_DATA };
   let t = tpl;
   if (!data.cupom) t = t.replace(/^[^\n]*\{cupom\}[^\n]*\n?/gm, "");
+  // Sem cupom o {preco_com_cupom} vira o preço normal — a linha NÃO some. Espelha
+  // o fallback do scheduler.js, pra prévia não prometer desconto que não sai.
+  if (!data.cupom) data.preco_com_cupom = data.preco;
   // Sem promoção: apaga as linhas de {preco_antigo} e {desconto} — espelha o scheduler.js.
   if (!promo) {
     t = t.replace(/^[^\n]*\{preco_antigo\}[^\n]*\n?/gm, "");

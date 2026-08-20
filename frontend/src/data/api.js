@@ -548,6 +548,16 @@ export async function adminMlCuponsCodes(limit = 50) { return http("GET",  `/api
 export async function adminMlCuponsTestWord(word, force = false) {
   return http("POST", "/api/admin/ml-cupons/code", { word, force }, { timeoutMs: SLOW_TIMEOUT_MS });
 }
+// Dispara a busca da campanha que uma palavra apontou. Responde na hora (202) — a
+// varredura da lista do ML passa dos 90s do nginx, então ela roda solta e o
+// desfecho vem pelo status abaixo. Timeout padrão de propósito: se ESTA chamada
+// demorar, é sinal de problema, não de busca longa.
+export async function adminMlCuponsImportCampaign(campaignId, withProducts = true) {
+  return http("POST", `/api/admin/ml-cupons/${encodeURIComponent(campaignId)}/importar`, { withProducts });
+}
+export async function adminMlCuponsImportStatus() {
+  return http("GET", "/api/admin/ml-cupons/importar/status");
+}
 export async function adminMlCuponsSyncProducts(campaignId) {
   return http("POST", `/api/admin/ml-cupons/${encodeURIComponent(campaignId)}/sync-produtos`, undefined, { timeoutMs: SLOW_TIMEOUT_MS });
 }

@@ -336,6 +336,32 @@ Na fila do repasse isso vira `group.scraping.couponBoost` ∈ `off` (default) |
 WHERE do catálogo; `prefer` busca 3× o lote e põe quem tem cupom na frente sem
 bagunçar a ordem escolhida pela campanha.
 
+### `{preco_com_cupom}` na mensagem
+
+O modelo de mensagem tem a variável `{preco_com_cupom}`: o preço **já com o
+desconto do cupom**. A conta é o `precoComCupom` do `coupons/price.js` — puro, sem
+banco: recebe o preço e a linha de `ml_coupons` (`kind`, `value`, `minPurchase`,
+`maxDiscount`, `startsAt`, `expiresAt`) e devolve o preço final ou `null`.
+
+O `null` é o coração da coisa. Ele aparece quando o cupom venceu, quando ainda não
+começou, quando o produto está **abaixo da compra mínima** ou quando o `kind` veio
+`unknown`/`desconhecido` — e nesses casos o `{preco_com_cupom}` sai **igual ao
+`{preco}`**, sem apagar linha e sem "—". Anunciar um desconto que o ML não daria é
+o cliente clicando e pagando mais caro; preço normal em silêncio é a resposta
+certa. O teto (`maxDiscount`) entra como `Math.min` no desconto, não no preço.
+
+Quem chama é o `sendItem` (`scheduler.js`), no **envio**, não no refill: o item
+fica dias em `group.queue` e o cupom vence nesse meio-tempo, então guardar
+valor/validade no payload da fila seria promessa velha. `couponRuleForItem` lê o
+cupom na hora, nesta ordem — a **palavra** do item (`findCouponByCode`, que é o
+caso do repasse e do cupom digitado à mão na fila), depois `couponCampaignId`,
+depois `couponsForKeys` pela chave do produto — e nada disso roda fora do Mercado
+Livre, porque cupom do ML não desconta produto da Amazon nem da Shopee (uma palavra
+igual nas duas lojas anunciaria um preço que não existe). O terceiro passo não é
+redundância:
+`couponCampaignId` só é preenchido quando `couponBoost` ≠ `off`, e `off` é o
+default — sem ele a variável nunca calcularia nada na campanha comum.
+
 ### A sonda
 
 ```

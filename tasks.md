@@ -971,3 +971,54 @@ No preenchimento automatico mesma coisa ao clicar em configurar. Em ambos, quand
     ficaram com a pasta vazia (o mesmo caso da 96). A migration nova recria tudo com
     `CREATE TABLE IF NOT EXISTS`: funciona no banco limpo e não encosta nos 1.122
     vínculos antigos do dev.
+
+101. [x] Quero que no modelo msg tenha o preço_com_cupom que aparece o preço com o desconto do cupom. Caso não seja valido o cupom quero que ele seja automaticamente substituido pelo preco normal.
+
+    O modelo de mensagem ganhou a variável `{preco_com_cupom}` — sem acento e em
+    snake_case, como o `{preco_antigo}`: o mirror da prévia no front casa `\{(\w+)\}`,
+    então um token acentuado nunca substituiria nada.
+
+    A conta em si mora num arquivo novo e puro, `backend/coupons/price.js`
+    (`precoComCupom(price, rule)`): recebe o preço e uma linha de `ml_coupons` e
+    devolve o preço final — ou `null`. **O `null` é a tarefa.** Ele é a resposta
+    quando o cupom venceu, quando ainda não começou (`startsAt` estava gravado no
+    banco desde sempre e não era conferido em lugar nenhum), quando o produto está
+    abaixo da **compra mínima**, ou quando o `kind` veio `unknown`/`desconhecido` —
+    e aí o `{preco_com_cupom}` sai **igual ao `{preco}`**, sem apagar a linha e sem
+    "—". Anunciar desconto que o ML não daria é cliente clicando e pagando mais
+    caro; preço normal em silêncio é a resposta certa. O teto do cupom
+    (`maxDiscount`) entra como `Math.min` no desconto, não no preço.
+
+    O dado pra fazer a conta já existia inteiro e estava sendo jogado fora: o
+    `couponsForKeys` (`coupons/pg.js`) devolve `kind`, `value`, `minPurchase`,
+    `maxDiscount` e `expiresAt` por produto, e o refill guardava no item só a
+    palavra, o `couponCampaignId` e um `couponLabel` que **ninguém lia**.
+
+    A leitura passou a ser no **envio** (`scheduler.js:couponRuleForItem`, chamado
+    pelo `sendItem`), não no refill. O motivo: o item fica dias em `group.queue` e
+    o cupom vence nesse meio-tempo — guardar valor e validade no payload da fila
+    seria anunciar promessa velha. Custa uma consulta por envio, contra os 4s de
+    espera que já existem entre um grupo e outro. A ordem é palavra →
+    `couponCampaignId` → chave do produto: a palavra vem primeiro porque é ela que
+    a mensagem manda o cliente digitar (no repasse ela vem da legenda do grupo
+    líder, ou digitada à mão na fila), e `findCouponByCode` acha o valor dela em
+    `ml_coupons.code`. Nada disso roda fora do Mercado Livre: `ml_coupons` é a aba
+    de cupons do ML, e sem essa trava um produto da Amazon com a palavra "SAVE10"
+    na legenda do grupo líder colidiria com um cupom do ML de mesmo nome e a
+    mensagem anunciaria um preço que não existe.
+
+    O terceiro passo da ordem acima não é redundância: `couponCampaignId` só é
+    preenchido quando `couponBoost` ≠ `off`, e `off` é o **default** — sem ele a
+    variável nunca calcularia nada na campanha comum, que é a maioria.
+
+    O `renderTemplate` continua **síncrono e puro**: recebe o número já pronto em
+    `priceWithCoupon` e cai no `p.price` quando ele é `null`. E o `.replace` de
+    `{preco}` não come o `{preco_com_cupom}` porque a regex exige a chave fechando
+    logo depois (`/\{preco\}/g`) — tem teste pra isso.
+
+    Os modelos prontos (`MESSAGE_PRESETS`, `DEFAULT_MESSAGE_TEMPLATE`) não mudaram:
+    a variável entra só na lista de "Inserir:" e na prévia, e nenhuma campanha que
+    já existe muda de comportamento sozinha. 
+
+
+    102. [] Quero adicionar 2 links nos tutoriais. Cria uma aba de ADMIN de "EDITAR TUTORIAIS", onde eu consigo editar a pagina de tutoriais que aparece para todo mundo. La quero editar os topicos que ja tem, poder excluir e criar novos e adicionar os respectivos vídeos.
