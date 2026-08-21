@@ -4,6 +4,7 @@ import { createWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOp
 import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
 import { leadersOf, withLeaders } from "../data/repasseLeaders";
 import { useUnsavedGuard, useRequestNavigation } from "../data/navGuard";
+import { useTextHistory } from "../data/textHistory";
 import { TOUR_TAB_EVENT } from "../data/onboarding";
 import BusyOverlay from "./ui/BusyOverlay";
 import AlertBanner from "./ui/AlertBanner";
@@ -724,9 +725,18 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
   const templateRef = useRef(null);
 
+  // Ctrl+Z / Ctrl+Shift+Z no editor de modelo. O histórico nativo do textarea
+  // não sobrevive às edições feitas pelos botões da barra, então mantemos o nosso.
+  const tplHistory = useTextHistory(
+    templateRef,
+    groupInfo.messageTemplate,
+    (t) => setGroupInfo(g => ({ ...g, messageTemplate: t })),
+  );
+
   const insertTemplateVar = (token) => {
     const ta = templateRef.current;
     const cur = groupInfo.messageTemplate || "";
+    tplHistory.push(cur, ta);
     if (ta && typeof ta.selectionStart === "number") {
       const start = ta.selectionStart;
       const end = ta.selectionEnd;
@@ -747,6 +757,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const wrapSelectionWith = (marker) => {
     const ta = templateRef.current;
     const cur = groupInfo.messageTemplate || "";
+    tplHistory.push(cur, ta);
     if (!ta || typeof ta.selectionStart !== "number") {
       setGroupInfo(g => ({ ...g, messageTemplate: cur + marker + marker }));
       return;
@@ -785,6 +796,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
   const handleTabClick = (t) => {
     setActiveTplKey(t.key);
+    tplHistory.reset();
     setGroupInfo(g => ({ ...g, messageTemplate: t.template }));
   };
 
@@ -802,6 +814,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     const newId = onAddCustomTemplate?.(name, seed);
     if (newId) {
       setActiveTplKey(`custom:${newId}`);
+      tplHistory.reset();
       setGroupInfo(g => ({ ...g, messageTemplate: seed }));
       requestAnimationFrame(() => { templateRef.current?.focus(); });
     }
@@ -828,6 +841,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   // Passa a campanha a usar este texto nos envios.
   const applyTemplateToCampaign = (template) => {
     onUpdate(group.id, { messageTemplate: template });
+    tplHistory.reset();
     setGroupInfo(g => ({ ...g, messageTemplate: template }));
   };
 
@@ -916,6 +930,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       const fallback = MESSAGE_PRESETS[0];
       if (fallback) {
         setActiveTplKey(`preset:${fallback.id}`);
+        tplHistory.reset();
         setGroupInfo(g => ({ ...g, messageTemplate: fallback.template }));
       }
     }
@@ -1474,6 +1489,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   // Reverte o estado local editável pros valores salvos do grupo (usado no
   // "Descartar" do guard). Não mexe em queue/pending (dados de polling).
   const revertLocal = () => {
+    tplHistory.reset();
     setSched(group.schedule);
     setScraping(group.scraping);
     setGroupInfo({
@@ -2064,7 +2080,8 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 <textarea
                   ref={templateRef}
                   value={groupInfo.messageTemplate}
-                  onChange={e => setGroupInfo(g => ({ ...g, messageTemplate: e.target.value }))}
+                  onChange={e => tplHistory.handleChange(e.target.value, e.target)}
+                  onKeyDown={tplHistory.onKeyDown}
                   style={{ width: "100%", padding: 10, borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, resize: "vertical", minHeight: 260, boxSizing: "border-box", fontFamily: "inherit", lineHeight: 1.5 }}
                   placeholder={DEFAULT_MESSAGE_TEMPLATE}
                 />

@@ -1022,3 +1022,22 @@ No preenchimento automatico mesma coisa ao clicar em configurar. Em ambos, quand
 
 
     102. [x] Quero adicionar 2 links nos tutoriais. Cria uma aba de ADMIN de "EDITAR TUTORIAIS", onde eu consigo editar a pagina de tutoriais que aparece para todo mundo. La quero editar os topicos que ja tem, poder excluir e criar novos e adicionar os respectivos vídeos.
+
+    103. [x] No modelo de mensagem das campanhas quero que de pra apertar ctrl z para desfazer as coisas
+
+    Ctrl+Z desfaz e Ctrl+Shift+Z (ou Ctrl+Y) refaz dentro do editor de modelo.
+    O undo nativo do navegador não servia: os botões de "Formatar:" e "Inserir:"
+    reescrevem o texto por fora do `onChange`, e o React zerava o histórico do
+    textarea a cada clique. Então o histórico agora é nosso —
+    `frontend/src/data/textHistory.js` (`useTextHistory`), pilhas em `useRef`,
+    limite de 100 passos, com o cursor voltando junto com o texto.
+
+    Digitação corrida vira um passo só (junta o que for digitado em menos de
+    600 ms); espaço, quebra de linha, colar e apagar seleção fecham o passo. Os
+    botões da barra sempre entram como passo próprio. Trocar de modelo, criar
+    modelo novo, ativar na campanha ou "Descartar" zeram o histórico — Ctrl+Z
+    não traz de volta o texto de outra aba.
+
+    Nada mudou no backend nem no formato salvo: o histórico só existe em memória
+    enquanto o editor está aberto. Testes em
+    `frontend/src/__tests__/TemplateUndo.test.jsx`. 
