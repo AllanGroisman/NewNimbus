@@ -12,6 +12,8 @@ const billing = require("./billing");
 const storeLocks = require("./scraping/store-locks");
 const auth = require("./auth");
 const userNotifier = require("./notifications/user-notifier");
+const captureLog = require("./repasse/capture-log");
+const { KIND, STAGE } = require("./repasse/error-kinds");
 
 // Cadência do loop principal (em ms). Roda janelas de envio.
 const TICK_MS = 30 * 1000;
@@ -636,6 +638,43 @@ async function couponRuleForItem(item) {
   return null;
 }
 
+// Conversão de link de afiliado por loja. Tabela em vez de três `else if`
+// idênticos: o descarte precisava do mesmo tratamento nos três, e repetir a
+// gravação do log três vezes é como ela sairia de sincronia.
+const AFFILIATE_CONVERTERS = {
+  "Mercado Livre": { statusKey: "ml", label: "ML", convert: (u, l) => affiliate.gerarLinkAfiliadoML(u, l) },
+  "Amazon": { statusKey: "amazon", label: "Amazon", convert: (u, l) => affiliate.gerarLinkAfiliadoAmazon(u, l) },
+  "Shopee": { statusKey: "shopee", label: "Shopee", convert: (u, l) => affiliate.gerarLinkAfiliadoShopee(u, l) },
+};
+
+// Grava no log de Repasse o descarte que acontece no ENVIO. Só pra itens que
+// vieram do repasse — item de catálogo não tem linha nesse log e inventar uma
+// confundiria a contagem. Fire-and-forget: observabilidade não pode atrasar nem
+// derrubar o envio.
+function logSendDiscard(userId, group, item, reason) {
+  if (item?.source !== "repasse") return;
+  Promise.resolve(captureLog.logCapture({
+    groupId: group.id,
+    userId,
+    // A coluna é NOT NULL e aqui não existe grupo líder de origem — string vazia
+    // em vez de inventar um jid que não é verdade.
+    waJid: "",
+    rawUrl: item.rawUrl || item.link,
+    resolvedUrl: item.link,
+    store: item.store,
+    sourceAllowed: true,
+    affiliateConfigured: true,
+    scrapeOk: true,
+    productName: item.name, productImg: item.img,
+    price: item.price, originalPrice: item.originalPrice,
+    discount: item.discount, sold: item.sold, coupon: item.coupon,
+    outcome: "discarded",
+    errorKind: KIND.CONVERSAO_AFILIADO_FALHOU,
+    stage: STAGE.SEND,
+    reason,
+  })).catch(() => {});
+}
+
 // Faz o envio de UM item para todos os grupos vinculados
 async function sendItem(userId, group, whatsappGroups, item) {
   const linkedIds = group.whatsappGroupIds || [];
@@ -651,29 +690,27 @@ async function sendItem(userId, group, whatsappGroups, item) {
   if (item.affiliateLink) {
     // Já convertido no refill — usa direto pra evitar nova chamada de API.
     itemForSend = { ...item, link: item.affiliateLink };
-  } else if (item.store === "Mercado Livre" && item.link) {
+  } else if (item.link && AFFILIATE_CONVERTERS[item.store]) {
     // Fallback pra itens legados ou inseridos manualmente (sem affiliateLink).
     // Mesma política de convertItemAffiliate: se o afiliado está configurado e a
     // conversão falha, NÃO manda link sem comissão — descarta (lança erro).
-    const aff = await affiliate.gerarLinkAfiliadoML(userId, item.link);
+    const { statusKey, convert, label } = AFFILIATE_CONVERTERS[item.store];
+    const aff = await convert(userId, item.link);
     if (aff) {
       itemForSend = { ...item, link: aff };
-    } else if (affiliate.status(userId).ml.configured) {
-      throw new Error(`Afiliado ML falhou pra "${item.name?.slice(0, 40)}" — item descartado (sem link com comissão).`);
-    }
-  } else if (item.store === "Amazon" && item.link) {
-    const aff = affiliate.gerarLinkAfiliadoAmazon(userId, item.link);
-    if (aff) {
-      itemForSend = { ...item, link: aff };
-    } else if (affiliate.status(userId).amazon.configured) {
-      throw new Error(`Afiliado Amazon falhou pra "${item.name?.slice(0, 40)}" — item descartado (sem link com comissão).`);
-    }
-  } else if (item.store === "Shopee" && item.link) {
-    const aff = await affiliate.gerarLinkAfiliadoShopee(userId, item.link);
-    if (aff) {
-      itemForSend = { ...item, link: aff };
-    } else if (affiliate.status(userId).shopee.configured) {
-      throw new Error(`Afiliado Shopee falhou pra "${item.name?.slice(0, 40)}" — item descartado (sem link com comissão).`);
+    } else if (affiliate.status(userId)[statusKey].configured) {
+      const err = new Error(`Afiliado ${label} falhou pra "${item.name?.slice(0, 40)}" — item descartado (sem link com comissão).`);
+      err.code = "affiliate_conversion_failed";
+      // Fim da história do repasse: até aqui o item sumia em silêncio — saía da
+      // fila, o erro virava um log de servidor e o painel de Repasse nunca contava
+      // esse descarte. Registra aqui, e não no catch de quem chama, porque são três
+      // chamadores diferentes e só neste ponto se sabe o motivo exato (os catches
+      // também pegam falha de WhatsApp, que não é descarte de repasse).
+      //
+      // Uma linha por TENTATIVA: se o BullMQ retentar o job, conta de novo. É o
+      // certo pra um log de eventos, e o painel avisa disso.
+      logSendDiscard(userId, group, item, err.message);
+      throw err;
     }
   }
   // Defesa: itens já no catálogo/fila podem ter URL de thumb (Amazon, ML ou
@@ -1258,6 +1295,10 @@ module.exports = {
   start, stop, tick, sendNextNow, refillNow, manualAdd, addItemToGroup,
   isRepasse, isAutoApprove, isAutoRefill, resolveSources, activeSources, sourcesForCampaign,
   status, processSendJob,
+  // O descarte por conversão de afiliado acontece dentro do sendItem, antes de
+  // qualquer envio — exportado pra tests/unit/scheduler-send-discard.test.js
+  // poder cobrir esse caminho sem subir WhatsApp.
+  sendItem,
   // Funções puras exportadas só pra teste unitário (tests/unit/scheduler-core.test.js).
   inWindow, activeWindow, windowGate, cooldownMinutes, renderTemplate, itemMatchesCampaign, campaignFilterCtx,
   affiliateGate,

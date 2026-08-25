@@ -324,6 +324,27 @@ describe("amzBackoffMs — retry da Amazon", () => {
   });
 });
 
+describe("re-tentativa de scrape por loja", () => {
+  it("ML ganhou uma segunda tentativa; Amazon mantém três; Shopee, uma", () => {
+    expect(scraper.maxAttemptsFor("Amazon")).toBe(3);
+    expect(scraper.maxAttemptsFor("Mercado Livre")).toBe(2);
+    expect(scraper.maxAttemptsFor("Shopee")).toBe(1);
+  });
+
+  it("no ML só CAPTCHA é re-tentado — muro de login não", () => {
+    // Muro de login é cookie vencido: esperar 30 s bate na mesma parede.
+    expect(scraper.shouldRetryScrape("Mercado Livre", { blocked: true, captcha: true, kind: "captcha" })).toBe(true);
+    expect(scraper.shouldRetryScrape("Mercado Livre", { blocked: true, kind: "login-wall" })).toBe(false);
+    expect(scraper.shouldRetryScrape("Mercado Livre", new Error("Navigation timeout"))).toBe(false);
+    expect(scraper.shouldRetryScrape("Mercado Livre", undefined)).toBe(false);
+  });
+
+  it("na Amazon qualquer erro é re-tentado (o bloqueio de lá é intermitente)", () => {
+    expect(scraper.shouldRetryScrape("Amazon", new Error("qualquer coisa"))).toBe(true);
+    expect(scraper.shouldRetryScrape("Amazon", { blocked: true })).toBe(true);
+  });
+});
+
 describe("slugNameFromUrl — nome aproximado pela URL (fallback Shopee)", () => {
   it("extrai e limpa o slug da Shopee, removendo o sufixo i.SHOPID.ITEMID", () => {
     expect(scraper.slugNameFromUrl(

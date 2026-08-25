@@ -589,7 +589,7 @@ export async function adminCatalog({ page = 1, pageSize = 50, category, source, 
 export async function adminClearCatalog() { return http("DELETE", "/api/admin/catalog"); }
 
 // ─── Admin / Repasse (log de captura) ──────────────────────────────────
-export async function adminRepasseLogs({ page = 1, pageSize = 50, userId, groupId, store, outcome } = {}) {
+export async function adminRepasseLogs({ page = 1, pageSize = 50, userId, groupId, store, outcome, errorKind, stage } = {}) {
   const params = new URLSearchParams();
   params.set("page", page);
   params.set("pageSize", pageSize);
@@ -597,7 +597,19 @@ export async function adminRepasseLogs({ page = 1, pageSize = 50, userId, groupI
   if (groupId) params.set("groupId", groupId);
   if (store) params.set("store", store);
   if (outcome) params.set("outcome", outcome);
+  if (errorKind) params.set("errorKind", errorKind);
+  if (stage) params.set("stage", stage);
   return http("GET", `/api/admin/repasse/logs?${params}`);
+}
+
+// Resumo da janela (1h/24h/7d): totais por resultado, por motivo e taxa por loja.
+export async function adminRepasseSummary({ hours = 24, userId, groupId, store } = {}) {
+  const params = new URLSearchParams();
+  params.set("hours", hours);
+  if (userId) params.set("userId", userId);
+  if (groupId) params.set("groupId", groupId);
+  if (store) params.set("store", store);
+  return http("GET", `/api/admin/repasse/summary?${params}`);
 }
 
 // ─── Layout (paleta de cores, global) ──────────────────────────────────

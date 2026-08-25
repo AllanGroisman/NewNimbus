@@ -13,45 +13,12 @@
 const scraper = require("../scraping/scraper");
 const urlGuard = require("../scraping/urlGuard");
 const affiliate = require("../scraping/affiliate");
+const mlSocial = require("../scraping/ml-social");
 const storage = require("../storage");
 const userNotifier = require("../notifications/user-notifier");
 const { leadersOf } = require("./leaders");
-
-// Best-effort: registra uma tentativa de captura (link, campanha) pro painel
-// admin. Nunca deve quebrar o pipeline — qualquer falha é engolida.
-async function logCapture(fields) {
-  try {
-    const { prisma } = require("../db");
-    await prisma().repasseCaptureLog.create({
-      data: {
-        groupId: BigInt(fields.groupId),
-        userId: String(fields.userId),
-        waJid: fields.waJid || "",
-        rawUrl: fields.rawUrl,
-        resolvedUrl: fields.resolvedUrl || null,
-        store: fields.store || null,
-        sourceAllowed: fields.sourceAllowed ?? null,
-        affiliateConfigured: fields.affiliateConfigured ?? null,
-        scrapeOk: fields.scrapeOk ?? null,
-        productName: fields.productName || null,
-        productImg: fields.productImg || null,
-        price: fields.price ?? null,
-        originalPrice: fields.originalPrice ?? null,
-        discount: fields.discount ?? null,
-        // A coluna é Int; o produto carrega o TEXTO das vendas ("+1.000 vendidos")
-        // pra mensagem preservar o "+". Converte só aqui, pro log.
-        sold: fields.sold != null ? affiliate.parseSoldText(fields.sold) : null,
-        // Cupom que veio na legenda do grupo líder. Null = a mensagem não trazia
-        // nenhum — o log precisa mostrar os dois casos, não só quando pescou algo.
-        coupon: fields.coupon || null,
-        outcome: fields.outcome,
-        reason: fields.reason || null,
-      },
-    });
-  } catch (err) {
-    console.error(`[repasse] falha ao gravar log de captura: ${err.message}`);
-  }
-}
+const { logCapture } = require("./capture-log");
+const { KIND, STAGE, classifyFromText } = require("./error-kinds");
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
 
@@ -319,22 +286,33 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null) {
       console.log(`[repasse] link ${rawUrl}${resolved !== rawUrl ? ` → ${resolved}` : ""} | loja=${store || "desconhecida"}`);
       if (!statusKey) {
         console.log(`[repasse] loja não suportada → ignorado`);
-        discarded.push({ rawUrl, resolved, store, reason: "loja não suportada" });
+        discarded.push({ rawUrl, resolved, store, reason: "loja não suportada", errorKind: KIND.LOJA_NAO_SUPORTADA, stage: STAGE.STORE });
         continue;
       }
+      // Perfil/lista do afiliado (/social/<id>/lists) não é produto nenhum.
+      // Barrado aqui, antes do scrape, porque o caminho normal gastaria um Chrome
+      // inteiro pra descobrir isso e ainda descartaria no fim.
+      if (mlSocial.isAffiliateProfileUrl(resolved) || mlSocial.isAffiliateProfileUrl(rawUrl)) {
+        const reason = "o link é o perfil/lista do afiliado, não um produto";
+        console.log(`[repasse] ${reason} → descartado`);
+        discarded.push({ rawUrl, resolved, store, reason, errorKind: KIND.NAO_E_PRODUTO, stage: STAGE.STORE });
+        continue;
+      }
+
       const affiliateConfigured = !!affStatus?.[statusKey]?.configured;
       if (!affiliateConfigured) {
         console.log(`[repasse] afiliado ${store} não configurado → ignorado`);
-        discarded.push({ rawUrl, resolved, store, affiliateConfigured, reason: `afiliado ${store} não configurado` });
+        discarded.push({ rawUrl, resolved, store, affiliateConfigured, reason: `afiliado ${store} não configurado`, errorKind: KIND.AFILIADO_AUSENTE, stage: STAGE.AFFILIATE_CONFIG });
         continue;
       }
 
       // Raspa a URL ORIGINAL (não a resolvida): o Puppeteer segue o redirect ele
       // mesmo, com stealth + cookie de afiliado — igual ao "Adicionar link" manual.
-      // A resolução via fetch cru (resolveUrl) costuma cair no muro de login/captcha
-      // do ML e devolver a página errada — por isso o link ARMAZENADO (usado na
-      // reafiliação no envio) prefere o finalUrl que o próprio Puppeteer navegou
-      // (scraped.finalUrl), caindo pro `resolved` só quando o scrape falha.
+      // O link ARMAZENADO (usado na reafiliação no envio) prefere o finalUrl que o
+      // scrape devolveu — que é o permalink do produto —, caindo pro `resolved`
+      // (a landing de OUTRO afiliado) só quando o scrape falha.
+      // Obs.: para a landing /social/ do ML o scrapeSingleProduct já tenta ler por
+      // HTTP simples antes do navegador; ali o fetch passa e o Chrome é que apanha.
       let scraped = null, scrapeErr = null;
       try {
         scraped = await scraper.scrapeSingleProduct(rawUrl, { userId });
@@ -353,8 +331,11 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null) {
         // detectBlockPage põe a razão detalhada em err.message (new Error(block.reason)).
         const reason = scrapeErr.message
           || (scrapeErr.captcha ? `${store}: verificação anti-bot (CAPTCHA)` : `${store}: bloqueio anti-bot (login)`);
+        // O motivo fechado vem tipado do detectBlockPage; o classifyFromText só
+        // cobre erro antigo/inesperado que chegue sem `kind`.
+        const errorKind = scrapeErr.kind || classifyFromText(reason);
         console.log(`[repasse] ${reason} → descartado`);
-        discarded.push({ rawUrl, resolved, store, affiliateConfigured, reason });
+        discarded.push({ rawUrl, resolved, store, affiliateConfigured, reason, errorKind, stage: STAGE.SCRAPE });
         continue;
       }
 
@@ -362,8 +343,11 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null) {
       // mensagem real do erro em vez de mascarar como "não é produto".
       if (!scraped) {
         const reason = `falha no scrape: ${scrapeErr?.message || "motivo desconhecido"}`;
+        // Aqui o erro veio de fora (Puppeteer, rede, urlGuard) e não traz `kind` —
+        // é o caso legítimo de olhar o texto, pra separar timeout de desconhecido.
+        const errorKind = classifyFromText(scrapeErr?.message);
         console.log(`[repasse] ${store}: ${reason} → descartado`);
-        discarded.push({ rawUrl, resolved, store, affiliateConfigured, reason });
+        discarded.push({ rawUrl, resolved, store, affiliateConfigured, reason, errorKind, stage: STAGE.SCRAPE });
         continue;
       }
 
@@ -378,9 +362,19 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null) {
         if (!scraped.name) missing.push("nome");
         if (!scraped.img) missing.push("foto");
         if (scraped.price == null) missing.push("preço");
-        const reason = `dados insuficientes (sem ${missing.join("/")}) — provavelmente não é uma página de produto`;
+        // Landing de afiliado (/social/) que não abriu a PDP é um caso PRÓPRIO, e não
+        // "não é produto": ali o link é de produto, só está velho ou é de outro
+        // afiliado. Misturar os dois esconderia o que precisa de ação.
+        const onLanding = /\/social\//i.test(scraped.finalUrl || "");
+        const reason = onLanding
+          ? `landing de afiliado não abriu a página do produto (sem ${missing.join("/")})`
+          : `dados insuficientes (sem ${missing.join("/")}) — provavelmente não é uma página de produto`;
         console.log(`[repasse] ${store}: ${reason} → descartado`);
-        discarded.push({ rawUrl, resolved, store, affiliateConfigured, reason });
+        discarded.push({
+          rawUrl, resolved, store, affiliateConfigured, reason,
+          errorKind: onLanding ? KIND.LANDING_EXPIRADA : KIND.NAO_E_PRODUTO,
+          stage: STAGE.VALIDATE,
+        });
         continue;
       }
 
@@ -407,7 +401,7 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null) {
       });
     } catch (err) {
       console.error(`[repasse] erro processando ${rawUrl}: ${err.message}`);
-      discarded.push({ rawUrl, reason: `erro: ${err.message}` });
+      discarded.push({ rawUrl, reason: `erro: ${err.message}`, errorKind: classifyFromText(err.message), stage: STAGE.STORE });
     }
   }
 
@@ -421,6 +415,7 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null) {
         affiliateConfigured: d.affiliateConfigured ?? null,
         coupon,
         outcome: "discarded", reason: d.reason,
+        errorKind: d.errorKind, stage: d.stage,
       });
     }
   }
@@ -456,7 +451,9 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null) {
           sourceAllowed: false, affiliateConfigured: base.affiliateConfigured, scrapeOk: base.scrapeOk,
           productName: base.name, productImg: base.img, price: base.price, originalPrice: base.originalPrice,
           discount: base.discount, sold: base.sold, coupon: base.coupon,
-          outcome: "discarded", reason: "fonte não habilitada",
+          // Sem errorKind de propósito: nada falhou. A campanha é que não aceita
+          // essa loja — contar isso como erro sujaria a taxa de sucesso do resumo.
+          outcome: "discarded", reason: "fonte não habilitada", stage: STAGE.SOURCE,
         });
         continue;
       }
@@ -473,7 +470,7 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null) {
             rawUrl: base.rawUrl, resolvedUrl: base.link, store: base.store,
             sourceAllowed: true, affiliateConfigured: base.affiliateConfigured, scrapeOk: base.scrapeOk,
             productName: base.name, coupon: base.coupon,
-          outcome: r.target === "queue" ? "queued" : "pending",
+          outcome: r.target === "queue" ? "queued" : "pending", stage: STAGE.QUEUE,
           });
           // Recarrega o grupo pra refletir a inserção anterior (dedup correto).
           const fresh = await storage.loadState(userId);
@@ -485,7 +482,7 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null) {
             rawUrl: base.rawUrl, resolvedUrl: base.link, store: base.store,
             sourceAllowed: true, affiliateConfigured: base.affiliateConfigured, scrapeOk: base.scrapeOk,
             productName: base.name, coupon: base.coupon,
-          outcome: "cooldown",
+          outcome: "cooldown", stage: STAGE.QUEUE,
           });
         }
       } catch (err) {
@@ -503,6 +500,9 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null) {
           productName: base.name, productImg: base.img, price: base.price, originalPrice: base.originalPrice,
           discount: base.discount, sold: base.sold, coupon: base.coupon,
           outcome: isDup ? "duplicate" : "error", reason: isDup ? err.code : err.message,
+          stage: STAGE.QUEUE,
+          // Duplicata não é erro (o produto só já estava lá); só o `error` classifica.
+          errorKind: isDup ? null : classifyFromText(err.message),
         });
       }
     }

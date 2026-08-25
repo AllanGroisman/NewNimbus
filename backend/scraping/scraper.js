@@ -1,5 +1,6 @@
 const puppeteer = require("puppeteer");
 const urlGuard = require("./urlGuard");
+const mlSocial = require("./ml-social");
 const { pickBestImage } = require("./image-quality");
 const { canonicalAmazonUrl } = require("./amazon-url");
 
@@ -14,6 +15,13 @@ const AMZ_MAX_ATTEMPTS = 3;
 const AMZ_BACKOFF_MS = [3000, 8000, 20000];   // por tentativa (1-based) + jitter
 const AMZ_VERIFY_DEFAULT = 60;                // fallback do enrichLimit do admin
 const AMZ_VERIFY_MAX = 120;                   // teto da folga quando há filtro de nota/avaliações
+
+// ML — o CAPTCHA da página de produto também é intermitente, mas só ELE vale
+// re-tentativa: muro de login é cookie vencido, e esperar 30 s bate na mesma parede.
+const ML_MAX_ATTEMPTS = 2;
+// Leitura da landing sem navegador: 2 tentativas, com pausa curta entre elas.
+const ML_FETCH_MAX_ATTEMPTS = 2;
+const ML_FETCH_RETRY_MS = 3000;
 
 // Backoff com jitter ±30% pra a tentativa N (1-based). Pura → testável.
 function amzBackoffMs(attempt) {
@@ -1316,16 +1324,24 @@ function parseMLCookies(cookieStr) {
 
 // Detecta páginas de bloqueio anti-bot: login wall do ML (/gz/account-verification),
 // interstitial "Continuar comprando" e CAPTCHA da Amazon, e produto inexistente.
-// Retorna { blocked, reason, captcha?, interstitial? }.
+// Retorna { blocked, reason, kind?, captcha?, interstitial? }.
+//
+// `kind` é o motivo em lista fechada (repasse/error-kinds.js) e `reason` é o texto
+// humano. Cada texto trata de UMA causa só: o que é passageiro ("tente daqui a
+// alguns minutos") não pode vir junto do que exige ação ("revise o cookie"), senão
+// quem lê não sabe se espera ou age. O conselho do cookie vive só no muro de login,
+// que é onde ele é verdadeiro.
 async function detectBlockPage(page, store) {
   if (store === "Mercado Livre" && /\/gz\/account-verification/i.test(page.url())) {
-    return { blocked: true, reason: "Mercado Livre pediu login — verifique o cookie de afiliado nas Configurações." };
+    return { blocked: true, kind: "login-wall", reason: "Mercado Livre pediu login — verifique o cookie de afiliado nas Configurações." };
   }
   // Muro de CAPTCHA: a URL vira /captcha/wall e a página não tem nada do produto —
   // sem isso o retorno saía como sucesso, com nome "Seguridad — Mercado Libre".
   if (store === "Mercado Livre" && /\/captcha\/wall/i.test(page.url())) {
-    return { blocked: true, captcha: true, reason: "Mercado Livre pediu verificação (CAPTCHA) — tente daqui a alguns minutos ou revise o cookie de afiliado." };
+    return { blocked: true, captcha: true, kind: "captcha", reason: "Mercado Livre pediu verificação (CAPTCHA) — bloqueio passageiro, tente daqui a alguns minutos." };
   }
+  // Os `kind` abaixo são literais porque este bloco roda dentro do navegador
+  // (page.evaluate) e não enxerga o require de error-kinds.js. Há teste de paridade.
   return page.evaluate((store) => {
     const body = document.body?.innerText || "";
     // O texto do muro às vezes vem no <title>/og:title (não no body) — junta tudo.
@@ -1334,22 +1350,22 @@ async function detectBlockPage(page, store) {
     const hay = `${body}\n${title}\n${og}`;
     if (store === "Amazon") {
       if (/enter the characters|captcha|robot check|digite os caracteres/i.test(hay)) {
-        return { blocked: true, captcha: true, reason: "Amazon retornou CAPTCHA — tente daqui a alguns minutos." };
+        return { blocked: true, captcha: true, kind: "captcha", reason: "Amazon retornou CAPTCHA — bloqueio passageiro, tente daqui a alguns minutos." };
       }
       if (/continuar comprando|continue shopping/i.test(body) && !document.querySelector("#productTitle")) {
         return { blocked: true, interstitial: true, reason: "Amazon mostrou tela intermediária (Continuar comprando)." };
       }
       if (/n[aã]o foi poss[ií]vel encontrar|couldn.t find that page|page not found/i.test(hay) && !document.querySelector("#productTitle")) {
-        return { blocked: true, reason: "Produto não encontrado na Amazon (o link pode estar quebrado)." };
+        return { blocked: true, kind: "nao-e-produto", reason: "Produto não encontrado na Amazon (o link pode estar quebrado)." };
       }
     }
     if (store === "Mercado Livre") {
       if (/acesse sua conta|para continuar, acesse/i.test(body) && !document.querySelector(".ui-pdp-title")) {
-        return { blocked: true, reason: "Mercado Livre pediu login — verifique o cookie de afiliado nas Configurações." };
+        return { blocked: true, kind: "login-wall", reason: "Mercado Livre pediu login — verifique o cookie de afiliado nas Configurações." };
       }
       // O muro de CAPTCHA às vezes vem sem trocar a URL — o título é "Seguridad".
       if (/seguridad|captcha|n[ãa]o sou um rob[ôo]|no soy un robot/i.test(hay) && !document.querySelector(".ui-pdp-title")) {
-        return { blocked: true, captcha: true, reason: "Mercado Livre pediu verificação (CAPTCHA) — tente daqui a alguns minutos ou revise o cookie de afiliado." };
+        return { blocked: true, captcha: true, kind: "captcha", reason: "Mercado Livre pediu verificação (CAPTCHA) — bloqueio passageiro, tente daqui a alguns minutos." };
       }
     }
     return { blocked: false };
@@ -1419,12 +1435,18 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
       // ser clicado pra chegar na PDP real (nome/preço só existem lá).
       if (/\/social\//i.test(page.url())) {
         page = await clickGoToProductML(browser, page);
-        // Se o botão não estava lá (landing renderizada por JS, forceInApp=true),
-        // ficamos na landing: sem galeria da PDP, a foto sai do og:image — que é
-        // a MINIATURA (~500px). O pickBestImage ainda sobe a resolução, mas o
-        // aviso aqui é o que denuncia esse caminho no log de produção.
+        // Continuamos na landing: o botão não existe quando ela é renderizada por
+        // JS (forceInApp=true). Seguir daqui dava meia-página — sem a galeria da
+        // PDP a foto sai do og:image, que é miniatura, e o link guardado seria o
+        // da landing de OUTRO afiliado, que morria depois no envio. Em vez disso,
+        // lê o JSON embutido: é o mesmo parser do caminho sem navegador.
         if (/\/social\//i.test(page.url())) {
-          console.warn(`[scraper ML] "Ir para o produto" não abriu a PDP — dados vindos da landing de afiliado (${page.url().slice(0, 120)})`);
+          const fromLanding = mlSocial.parseSocialLanding(await page.content(), page.url());
+          if (fromLanding.ok) {
+            console.warn(`[scraper ML] "Ir para o produto" não abriu a PDP — produto lido do JSON da landing (${page.url().slice(0, 120)})`);
+            return fromLanding.product;
+          }
+          console.warn(`[scraper ML] "Ir para o produto" não abriu a PDP e o JSON da landing não serviu (${fromLanding.kind}) — seguindo com o que a página mostrar`);
         }
       }
       try { await page.waitForSelector(".ui-pdp-title, h1", { timeout: 5000 }); } catch {}
@@ -1441,12 +1463,14 @@ async function harvestSingleProduct(cleanUrl, store, userId) {
       const err = new Error(block.reason);
       err.blocked = true;
       err.captcha = !!block.captcha;
+      // Motivo em lista fechada, pro log de repasse não ter que adivinhar pelo texto.
+      err.kind = block.kind || (block.captcha ? "captcha" : "login-wall");
       throw err;
     }
 
-    // URL pós-navegação/redirects — o Puppeteer já contornou o muro (cookie de
-    // sessão do afiliado) pra chegar aqui, diferente de um fetch cru sem cookie
-    // (que costuma travar no captcha do ML). É o link confiável pra guardar/afiliar.
+    // URL pós-navegação/redirects — é o link confiável pra guardar/afiliar.
+    // (Na landing de afiliado do ML o fetch cru vai MAIS longe que o navegador;
+    // esse caminho é tratado antes, em ml-social.js.)
     const finalUrl = page.url();
 
     const data = await page.evaluate((store) => {
@@ -1734,6 +1758,23 @@ async function scrapeShopeeSingleViaApi(cleanUrl, userId) {
   };
 }
 
+// Quantas tentativas de navegador cada loja merece. A Amazon serve
+// CAPTCHA/interstitial de forma intermitente; o ML também, mas só na tela de
+// CAPTCHA (ver shouldRetryScrape); a Shopee é determinística. Pura → testável.
+function maxAttemptsFor(store) {
+  if (store === "Amazon") return AMZ_MAX_ATTEMPTS;
+  if (store === "Mercado Livre") return ML_MAX_ATTEMPTS;
+  return 1;
+}
+
+// Vale re-tentar depois deste erro? No ML, só o CAPTCHA é passageiro: muro de
+// login é cookie vencido, e link quebrado ou erro de rede repetem igual — nos dois
+// casos esperar 30 s só atrasa o descarte e não muda o fim. Pura → testável.
+function shouldRetryScrape(store, err) {
+  if (store === "Mercado Livre") return !!err?.captcha;
+  return true;
+}
+
 async function scrapeSingleProduct(url, { userId } = {}) {
   if (!url || typeof url !== "string" || !url.trim()) {
     throw new Error("URL inválida");
@@ -1749,16 +1790,41 @@ async function scrapeSingleProduct(url, { userId } = {}) {
     // API falhou (IDs não encontrados, endpoint fora) — cai no fallback abaixo.
   }
 
-  // Amazon serve CAPTCHA/interstitial de forma intermitente → re-tenta com backoff
-  // (browser novo a cada vez). ML/Shopee são determinísticos: 1 tentativa só.
-  const maxAttempts = store === "Amazon" ? AMZ_MAX_ATTEMPTS : 1;
+  // ML: link de afiliado (landing /social/ ou encurtador) é lido por HTTP simples
+  // ANTES de abrir o navegador. Não é economia de recurso: o Chrome headless leva
+  // CAPTCHA nessa página praticamente sempre, e o fetch cru responde 200 com o
+  // produto inteiro (o porquê está em ml-social.js). Se o fetch não trouxer
+  // produto, o navegador segue como plano B — mesmo desenho da Shopee acima.
+  if (store === "Mercado Livre" && mlSocial.isAffiliateShareUrl(cleanUrl)) {
+    // Duas tentativas, mas só quando a falha é de rede: o plano B (navegador)
+    // está bloqueado por CAPTCHA, então desistir aqui por um soluço de DNS
+    // custa o item inteiro. Falha de conteúdo (CAPTCHA na landing, página que
+    // não é produto) vai direto pro navegador, sem espera à toa.
+    for (let attempt = 1; attempt <= ML_FETCH_MAX_ATTEMPTS; attempt++) {
+      let viaFetch = null;
+      try {
+        viaFetch = await mlSocial.fetchSocialLanding(cleanUrl);
+      } catch (err) {
+        const retriable = mlSocial.isTransientFetchError(err) && attempt < ML_FETCH_MAX_ATTEMPTS;
+        console.warn(`[scraper ML] leitura da landing sem navegador falhou: ${err.message}${retriable ? " — tentando de novo" : ""}`);
+        if (!retriable) break;
+        await sleep(ML_FETCH_RETRY_MS);
+        continue;
+      }
+      if (viaFetch.ok) return viaFetch.product;
+      console.warn(`[scraper ML] landing sem navegador não serviu (${viaFetch.kind}): ${viaFetch.reason} — tentando pelo navegador`);
+      break;
+    }
+  }
+
+  const maxAttempts = maxAttemptsFor(store);
   let lastErr = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       return await harvestSingleProduct(cleanUrl, store, userId);
     } catch (err) {
       lastErr = err;
-      if (attempt >= maxAttempts) break;
+      if (attempt >= maxAttempts || !shouldRetryScrape(store, err)) break;
       await sleep(amzBackoffMs(attempt));
     }
   }
@@ -1784,7 +1850,7 @@ async function autoScroll(page) {
   await new Promise(r => setTimeout(r, 1000));
 }
 
-module.exports = { scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, upgradeMLImageUrl, upgradeShopeeImageUrl, upgradeImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, extractShopeeIds, parseMLReviewCompacted, mergeNewProducts, parseAmazonSold, parseRatingText, parseReviewsCount, reconcilePricing, normalizeSoldText,
+module.exports = { maxAttemptsFor, shouldRetryScrape, scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, upgradeMLImageUrl, upgradeShopeeImageUrl, upgradeImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, extractShopeeIds, parseMLReviewCompacted, mergeNewProducts, parseAmazonSold, parseRatingText, parseReviewsCount, reconcilePricing, normalizeSoldText,
   parseBrlPrice, parseDiscountLabel, parseAmazonPdpPricing, selectVerifiedAmazonProducts, CATEGORIES, STORES,
   // Reusados por ml-hub.js (navegar logado em páginas do ML)
   launchAmazonBrowser, applyAmazonStealth, parseMLCookies, autoScroll, detectBlockPage, UA,

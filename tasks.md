@@ -1041,3 +1041,126 @@ No preenchimento automatico mesma coisa ao clicar em configurar. Em ambos, quand
     Nada mudou no backend nem no formato salvo: o histórico só existe em memória
     enquanto o editor está aberto. Testes em
     `frontend/src/__tests__/TemplateUndo.test.jsx`. 
+
+104. [x] Repasse do Mercado Livre está preso no CAPTCHA — nenhum link passa. Hoje (25/08/2026), entre 14:07 e 15:58, 10 de 10 tentativas de repasse do ML foram descartadas com "Mercado Livre pediu verificação (CAPTCHA) — tente daqui a alguns minutos ou revise o cookie de afiliado", e nenhuma passou. Não é um link específico: é o caminho inteiro.
+
+    Diagnóstico feito na própria VPS de produção: um fetch simples na landing de afiliado do ML (sem navegador, sem cookie, só um User-Agent de browser) responde **200 com o produto inteiro** — nome, foto, preço, preço anterior, desconto e o link canônico `/p/MLB…`. O Chrome headless com o cookie de afiliado injetado leva CAPTCHA em ~6 segundos, sempre. Ou seja: **o IP da VPS não está bloqueado; o que está bloqueado é o navegador automatizado** — pela impressão digital do Chrome headless ou pelo cookie que é injetado nele. Existe um caminho que funciona agora, sem trocar de servidor nem usar proxy.
+
+    Agrava: para o ML o sistema faz **uma tentativa só** (`scraper.js:1754` — o retry com espera existe só para a Amazon) e descarta na hora, sem reenfileirar (`capture.js:352-359`).
+
+    Caminho de correção:
+
+    1. **Plano B sem navegador.** Quando o Chrome for bloqueado, ler a landing via fetch e extrair os dados do JSON embutido na página. O parser de "polycard" que já existe em `backend/scraping/ml-hub.js` lê esse formato **sem nenhuma alteração** (verificado ao vivo). Módulo novo `backend/scraping/ml-social.js`, com função pura `parseSocialLanding(html, url)` — mesmo formato de `classifyHubResult`, testável sem navegador. Cuidado obrigatório: a mesma página traz um carrossel "Quem viu este produto também comprou" com **outros produtos**; a extração tem que fixar no bloco `card-featured` do topo. Repassar o produto errado para o grupo de um cliente é pior do que descartar. O link a guardar é o permalink `/p/MLB…`, que é o formato que a API de afiliado do ML aceita — a landing de outro afiliado não serve.
+    2. **Usar o mesmo parser dentro do navegador**, quando o botão "Ir para o produto" não abrir a página real. Hoje esse caso guarda a URL da landing e o item morre depois, em silêncio, na hora do envio (`scheduler.js:658`).
+    3. **Re-tentar com espera no ML** (2 tentativas), **só** em CAPTCHA. Muro de login não: ali é cookie ruim, re-tentar só queima 30 segundos e bate na mesma parede.
+    4. **Investigar cookie x impressão digital.** Rodar o mesmo scrape sem o cookie de afiliado injetado. Se passar, o cookie está marcado e a correção real é outra (trocar/renovar cookie, ou não usá-lo no repasse).
+    5. **Barrar `/social/<id>/lists`** (perfil/lista do afiliado, não é produto) logo depois de resolver o link, para não gastar um Chrome inteiro à toa.
+
+    A landing de afiliado do ML passou a ser lida **por HTTP simples, antes de abrir
+    o navegador** — não como plano B, mas como caminho principal. O motivo é o
+    diagnóstico: o Chrome apanha ali praticamente sempre e o fetch cru responde 200
+    com o produto inteiro. Se o fetch não trouxer produto, o navegador continua
+    valendo como plano B, igualzinho ao desenho que a Shopee já usava (API oficial
+    primeiro, scraping depois).
+
+    O módulo novo é `backend/scraping/ml-social.js`, com a função pura
+    `parseSocialLanding(html, url)`. Ela recorta do HTML o objeto `_n.ctx.r={…}`
+    (contando chaves, porque o script tem JS que não é JSON depois dele) e entrega o
+    card ao `polycardToProduct` do `ml-hub.js` — que leu o formato **sem uma linha
+    de alteração**, como esperado. O link guardado é o permalink do catálogo
+    (`/p/MLB…` ou `/up/MLBU…`), não a landing do outro afiliado: é o permalink que a
+    conversão de afiliado usa no envio.
+
+    O cuidado que a task pedia virou regra dura: a mesma página traz o carrossel
+    "Quem viu este produto também comprou" com 17 outros produtos, aninhado dentro
+    de `tabs`. A leitura fixa no bloco `card-featured` do primeiro nível — a busca
+    **não é recursiva de propósito** — e recusa se houver zero ou mais de um
+    destaque. Mandar o produto errado pro grupo de um cliente é pior do que não
+    mandar nada.
+
+    Dentro do navegador o mesmo parser entrou onde antes havia só um `console.warn`:
+    quando "Ir para o produto" não abre a PDP, em vez de seguir com meia-página
+    (foto do `og:image`, que é miniatura, e o link da landing alheia), lê o JSON
+    embutido. Era esse o caso que morria em silêncio no envio.
+
+    Re-tentativa: o ML ganhou uma segunda tentativa, **só em CAPTCHA**
+    (`shouldRetryScrape`). Muro de login não se re-tenta — ali é cookie vencido e
+    esperar 30 segundos bate na mesma parede. E `/social/<id>/lists` é barrado no
+    `capture.js` antes do scrape, com motivo próprio, porque é a vitrine do
+    afiliado e gastaria um Chrome inteiro pra ser descartado no fim.
+
+    Nada mudou no catálogo de motivos nem no painel do item 105 — os `kind`
+    existentes já cobrem os casos novos.
+
+    Testes: `tests/unit/ml-social.test.js` (16 casos sobre uma landing REAL salva em
+    `tests/fixtures/ml-social-landing.html`, incluindo o carrossel que não pode
+    vazar), 3 casos de re-tentativa em `tests/unit/scraper-filters.test.js` e 4 em
+    `tests/integration/repasse-capture.test.js` — entre eles um que roda o
+    `scrapeSingleProduct` de verdade e falharia se a ordem estivesse invertida.
+
+    **Fica pendente o item 4**: rodar o mesmo scrape na VPS sem o cookie de afiliado
+    injetado, pra saber se o que está marcado é o cookie ou a impressão digital do
+    Chrome headless. O repasse volta a funcionar sem essa resposta, mas ela decide
+    se ainda vale trocar/renovar o cookie.
+
+105. [x] Log de repasse precisa dizer de verdade por que o item foi descartado. Hoje o Admin → Repasse mostra `loja / fonte habilitada / afiliado / scrape / cupom` mais um texto livre, e o caso do item 104 expõe os buracos:
+
+    - **Não dá para ver que o problema é sistêmico.** São 10 linhas iguais, uma por link, e nada diz "o ML está recusando 100% desde as 14h". Falta um resumo no topo: total por resultado e por motivo nas últimas 24h, e taxa de sucesso por loja.
+    - **O motivo é texto livre** — não dá para filtrar nem contar. Criar uma coluna `errorKind` com valores fechados (`captcha`, `login-wall`, `landing-expirada`, `nao-e-produto`, `timeout`, `loja-nao-suportada`, `afiliado-ausente`, `conversao-afiliado-falhou`), mantendo o texto ao lado para leitura humana.
+    - **A mensagem mistura causas diferentes.** "revise o cookie de afiliado" aparece junto com "tente daqui a alguns minutos", então quem lê não sabe se precisa agir ou esperar. Separar: bloqueio passageiro ≠ cookie vencido ≠ landing de afiliado expirada ≠ link que não é produto.
+    - **`fonte habilitada: —` e `scrape: —` parecem defeito.** São só etapas que não chegaram a rodar por causa de um descarte anterior. Mostrar "não chegou nessa etapa" em vez de um traço solto.
+    - **Falta o fim da história.** O item ainda pode ser descartado depois, no envio, quando a conversão para link de afiliado falha (`scheduler.js:658`). Isso não aparece no log de repasse hoje.
+
+    O painel de Repasse agora tem um resumo no topo (1h / 24h / 7d) que responde a
+    pergunta que faltava: **"o Mercado Livre não aprova nada desde as 14h03 — 90
+    tentativas seguidas falharam (CAPTCHA)"**. É uma faixa vermelha por loja parada,
+    com totais por resultado, motivos ordenados e uma linha do tempo por hora onde o
+    corte fica visível de relance.
+
+    O motivo virou lista fechada em `backend/repasse/error-kinds.js` (`captcha`,
+    `login-wall`, `landing-expirada`, `nao-e-produto`, `timeout`, `loja-nao-suportada`,
+    `afiliado-ausente`, `conversao-afiliado-falhou`, `desconhecido`), gravado na coluna
+    `errorKind` **ao lado** do texto humano, que continua igual. A classificação é feita
+    na origem — o `detectBlockPage` devolve o motivo tipado e cada `if` de descarte do
+    `capture.js` escreve o seu —, não por leitura de string; `classifyFromText` só existe
+    para erros vindos de fora (Puppeteer, rede) e para o backfill.
+
+    Cada mensagem trata de uma causa só. A do CAPTCHA do ML dizia "tente daqui a alguns
+    minutos ou revise o cookie de afiliado" e agora fala só do bloqueio passageiro; o
+    conselho do cookie ficou no muro de login, que é onde é verdade. No painel isso
+    aparece como um selo **esperar** (âmbar) ou **agir** (vermelho), e clicando no motivo
+    abrem-se "O que aconteceu" e "O que fazer" em linhas separadas. O catálogo viaja do
+    backend junto do resumo, então a UI nunca fica dessincronizada.
+
+    A coluna `stage` guarda até onde o link chegou, e `fonte habilitada: —` / `scrape: —`
+    viraram **"não rodou"**, com o `title` dizendo em que etapa o descarte aconteceu. Um
+    traço agora só sobra quando a etapa rodou mesmo e não gravou nada — ou seja, quando é
+    bug de verdade. Linha antiga (sem `stage`) mantém o traço, sem inventar histórico.
+
+    O fim da história entrou: o descarte por conversão de afiliado falha no envio
+    (`sendItem`) passa a gravar uma linha `stage: send`, marcada como "descartado no
+    envio" — antes o item saía da fila e sumia em silêncio. É gravado no ponto do throw,
+    não no catch dos três chamadores, e conta tentativas (se o job for retentado, conta de
+    novo), o que está avisado no cabeçalho do painel.
+
+    A migration `20260825120000_repasse_log_error_kind` classificou o histórico pelo texto
+    livre: no banco de dev, 554 descartes que não contavam viraram `loja-nao-suportada`,
+    `nao-e-produto`, `captcha` e `afiliado-ausente` — o resumo já nasce com o incidente do
+    item 104 visível. `stage` fica NULL nas linhas antigas de propósito.
+
+    "Fonte não habilitada" **não** ganha `errorKind`: nada falhou, a campanha é que não
+    aceita aquela loja — contar isso como erro sujaria a taxa de sucesso. Cooldown e
+    duplicata também ficam fora do denominador.
+
+    Testes: `tests/unit/repasse-error-kinds.test.js` (inclui paridade entre os literais do
+    `page.evaluate`, o SQL do backfill e o catálogo), `tests/unit/repasse-summary.test.js`,
+    `tests/unit/scheduler-send-discard.test.js`, mais 11 casos novos em
+    `tests/integration/repasse-capture.test.js` e a primeira suíte de
+    `frontend/src/__tests__/AdminRepasse.test.jsx`.
+
+
+106. [ ] Notificação de Admin quando houver bloqueio que precisa ser arrumado. No caso do item 104 o sistema passou horas sem repassar nada e ninguém foi avisado — a única pista estava no log de admin, e só para quem foi olhar.
+
+    Reaproveitar o que já existe, sem infra nova: `backend/notifications/admin-notifier.js` (o `send()` já manda pelo WhatsNimbus no grupo configurado, com modelo editável em "Modelos Notificações" e liga/desliga por evento em `cfg.events`) e o `stateAlert(chave, estáRuim, {graceMs, onDown, onRecover})` de `backend/notifications/user-notifier.js`, que já resolve o debounce: só avisa depois de um período ruim contínuo e avisa de novo quando normaliza (tem teste em `tests/unit/notify-state-alert.test.js`).
+
+    Evento novo `bloqueios`, disparado quando o mesmo tipo de bloqueio se repete — por exemplo N falhas seguidas, ou X minutos sem nenhum sucesso naquela loja. **Nunca um aviso por link**, senão vira spam. A mensagem precisa dizer o que fazer: cookie vencido → "cole um cookie novo em Configurações"; CAPTCHA persistente → "o ML está bloqueando o navegador do servidor"; e mandar o "voltou ao normal" quando recuperar. Cobrir também os bloqueios já detectados no scraping do Hub e dos cupons (`ml-hub.js`, `ml-session-page.js`), não só o repasse.

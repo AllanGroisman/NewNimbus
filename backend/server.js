@@ -2649,6 +2649,24 @@ app.get("/api/admin/catalog", auth.requireAuth, auth.requireAdmin, async (req, r
   }
 });
 
+// Resumo do log de repasse: total por resultado, por motivo, e taxa de sucesso
+// por loja numa janela de tempo. É o que faz um bloqueio sistêmico aparecer — na
+// lista item a item, 10 falhas do mesmo tipo eram só 10 linhas parecidas.
+app.get("/api/admin/repasse/summary", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const { prisma } = require("./db");
+    const repasseSummary = require("./repasse/summary");
+    // Mesmos filtros da lista, pra o resumo poder ser lido "dentro" de um filtro.
+    const where = {};
+    if (req.query.userId) where.userId = String(req.query.userId);
+    if (req.query.groupId) where.groupId = BigInt(req.query.groupId);
+    if (req.query.store) where.store = String(req.query.store);
+    res.json(await repasseSummary.buildSummary(prisma, { hours: req.query.hours, where }));
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/repasse/summary" });
+  }
+});
+
 // Log de captura de campanhas de repasse — visibilidade do admin sobre cada
 // link visto num grupo líder e o que aconteceu com ele (fila/pendente/descarte).
 app.get("/api/admin/repasse/logs", auth.requireAuth, auth.requireAdmin, async (req, res) => {
@@ -2661,6 +2679,11 @@ app.get("/api/admin/repasse/logs", auth.requireAuth, auth.requireAdmin, async (r
     if (req.query.groupId) where.groupId = BigInt(req.query.groupId);
     if (req.query.store) where.store = String(req.query.store);
     if (req.query.outcome) where.outcome = String(req.query.outcome);
+    // "none" isola os descartes que NÃO são erro (a fonte não habilitada na
+    // campanha) — sem isso não haveria como separá-los dos que precisam de ação.
+    if (req.query.errorKind === "none") where.errorKind = null;
+    else if (req.query.errorKind) where.errorKind = String(req.query.errorKind);
+    if (req.query.stage) where.stage = String(req.query.stage);
 
     const [total, rows] = await Promise.all([
       prisma().repasseCaptureLog.count({ where }),
@@ -2702,6 +2725,8 @@ app.get("/api/admin/repasse/logs", auth.requireAuth, auth.requireAdmin, async (r
       sold: r.sold,
       coupon: r.coupon,
       outcome: r.outcome,
+      errorKind: r.errorKind,
+      stage: r.stage,
       reason: r.reason,
       createdAt: r.createdAt,
     }));

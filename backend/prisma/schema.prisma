@@ -176,11 +176,20 @@ model RepasseCaptureLog {
   // trazia código nenhum — é o caso mais comum, e o log precisa distinguir os dois.
   coupon              String?
   outcome             String
+  // Motivo em lista FECHADA (repasse/error-kinds.js) — é o que dá pra filtrar e
+  // contar. NÃO substitui o `reason`: aquele continua sendo o texto humano, com o
+  // detalhe do caso (qual campo faltou, qual mensagem o navegador viu).
+  errorKind           String?
+  // Até onde o link chegou no pipeline (STAGE em error-kinds.js). É o que permite
+  // dizer "não chegou nessa etapa" em vez de mostrar um traço solto que parece bug.
+  stage               String?
   reason              String?
   createdAt           DateTime @default(now())
 
   @@index([groupId, createdAt(sort: Desc)])
   @@index([userId, createdAt(sort: Desc)])
+  @@index([errorKind, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
   @@map("repasse_capture_log")
 }
 
