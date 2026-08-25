@@ -29,6 +29,40 @@ describe("catalog.upsertProducts", () => {
   });
 });
 
+describe("catalog.getByLink", () => {
+  it("acha o produto pelo link colado, mesmo com query de tracking", async () => {
+    await catalog.upsertProducts([
+      { name: "Direto MLB5550001", link: "https://www.mercadolivre.com.br/x/p/MLB5550001", store: "Mercado Livre", category: "casa", price: 120, discount: 10 },
+    ]);
+    const p = await catalog.getByLink("https://www.mercadolivre.com.br/x/p/MLB5550001?matt_word=abc");
+    expect(p).toBeTruthy();
+    expect(p.name).toBe("Direto MLB5550001");
+  });
+
+  it("recusa linha velha: preço de dias atrás não vai pro grupo de um cliente", async () => {
+    await catalog.upsertProducts([
+      { name: "Velho MLB5550002", link: "https://www.mercadolivre.com.br/x/p/MLB5550002", store: "Mercado Livre", category: "casa", price: 10, discount: 10 },
+    ]);
+    expect(await catalog.getByLink("https://www.mercadolivre.com.br/x/p/MLB5550002", { maxAgeMs: 1 })).toBeNull();
+    // Sem limite de idade a mesma linha continua servindo.
+    expect(await catalog.getByLink("https://www.mercadolivre.com.br/x/p/MLB5550002", { maxAgeMs: null })).toBeTruthy();
+  });
+
+  it("número de anúncio ≠ número de catálogo: não entrega o produto errado", async () => {
+    // A chave funde as duas numerações do ML. A linha gravada é /MLB-5550003-,
+    // e quem pede é /p/MLB5550003 — mesmo número, produtos diferentes.
+    await catalog.upsertProducts([
+      { name: "Anúncio 5550003", link: "https://produto.mercadolivre.com.br/MLB-5550003-algo-_JM", store: "Mercado Livre", category: "casa", price: 30, discount: 10 },
+    ]);
+    expect(await catalog.getByLink("https://www.mercadolivre.com.br/x/p/MLB5550003")).toBeNull();
+  });
+
+  it("link que não está no catálogo devolve null", async () => {
+    expect(await catalog.getByLink("https://www.mercadolivre.com.br/x/p/MLB9990009")).toBeNull();
+    expect(await catalog.getByLink(null)).toBeNull();
+  });
+});
+
 describe("catalog.query — filtros", () => {
   beforeAll(async () => {
     await catalog.upsertProducts([

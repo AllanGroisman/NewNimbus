@@ -290,14 +290,46 @@ function status(userId) {
 // Mercado Livre
 // ────────────────────────────────────────────────────────────────────────
 
-async function gerarLinkAfiliadoML(userId, linkOriginal) {
-  if (!linkOriginal || typeof linkOriginal !== "string") return null;
+// Motivos tipados de falha do createLink. Sem isso o chamador só recebia `null` e
+// a UI mostrava "CAPTCHA" pra qualquer coisa — inclusive pra cookie vencido, que é
+// o oposto de bloqueio passageiro. Os valores espelham os `kind` de
+// repasse/error-kinds.js, que é quem o log e a UI já sabem ler.
+const ML_LINK_KIND = {
+  OK: "ok",
+  SEM_CONFIG: "afiliado-ausente",
+  COOKIE: "login-wall",
+  LINK_RECUSADO: "nao-e-produto",
+  ERRO: "desconhecido",
+};
+
+// Aviso de cookie vencido: mora no notifications, e requerer de cima fecharia ciclo
+// (notifications → whatsapp → scheduler → affiliate). Lazy, e falha em silêncio —
+// gerar link não pode quebrar porque a notificação não saiu.
+function notifyMLCookie(userId, ok, tag) {
+  try { require("../notifications/affiliate-alert").mlCookieState(userId, ok, tag); }
+  catch { /* notificação é acessório */ }
+}
+
+// Cria o link de afiliado e DIZ POR QUE falhou quando falha.
+// Devolve { shortUrl, kind, reason }.
+async function criarLinkAfiliadoML(userId, linkOriginal) {
+  if (!linkOriginal || typeof linkOriginal !== "string") {
+    return { shortUrl: null, kind: ML_LINK_KIND.ERRO, reason: "Link vazio." };
+  }
   const { tag, cookie } = readMLConfig(userId);
-  if (!tag || !cookie) return null;
+  if (!tag || !cookie) {
+    return {
+      shortUrl: null,
+      kind: ML_LINK_KIND.SEM_CONFIG,
+      reason: "Sem TAG ou cookie de afiliado do Mercado Livre — configure em Configurações › Afiliados.",
+    };
+  }
 
   const cache = getCache(mlCache, userId);
   const cached = cache.get(linkOriginal);
-  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.shortUrl;
+  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+    return { shortUrl: cached.shortUrl, kind: ML_LINK_KIND.OK, reason: null };
+  }
 
   const s = ensureStats(userId).ml;
   try {
@@ -314,35 +346,57 @@ async function gerarLinkAfiliadoML(userId, linkOriginal) {
     });
 
     if (!res.ok) {
+      // 401/403 é cookie vencido — o único caso aqui que exige AÇÃO de quem usa.
+      const cookieMorto = res.status === 401 || res.status === 403;
       s.lastFailureAt = new Date().toISOString();
-      s.lastFailureReason = `HTTP ${res.status} — cookie pode ter expirado`;
+      s.lastFailureReason = cookieMorto
+        ? `HTTP ${res.status} — cookie de afiliado do Mercado Livre venceu`
+        : `HTTP ${res.status} — cookie pode ter expirado`;
       console.error(`[afiliados ML] ${s.lastFailureReason}`);
-      return null;
+      if (cookieMorto) notifyMLCookie(userId, false, tag);
+      return {
+        shortUrl: null,
+        kind: cookieMorto ? ML_LINK_KIND.COOKIE : ML_LINK_KIND.ERRO,
+        reason: cookieMorto
+          ? "O cookie de afiliado do Mercado Livre venceu — cole um novo em Configurações › Afiliados."
+          : `O Mercado Livre respondeu HTTP ${res.status} ao gerar o link de afiliado.`,
+      };
     }
 
     const data = await res.json();
     const short = data?.urls?.[0]?.short_url || null;
     if (!short) {
+      // Respondeu 200: o cookie está vivo, quem não serve é o link.
       s.lastSuccessAt = new Date().toISOString();
-      const apiMsg = data?.urls?.[0]?.error || data?.message || data?.error || null;
+      notifyMLCookie(userId, true, tag);
+      const apiMsg = data?.urls?.[0]?.message || data?.urls?.[0]?.error || data?.message || data?.error || null;
       s.lastFailureReason = apiMsg
         ? `Link inválido: ${String(apiMsg).slice(0, 120)}`
         : "Link inválido — use uma URL de produto/oferta do Mercado Livre (a home não funciona)";
       console.warn(`[afiliados ML] ${s.lastFailureReason}: ${JSON.stringify(data).slice(0, 200)}`);
-      return null;
+      return {
+        shortUrl: null,
+        kind: ML_LINK_KIND.LINK_RECUSADO,
+        reason: "O Mercado Livre não aceita este link no programa de afiliados — use uma URL de produto ou oferta.",
+      };
     }
     cache.set(linkOriginal, { shortUrl: short, ts: Date.now() });
     s.lastSuccessAt = new Date().toISOString();
     s.lastFailureReason = null;
-    return short;
+    notifyMLCookie(userId, true, tag);
+    return { shortUrl: short, kind: ML_LINK_KIND.OK, reason: null };
   } catch (err) {
     s.lastFailureAt = new Date().toISOString();
     s.lastFailureReason = err.message;
     console.error("[afiliados ML] erro:", err.message);
-    return null;
+    return { shortUrl: null, kind: ML_LINK_KIND.ERRO, reason: `Falha ao gerar o link de afiliado: ${err.message}` };
   }
 }
 
+async function gerarLinkAfiliadoML(userId, linkOriginal) {
+  const { shortUrl } = await criarLinkAfiliadoML(userId, linkOriginal);
+  return shortUrl;
+}
 // ────────────────────────────────────────────────────────────────────────
 // Amazon BR
 // ────────────────────────────────────────────────────────────────────────
@@ -956,6 +1010,8 @@ async function warmup() {
 module.exports = {
   // ML
   gerarLinkAfiliadoML,
+  criarLinkAfiliadoML,
+  ML_LINK_KIND,
   readMLConfig,
   writeMLConfig,
   clearMLConfig,

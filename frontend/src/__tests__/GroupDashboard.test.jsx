@@ -28,7 +28,7 @@ vi.mock("../data/api", () => ({
 }));
 
 import GroupDashboard from "../components/GroupDashboard.jsx";
-import { createWAGroup } from "../data/api";
+import { createWAGroup, fetchUrlMetadata } from "../data/api";
 
 function makeGroup(overrides = {}) {
   return {
@@ -354,5 +354,48 @@ describe("GroupDashboard — grupos líderes do repasse", () => {
       limits: { leadersPerCampaign: 3 },
     });
     expect(screen.getByText(/Também é líder/)).toBeInTheDocument();
+  });
+});
+
+// ── Adicionar link manualmente: o que a UI diz quando o ML bloqueia ──────────
+// A página de produto do ML responde CAPTCHA, então o backend cai na landing de
+// afiliado e, em último caso, no catálogo já raspado. Nos dois desfechos ruins a
+// mensagem precisa ser honesta: preço de catálogo pede conferência, e cookie
+// vencido pede AÇÃO — nunca "espere um pouco".
+describe("GroupDashboard — Adicionar link manualmente", () => {
+  const abrirEBuscar = async (url = "https://www.mercadolivre.com.br/x/p/MLB1") => {
+    renderDashboard();
+    fireEvent.click(screen.getByRole("button", { name: /Fila/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: /Adicionar link manualmente/ })[0]);
+    const input = await screen.findByPlaceholderText("ex: https://www.mercadolivre.com.br/...");
+    fireEvent.change(input, { target: { value: url } });
+    fireEvent.click(screen.getByRole("button", { name: /Buscar dados/ }));
+  };
+
+  it("dados do catálogo saem com aviso pra conferir o preço", async () => {
+    fetchUrlMetadata.mockResolvedValueOnce({
+      name: "Produto do catálogo",
+      link: "https://www.mercadolivre.com.br/x/p/MLB1",
+      price: 149, img: "https://http2.mlstatic.com/c.jpg", store: "Mercado Livre",
+      fromCatalog: true, scrapedAt: "2026-08-25T12:00:00.000Z",
+    });
+    await abrirEBuscar();
+    expect(await screen.findByText(/Dados do catálogo/i)).toBeInTheDocument();
+    expect(screen.getByText(/confira o preço/i)).toBeInTheDocument();
+  });
+
+  it("cookie vencido: mostra a mensagem do backend, sem o 'Falha ao buscar dados'", async () => {
+    const err = new Error("O cookie de afiliado do Mercado Livre venceu — cole um novo em Configurações › Afiliados.");
+    err.code = "login-wall";
+    fetchUrlMetadata.mockRejectedValueOnce(err);
+    await abrirEBuscar();
+    expect(await screen.findByText(/cookie de afiliado do Mercado Livre venceu/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Falha ao buscar dados/i)).not.toBeInTheDocument();
+  });
+
+  it("erro sem motivo tipado mantém o texto genérico de sempre", async () => {
+    fetchUrlMetadata.mockRejectedValueOnce(new Error("timeout"));
+    await abrirEBuscar();
+    expect(await screen.findByText(/Falha ao buscar dados: timeout/i)).toBeInTheDocument();
   });
 });

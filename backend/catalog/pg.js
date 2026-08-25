@@ -1,6 +1,6 @@
 // Implementação Postgres do catálogo (tudo async via Prisma).
 const { prisma } = require("../db");
-const { productKey } = require("./product-key");
+const { productKey, mlItemIdFromUrl, mlUrlSpace } = require("./product-key");
 
 function storeToId(store) {
   if (!store) return null;
@@ -122,6 +122,41 @@ async function loadAll() {
     select: { lastSeenAt: true },
   });
   return { products, updatedAt: last?.lastSeenAt?.toISOString() || null };
+}
+
+// Um produto pelo link, se ele já estiver no catálogo e ainda for recente.
+// O `productKey` normaliza /p/MLB…, /MLB-…- e produto.mercadolivre.com.br/MLB-…
+// na mesma chave, então o link colado à mão casa com o que o scraping gravou.
+//
+// Duas travas, porque aqui o produto vai parar na mensagem de um cliente:
+//  - o número do ML da linha achada tem que ser o MESMO do link pedido. A chave
+//    funde a numeração de catálogo (/p/MLB…) com a de anúncio (/MLB-…-), e dois
+//    produtos diferentes com o mesmo número cairiam na mesma chave;
+//  - linha velha não serve: preço de dias atrás no grupo de um cliente é pior do
+//    que campo em branco. `maxAgeMs` null desliga a checagem de idade.
+const CATALOG_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+async function getByLink(link, { maxAgeMs = CATALOG_MAX_AGE_MS } = {}) {
+  if (!link || typeof link !== "string") return null;
+  const key = productKey({ link });
+  const row = await prisma().catalogProduct.findUnique({ where: { key } });
+  const p = fromRow(row);
+  if (!p) return null;
+
+  const pedido = mlItemIdFromUrl(link);
+  const achado = mlItemIdFromUrl(p.link);
+  if (pedido && achado && pedido !== achado) return null;
+  // Mesmo número em espaços diferentes (/p/MLB123 × /MLB-123-) são produtos
+  // diferentes que caem na mesma chave — aqui a linha não serve.
+  const espacoPedido = mlUrlSpace(link);
+  const espacoAchado = mlUrlSpace(p.link);
+  if (espacoPedido && espacoAchado && espacoPedido !== espacoAchado) return null;
+
+  if (maxAgeMs != null) {
+    const seen = p.lastSeenAt ? Date.parse(p.lastSeenAt) : NaN;
+    if (!Number.isFinite(seen) || Date.now() - seen > maxAgeMs) return null;
+  }
+  return p;
 }
 
 async function listAll() {
@@ -279,6 +314,8 @@ module.exports = {
   productKey,
   upsertProducts,
   loadAll,
+  getByLink,
+  CATALOG_MAX_AGE_MS,
   listAll,
   query,
   count,

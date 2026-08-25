@@ -626,13 +626,29 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       // hasPromo=false não é falha do scraping: a loja não está com o produto em
       // promoção, então preço original e desconto ficam vazios de propósito.
       const semPromo = data.hasPromo === false && data.price != null;
+      // O Mercado Livre bloqueia a leitura da página do produto; quando nem a
+      // landing de afiliado resolve, o backend cai no catálogo já raspado. Aí o
+      // preço pode ser de horas atrás e quem confere é quem está adicionando.
+      const doCatalogo = data.fromCatalog
+        ? ` Dados do catálogo${data.scrapedAt ? ` (lido em ${new Date(data.scrapedAt).toLocaleString("pt-BR")})` : ""} — confira o preço.`
+        : "";
       setManualMsg(missing.length
         ? { type: "warn", text: `Dados parciais. Preencha manualmente: ${missing.join(", ")}.` }
+        : data.fromCatalog
+        ? { type: "warn", text: `Dados carregados.${doCatalogo}` }
         : semPromo
         ? { type: "ok", text: "Dados carregados. Produto sem promoção — preço original e desconto ficaram vazios." }
         : { type: "ok", text: "Dados carregados. Revise antes de adicionar." });
     } catch (err) {
-      setManualMsg({ type: "err", text: `Falha ao buscar dados: ${err.message}. Preencha manualmente.` });
+      // Cookie vencido e link fora do programa de afiliados chegam tipados: a
+      // mensagem do backend já diz o que fazer, e o "Falha ao buscar dados" na
+      // frente só atrapalharia.
+      const acionavel = err.code === "login-wall" || err.code === "nao-e-produto" || err.code === "afiliado-ausente";
+      setManualMsg({
+        type: "err",
+        text: acionavel ? `${err.message} Preencha manualmente ou ajuste e tente de novo.`
+                        : `Falha ao buscar dados: ${err.message}. Preencha manualmente.`,
+      });
     } finally {
       setManualFetching(false);
     }

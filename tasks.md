@@ -1098,10 +1098,11 @@ No preenchimento automatico mesma coisa ao clicar em configurar. Em ambos, quand
     `tests/integration/repasse-capture.test.js` — entre eles um que roda o
     `scrapeSingleProduct` de verdade e falharia se a ordem estivesse invertida.
 
-    **Fica pendente o item 4**: rodar o mesmo scrape na VPS sem o cookie de afiliado
-    injetado, pra saber se o que está marcado é o cookie ou a impressão digital do
-    Chrome headless. O repasse volta a funcionar sem essa resposta, mas ela decide
-    se ainda vale trocar/renovar o cookie.
+    **Item 4 respondido em 25/08/2026 (ver item 107)**: rodado na VPS, o mesmo
+    scrape SEM o cookie de afiliado injetado leva CAPTCHA igual. O que o ML marca
+    não é o cookie — é o navegador automatizado e a própria página de produto.
+    Trocar/renovar o cookie não resolveria o bloqueio (continua valendo para a
+    conversão de afiliado, que é outra coisa).
 
 105. [x] Log de repasse precisa dizer de verdade por que o item foi descartado. Hoje o Admin → Repasse mostra `loja / fonte habilitada / afiliado / scrape / cupom` mais um texto livre, e o caso do item 104 expõe os buracos:
 
@@ -1164,3 +1165,63 @@ No preenchimento automatico mesma coisa ao clicar em configurar. Em ambos, quand
     Reaproveitar o que já existe, sem infra nova: `backend/notifications/admin-notifier.js` (o `send()` já manda pelo WhatsNimbus no grupo configurado, com modelo editável em "Modelos Notificações" e liga/desliga por evento em `cfg.events`) e o `stateAlert(chave, estáRuim, {graceMs, onDown, onRecover})` de `backend/notifications/user-notifier.js`, que já resolve o debounce: só avisa depois de um período ruim contínuo e avisa de novo quando normaliza (tem teste em `tests/unit/notify-state-alert.test.js`).
 
     Evento novo `bloqueios`, disparado quando o mesmo tipo de bloqueio se repete — por exemplo N falhas seguidas, ou X minutos sem nenhum sucesso naquela loja. **Nunca um aviso por link**, senão vira spam. A mensagem precisa dizer o que fazer: cookie vencido → "cole um cookie novo em Configurações"; CAPTCHA persistente → "o ML está bloqueando o navegador do servidor"; e mandar o "voltou ao normal" quando recuperar. Cobrir também os bloqueios já detectados no scraping do Hub e dos cupons (`ml-hub.js`, `ml-session-page.js`), não só o repasse.
+
+107. [x] "Adicionar produto manualmente" não preenchia mais nada no Mercado Livre. O conserto do item 104 valia só para landing de afiliado (`/social/…`), e no "Adicionar link manualmente" quem cola o link cola a página do produto (`/p/MLB…`) — que voltava pro navegador e apanhava CAPTCHA. Em produção, três tentativas seguidas em 25/08 às 19:33, 19:34 e 19:36: `[fetch-url] Mercado Livre pediu verificação (CAPTCHA)`.
+
+    Medido na VPS, um caminho de cada vez:
+
+    | Caminho | Resultado |
+    |---|---|
+    | Landing `/social/…` por fetch simples | 200 com o produto inteiro |
+    | Página de produto por fetch simples (headers completos de browser) | CAPTCHA |
+    | Página de produto no Chrome headless **com** cookie | CAPTCHA |
+    | Página de produto no Chrome headless **sem** cookie | CAPTCHA |
+    | `api.mercadolibre.com/items/MLB…` | 403 |
+
+    É isso que responde o item 4 que ficou pendente na 104: sem cookie apanha igual,
+    então o marcado é o navegador, não o cookie.
+
+    O conserto usa o que já passa: o link direto vira a landing de afiliado **do
+    próprio usuário** (`criarLinkAfiliadoML` → `meli.la/…`, a mesma chamada
+    `createLink` que o envio já faz) e é lida pelo `fetchSocialLanding` do item 104.
+    Medido ponta a ponta com uma conta de cookie válido: **1,7 s**, com nome, preço,
+    preço original, desconto, foto e o permalink canônico — antes eram ~20 s
+    terminando em CAPTCHA. Entrou dentro do `scrapeSingleProduct`, então vale também
+    para o repasse quando o líder posta link direto e para o teste de link do admin.
+
+    Rede de segurança: o produto já raspado no catálogo (`catalog.getByLink`). Vem
+    **depois** da landing de propósito — dado ao vivo primeiro, porque preço de horas
+    atrás no grupo de um cliente é pior do que campo em branco —, só serve se a linha
+    tiver no máximo 24 h e sobe marcado com `fromCatalog`, que na tela vira o aviso
+    "confira o preço". Duas travas na busca por link: o número do ML tem que bater
+    **e** o espaço também (`/p/MLB123` de catálogo × `/MLB-123-` de anúncio são
+    produtos diferentes que caem na mesma chave do `productKey`).
+
+    Os motivos deixaram de virar todos "CAPTCHA". O `createLink` agora devolve
+    `{ shortUrl, kind, reason }` (o `gerarLinkAfiliadoML` continua devolvendo `null`
+    pros chamadores de sempre): 401 é `login-wall` — cookie vencido, pede AÇÃO —, e
+    200 sem link é `nao-e-produto`, o ML recusando aquele link no programa de
+    afiliados (acontece de verdade: reproduzido em duas contas). O `kind` viaja no
+    `code` do 400 do `/api/scraper/fetch-url` e a tela mostra a mensagem direta, sem
+    o "Falha ao buscar dados" na frente. E com cookie vencido nem se abre o navegador:
+    ele usaria o mesmo cookie e gastaria ~20 s pra terminar pior (o caso caiu de
+    10,7 s para 0,5 s no teste de integração).
+
+    Fatia do item 106 junto, que era o buraco que deixou isso passar horas em
+    silêncio: evento `afiliadoCookie` no admin-notifier, com dois modelos editáveis
+    ("vencido" e "normalizado"), disparado pelo `stateAlert` que já existia — 15 min
+    de carência, nunca um aviso por link, e o "voltou ao normal" quando um
+    `createLink` responde de novo. HTTP 200 com erro de negócio conta como **cookie
+    vivo**, não como falha.
+
+    Achado de operação: o cookie do `allangroisman` está vencido (HTTP 401) — precisa
+    ser recolado em Configurações › Afiliados.
+
+    Testes: `tests/unit/ml-link-direto.test.js` (8 casos), `tests/unit/notify-ml-cookie.test.js`,
+    4 casos novos em `tests/unit/affiliate-ml.test.js`, 2 em `tests/unit/product-key.test.js`
+    (com os hashes antigos reafirmados — a chave é PK do catálogo), 4 em
+    `tests/integration/catalog.test.js`, o novo `tests/integration/fetch-url.test.js`
+    e 3 em `frontend/src/__tests__/GroupDashboard.test.jsx`.
+
+    **Fica pendente**: o resto do item 106 — os mesmos avisos para os bloqueios do Hub
+    e dos cupons (`ml-hub.js`, `ml-session-page.js`).

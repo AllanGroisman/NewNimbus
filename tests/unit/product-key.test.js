@@ -10,7 +10,7 @@ import { createRequire } from "module";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
-const { productKey } = require(path.resolve(__dirname, "..", "..", "backend", "catalog", "product-key.js"));
+const { productKey, mlItemIdFromUrl, mlUrlSpace } = require(path.resolve(__dirname, "..", "..", "backend", "catalog", "product-key.js"));
 
 describe("productKey", () => {
   it("usa MLB id da URL quando disponivel (formato /p/MLB...)", () => {
@@ -70,6 +70,20 @@ describe("productKey", () => {
     const c = { name: "Teclado Gamer", store: "Amazon" };
     expect(productKey(a)).toBe(productKey(b));
     expect(productKey(a)).not.toBe(productKey(c));
+  });
+
+  it("mlItemIdFromUrl le o numero do ML nos tres formatos", () => {
+    expect(mlItemIdFromUrl("https://www.mercadolivre.com.br/x/p/MLB1040287986")).toBe("MLB1040287986");
+    expect(mlItemIdFromUrl("https://produto.mercadolivre.com.br/MLB-1234567-algo-_JM")).toBe("MLB1234567");
+    expect(mlItemIdFromUrl("https://www.amazon.com.br/dp/B000000001")).toBeNull();
+    expect(mlItemIdFromUrl(null)).toBeNull();
+  });
+
+  it("mlUrlSpace separa catalogo de anuncio (numeros distintos podem coincidir)", () => {
+    expect(mlUrlSpace("https://www.mercadolivre.com.br/x/p/MLB1234567")).toBe("catalogo");
+    expect(mlUrlSpace("https://www.mercadolivre.com.br/x/up/MLBU3987817684")).toBe("catalogo");
+    expect(mlUrlSpace("https://produto.mercadolivre.com.br/MLB-1234567-algo-_JM")).toBe("anuncio");
+    expect(mlUrlSpace("https://www.mercadolivre.com.br/ofertas")).toBeNull();
   });
 
   it("e deterministico (hash hex 32 chars)", () => {

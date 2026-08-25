@@ -47,6 +47,23 @@ const DEFAULT_TEMPLATES = {
     "📅 {data}",
     "Backend inicializado com sucesso.",
   ].join("\n"),
+  afiliadoCookieExpirado: [
+    "*[Nimbus] 🔑 Cookie de Afiliado Vencido*",
+    "📅 {data}",
+    "Conta: {tag}",
+    "",
+    "O Mercado Livre recusou o cookie ao gerar link de afiliado.",
+    "Enquanto isso, os links dessa conta não são convertidos e os itens são descartados no envio.",
+    "",
+    "O que fazer: colar um cookie novo em Configurações › Afiliados.",
+  ].join("\n"),
+  afiliadoCookieOk: [
+    "*[Nimbus] ✅ Cookie de Afiliado Normalizado*",
+    "📅 {data}",
+    "Conta: {tag}",
+    "",
+    "A geração de link de afiliado do Mercado Livre voltou a funcionar.",
+  ].join("\n"),
   test: [
     "*[Nimbus] 🔔 Teste de Notificação*",
     "📅 {data}",
@@ -176,6 +193,24 @@ const TEMPLATE_META = [
     variables: [{ name: "data", desc: "Data/hora do teste" }],
     example: { data: "23/07/2026 14:30" },
   },
+  {
+    key: "afiliadoCookieExpirado",
+    label: "Cookie de afiliado vencido",
+    variables: [
+      { name: "data", desc: "Data/hora do aviso" },
+      { name: "tag", desc: "TAG de afiliado da conta afetada" },
+    ],
+    example: { data: "25/08/2026 19:33", tag: "allangroisman" },
+  },
+  {
+    key: "afiliadoCookieOk",
+    label: "Cookie de afiliado normalizado",
+    variables: [
+      { name: "data", desc: "Data/hora do aviso" },
+      { name: "tag", desc: "TAG de afiliado da conta afetada" },
+    ],
+    example: { data: "25/08/2026 20:10", tag: "allangroisman" },
+  },
 ];
 
 const DEFAULT_CONFIG = {
@@ -189,6 +224,7 @@ const DEFAULT_CONFIG = {
     scrapTester: true,
     errors: true,
     systemOnline: true,
+    afiliadoCookie: true,
   },
   templates: { ...DEFAULT_TEMPLATES },
 };
@@ -396,6 +432,22 @@ async function notifySystemOnline() {
   await send(renderTemplate(template, { data: formatDate(new Date().toISOString()) }));
 }
 
+// Cookie de afiliado do ML vencido (HTTP 401/403 no createLink) e sua recuperação.
+// Quem decide QUANDO chamar é o affiliate-alert.js — aqui é só o envio.
+async function notifyMLCookieExpired({ tag } = {}) {
+  const cfg = readConfig();
+  if (!cfg.events.afiliadoCookie) return;
+  const template = cfg.templates.afiliadoCookieExpirado || DEFAULT_TEMPLATES.afiliadoCookieExpirado;
+  await send(renderTemplate(template, { data: formatDate(new Date().toISOString()), tag: tag || "—" }));
+}
+
+async function notifyMLCookieRecovered({ tag } = {}) {
+  const cfg = readConfig();
+  if (!cfg.events.afiliadoCookie) return;
+  const template = cfg.templates.afiliadoCookieOk || DEFAULT_TEMPLATES.afiliadoCookieOk;
+  await send(renderTemplate(template, { data: formatDate(new Date().toISOString()), tag: tag || "—" }));
+}
+
 async function sendTest() {
   const cfg = readConfig();
   const wn = whatsnimbus.readConfig();
@@ -475,12 +527,14 @@ function renderPreview(key, text) {
     vars.data = ex.data;
     vars.duracao = ex.duracao;
   } else {
-    vars = { data: ex.data };
+    // Todas as variáveis do exemplo, não só a data: modelo novo com variável
+    // própria (ex.: {tag}) sairia com o campo vazio na pré-visualização.
+    vars = { ...ex };
   }
   return renderTemplate(src, vars);
 }
 
 module.exports = {
-  readConfig, writeConfig, notifyScrapingResult, notifyScrapTesterResult, notifyError, notifySystemOnline, sendTest,
+  readConfig, writeConfig, notifyMLCookieExpired, notifyMLCookieRecovered, notifyScrapingResult, notifyScrapTesterResult, notifyError, notifySystemOnline, sendTest,
   getTemplates, saveTemplates, renderPreview,
 };

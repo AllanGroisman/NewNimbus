@@ -21,6 +21,7 @@ const EVENT_LABELS = {
   scrapTester:  { label: "Teste de scraping",  desc: "Envia o relatório do ScrapTester a cada rodada, dizendo quais campos dos produtos estão faltando." },
   errors:       { label: "Erros críticos",     desc: "Notifica quando ocorre um erro inesperado no sistema." },
   systemOnline: { label: "Sistema online",     desc: "Avisa quando o backend é (re)iniciado." },
+  afiliadoCookie: { label: "Cookie de afiliado", desc: "Avisa quando o Mercado Livre recusa o cookie de um cliente ao gerar link de afiliado — e quando volta ao normal." },
 };
 
 export default function PageAdminNotifications({ onGoToWhatsNimbus }) {

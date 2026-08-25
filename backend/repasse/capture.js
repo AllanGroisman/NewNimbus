@@ -343,9 +343,11 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null) {
       // mensagem real do erro em vez de mascarar como "não é produto".
       if (!scraped) {
         const reason = `falha no scrape: ${scrapeErr?.message || "motivo desconhecido"}`;
-        // Aqui o erro veio de fora (Puppeteer, rede, urlGuard) e não traz `kind` —
-        // é o caso legítimo de olhar o texto, pra separar timeout de desconhecido.
-        const errorKind = classifyFromText(scrapeErr?.message);
+        // Erro de fora (Puppeteer, rede, urlGuard) não traz `kind` — é o caso
+        // legítimo de olhar o texto, pra separar timeout de desconhecido. Já o
+        // createLink recusando o link vem tipado da origem, e o texto dele não
+        // deve ser reinterpretado.
+        const errorKind = scrapeErr?.kind || classifyFromText(scrapeErr?.message);
         console.log(`[repasse] ${store}: ${reason} → descartado`);
         discarded.push({ rawUrl, resolved, store, affiliateConfigured, reason, errorKind, stage: STAGE.SCRAPE });
         continue;

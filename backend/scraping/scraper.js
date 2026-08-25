@@ -1775,6 +1775,67 @@ function shouldRetryScrape(store, err) {
   return true;
 }
 
+// Gera a landing de afiliado do usuário para um link direto e lê o produto dela.
+// Devolve { product, err }: `err` já vem tipado (kind/blocked) pra virar mensagem
+// certa lá em cima — cookie vencido pede AÇÃO, link recusado pelo programa não é
+// bloqueio nenhum, e nenhum dos dois é CAPTCHA.
+async function mlProductViaAffiliateLanding(cleanUrl, userId) {
+  const affiliate = require("./affiliate");
+  const { shortUrl, kind, reason } = await affiliate.criarLinkAfiliadoML(userId, cleanUrl);
+
+  if (!shortUrl) {
+    const err = new Error(reason || "Não foi possível gerar o link de afiliado do Mercado Livre.");
+    err.blocked = kind === affiliate.ML_LINK_KIND.COOKIE;
+    err.kind = kind;
+    console.warn(`[scraper ML] link direto: createLink não resolveu (${kind}): ${reason}`);
+    return { product: null, err };
+  }
+
+  let read = null;
+  try {
+    read = await mlSocial.fetchSocialLanding(shortUrl);
+  } catch (fetchErr) {
+    console.warn(`[scraper ML] link direto: leitura da landing gerada falhou: ${fetchErr.message}`);
+    return { product: null, err: null };   // sem motivo próprio: deixa o navegador tentar
+  }
+
+  if (read.ok) return { product: read.product, err: null };
+
+  console.warn(`[scraper ML] link direto: landing gerada não serviu (${read.kind}): ${read.reason}`);
+  return { product: null, err: null };
+}
+
+// O produto já raspado, se estiver no catálogo. `fromCatalog` sobe até a UI.
+async function mlProductFromCatalog(cleanUrl) {
+  try {
+    const catalog = require("../catalog");
+    const p = await catalog.getByLink(cleanUrl);
+    if (!p || !p.name || p.price == null) return null;
+    console.warn(`[scraper ML] link direto: dados vindos do catálogo (visto em ${p.lastSeenAt || "?"}).`);
+    return {
+      name: p.name,
+      link: p.link,
+      finalUrl: p.link,
+      price: p.price,
+      originalPrice: p.originalPrice ?? null,
+      discount: p.discount ?? null,
+      hasPromo: p.originalPrice != null || p.discount != null,
+      sold: p.sold ?? null,
+      soldCount: p.soldCount ?? null,
+      rating: p.rating ?? null,
+      reviewsCount: p.reviewsCount ?? null,
+      img: p.img,
+      store: "Mercado Livre",
+      category: p.category || null,
+      fromCatalog: true,
+      scrapedAt: p.lastSeenAt || null,
+    };
+  } catch (err) {
+    console.warn(`[scraper ML] link direto: catálogo indisponível: ${err.message}`);
+    return null;
+  }
+}
+
 async function scrapeSingleProduct(url, { userId } = {}) {
   if (!url || typeof url !== "string" || !url.trim()) {
     throw new Error("URL inválida");
@@ -1817,6 +1878,32 @@ async function scrapeSingleProduct(url, { userId } = {}) {
     }
   }
 
+  // ML: link DIRETO de produto (/p/MLB…, /MLB-…). Aqui o navegador não adianta —
+  // em 25/08/2026, na VPS, a página de produto respondeu CAPTCHA no Chrome headless
+  // COM e SEM cookie de afiliado, e também por fetch cru com headers completos de
+  // browser (a API pública responde 403). O que ainda passa é a landing /social/ —
+  // então o caminho é transformar o link direto na landing de afiliado do PRÓPRIO
+  // usuário (mesma chamada createLink que o envio já faz) e ler ela.
+  let afiliadoErr = null;
+  if (store === "Mercado Livre" && !mlSocial.isAffiliateShareUrl(cleanUrl)) {
+    const viaAfiliado = await mlProductViaAffiliateLanding(cleanUrl, userId);
+    if (viaAfiliado.product) return viaAfiliado.product;
+    afiliadoErr = viaAfiliado.err;
+
+    // Rede de segurança: o produto pode já estar no catálogo raspado. Vem DEPOIS
+    // da landing de propósito — o catálogo é atualizado a cada poucas horas, e
+    // preço velho no grupo de um cliente é pior do que um campo em branco. Vai
+    // marcado com fromCatalog pra UI avisar que o preço merece conferência.
+    const fromCatalog = await mlProductFromCatalog(cleanUrl);
+    if (fromCatalog) return fromCatalog;
+
+    // Cookie vencido: o navegador usaria o MESMO cookie e bateria na mesma parede,
+    // gastando ~20 s pra terminar com uma mensagem pior. Falha agora, dizendo o que
+    // fazer. Link recusado pelo programa de afiliados ainda tenta o navegador — ali
+    // o cookie está vivo e a página pode abrir.
+    if (afiliadoErr?.kind === "login-wall") throw afiliadoErr;
+  }
+
   const maxAttempts = maxAttemptsFor(store);
   let lastErr = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -1828,6 +1915,10 @@ async function scrapeSingleProduct(url, { userId } = {}) {
       await sleep(amzBackoffMs(attempt));
     }
   }
+  // O navegador também não passou. Quando o motivo do afiliado é mais específico
+  // (cookie vencido, link fora do programa), ele manda — "CAPTCHA, tente daqui a
+  // pouco" faria a pessoa esperar por um problema que só some se ela agir.
+  if (afiliadoErr) throw afiliadoErr;
   throw lastErr;
 }
 
@@ -1850,7 +1941,7 @@ async function autoScroll(page) {
   await new Promise(r => setTimeout(r, 1000));
 }
 
-module.exports = { maxAttemptsFor, shouldRetryScrape, scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, upgradeMLImageUrl, upgradeShopeeImageUrl, upgradeImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, extractShopeeIds, parseMLReviewCompacted, mergeNewProducts, parseAmazonSold, parseRatingText, parseReviewsCount, reconcilePricing, normalizeSoldText,
+module.exports = { maxAttemptsFor, shouldRetryScrape, mlProductViaAffiliateLanding, mlProductFromCatalog, scrapeOfertas, scrapeML, scrapeAmazon, scrapeShopee, scrapeSingleProduct, detectStore, upgradeAmazonImageUrl, upgradeMLImageUrl, upgradeShopeeImageUrl, upgradeImageUrl, applyFilters, buildAmazonDealsUrl, normalizeSource, shopeeNodeToProduct, amzBackoffMs, slugNameFromUrl, extractShopeeIds, parseMLReviewCompacted, mergeNewProducts, parseAmazonSold, parseRatingText, parseReviewsCount, reconcilePricing, normalizeSoldText,
   parseBrlPrice, parseDiscountLabel, parseAmazonPdpPricing, selectVerifiedAmazonProducts, CATEGORIES, STORES,
   // Reusados por ml-hub.js (navegar logado em páginas do ML)
   launchAmazonBrowser, applyAmazonStealth, parseMLCookies, autoScroll, detectBlockPage, UA,

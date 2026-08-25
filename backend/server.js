@@ -1685,7 +1685,9 @@ app.post("/api/scraper/fetch-url", auth.requireAuth, requireActiveSubscription, 
     res.json(data);
   } catch (err) {
     console.error("[fetch-url]", err.message);
-    res.status(400).json({ error: err.message });
+    // `code` é o motivo tipado (login-wall, nao-e-produto, captcha…): cookie
+    // vencido pede ação de quem usa e não pode chegar na tela como "espere".
+    res.status(400).json({ error: err.message, code: err.kind || null });
   }
 });
 

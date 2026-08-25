@@ -125,6 +125,44 @@ describe("gerarLinkAfiliadoML", () => {
     expect(affiliate.status(TEST_USER_ID).ml.lastFailureReason).toBe("ECONNRESET");
   });
 
+  it("HTTP 401 vira kind login-wall (cookie vencido pede AÇÃO, não espera)", async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 401, json: async () => ({}) });
+
+    const r = await affiliate.criarLinkAfiliadoML(TEST_USER_ID, LINK);
+    expect(r.shortUrl).toBeNull();
+    expect(r.kind).toBe(affiliate.ML_LINK_KIND.COOKIE);
+    expect(r.reason).toMatch(/cookie/i);
+    // O contrato antigo continua: os chamadores de sempre recebem null.
+    expect(await affiliate.gerarLinkAfiliadoML(TEST_USER_ID, `${LINK}?outro`)).toBeNull();
+  });
+
+  it("200 sem short_url vira kind nao-e-produto — o cookie está vivo", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ urls: [{ message: "URL not allowed in affiliates program" }] }),
+    });
+
+    const r = await affiliate.criarLinkAfiliadoML(TEST_USER_ID, LINK);
+    expect(r.shortUrl).toBeNull();
+    expect(r.kind).toBe(affiliate.ML_LINK_KIND.LINK_RECUSADO);
+    // 200 é prova de sessão válida: conta como sucesso no status, não como cookie ruim.
+    expect(affiliate.status(TEST_USER_ID).ml.lastSuccessAt).toBeTruthy();
+  });
+
+  it("sem tag/cookie vira kind afiliado-ausente, sem tocar a rede", async () => {
+    affiliate.clearConfig(TEST_USER_ID);
+    const r = await affiliate.criarLinkAfiliadoML(TEST_USER_ID, LINK);
+    expect(r.kind).toBe(affiliate.ML_LINK_KIND.SEM_CONFIG);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("sucesso devolve kind ok e o link curto", async () => {
+    fetchMock.mockResolvedValue(okResponse("https://meli.la/abc"));
+    const r = await affiliate.criarLinkAfiliadoML(TEST_USER_ID, `${LINK}?novo`);
+    expect(r).toMatchObject({ shortUrl: "https://meli.la/abc", kind: affiliate.ML_LINK_KIND.OK });
+  });
+
   it("falha não fica cacheada: próxima chamada tenta a rede de novo", async () => {
     fetchMock
       .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) })
