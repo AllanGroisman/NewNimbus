@@ -273,7 +273,7 @@ async function scrapeHub({ category = null, limit = 200 } = {}) {
   try {
     const verdict = verdictFor(r);
     if (!verdict.ok) {
-      affiliate.recordMLHubCheck({ ok: false, reason: verdict.reason });
+      affiliate.recordMLHubCheck({ ok: false, reason: verdict.reason, kind: verdict.kind });
       throw new Error(verdict.reason);
     }
 

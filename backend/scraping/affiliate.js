@@ -640,7 +640,20 @@ function clearScraperMLAdminSession() {
 
 // Guarda o resultado do último "Testar acesso ao Hub" junto do cookie.
 // Não faz nada se a sessão vem de env (não há o que atualizar em appConfig).
-function recordMLHubCheck({ ok, reason }) {
+//
+// É também o funil por onde Hub e cupons passam nas DUAS pontas (falha e sucesso), o
+// que faz dele o lugar certo pra alimentar o aviso de bloqueio do admin — daí os campos
+// `kind` (tipo da parede) e `manual`. O aviso fica ANTES do early return do cookie: uma
+// sessão vinda de env não tem o que gravar, mas continua podendo estar bloqueada.
+//
+// `manual: true` é o botão "Testar acesso" do Admin, que de propósito NÃO conta: quem
+// clicou já está olhando a tela, e testar um cookie que ainda não vale não pode virar
+// mensagem no grupo.
+function recordMLHubCheck({ ok, reason, kind, manual } = {}) {
+  if (!manual) {
+    try { require("../notifications/block-alert").mlSessionResult({ ok, kind, reason }); }
+    catch { /* aviso nunca pode derrubar o scraping */ }
+  }
   const cur = readScraperMLAdminSession();
   if (!cur.cookie) return cur;
   const next = {

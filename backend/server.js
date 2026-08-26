@@ -2466,11 +2466,13 @@ app.post("/api/admin/scraper/ml/session/test", auth.requireAuth, auth.requireAdm
   if (!session) return res.status(400).json({ error: "Nenhuma sessão salva — cole o cookie da conta do sistema primeiro." });
   try {
     const r = await mlHub.checkHubAccess(session.cookie);
-    affiliate.recordMLHubCheck({ ok: r.ok, reason: r.reason });
+    // manual: quem clicou já está olhando a tela — testar um cookie que ainda não
+    // vale não pode virar aviso de bloqueio no grupo do admin.
+    affiliate.recordMLHubCheck({ ok: r.ok, reason: r.reason, manual: true });
     if (!await confirmConfigSaved(res)) return;
     res.json({ ...r, session: mlSessionPayload() });
   } catch (err) {
-    affiliate.recordMLHubCheck({ ok: false, reason: err.message });
+    affiliate.recordMLHubCheck({ ok: false, reason: err.message, manual: true });
     res.status(502).json({ error: err.message });
   }
 });

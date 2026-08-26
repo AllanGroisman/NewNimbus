@@ -64,6 +64,25 @@ const DEFAULT_TEMPLATES = {
     "",
     "A geração de link de afiliado do Mercado Livre voltou a funcionar.",
   ].join("\n"),
+  bloqueioDetectado: [
+    "*[Nimbus] 🚧 Bloqueio no Scraping*",
+    "📅 {data}",
+    "Onde: {alvo}",
+    "Motivo: {motivo}",
+    "",
+    "{o_que}",
+    "",
+    "{falhas} falhas seguidas, sem nenhum sucesso desde {desde}.",
+    "{clientes}",
+    "O que fazer: {o_que_fazer}",
+  ].join("\n"),
+  bloqueioNormalizado: [
+    "*[Nimbus] ✅ Bloqueio Normalizado*",
+    "📅 {data}",
+    "Onde: {alvo}",
+    "",
+    "{motivo} parou de acontecer — o scraping voltou a passar.",
+  ].join("\n"),
   test: [
     "*[Nimbus] 🔔 Teste de Notificação*",
     "📅 {data}",
@@ -203,6 +222,40 @@ const TEMPLATE_META = [
     example: { data: "25/08/2026 19:33", tag: "allangroisman" },
   },
   {
+    key: "bloqueioDetectado",
+    label: "Bloqueio de scraping detectado",
+    variables: [
+      { name: "data", desc: "Data/hora do aviso" },
+      { name: "alvo", desc: "Onde travou (ex.: Repasse · Mercado Livre)" },
+      { name: "motivo", desc: "Tipo do bloqueio (CAPTCHA, muro de login…)" },
+      { name: "o_que", desc: "O que aconteceu, na linguagem do painel de Repasse" },
+      { name: "o_que_fazer", desc: "A orientação — esperar ou agir" },
+      { name: "falhas", desc: "Quantas falhas seguidas do mesmo tipo" },
+      { name: "desde", desc: "Hora da primeira falha da sequência" },
+      { name: "clientes", desc: "Clientes atingidos (vazio quando não se aplica)" },
+    ],
+    example: {
+      data: "25/08/2026 15:12",
+      alvo: "Repasse · Mercado Livre",
+      motivo: "CAPTCHA",
+      o_que: "A loja exigiu verificação anti-robô e a página do produto não abriu.",
+      o_que_fazer: "Bloqueio passageiro — nada a fazer agora. Se durar horas seguidas, o jeito de raspar a página é que precisa mudar.",
+      falhas: 90,
+      desde: "25/08/2026 14:03",
+      clientes: "Clientes atingidos: Allan, Marina\n",
+    },
+  },
+  {
+    key: "bloqueioNormalizado",
+    label: "Bloqueio de scraping normalizado",
+    variables: [
+      { name: "data", desc: "Data/hora do aviso" },
+      { name: "alvo", desc: "Onde havia travado" },
+      { name: "motivo", desc: "Tipo do bloqueio que parou" },
+    ],
+    example: { data: "25/08/2026 17:40", alvo: "Repasse · Mercado Livre", motivo: "CAPTCHA" },
+  },
+  {
     key: "afiliadoCookieOk",
     label: "Cookie de afiliado normalizado",
     variables: [
@@ -225,6 +278,7 @@ const DEFAULT_CONFIG = {
     errors: true,
     systemOnline: true,
     afiliadoCookie: true,
+    bloqueios: true,
   },
   templates: { ...DEFAULT_TEMPLATES },
 };
@@ -448,6 +502,22 @@ async function notifyMLCookieRecovered({ tag } = {}) {
   await send(renderTemplate(template, { data: formatDate(new Date().toISOString()), tag: tag || "—" }));
 }
 
+// Bloqueio de scraping que se repete (repasse, Hub, cupons) e sua recuperação.
+// Quem conta a sequência e segura o gatilho é o block-alert.js — aqui é só o envio.
+async function notifyBlockDetected(vars = {}) {
+  const cfg = readConfig();
+  if (!cfg.events.bloqueios) return;
+  const template = cfg.templates.bloqueioDetectado || DEFAULT_TEMPLATES.bloqueioDetectado;
+  await send(renderTemplate(template, { data: formatDate(new Date().toISOString()), ...vars }));
+}
+
+async function notifyBlockRecovered(vars = {}) {
+  const cfg = readConfig();
+  if (!cfg.events.bloqueios) return;
+  const template = cfg.templates.bloqueioNormalizado || DEFAULT_TEMPLATES.bloqueioNormalizado;
+  await send(renderTemplate(template, { data: formatDate(new Date().toISOString()), ...vars }));
+}
+
 async function sendTest() {
   const cfg = readConfig();
   const wn = whatsnimbus.readConfig();
@@ -535,6 +605,6 @@ function renderPreview(key, text) {
 }
 
 module.exports = {
-  readConfig, writeConfig, notifyMLCookieExpired, notifyMLCookieRecovered, notifyScrapingResult, notifyScrapTesterResult, notifyError, notifySystemOnline, sendTest,
+  readConfig, writeConfig, notifyMLCookieExpired, notifyMLCookieRecovered, notifyBlockDetected, notifyBlockRecovered, notifyScrapingResult, notifyScrapTesterResult, notifyError, notifySystemOnline, sendTest,
   getTemplates, saveTemplates, renderPreview,
 };

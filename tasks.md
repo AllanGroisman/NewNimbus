@@ -1160,11 +1160,69 @@ No preenchimento automatico mesma coisa ao clicar em configurar. Em ambos, quand
     `frontend/src/__tests__/AdminRepasse.test.jsx`.
 
 
-106. [ ] Notificação de Admin quando houver bloqueio que precisa ser arrumado. No caso do item 104 o sistema passou horas sem repassar nada e ninguém foi avisado — a única pista estava no log de admin, e só para quem foi olhar.
+106. [x] Notificação de Admin quando houver bloqueio que precisa ser arrumado. No caso do item 104 o sistema passou horas sem repassar nada e ninguém foi avisado — a única pista estava no log de admin, e só para quem foi olhar.
 
     Reaproveitar o que já existe, sem infra nova: `backend/notifications/admin-notifier.js` (o `send()` já manda pelo WhatsNimbus no grupo configurado, com modelo editável em "Modelos Notificações" e liga/desliga por evento em `cfg.events`) e o `stateAlert(chave, estáRuim, {graceMs, onDown, onRecover})` de `backend/notifications/user-notifier.js`, que já resolve o debounce: só avisa depois de um período ruim contínuo e avisa de novo quando normaliza (tem teste em `tests/unit/notify-state-alert.test.js`).
 
     Evento novo `bloqueios`, disparado quando o mesmo tipo de bloqueio se repete — por exemplo N falhas seguidas, ou X minutos sem nenhum sucesso naquela loja. **Nunca um aviso por link**, senão vira spam. A mensagem precisa dizer o que fazer: cookie vencido → "cole um cookie novo em Configurações"; CAPTCHA persistente → "o ML está bloqueando o navegador do servidor"; e mandar o "voltou ao normal" quando recuperar. Cobrir também os bloqueios já detectados no scraping do Hub e dos cupons (`ml-hub.js`, `ml-session-page.js`), não só o repasse.
+
+    O evento `bloqueios` entrou no `admin-notifier`, com dois modelos editáveis
+    ("Bloqueio de scraping detectado" e "normalizado") e liga/desliga próprio em Admin ›
+    Notificações. A fatia do cookie de afiliado de cliente já tinha entrado no item 107
+    (evento `afiliadoCookie`); aqui fecharam os outros dois buracos: o **repasse** e o
+    **Hub/cupons**.
+
+    **Duas travas antes de qualquer mensagem**, porque uma só não bastava. O contador de
+    `backend/notifications/block-alert.js` exige N falhas **seguidas do mesmo tipo**
+    (padrão 5, `BLOCK_ALERT_MIN_FAILS`) — isso mata a falha isolada; e só então arma o
+    `stateAlert` que já existia, que ainda exige X minutos contínuos sem nenhum sucesso
+    (padrão 15 min, `BLOCK_ALERT_GRACE_MS`) — isso mata a rajada curta que se resolve
+    sozinha. Nunca um aviso por link, que era a exigência do item.
+
+    A chave é **global por loja + tipo de parede**, não por usuário. O CAPTCHA do item 104
+    é do navegador do SERVIDOR: atinge todo mundo, e um aviso por cliente seria exatamente
+    o spam que se queria evitar. Quem sofreu vai **citado na mensagem** ("Clientes
+    atingidos: …"), resolvendo id → nome pelo banco, com o id de reserva se o banco não
+    responder — nome é enfeite, o aviso não pode depender dele.
+
+    O "o que fazer" não é texto novo: sai do `ERROR_KINDS` do item 105
+    (`what` + `action`), então a orientação no WhatsApp é **a mesma** que o painel de
+    Repasse mostra. Cookie vencido continua dizendo "cole um cookie novo em
+    Configurações"; CAPTCHA diz que é passageiro e que, se durar horas, o jeito de raspar
+    é que precisa mudar.
+
+    **O que conta como parede** virou `BLOCK_KINDS` no `error-kinds.js`
+    (`captcha`, `login-wall`, `timeout`). `nao-e-produto` e `loja-nao-suportada` ficam de
+    fora de propósito: ali a página ABRIU e o link é que não servia — e link ruim em grupo
+    líder é o caso comum, não a exceção. No `capture.js` o gancho fica **antes** dos
+    descartes, num ponto só, porque precisa ver os dois lados: a parede e o sucesso que
+    prova que ela caiu. Um scrape que falhou por rede (nem parede, nem sucesso) não zera
+    a sequência: não é prova de nada.
+
+    No Hub e nos cupons o gancho é o `affiliate.recordMLHubCheck` — que já era o funil por
+    onde `ml-hub.js` e `ml-cupons.js` passam nas **duas** pontas, falha e sucesso, então
+    cobrir os dois custou um `if`. Ele ganhou `kind` e `manual`, e o aviso fica antes do
+    early return do cookie (sessão de env não tem o que gravar, mas continua podendo estar
+    bloqueada). O botão "Testar acesso ao Hub" passa `manual: true` e **não** conta: quem
+    clicou já está olhando a tela, e testar um cookie que ainda não vale não pode virar
+    mensagem no grupo.
+
+    Havia três vocabulários para as mesmas paredes — o `KIND` do repasse, o
+    `login`/`captcha`/`verificacao` do Hub e dos cupons, e os literais do
+    `detectBlockPage`. O `block-alert` traduz **na entrada**, numa função de 6 linhas
+    (`verificacao` vira `login-wall`, porque a saída é a mesma: mexer na conta; o `alvo`
+    é que diz que ali é a conta do sistema). Unificar os três de verdade seria refatoração
+    grande em código que funciona, e não é o pedido deste item.
+
+    Testes: `tests/unit/notify-bloqueios.test.js` (13 casos — rajada curta cala, falha
+    isolada cala, sequência longa avisa uma vez só, sucesso no meio zera, CAPTCHA e muro
+    de login não somam entre si, lojas não somam entre si, link ruim nunca arma, clientes
+    sem repetição, teste manual não mexe no estado) e 2 casos novos em
+    `tests/unit/repasse-error-kinds.test.js` para o `BLOCK_KINDS`.
+
+    **Não entrou**: abortar os links restantes da mensagem quando a loja já se sabe
+    bloqueada. Hoje o `capture.js` segue e abre outro Chrome por link — economizaria
+    tempo, mas é mudança de comportamento do repasse, não de notificação.
 
 107. [x] "Adicionar produto manualmente" não preenchia mais nada no Mercado Livre. O conserto do item 104 valia só para landing de afiliado (`/social/…`), e no "Adicionar link manualmente" quem cola o link cola a página do produto (`/p/MLB…`) — que voltava pro navegador e apanhava CAPTCHA. Em produção, três tentativas seguidas em 25/08 às 19:33, 19:34 e 19:36: `[fetch-url] Mercado Livre pediu verificação (CAPTCHA)`.
 
@@ -1224,4 +1282,5 @@ No preenchimento automatico mesma coisa ao clicar em configurar. Em ambos, quand
     e 3 em `frontend/src/__tests__/GroupDashboard.test.jsx`.
 
     **Fica pendente**: o resto do item 106 — os mesmos avisos para os bloqueios do Hub
-    e dos cupons (`ml-hub.js`, `ml-session-page.js`).
+    e dos cupons (`ml-hub.js`, `ml-session-page.js`). *(Fechado no item 106, pelo
+    `recordMLHubCheck`, que já era o funil dos dois.)*

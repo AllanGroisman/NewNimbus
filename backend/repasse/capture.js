@@ -321,6 +321,21 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null) {
         console.warn(`[repasse] scrape falhou pra ${rawUrl}: ${err.message}`);
       }
 
+      // Alimenta o aviso de bloqueio do admin com o desfecho deste scrape. Fica ANTES
+      // dos descartes porque precisa ver os dois lados: a parede E o sucesso que prova
+      // que ela caiu. Um scrape que ABRIU a página e não era produto conta como sucesso
+      // aqui — o link é que não servia, não havia parede nenhuma.
+      //
+      // Um aviso por link seria spam; quem segura o gatilho (N falhas seguidas + X min
+      // sem sucesso) é o block-alert. O require é preguiçoso e dentro de try/catch pelo
+      // mesmo motivo do scraping/affiliate.js: quebrar o ciclo notifications → whatsapp
+      // → scheduler no boot.
+      try {
+        require("../notifications/block-alert").repasseScrapeResult({
+          store, ok: !!scraped, kind: scrapeErr?.kind, reason: scrapeErr?.message, userId,
+        });
+      } catch { /* aviso nunca pode derrubar o repasse */ }
+
       // Bloqueio anti-bot (login wall / CAPTCHA / interstitial) em qualquer loja: nem
       // o Puppeteer passou, e o `resolved` (fetch cru) é sabidamente a mesma página de
       // bloqueio — não há link confiável pra guardar, então descarta. Registra a razão

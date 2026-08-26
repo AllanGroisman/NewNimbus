@@ -22,6 +22,7 @@ const EVENT_LABELS = {
   errors:       { label: "Erros críticos",     desc: "Notifica quando ocorre um erro inesperado no sistema." },
   systemOnline: { label: "Sistema online",     desc: "Avisa quando o backend é (re)iniciado." },
   afiliadoCookie: { label: "Cookie de afiliado", desc: "Avisa quando o Mercado Livre recusa o cookie de um cliente ao gerar link de afiliado — e quando volta ao normal." },
+  bloqueios:      { label: "Bloqueios de scraping", desc: "Avisa quando a mesma parede (CAPTCHA, muro de login) se repete no repasse, no Hub ou nos cupons — e quando volta ao normal." },
 };
 
 export default function PageAdminNotifications({ onGoToWhatsNimbus }) {

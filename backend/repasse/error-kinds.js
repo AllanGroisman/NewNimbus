@@ -86,6 +86,13 @@ const ERROR_KINDS = {
   },
 };
 
+// Motivos que significam "a página não abriu por causa de uma parede". São os
+// únicos que podem virar aviso de bloqueio pro admin (ver notifications/block-alert.js).
+// `nao-e-produto` e `loja-nao-suportada` ficam de fora de propósito: ali a página
+// abriu, o link é que não servia — contar isso como bloqueio seria alarme falso, e
+// links ruins no grupo líder são o caso comum, não a exceção.
+const BLOCK_KINDS = new Set([KIND.CAPTCHA, KIND.LOGIN_WALL, KIND.TIMEOUT]);
+
 // Etapas do caminho de um link, em ordem. Serve pra UI saber se uma checagem
 // ("fonte habilitada", "scrape") simplesmente NÃO CHEGOU a rodar — antes disso o
 // painel mostrava um traço solto, que parecia defeito.
@@ -127,4 +134,4 @@ function classifyFromText(text) {
   return KIND.DESCONHECIDO;
 }
 
-module.exports = { KIND, ERROR_KINDS, STAGE, STAGE_ORDER, classifyFromText };
+module.exports = { KIND, ERROR_KINDS, BLOCK_KINDS, STAGE, STAGE_ORDER, classifyFromText };

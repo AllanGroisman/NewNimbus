@@ -834,7 +834,7 @@ async function runPull({ groupings = [], limit = 60, withProducts = true, maxPro
         modelFound: !!landing, couponCount: daAba.coupons.length, blocked: r.blocked,
       });
       if (!veredito.ok) {
-        affiliate.recordMLHubCheck({ ok: false, reason: veredito.reason });
+        affiliate.recordMLHubCheck({ ok: false, reason: veredito.reason, kind: veredito.kind });
         throw new Error(veredito.reason);
       }
       totalNoML = daAba.total;
@@ -874,7 +874,7 @@ async function runPull({ groupings = [], limit = 60, withProducts = true, maxPro
           // Bloqueio é estado da SESSÃO: seguir para o próximo cupom só queima a
           // conta mais rápido, e a conta é a mesma do Hub.
           if (res.blocked) {
-            affiliate.recordMLHubCheck({ ok: false, reason: res.reason });
+            affiliate.recordMLHubCheck({ ok: false, reason: res.reason, kind: res.blocked?.kind });
             avisos.push(`Parei nas vitrines: ${res.reason}`);
             break;
           }

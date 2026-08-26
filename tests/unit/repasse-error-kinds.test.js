@@ -15,7 +15,7 @@ import { createRequire } from "module";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const backend = path.resolve(__dirname, "..", "..", "backend");
-const { KIND, ERROR_KINDS, STAGE, STAGE_ORDER, classifyFromText } = require(path.join(backend, "repasse", "error-kinds.js"));
+const { KIND, ERROR_KINDS, BLOCK_KINDS, STAGE, STAGE_ORDER, classifyFromText } = require(path.join(backend, "repasse", "error-kinds.js"));
 
 describe("ERROR_KINDS", () => {
   it("cobre todos os motivos da lista fechada", () => {
@@ -98,5 +98,22 @@ describe("paridade com o resto do código", () => {
     const found = [...sql.matchAll(/SET "errorKind" = '([a-z-]+)'/g)].map(m => m[1]);
     expect(found.length).toBeGreaterThan(0);
     for (const k of found) expect(ERROR_KINDS[k], `kind "${k}" do SQL não está em error-kinds.js`).toBeTruthy();
+  });
+});
+
+describe("BLOCK_KINDS", () => {
+  it("é um subconjunto do catálogo", () => {
+    for (const k of BLOCK_KINDS) {
+      expect(ERROR_KINDS[k], `kind "${k}" de bloqueio não está no catálogo`).toBeTruthy();
+    }
+  });
+
+  // A linha que separa "parede" de "link ruim". Link que não é produto é o caso
+  // COMUM num grupo líder: contar isso como bloqueio encheria o admin de aviso falso.
+  it("deixa de fora o que não é parede", () => {
+    expect(BLOCK_KINDS.has(KIND.NAO_E_PRODUTO)).toBe(false);
+    expect(BLOCK_KINDS.has(KIND.LOJA_NAO_SUPORTADA)).toBe(false);
+    expect(BLOCK_KINDS.has(KIND.AFILIADO_AUSENTE)).toBe(false);
+    expect(BLOCK_KINDS.has(KIND.DESCONHECIDO)).toBe(false);
   });
 });
