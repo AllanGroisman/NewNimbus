@@ -5,6 +5,7 @@ Configurações **globais** do app, salvas como chave-valor. Não é configuraç
 ## O que mora aqui
 
 - **Configuração do admin-scraper** (`key = "scraper-config"`) — categorias e lojas habilitadas, intervalo entre rodadas, limite de produtos por categoria, etc.
+- **Palavras que detectam cupom no repasse** (`key = "repasse-coupon-config"`) — os gatilhos ("cupom", "código", "voucher"…), as palavras ignoradas e o tamanho do código. Dono: `repasse/coupon-words.js`; editável em Admin → Repasse.
 - **Segredo JWT** (`key = "jwt_secret"`) — gerado/lido por `auth.warmup()`. Env `JWT_SECRET` tem prioridade.
 
 A configuração de afiliado **per-user** (ML/Amazon/Shopee) vive em `scraping/affiliate-store/` (tabela `affiliate_config`), não aqui.

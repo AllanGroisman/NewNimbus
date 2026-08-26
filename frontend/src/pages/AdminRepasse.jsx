@@ -4,6 +4,7 @@ import { adminRepasseLogs, adminRepasseSummary, errText} from "../data/api";
 import Pagination from "../components/ui/Pagination";
 import Badge from "../components/ui/Badge";
 import RepasseSummary from "../components/admin/RepasseSummary";
+import CouponDetection from "../components/admin/CouponDetection";
 
 const POLL_MS = 5000;
 
@@ -113,6 +114,8 @@ export default function PageAdminRepasse() {
           Descartes marcados como <em>no envio</em> contam tentativas, não itens únicos.
         </div>
       </div>
+
+      <CouponDetection />
 
       <RepasseSummary
         summary={summary}

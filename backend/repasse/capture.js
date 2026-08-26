@@ -19,6 +19,7 @@ const userNotifier = require("../notifications/user-notifier");
 const { leadersOf } = require("./leaders");
 const { logCapture } = require("./capture-log");
 const { KIND, STAGE, classifyFromText } = require("./error-kinds");
+const couponWords = require("./coupon-words");
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
 
@@ -123,21 +124,28 @@ function extractUrls(text) {
 // o texto era só usado pra achar URLs e descartado — o cupom se perdia. Pura → testável.
 //
 // Conservadora de propósito: só devolve algo quando um dos gatilhos (cupom/código/
-// voucher) aparece ANTES do candidato, e o candidato "parece" código (tem dígito OU
-// caixa mista OU hífen), pra não confundir uma palavra comum da frase com um cupom.
-// Devolve o código em UPPER, sem pontuação nas pontas, 4..20 chars, ou null.
-// "cupom XXXX", "cupom: XXXX", "código de desconto XXXX", "use o cupom XXXX" (o
-// gatilho pode vir depois de "use o"/"com o"/"aplique o" — a regex casa a partir do
-// próprio "cupom"/"código"/"voucher", então esses prefixos não precisam ser listados).
-const COUPON_RE = /(?:cupom|c[óo]digo|voucher)\s*(?:de\s+desconto\s*)?[:\-]?\s*([A-Za-z0-9][A-Za-z0-9._-]{2,19})/gi;
-
-function extractCoupon(text) {
+// voucher, e o que mais o admin tiver cadastrado) aparece ANTES do candidato, e o
+// candidato "parece" código (tem dígito OU caixa mista OU hífen), pra não confundir
+// uma palavra comum da frase com um cupom.
+// Devolve o código em UPPER, sem pontuação nas pontas, dentro do tamanho configurado,
+// ou null. "cupom XXXX", "cupom: XXXX", "código de desconto XXXX", "use o cupom XXXX"
+// (o gatilho pode vir depois de "use o"/"com o"/"aplique o" — a regex casa a partir do
+// próprio gatilho, então esses prefixos não precisam ser listados).
+//
+// As palavras e os tamanhos vêm de repasse/coupon-words.js (app_config, editável no
+// admin). `cfg` só é passado pelo testador da tela e pelos testes; em produção lê a
+// config salva — que no worker é recarregada sozinha a cada 30s.
+function extractCoupon(text, cfg) {
   if (!text || typeof text !== "string") return null;
-  COUPON_RE.lastIndex = 0;
+  const { re, ignore, minLen, maxLen } = couponWords.compile(cfg || couponWords.readConfig());
+  re.lastIndex = 0;
   let m;
-  while ((m = COUPON_RE.exec(text))) {
+  while ((m = re.exec(text))) {
     const code = (m[1] || "").replace(/[._-]+$/, "");
-    if (code.length < 4 || code.length > 20) continue;
+    if (code.length < minLen || code.length > maxLen) continue;
+    // Palavra que o admin marcou como "não é código" ("use o cupom AQUI"). Sem
+    // acento e em minúsculas dos dois lados: "DESCRIÇÃO" e "descricao" são a mesma.
+    if (ignore.has(couponWords.semAcento(code).toLowerCase())) continue;
     // Precisa ter dígito, hífen ou pelo menos uma maiúscula — senão é só uma palavra
     // comum da frase ("cupom aqui", "código abaixo"), não um código de fato.
     if (!/\d/.test(code) && !/-/.test(code) && !/[A-Z]/.test(code)) continue;

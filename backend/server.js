@@ -26,6 +26,7 @@ const tutorials = require("./tutorials");
 const appConfig = require("./config");
 const cpfUtil = require("./utils/cpf");
 const repasseLeaders = require("./repasse/leaders");
+const couponWords = require("./repasse/coupon-words");
 const queueMod = require("./infra/queue");
 const logger = require("./infra/logger");
 const metrics = require("./infra/metrics");
@@ -2650,6 +2651,41 @@ app.get("/api/admin/catalog", auth.requireAuth, auth.requireAdmin, async (req, r
     });
   } catch (err) {
     httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/catalog" });
+  }
+});
+
+// ── Detecção de cupom na legenda do grupo líder ──────────────────────────
+// As palavras-gatilho ("cupom", "código", "voucher"…) e o tamanho do código
+// eram fixos no capture.js; agora vivem em app_config e o admin edita aqui.
+// A captura roda no WORKER, que recarrega o app_config a cada 30s — por isso a
+// mudança vale em até meio minuto, sem restart.
+app.get("/api/admin/repasse/coupon-config", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json({ config: couponWords.readConfig(), defaults: couponWords.DEFAULTS });
+});
+
+app.put("/api/admin/repasse/coupon-config", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const config = couponWords.writeConfig(req.body || {});
+    if (!await confirmConfigSaved(res)) return;
+    res.json({ config });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Testador da tela: roda a detecção com a config que ainda está no formulário,
+// não com a salva. Serve pra conferir uma palavra nova ANTES de gravar — sem
+// isso o único jeito de testar seria postar num grupo líder de verdade.
+app.post("/api/admin/repasse/coupon-config/test", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  try {
+    const text = String((req.body || {}).text || "").slice(0, 4000);
+    const config = couponWords.sanitize((req.body || {}).config);
+    // Require aqui dentro (e não no topo) como as outras rotas de repasse: o
+    // capture.js arrasta scraper/scheduler e a rota é usada de vez em quando.
+    const capture = require("./repasse/capture");
+    res.json({ coupon: capture.extractCoupon(text, config), config });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 

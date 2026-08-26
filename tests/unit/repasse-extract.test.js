@@ -12,6 +12,7 @@ import { createRequire } from "module";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const capture = require(path.resolve(__dirname, "..", "..", "backend", "repasse", "capture.js"));
+const couponWords = require(path.resolve(__dirname, "..", "..", "backend", "repasse", "coupon-words.js"));
 
 describe("extractUrls", () => {
   it("acha múltiplas URLs no meio do texto, na ordem", () => {
@@ -71,6 +72,76 @@ describe("extractCoupon", () => {
     expect(capture.extractCoupon("")).toBeNull();
     expect(capture.extractCoupon(null)).toBeNull();
     expect(capture.extractCoupon(42)).toBeNull();
+  });
+});
+
+// As palavras/tamanhos da detecção viraram config editável no admin
+// (app_config "repasse-coupon-config"). Aqui a config é passada direto no 2º
+// argumento — os testes acima, sem argumento, provam que o DEFAULT continua
+// reproduzindo o comportamento antigo.
+describe("extractCoupon — lista de palavras configurável", () => {
+  it("gatilho novo passa a valer, e o removido deixa de valer", () => {
+    const cfg = { triggers: ["promo"] };
+    expect(capture.extractCoupon("aproveita a promo NIMBUS10", cfg)).toBe("NIMBUS10");
+    expect(capture.extractCoupon("use o cupom JBL20", cfg)).toBeNull();
+  });
+
+  it("gatilho vale com ou sem acento, dos dois lados", () => {
+    expect(capture.extractCoupon("aplique o codigo X10AB")).toBe("X10AB");
+    const cfg = { triggers: ["código"] };
+    expect(capture.extractCoupon("aplique o codigo X10AB", cfg)).toBe("X10AB");
+    expect(capture.extractCoupon("aplique o código X10AB", cfg)).toBe("X10AB");
+  });
+
+  it("palavra ignorada é descartada mesmo gritada em caixa alta", () => {
+    // Sem a lista, "AQUI" passaria: tem maiúscula, então a heurística de forma
+    // acha que é código.
+    expect(capture.extractCoupon("use o cupom AQUI", { ignore: [] })).toBe("AQUI");
+    expect(capture.extractCoupon("use o cupom AQUI", { ignore: ["aqui"] })).toBeNull();
+    // Comparação sem acento dos dois lados: "descrição" na config barra
+    // "DESCRICAO" no texto (e vice-versa).
+    expect(capture.extractCoupon("use o cupom DESCRICAO", { ignore: ["descrição"] })).toBeNull();
+    expect(capture.extractCoupon("use o cupom DESCRICAO", { ignore: [] })).toBe("DESCRICAO");
+  });
+
+  it("respeita os tamanhos mínimo e máximo configurados", () => {
+    expect(capture.extractCoupon("use o cupom X1", { minLen: 2 })).toBe("X1");
+    expect(capture.extractCoupon("use o cupom X1")).toBeNull();
+    // Palavra maior que o máximo é RECUSADA, não cortada no limite: um cupom
+    // truncado chegaria ao cliente como código inválido.
+    expect(capture.extractCoupon("cupom ABCDEFGH1", { maxLen: 5 })).toBeNull();
+    expect(capture.extractCoupon("cupom ABCDE", { maxLen: 5 })).toBe("ABCDE");
+    expect(capture.extractCoupon("cupom ABCDEFGHIJKLMNOPQRSTUVWXYZ1")).toBeNull();
+  });
+
+  it("lista vazia ou inválida cai no default em vez de desligar a detecção", () => {
+    expect(capture.extractCoupon("use o cupom JBL20", { triggers: [] })).toBe("JBL20");
+    expect(capture.extractCoupon("use o cupom JBL20", { triggers: "cupom" })).toBe("JBL20");
+  });
+
+  it("palavra com caractere especial não quebra a regex", () => {
+    // Um "c+" digitado por engano viraria "Invalid regular expression" e
+    // derrubaria a captura inteira se não fosse escapado.
+    expect(() => capture.extractCoupon("use o c+ JBL20", { triggers: ["c+"] })).not.toThrow();
+    expect(capture.extractCoupon("use o c+ JBL20", { triggers: ["c+"] })).toBe("JBL20");
+  });
+});
+
+describe("coupon-words — saneamento da config", () => {
+  it("normaliza as listas: minúsculas, sem espaço, sem repetida", () => {
+    const cfg = couponWords.sanitize({ triggers: [" Cupom ", "CUPOM", "Voucher"], ignore: [" Aqui "] });
+    expect(cfg.triggers).toEqual(["cupom", "voucher"]);
+    expect(cfg.ignore).toEqual(["aqui"]);
+  });
+
+  it("máximo menor que o mínimo não zera a detecção: o mínimo manda", () => {
+    const cfg = couponWords.sanitize({ minLen: 10, maxLen: 3 });
+    expect(cfg.minLen).toBe(10);
+    expect(cfg.maxLen).toBe(10);
+  });
+
+  it("accentInsensitive escapa metacaractere antes de trocar a letra", () => {
+    expect(couponWords.accentInsensitive("c+")).toBe("[cç]\\+");
   });
 });
 

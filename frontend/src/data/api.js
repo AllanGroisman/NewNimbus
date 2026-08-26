@@ -612,6 +612,13 @@ export async function adminRepasseSummary({ hours = 24, userId, groupId, store }
   return http("GET", `/api/admin/repasse/summary?${params}`);
 }
 
+// Palavras que fazem a captura reconhecer um cupom escrito na legenda. O GET
+// devolve { config, defaults } — os defaults alimentam o "Restaurar padrão".
+export async function adminRepasseCouponConfig()      { return http("GET", "/api/admin/repasse/coupon-config"); }
+export async function adminRepasseCouponConfigSave(config) { return http("PUT", "/api/admin/repasse/coupon-config", config); }
+// Testa com a config do formulário (ainda não salva) — daí ela ir no corpo.
+export async function adminRepasseCouponTest(text, config) { return http("POST", "/api/admin/repasse/coupon-config/test", { text, config }); }
+
 // ─── Layout (paleta de cores, global) ──────────────────────────────────
 // A leitura é pública: a tela de login precisa da paleta antes do login.
 export async function layoutGet()                 { return http("GET",  "/api/layout"); }
