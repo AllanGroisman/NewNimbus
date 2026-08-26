@@ -77,7 +77,12 @@ const CODE_APPLY_RE = /^(adicionar|inserir|aplicar) cupom$/i;
 // da página se chama "smart-coupons-frontend" e o baseURL do app é "/coupons").
 const COUPON_API_RE = /(coupon|cupon|smart-coupons)/i;
 
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+// As pausas abaixo existem pra não parecer robô no site do ML. Em teste não há
+// site nenhum (a página é um fake), então elas viram espera pura: só neste
+// arquivo somavam ~15 s da suíte de unitários. Sob NODE_ENV=test o sleep vira
+// um tick — a ordem assíncrona do crawler continua idêntica, só sem o relógio.
+const SLEEP_REAL = process.env.NODE_ENV !== "test";
+const sleep = (ms) => new Promise(r => setTimeout(r, SLEEP_REAL ? ms : 0));
 
 // ────────────────────────────────────────────────────────────────────────
 // Parte pura — é o que os testes cobrem, sem navegador

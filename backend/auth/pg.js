@@ -21,7 +21,13 @@ const MAX_PASSWORD_LEN = 128;
 // Custo do bcrypt. Hash guarda o próprio custo, então subir aqui não invalida as
 // senhas já gravadas — elas continuam conferindo, e são regravadas com o custo
 // novo na próxima troca.
-const BCRYPT_ROUNDS = 12;
+//
+// Em teste o custo cai pro mínimo: 12 rounds levam ~485 ms por senha e quase
+// todo teste de integração cria um usuário, o que fazia do bcrypt o item mais
+// caro da suíte inteira. Com 4 rounds são ~3 ms, e o que os testes verificam
+// (hash grava, compare confere) continua idêntico. Mesmo critério já usado nos
+// rate limiters, que também viram no-op sob NODE_ENV=test.
+const BCRYPT_ROUNDS = process.env.NODE_ENV === "test" ? 4 : 12;
 
 const EMAIL_VERIFY_TTL_MS    = 24 * 60 * 60 * 1000; // 24h
 const PASSWORD_RESET_TTL_MS  = 60 * 60 * 1000;     // 1h

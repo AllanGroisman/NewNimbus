@@ -6,7 +6,7 @@ Plataforma de automação de ofertas no WhatsApp. Faz scraping de produtos (Merc
 
 - **`backend/`** — servidor Node.js (Express). Onde fica toda a lógica: login, scraping, scheduler, envio pelo WhatsApp.
 - **`frontend/`** — site React que o usuário usa. Conecta no backend pela rota `/api`.
-- **`tests/`** — bateria automatizada de testes (Vitest). Roda com `windows\test.bat`.
+- **`tests/`** — bateria automatizada de testes (Vitest). Roda com `windows\test.bat`; tempos e o que rodar em cada caso em `tests/TIMING.md`.
 - **`docs/`** — documentos do projeto (arquitetura, plano, status). Não tem código aqui.
 - **`deploy/`** — scripts pra rodar tudo em VPS Ubuntu (install, start, update, setup-backups).
 - **`docker-compose.yml`** — sobe Postgres + Redis em containers locais. **Obrigatório**: Postgres é o storage primário (Prisma) e Redis é usado em modo `QUEUE_BACKEND=redis`.
@@ -19,7 +19,7 @@ Plataforma de automação de ofertas no WhatsApp. Faz scraping de produtos (Merc
 |---|---|
 | **`windows\start.bat`** | Sobe **tudo** local: backend (3001) + worker (Baileys+filas) + frontend (5173). Injeta envs de dev (`DATABASE_URL`, `QUEUE_BACKEND=redis`, `ADMIN_EMAILS`). |
 | **`windows\stop.bat`** | Mata os processos do Node/Vite abertos pelo `windows\start.bat`. |
-| **`windows\test.bat`** | Roda a bateria completa (~286 testes — backend unit/integration/journey + frontend Vitest). |
+| **`windows\test.bat`** | Roda a bateria completa (~1550 testes — backend unit/integration/journey + frontend Vitest, ~2min). |
 | **`windows\backup.bat`** | Abre o gerenciador interativo de backups (sync-manager: dump/restore/upload Backblaze). |
 
 ### VPS Ubuntu (`deploy/*.sh`)
@@ -111,7 +111,7 @@ Usuários novos via Google são criados automaticamente (com trial de 7 dias). S
 ```bat
 windows\start.bat   :: sobe tudo
 windows\stop.bat    :: mata os processos
-windows\test.bat    :: roda a bateria de testes (~286 testes)
+windows\test.bat    :: roda a bateria de testes (~1550 testes, ~2min)
 docker compose down :: para Postgres+Redis (dados persistem nos volumes)
 ```
 
@@ -247,7 +247,9 @@ Veja `docs/` pra documentos de arquitetura, plano de escala e status do projeto.
 
 ## Testes automatizados
 
-O projeto tem **~286 testes** divididos em três camadas. Rodam com `windows\test.bat` (backend + frontend) ou individualmente. Detalhes técnicos em `CLAUDE.md`.
+O projeto tem **~1550 testes** divididos em três camadas. Rodam com `windows\test.bat` (backend + frontend, ~2min) ou individualmente. Catálogo por arquivo em `tests/README.md`.
+
+**Não precisa rodar tudo a cada mudança** — `tests/TIMING.md` tem o tempo de cada arquivo e o mapa de qual suíte roda pra qual parte do código.
 
 ### Backend — unitários (`tests/unit/`)
 

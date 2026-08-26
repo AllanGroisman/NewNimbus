@@ -15,6 +15,11 @@ const userNotifier = require("./notifications/user-notifier");
 const captureLog = require("./repasse/capture-log");
 const { KIND, STAGE } = require("./repasse/error-kinds");
 
+// Respiro entre um envio e o próximo pro WhatsApp não tratar a sequência como
+// disparo em massa. Em teste o WhatsApp é mockado, então a pausa não protege
+// nada e só faz a suíte esperar — eram 4 s por envio.
+const SEND_GAP_MS = process.env.NODE_ENV === "test" ? 0 : 4000;
+
 // Cadência do loop principal (em ms). Roda janelas de envio.
 const TICK_MS = 30 * 1000;
 
@@ -756,7 +761,7 @@ async function sendItem(userId, group, whatsappGroups, item) {
         }
         sentCount++;
         log.info({ item: item.name?.slice(0, 60), waGroup: w.name, jid: w.jid, userId, numberId }, "envio ok");
-        await new Promise(r => setTimeout(r, 4000));
+        await new Promise(r => setTimeout(r, SEND_GAP_MS));
       } catch (err) {
         log.error({ err, waGroup: w.name, jid: w.jid, userId, numberId, item: item.name?.slice(0, 60) }, "falha envio");
         errors.push(`${w.name}: ${err.message}`);

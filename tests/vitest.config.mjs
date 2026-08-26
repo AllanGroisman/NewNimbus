@@ -1,22 +1,24 @@
 import { defineConfig } from "vitest/config";
 
+// Config dos testes UNITÁRIOS. As camadas que precisam de Postgres
+// (integration/ e journey/) rodam pela vitest.integration.config.mjs.
+//
+// Nenhum arquivo de unit/ importa helpers/app.js ou pg-helpers.js — são funções
+// puras com IO mockado. Antes eles herdavam o setup global do banco e pagavam
+// uma limpeza de tabelas antes de cada teste, sem usar o banco pra nada. Sem PG,
+// também não há estado compartilhado, então os arquivos rodam em paralelo.
+//
+// Tempos por arquivo e o mapa "mudei X -> rode Y": tests/TIMING.md
+
 export default defineConfig({
   test: {
     globals: false,
     environment: "node",
-    include: ["unit/**/*.test.js", "integration/**/*.test.js", "journey/**/*.test.js"],
+    include: ["unit/**/*.test.js"],
     testTimeout: 20000,
     hookTimeout: 60000,
-    // Pool=forks com isolate=true (default) = cada arquivo em worker próprio.
-    // fileParallelism: false — a partir da migração pro PG, os testes compartilham
-    // um único database (nimbus_test) e usam truncateAll() entre cada teste.
-    // Rodar arquivos em paralelo causaria corridas; o custo de serializar
-    // arquivos é pequeno (suite total ~30s).
     pool: "forks",
-    fileParallelism: false,
-    sequence: { concurrent: false },
-    globalSetup: ["./helpers/global-setup.js"],
-    setupFiles: ["./helpers/setup-each.js"],
+    setupFiles: ["./helpers/setup-unit.js"],
     reporters: ["default"],
   },
 });

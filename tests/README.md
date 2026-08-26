@@ -2,9 +2,12 @@
 
 Bateria automatizada de testes do Nimbus — três camadas, **~594 testes** no total.
 
-- **Backend** (este diretório): unit + integration + journey, Vitest 2.x + supertest, ~408 testes, ~2min. Sobe o backend em memória (sem bindar porta) com WhatsApp, Stripe e mailer mockados.
-- **Frontend** (`frontend/`): Vitest + React Testing Library + jsdom, ~160 testes, ~20s. Roda no diretório `frontend/`.
-- **E2E** (`tests/e2e/`): Playwright + Chromium, ~26 testes. Sobe backend (3101) + frontend (5273) dedicados contra um Postgres isolado (`nimbus_test_e2e`).
+- **Backend** (este diretório): unit + integration + journey, Vitest 2.x + supertest, ~1183 testes, **~69s**. Sobe o backend em memória (sem bindar porta) com WhatsApp, Stripe e mailer mockados.
+- **Frontend** (`frontend/`): Vitest + React Testing Library + jsdom, 370 testes, ~61s. Roda no diretório `frontend/`.
+- **E2E** (`tests/e2e/`): Playwright + Chromium, 44 testes. Sobe backend (3101) + frontend (5273) dedicados contra um Postgres isolado (`nimbus_test_e2e`).
+
+**Tempo por arquivo e o mapa "mudei X → rode Y": [TIMING.md](TIMING.md).** Use
+ele pra não rodar a suíte inteira a cada implementação.
 
 **CI**: `.github/workflows/tests.yml` roda backend + frontend a cada push/PR no GitHub; o E2E roda no agendamento noturno ou manualmente pela aba Actions.
 
@@ -26,27 +29,32 @@ Manualmente:
 # Backend (deste diretório)
 cd tests
 npm install                       # primeira vez
-npm test                          # tudo (~100s)
-npm run test:unit                 # só unitários
+npm test                          # tudo (~69s)
+npm run test:unit                 # só unitários, SEM banco (~14s)
+npm run test:db                   # integração + jornada (~54s)
 npm run test:integration          # só integração
 npm run test:journey              # só jornada
-RUN_REDIS_TESTS=1 npm test        # inclui redis-queue (BullMQ real)
+npm run test:repasse              # atalhos por área — ver TIMING.md
+RUN_REDIS_TESTS=1 npm run test:db # inclui redis-queue (BullMQ real)
 npm run test:e2e                  # Playwright (auto-sobe servers)
-npm run test:watch                # watch mode
+npm run test:watch                # watch mode (unitários)
+npm run test:timing               # remede o tempo de cada arquivo
 
 # Frontend (RTL + jsdom)
 cd frontend
-npm test                          # ~4s
+npm test                          # ~61s
 ```
 
 **Pré-requisito**: `docker compose up -d` (Postgres + Redis). O DB `nimbus_test` precisa existir uma vez (`docker exec nimbus-postgres psql -U nimbus -c "CREATE DATABASE nimbus_test OWNER nimbus"`); `nimbus_test_e2e` é criado pelo globalSetup do Playwright.
 
 ## Estrutura
 
-### `unit/` — funções puras (sem IO de rede)
-- `affiliate-asin.test.js` — extração de ASIN da Amazon a partir de URLs variadas.
-- `affiliate-ml.test.js` — `gerarLinkAfiliadoML` com fetch mockado: headers/body, cache de 7 dias, modos de falha (cookie expirado, link inválido, rede).
-- `affiliate-shopee.test.js` — assinatura HMAC da Shopee + montagem dos payloads GraphQL + link de afiliado.
+### `unit/` — funções puras (sem banco e sem IO de rede)
+
+Rodam em paralelo e **não conectam no Postgres** — é o que mantém essa camada em
+~14s. Teste que precisa de banco pertence a `integration/`. Foi o caso dos
+quatro `affiliate-*.test.js`, que gravam o cache de link no Postgres e por isso
+moram lá.
 - `billing-limits.test.js` — limites de cada plano (free/basic/pro/business): números, grupos, categorias por grupo; `effectivePlanId` e admin bypass.
 - `coupon-price.test.js` — `precoComCupom` (preço com o desconto do cupom do ML): percentual/fixo, teto, compra mínima, validade, e todos os casos em que o cupom não vale e o preço normal é a resposta.
 - `notify-state-alert.test.js` — `stateAlert` (grace period, aviso de queda/volta, anti-spam).
@@ -66,6 +74,10 @@ npm test                          # ~4s
 - `state.test.js` — race condition scheduler ↔ auto-save do frontend (`OPS_FIELDS`).
 - `catalog.test.js` — upsert no catálogo, filtros, paginação, `/api/ofertas`, `/api/admin/catalog`.
 - `affiliate.test.js` — geração de link pros 3 marketplaces, cache de 7 dias, expiração.
+- `affiliate-asin.test.js` — extração de ASIN da Amazon a partir de URLs variadas.
+- `affiliate-ml.test.js` — `gerarLinkAfiliadoML` com fetch mockado: headers/body, cache de 7 dias, modos de falha.
+- `affiliate-ml-session.test.js` — sessão/cookie do afiliado ML.
+- `affiliate-shopee.test.js` — assinatura HMAC da Shopee + payloads GraphQL + link de afiliado.
 - `scheduler.test.js` — tick do scheduler: refill, manual add, send next, edge cases.
 - `manual-ops.test.js` — refill/manual-add (force/409/202 cooldown)/pending approve+reject/history clear, isolamento entre users.
 - `admin.test.js` — CRUD de usuários + role, scraper config/run/status, catalog admin, DLQ.
@@ -92,16 +104,17 @@ npm test                          # ~4s
 - `global-setup.js` — cria/migra o DB `nimbus_test_e2e` (docker exec local; psql direto no CI).
 
 ### `helpers/` — utilitários
-- `env.js` — seta `NODE_ENV=test`, aponta `DATABASE_URL` pra `nimbus_test`, define `JWT_SECRET`. **Importar primeiro** em qualquer teste.
+- `env.js` — seta `NODE_ENV=test`, define `JWT_SECRET` e aponta `DATABASE_URL` pro banco do worker (`nimbus_test_<VITEST_POOL_ID>`, ou `nimbus_test` fora do vitest). **Importar primeiro** em qualquer teste.
 - `env-redis.js` — variante com `QUEUE_BACKEND=redis` pra `redis-queue.test.js`.
 - `app.js` — helper único que importa o backend já configurado pra teste (com mocks de WA + Stripe instalados).
 - `app-redis.js` — variante que monta o app com fila Redis real. Expõe `cleanQueues()` (limpeza entre testes via API do BullMQ — drain/clean) em vez de `flushdb`, que apagaria os markers internos do BullMQ embaixo dos workers vivos e travaria o consumo de jobs. `flushRedis` (flushdb bruto) só é usado no baseline do `setupQueue`, antes de qualquer worker existir.
 - `wa-mock.js` — mock no lugar de `backend/whatsapp/index.js`. Toda chamada de envio fica em `calls[]` pra os testes inspecionarem. `listSessions` espelha o contrato real (`{ numberId, status, info, lastError }`). Exporta `connect(userId, numberId)` (re-exportado como `waConnect` em `app.js`): marca uma sessão como `status:"connected"` — **necessário** pra qualquer teste de envio, porque o `whatsappGate` (`scheduler.js:152`) só deixa enviar quando algum número vinculado está conectado. `startSession` deixa a sessão em `"open"` (iniciada mas não conectada).
 - `stripe-mock.js` — mock no lugar de `backend/billing/stripe.js`. URL fake, eventos sintéticos.
 - `mailer-mock.js` — mock no lugar de `backend/auth/mailer.js`. Sem ele o register/reset dispara o SMTP **real** e bate na cota horária. O token de verificação continua sendo gravado no DB, então `createTestUser` (que lê o token direto do banco) segue funcionando.
-- `pg-helpers.js` — `truncateAll()` antes de cada teste, `seedSubscription(userId, planId)` (assinatura ativa direto no DB — é o que `createTestUser({ plan })` usa) e helpers de seed.
-- `setup-each.js` — `beforeEach` global (reset de mocks, truncate).
-- `global-setup.js` — `beforeAll` global (warmup do appConfig).
+- `pg-helpers.js` — `truncateAll()` antes de cada teste (via `DELETE` com FK triggers desligadas — `TRUNCATE` custava 4,3s por chamada; ver TIMING.md), com a lista de tabelas lida do próprio banco, `seedSubscription(userId, planId)` (assinatura ativa direto no DB — é o que `createTestUser({ plan })` usa) e helpers de seed.
+- `setup-each.js` — `beforeEach` de integration/journey (reset de mocks + limpeza do banco).
+- `setup-unit.js` — `beforeEach` dos unitários: só reseta mocks, **não toca no banco**.
+- `global-setup.js` — roda 1× antes de integration/journey: aplica as migrations no molde `nimbus_test` (pulando quando já está em dia) e garante os bancos-worker `nimbus_test_1..N` que permitem rodar os arquivos em paralelo.
 - `fixtures.js` — geradores de objetos de teste (produto, grupo, etc).
 
 ## O que NÃO está coberto
