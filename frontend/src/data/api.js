@@ -472,6 +472,7 @@ export async function adminSetUserSuspended(id, suspended) {
 export async function adminResendUserVerification(id) {
   return http("POST", `/api/admin/users/${id}/resend-verification`);
 }
+export async function adminUserDetail(id)        { return http("GET", `/api/admin/users/${id}/detail`); }
 export async function adminGetRegistration()        { return http("GET", "/api/admin/registration"); }
 export async function adminSetRegistration(blocked) { return http("PUT", "/api/admin/registration", { blocked }); }
 

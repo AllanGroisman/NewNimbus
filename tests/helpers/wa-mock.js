@@ -70,6 +70,19 @@ const mock = {
       .filter(([k]) => k.startsWith(`${userId}::`))
       .map(([, s]) => ({ numberId: s.numberId, status: s.status, info: s.info || null, lastError: s.lastError || null }));
   },
+  // Espelha backend/whatsapp/local.js:listAllSessions — tudo agrupado por
+  // usuário, que é como a aba de usuários do admin lê o status da lista inteira.
+  async listAllSessions() {
+    const out = {};
+    for (const [k, s] of fakeSessions.entries()) {
+      const userId = k.split("::")[0];
+      (out[userId] ||= []).push({
+        numberId: s.numberId, status: s.status, info: s.info || null,
+        lastError: s.lastError || null, stuck: s.stuck || false,
+      });
+    }
+    return out;
+  },
   __connect: connect,
   async deleteSession(userId, numberId) {
     calls.deleteSession.push({ userId, numberId });

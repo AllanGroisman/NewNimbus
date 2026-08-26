@@ -11,4 +11,14 @@
 
 6. [x] Quero analisar os testes e ver quanto demora cada um. Quando estou fazendo novas implementações, ta demorando mt por conta dos testes. Quero entender bem e deixar salvo aqui para que quando implementar, apenas fazer os testes necessários.
 
-7. [] Quero adicionar um aviso de notificacao para quando o claude termina alguma tarefa ou requer alguma escolha ou ação minha.
+7. [x] Quero adicionar um aviso de notificacao para quando o claude termina alguma tarefa ou requer alguma escolha ou ação minha.
+
+8. [x] Na aba de usuários do ADMIN, o que quer dizer o card de ATIVAS exatamente? Que está sendo pago? Que está funcionando seus grupos? Quero saber mais dados sobre os usuarios nesta aba, se as campanhas estão ativas, quais numeros conectados, pode oferecer sugestões do que aparecer. Quero que apareçam estas informações ao clicar no usuário extendendo para baixo. 
+
+9. [] Quero exigir telefone dos usuários. Como tu sugere que seja feito?
+
+10. [] Na aba de busca de produtos, quero que tire aquele salvar alterações que aparece na parte debaixo da tela. Tb o que mais que tu acha que da pra melhorar nesta tela? Ta meio ruim ficar salvando as alterações toda hora, quanto menos precisar desse botão, melhor.
+
+11. [] Teste de cupom não está funcionando, me parece que é por causa do captcha do ML ou pq a pagina ali mudou. Revisa a forma como se faz e as paginas do ML.
+
+12. [] A parte superior esquerda da página, onde tem a marca, escrito Nimbus e painel admistrativo. Quero que tire o escrito "painel admistrativo" e quero que a junção da marca com o escrito seja clicável para ir para a Home do Sistema (a home pode ser o menu de campanhas)

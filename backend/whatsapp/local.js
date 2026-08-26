@@ -293,6 +293,22 @@ function listSessions(userId) {
     }));
 }
 
+// Todas as sessões agrupadas por usuário — a aba de usuários do admin precisa do
+// status de conexão da lista inteira, e um listSessions por linha seria N+1.
+function listAllSessions() {
+  const out = {};
+  for (const s of sessions.values()) {
+    (out[s.userId] ||= []).push({
+      numberId: s.numberId,
+      status: s.status,
+      info: s.info || null,
+      lastError: s.lastError || null,
+      stuck: s.stuck || false,
+    });
+  }
+  return out;
+}
+
 async function deleteSession(userId, numberId) {
   userId = String(userId);
   numberId = String(numberId);
@@ -497,6 +513,7 @@ module.exports = {
   startSession,
   getSession,
   listSessions,
+  listAllSessions,
   deleteSession,
   sendText,
   sendImage,
@@ -521,6 +538,7 @@ function makeStub() {
     startSession: fail,
     getSession: () => null,
     listSessions: () => [],
+    listAllSessions: () => ({}),
     deleteSession: fail,
     sendText: fail,
     sendImage: fail,

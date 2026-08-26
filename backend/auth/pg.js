@@ -11,6 +11,11 @@ const appConfig = require("../config");
 const mailer = require("./mailer");
 const emails = require("../notifications/email");
 const { normalizeCpf, isValidCpf, maskCpf } = require("../utils/cpf");
+// Só os módulos puros de billing: `../billing` puxaria provision/notify, que
+// requerem este arquivo de volta.
+const billingLimits = require("../billing/limits");
+const enforce = require("../billing/enforce");
+const stripe = require("../billing/stripe");
 
 // Limites e regras de input padronizadas (compartilhadas com o frontend via copy).
 const MAX_NAME_LEN = 100;
@@ -886,19 +891,71 @@ async function setInitialPassword(userId, newPassword) {
 // Versão async — server.js precisará adaptar pra await em algumas rotas admin.
 // Mantemos a sincrona "findById" interna com cache pra requireAuth.
 
+// O admin precisa da linha CRUA da assinatura — `maskCrossMode` existe pra
+// proteger o app do usuário, e aplicá-la aqui esconderia justamente o caso que o
+// admin precisa enxergar. Em vez de mascarar, anexamos o veredito: qual plano
+// vale agora e se a linha é de outro modo do Stripe (a que aparecia como um
+// "Pro" verde enquanto o resto do sistema tratava a conta como free).
+function decorateSubscription(sub) {
+  if (!sub) return null;
+  return {
+    ...sub,
+    // "user" de propósito: effectivePlanId devolve business pra qualquer admin,
+    // e aqui a pergunta é o que a ASSINATURA vale, não o que o cargo concede.
+    effectivePlanId: billingLimits.effectivePlanId(sub, "user"),
+    graceEndsAt: billingLimits.graceEndsAt(sub),
+    crossMode: sub.stripeMode && sub.stripeMode !== stripe.mode() ? sub.stripeMode : null,
+  };
+}
+
+// Uma campanha só está de fato ativa quando o dono não a pausou E o plano não a
+// pausou. `_count.groups` sozinho contava as duas pausadas junto com as vivas —
+// era isso que fazia a aba de usuários prometer atividade que não existia.
+function summarizeGroups(groups, planPaused) {
+  let active = 0, repasse = 0;
+  for (const g of groups || []) {
+    if (g.scraping?.kind === "repasse") repasse++;
+    if (g.paused) continue;
+    if (enforce.isGroupPlanPaused(planPaused, g.id)) continue;
+    active++;
+  }
+  return { active, repasse };
+}
+
 async function listUsers() {
   const users = await prisma().user.findMany({
     orderBy: { createdAt: "asc" },
     include: {
-      subscription: { select: { planId: true, status: true } },
-      _count: { select: { groups: true, numbers: true } },
+      subscription: true,
+      state:   { select: { planPaused: true } },
+      groups:  { select: { id: true, paused: true, scraping: true } },
+      numbers: { select: { id: true } },
     },
   });
-  return users.map(u => ({
-    ...publicUser(u),
-    subscription: u.subscription || null,
-    _count: u._count,
-  }));
+  // Status ao vivo das sessões, uma leitura só pra lista inteira (SCAN no Redis
+  // ou o Map em memória) — sem isso seria um round-trip por usuário.
+  let sessionsByUser = {};
+  try { sessionsByUser = await require("../whatsapp").listAllSessions(); }
+  catch { /* o status é acessório: a lista não pode cair porque o WhatsApp caiu */ }
+
+  return users.map(u => {
+    // Os includes entram no spread do publicUser — tirar aqui evita devolver o
+    // array de campanhas inteiro em cada linha da lista.
+    const { subscription, state, groups, numbers, ...row } = u;
+    const { active, repasse } = summarizeGroups(groups, state?.planPaused);
+    const sessions = sessionsByUser[u.id] || [];
+    return {
+      ...publicUser(row),
+      subscription: decorateSubscription(subscription),
+      counts: {
+        groups: groups.length,
+        activeGroups: active,
+        repasseGroups: repasse,
+        numbers: numbers.length,
+        connectedNumbers: sessions.filter(s => s.status === "connected").length,
+      },
+    };
+  });
 }
 
 async function deleteUser(userId) {

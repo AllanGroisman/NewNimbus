@@ -1912,6 +1912,119 @@ app.get("/api/admin/users/:id/emails", auth.requireAuth, auth.requireAdmin, asyn
   }
 });
 
+// Ficha completa de um usuário — o que a aba de usuários mostra ao expandir a
+// linha. Responde "essa conta está pagando? está conectada? está enviando?" sem
+// precisar abrir o banco, que era a única forma de saber.
+//
+// Carregada sob demanda (uma vez por usuário expandido), não no polling da
+// lista: junta 6 fontes e não vale rodar isso a cada 20s pra todo mundo.
+app.get("/api/admin/users/:id/detail", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const { prisma } = require("./db");
+    const userId = String(req.params.id);
+
+    const user = await prisma().user.findUnique({ where: { id: userId }, select: { id: true } });
+    if (!user) return res.status(404).json({ error: "Usuário não encontrado" });
+
+    const [sub, stateRow, groupRows, numberRows, waGroups, emailRows, sessions] =
+      await Promise.all([
+        billing.getRawByUserId(userId),
+        prisma().userState.findUnique({ where: { userId }, select: { planPaused: true, updatedAt: true } }),
+        prisma().group.findMany({
+          where: { userId },
+          orderBy: { createdAt: "asc" },
+          select: {
+            id: true, name: true, paused: true, scraping: true, whatsappGroupIds: true,
+            categories: true, sentToday: true, sentWeek: true, lastSend: true,
+            avgDiscount: true, createdAt: true,
+            _count: { select: { queue: true, pending: true } },
+          },
+        }),
+        prisma().whatsappNumber.findMany({ where: { userId }, select: { id: true, label: true, phone: true } }),
+        prisma().whatsappGroup.count({ where: { userId } }),
+        emailLog.listByUser(userId, 20),
+        // O status ao vivo é acessório: se o WhatsApp estiver fora, a ficha ainda
+        // precisa abrir com o resto dos dados.
+        Promise.resolve(wa.listSessions(userId)).catch(() => []),
+      ]);
+
+    const planPaused = stateRow?.planPaused || { groups: [], numbers: [] };
+    const byNumberId = new Map((sessions || []).map(s => [String(s.numberId), s]));
+
+    const groups = groupRows.map(g => {
+      const planPausedHere = billing.enforce.isGroupPlanPaused(planPaused, g.id);
+      return {
+        id: String(g.id),
+        name: g.name,
+        kind: g.scraping?.kind === "repasse" ? "repasse" : "scraping",
+        paused: g.paused,
+        planPaused: planPausedHere,
+        active: !g.paused && !planPausedHere,
+        whatsappGroups: Array.isArray(g.whatsappGroupIds) ? g.whatsappGroupIds.length : 0,
+        categories: Array.isArray(g.categories) ? g.categories.length : 0,
+        leaders: repasseLeaders.leadersOf(g.scraping).length,
+        sentToday: g.sentToday,
+        sentWeek: g.sentWeek,
+        lastSend: g.lastSend,
+        avgDiscount: g.avgDiscount,
+        queue: g._count.queue,
+        pending: g._count.pending,
+        createdAt: g.createdAt,
+      };
+    });
+
+    const numbers = numberRows.map(n => {
+      const live = byNumberId.get(String(n.id));
+      return {
+        id: n.id,
+        label: n.label,
+        phone: n.phone,
+        planPaused: billing.enforce.isNumberPlanPaused(planPaused, n.id),
+        status: live?.status || "offline",
+        stuck: live?.stuck || false,
+        lastError: live?.lastError || null,
+        info: live?.info || null,
+      };
+    });
+
+    const aff = affiliate.status(userId);
+    const affStatus = {
+      ml:     { configured: !!aff.ml.configured,     healthy: !!aff.ml.healthy,     lastFailureReason: aff.ml.lastFailureReason || null },
+      amazon: { configured: !!aff.amazon.configured, lastFailureReason: aff.amazon.lastFailureReason || null },
+      shopee: { configured: !!aff.shopee.configured, healthy: !!aff.shopee.healthy, lastFailureReason: aff.shopee.lastFailureReason || null },
+    };
+
+    // Só vale montar o resumo de repasse pra quem tem campanha de repasse —
+    // zeros numa conta que nunca usou repasse parecem falha, não ausência.
+    let repasse = null;
+    if (groups.some(g => g.kind === "repasse")) {
+      const repasseSummary = require("./repasse/summary");
+      repasse = await repasseSummary.buildSummary(prisma, { hours: 168, where: { userId } });
+    }
+
+    res.json({
+      subscription: sub ? {
+        ...sub,
+        effectivePlanId: billing.limits.effectivePlanId(sub, "user"),
+        graceEndsAt: billing.limits.graceEndsAt(sub),
+        crossMode: sub.stripeMode && sub.stripeMode !== stripeMod.mode() ? sub.stripeMode : null,
+      } : null,
+      groups,
+      numbers,
+      whatsappGroups: waGroups,
+      repasse,
+      emails: emailRows,
+      lastStateUpdate: stateRow?.updatedAt || null,
+      // Reusa affiliate.status, mas só o veredito: tag, cookie do ML e appSecret
+      // da Shopee são credenciais do usuário e não têm por que trafegar numa
+      // tela de admin, nem mesmo como "preview".
+      affiliate: affStatus,
+    });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/users/:id/detail" });
+  }
+});
+
 // ────────────────────────────────────────────────────────────────────────
 // Admin — Backups
 // ────────────────────────────────────────────────────────────────────────
@@ -3325,6 +3438,7 @@ async function boot() {
     console.log(`  POST /api/admin/scraper/run    (admin)`);
     console.log(`  POST /api/admin/scraper/cancel (admin)`);
     console.log(`  GET  /api/admin/users          (admin)`);
+    console.log(`  GET  /api/admin/users/:id/detail (admin)`);
 
     if (queueMod.isRedis()) {
       // Redis mode: worker.js owna Baileys + processa filas. Server é proxy.

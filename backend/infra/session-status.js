@@ -68,6 +68,33 @@ async function listForUser(userId) {
     .filter(Boolean);
 }
 
+// Tudo agrupado por usuário. Reusa o mesmo SCAN + mget em chunks do
+// aggregateStatus: uma varredura serve a lista inteira do admin.
+async function listAllByUser() {
+  const keys = await scanKeys(ALL_PATTERN);
+  const out = {};
+  if (!keys.length) return out;
+  const CHUNK = 200;
+  for (let i = 0; i < keys.length; i += CHUNK) {
+    const values = await client().mget(...keys.slice(i, i + CHUNK));
+    for (const v of values) {
+      if (!v) continue;
+      try {
+        const s = JSON.parse(v);
+        if (!s?.userId) continue;
+        (out[s.userId] ||= []).push({
+          numberId: s.numberId,
+          status: s.status,
+          info: s.info || null,
+          lastError: s.lastError || null,
+          stuck: s.stuck || false,
+        });
+      } catch {}
+    }
+  }
+  return out;
+}
+
 async function clear(userId, numberId) {
   await client().del(KEY(userId, numberId));
 }
@@ -98,4 +125,4 @@ async function close() {
   }
 }
 
-module.exports = { publish, read, listForUser, clear, aggregateStatus, close };
+module.exports = { publish, read, listForUser, listAllByUser, clear, aggregateStatus, close };

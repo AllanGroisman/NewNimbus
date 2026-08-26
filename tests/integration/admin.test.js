@@ -2,7 +2,7 @@
 // catalog admin, DLQ. Cobre tanto gating (403 pra user comum) quanto comportamento.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { request, app, createTestUser, auth as authMod, catalog, setStripeMock } from "../helpers/app.js";
+import { request, app, createTestUser, auth as authMod, catalog, setStripeMock, waConnect } from "../helpers/app.js";
 import { mlProduct, amazonProduct, shopeeProduct } from "../helpers/fixtures.js";
 
 async function makeAdmin(opts = {}) {
@@ -18,6 +18,7 @@ describe("Admin — gating", () => {
     const { auth } = await createTestUser();
     const rotas = [
       ["get", "/api/admin/users"],
+      ["get", "/api/admin/users/qualquer-id/detail"],
       ["get", "/api/admin/scraper/config"],
       ["get", "/api/admin/scraper/status"],
       ["post", "/api/admin/scraper/run"],
@@ -99,6 +100,61 @@ describe("Admin — users", () => {
     const r = await admin.auth("delete", `/api/admin/users/${admin.user.id}`);
     expect(r.status).toBe(400);
     expect(r.body.error).toMatch(/excluir.*mesmo/i);
+  });
+
+  it("lista traz contagens que separam campanha ativa de campanha pausada", async () => {
+    const admin = await makeAdmin();
+    // Precisa de plano pago: no free o gating recusa criar campanha, e o
+    // cenário a testar é justamente ativa x pausada.
+    const alvo = await createTestUser({ name: "ComCampanhas", plan: "pro" });
+    const put = await alvo.auth("put", "/api/state").send({
+      groups: [
+        { id: 1, name: "Viva", paused: false },
+        { id: 2, name: "Pausada", paused: true },
+      ],
+      numbers: [{ id: "n1", label: "Um" }, { id: "n2", label: "Dois" }],
+    });
+    expect(put.status).toBe(200);
+    // Só um dos dois números chega a conectar — é a diferença que o contador
+    // cru de `whatsapp_numbers` não sabia mostrar.
+    waConnect(alvo.user.id, "n1");
+
+    const res = await admin.auth("get", "/api/admin/users");
+    const linha = res.body.users.find(u => u.id === alvo.user.id);
+    expect(linha.counts.groups).toBe(2);
+    // O bug que isto trava: `_count.groups` contava as duas como se ambas
+    // estivessem rodando, e a tela dizia "2 campanhas" pra quem tinha 1 ativa.
+    expect(linha.counts.activeGroups).toBe(1);
+    expect(linha.counts.numbers).toBe(2);
+    expect(linha.counts.connectedNumbers).toBe(1);
+  });
+
+  it("GET /:id/detail devolve a ficha completa e nao vaza credencial de afiliado", async () => {
+    const admin = await makeAdmin();
+    const alvo = await createTestUser({ name: "Ficha" });
+
+    const res = await admin.auth("get", `/api/admin/users/${alvo.user.id}/detail`);
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("subscription");
+    expect(Array.isArray(res.body.groups)).toBe(true);
+    expect(Array.isArray(res.body.numbers)).toBe(true);
+    expect(Array.isArray(res.body.emails)).toBe(true);
+
+    // Sem campanha de repasse o bloco vem nulo — zeros pareceriam falha em vez
+    // de ausência.
+    expect(res.body.repasse).toBeNull();
+
+    // A rota é de leitura ampla: tag, cookie do ML e appSecret da Shopee são
+    // credenciais do usuário e nao podem trafegar por aqui de forma alguma.
+    const aff = JSON.stringify(res.body.affiliate);
+    expect(aff).not.toMatch(/cookie|appSecret|Preview|"tag"/i);
+    expect(res.body.affiliate.ml).toHaveProperty("configured");
+  });
+
+  it("GET /:id/detail devolve 404 pra usuario inexistente", async () => {
+    const admin = await makeAdmin();
+    const res = await admin.auth("get", "/api/admin/users/00000000-0000-0000-0000-000000000000/detail");
+    expect(res.status).toBe(404);
   });
 
   it("admin exclui user — registro some da listagem", async () => {

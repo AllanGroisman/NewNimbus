@@ -48,6 +48,10 @@ async function listSessions(userId) {
   }));
 }
 
+async function listAllSessions() {
+  return sessionStatus.listAllByUser();
+}
+
 async function deleteSession(userId, numberId) {
   return queue.callControl("deleteSession", [String(userId), String(numberId)], { timeoutMs: 15000 });
 }
@@ -102,7 +106,7 @@ async function status() {
 }
 
 module.exports = {
-  startSession, getSession, listSessions, deleteSession,
+  startSession, getSession, listSessions, listAllSessions, deleteSession,
   sendText, sendImage,
   createGroup, getInviteLink, revokeInvite, listGroups, leaveGroup, getGroupMetadata,
   restoreSessions, closeAll, status,
