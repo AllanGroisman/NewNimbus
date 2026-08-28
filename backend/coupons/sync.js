@@ -29,6 +29,15 @@ const DEFAULT_CONFIG = {
   // rodada — é AUTOMATIC, então sempre ativado e sempre com vitrine pra abrir.
   // Desmarcar traz eles de volta, e a rodada fica bem mais longa.
   skipStoreCoupons: true,
+  // Clicar em "Eu quero" nos cupons não ativados. É a única ESCRITA que a rodada
+  // faz na conta do ML — e é o que faz a vitrine existir: sem ativar, o ML não dá
+  // a URL dela e o cupom entra no sistema sem lista de produtos.
+  //
+  // O teto é por rodada e existe pela conta, não pelo tempo: dezenas de cliques
+  // em sequência é o padrão que acorda o anti-robô, e a conta é a MESMA do Hub de
+  // Afiliados — verificação aqui derruba o Hub junto.
+  activateCoupons: true,
+  maxActivationsPerRun: 20,
 };
 
 // O override do POST /run não passa pelo writeConfig: o body chega cru. Um
@@ -100,6 +109,14 @@ function writeConfig(cfg) {
   merged.maxProductsPerCoupon = Math.min(300, Math.max(10, Number(merged.maxProductsPerCoupon) || DEFAULT_CONFIG.maxProductsPerCoupon));
   merged.withProducts = !!merged.withProducts;
   merged.skipStoreCoupons = booleano(merged.skipStoreCoupons, DEFAULT_CONFIG.skipStoreCoupons);
+  merged.activateCoupons = booleano(merged.activateCoupons, DEFAULT_CONFIG.activateCoupons);
+  // Zero é um valor legítimo ("ativar ligado, mas nenhum nesta rodada"), então o
+  // `||` não serve de rede aqui — ele trocaria o 0 pelo padrão. Quem decide é o
+  // Number.isFinite, porque `Number(undefined)` é NaN e NaN passa por `??`.
+  const teto = Number(merged.maxActivationsPerRun);
+  merged.maxActivationsPerRun = Number.isFinite(teto)
+    ? Math.min(100, Math.max(0, Math.trunc(teto)))
+    : DEFAULT_CONFIG.maxActivationsPerRun;
   appConfig.set(CONFIG_KEY, merged);
   return merged;
 }
@@ -123,6 +140,24 @@ function status() {
 async function persistRun(result) {
   const { novos, atualizados } = await coupons.upsertCoupons(result.cupons || []);
 
+  // As amostras do card entram para TODO cupom, antes das vitrines.
+  //
+  // Vêm de graça no modelo que a rodada já leu, e são o ÚNICO vínculo possível
+  // para o cupom não ativado — que não tem vitrine pra raspar sem ativar o cupom
+  // na conta do sistema. Vão marcadas como `amostra`, então não se misturam com a
+  // vitrine nem autorizam um "fora da vitrine" lá no quick-check.
+  //
+  // Ao contrário da vitrine, aqui NÃO se escreve no catálogo: o ML dá só o id, sem
+  // nome nem preço, e um produto de catálogo sem nada disso é lixo que a fila do
+  // repasse teria que aprender a ignorar. O vínculo aponta para a chave e espera o
+  // scraping normal trazer o produto.
+  let amostras = 0;
+  for (const c of result.cupons || []) {
+    if (!c?.campaignId || !(c.sampleItemIds || []).length) continue;
+    const r = await coupons.replaceCouponSamples(c.campaignId, c.sampleItemIds);
+    amostras += r.vinculados;
+  }
+
   let produtosNoCatalogo = 0;
   let vinculos = 0;
   for (const v of result.vitrines || []) {
@@ -132,7 +167,15 @@ async function persistRun(result) {
       const r = await catalog.upsertProducts(itens);
       produtosNoCatalogo += r.inserted + r.updated;
     }
-    const r = await coupons.replaceCouponProducts(v.campaignId, itens.map(p => ({ productKey: p.key, productUrl: p.link })));
+    // `parcial` = veio da landing de afiliado, que entrega uma PRÉVIA de 3-8
+    // produtos, não a vitrine inteira. Gravar isso como vitrine autorizaria o
+    // quick-check a dizer "este produto não está no cupom" olhando 5 de 50 —
+    // o mesmo erro caro da amostra, por outra porta.
+    const r = await coupons.replaceCouponProducts(
+      v.campaignId,
+      itens.map(p => ({ productKey: p.key, productUrl: p.link })),
+      { origem: v.parcial ? "landing" : "vitrine" },
+    );
     vinculos += r.vinculados;
   }
 
@@ -157,11 +200,15 @@ async function persistRun(result) {
     atualizados,
     cuponsComVitrine: result.cuponsComVitrine || 0,
     vinculos,
+    amostras,
     produtosNoCatalogo,
     catalogoCarimbado: carimbo.carimbados,
     catalogoLimpo: carimbo.limpos,
     palavrasRecarimbadas: palavras.recarimbados,
     cuponsDeLojaIgnorados: result.ignoradosLoja || 0,
+    // Ativação CONFIRMADA pelo modelo do ML, não cliques dados: se o botão mudar,
+    // este número vai a zero em vez de mentir.
+    ativados: result.ativados || 0,
     cuponsVencidosRemovidos: faxina.removidos,
     avisos: result.avisos || [],
     cancelada: !!result.cancelada,
@@ -188,6 +235,10 @@ function runOnce(overrides = {}) {
         withProducts: cfg.withProducts,
         maxProductsPerCoupon: cfg.maxProductsPerCoupon,
         skipStore: booleano(cfg.skipStoreCoupons, DEFAULT_CONFIG.skipStoreCoupons),
+        activateCoupons: booleano(cfg.activateCoupons, DEFAULT_CONFIG.activateCoupons),
+        maxActivations: Number.isFinite(Number(cfg.maxActivationsPerRun))
+          ? Number(cfg.maxActivationsPerRun)
+          : DEFAULT_CONFIG.maxActivationsPerRun,
       }, {
         onProgress: (p) => { _status.progress = p; },
       });
@@ -198,7 +249,7 @@ function runOnce(overrides = {}) {
       _status.lastResult = { ...resumo, totalNoML: result.totalNoML, categoriasDoML: result.categoriasDoML };
       _status.lastError = resumo.avisos.length ? resumo.avisos.join(" ") : null;
       persistStatus();
-      console.log(`[ml-cupons] rodada: ${resumo.cupons} cupons (${resumo.novos} novos), ${resumo.vinculos} vínculos, ${resumo.catalogoCarimbado} produtos carimbados, ${resumo.cuponsDeLojaIgnorados} de loja ignorados`);
+      console.log(`[ml-cupons] rodada: ${resumo.cupons} cupons (${resumo.novos} novos), ${resumo.ativados} ativados, ${resumo.vinculos} vínculos, ${resumo.catalogoCarimbado} produtos carimbados, ${resumo.cuponsDeLojaIgnorados} de loja ignorados`);
       return _status.lastResult;
     } catch (err) {
       _status.lastRun = new Date().toISOString();
@@ -232,21 +283,128 @@ async function syncOneCoupon(campaignId, { maxProducts = null } = {}) {
   const session = affiliate.getScraperMLSession();
   if (!session) throw new Error("Sem sessão do Mercado Livre do sistema — cole o cookie em Admin › Mercado Livre.");
 
+  const maxProdutos = maxProducts || cfg.maxProductsPerCoupon;
+
+  // A landing de afiliado ANTES de abrir Chrome nenhum. São duas chamadas HTTP e
+  // resolvem a maioria dos casos hoje; abrir o navegador pra descobrir isso
+  // custaria ~30s e uma passada a mais na conta do sistema, que é a mesma do Hub.
+  const pelaLanding = await mlCupons.vitrinePelaLanding(cupom);
+  if (pelaLanding?.ok) {
+    return gravarVitrine(campaignId, cupom, pelaLanding.products.slice(0, maxProdutos), { parcial: true });
+  }
+
   const res = await mlCupons.withCuponsPage(session.cookie, null);
   try {
-    const r = await mlCupons.scrapeCouponProducts(res.browser, cupom, {
-      maxProducts: maxProducts || cfg.maxProductsPerCoupon,
-    });
-    if (!r.ok) return { ok: false, reason: r.reason, produtos: 0 };
-
-    const itens = (r.products || []).map(p => ({ ...p, key: productKey(p) }));
-    if (itens.length) await catalog.upsertProducts(itens);
-    const v = await coupons.replaceCouponProducts(campaignId, itens.map(p => ({ productKey: p.key, productUrl: p.link })));
-    await coupons.syncCatalogCoupons();
-    return { ok: true, produtos: itens.length, ...v };
+    const r = await mlCupons.scrapeCouponProducts(res.browser, cupom, { maxProducts: maxProdutos });
+    // Vitrine barrada não pode sair de mãos vazias: as amostras do card já estão
+    // guardadas no cupom e regravá-las custa uma consulta, sem rede nenhuma.
+    if (!r.ok) {
+      const a = await coupons.replaceCouponSamples(campaignId, cupom.sampleItemIds || []);
+      await coupons.syncCatalogCoupons();
+      return { ok: false, reason: pelaLanding?.reason ? `${r.reason} (a landing também não veio: ${pelaLanding.reason})` : r.reason, produtos: 0, amostras: a.vinculados };
+    }
+    return gravarVitrine(campaignId, cupom, r.products || [], { parcial: !!r.parcial });
   } finally {
     await res.browser.close().catch(() => {});
   }
+}
+
+// Grava os produtos de uma vitrine (venha ela do navegador ou da landing) e
+// carimba o catálogo. Vive fora do syncOneCoupon porque os dois caminhos de lá
+// terminam aqui, e duplicar isso é como as duas pontas passam a divergir.
+async function gravarVitrine(campaignId, cupom, produtos, { parcial }) {
+  const itens = produtos.map(p => ({ ...p, key: productKey(p) }));
+  if (itens.length) await catalog.upsertProducts(itens);
+  const v = await coupons.replaceCouponProducts(
+    campaignId,
+    itens.map(p => ({ productKey: p.key, productUrl: p.link })),
+    { origem: parcial ? "landing" : "vitrine" },
+  );
+  // As amostras seguem gravadas ao lado: elas são outra coleção, e a prévia da
+  // landing não as substitui (podem ser produtos diferentes do mesmo cupom).
+  if ((cupom?.sampleItemIds || []).length) {
+    await coupons.replaceCouponSamples(campaignId, cupom.sampleItemIds);
+  }
+  await coupons.syncCatalogCoupons();
+  return { ok: true, produtos: itens.length, parcial, ...v };
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// A vitrine trazida de fora: o agente que roda no Chrome do admin
+// ────────────────────────────────────────────────────────────────────────
+
+// Por que existe: a vitrine do cupom está atrás do muro anti-bot do ML, e a
+// sonda de 27/08 provou que o CAPTCHA aparece MESMO fora da VPS — o que o ML
+// barra é o navegador automatizado, não a máquina (o mesmo diagnóstico de
+// scraping/ml-social.js). Então quem percorre a vitrine é um Chrome de verdade,
+// aberto pelo admin: a extensão em `extension/` só colhe e a tela manda pra cá.
+//
+// Isso muda a natureza do dado: o que vem do agente é a LISTA FECHADA (`origem:
+// "vitrine"`), não a prova positiva da landing. É por isso que a validação abaixo
+// é dura — um payload torto viraria "este cupom NÃO cobre seu produto" para um
+// cupom que cobre, que é o prejuízo que coupons/quick-check.js existe pra evitar.
+
+const MAX_PRODUTOS_DA_VITRINE = 500;
+
+// Confere o lote que chegou de fora. PURA: sem banco, sem rede, sem DNS — é o
+// que permite testá-la, e é o motivo de usar `detectStore` (síncrono) em vez do
+// `assertStoreUrl` (que resolve o host). O host público não importa aqui: nada
+// nesta rota faz o servidor buscar a URL, ela só vira vínculo no banco.
+//
+// Devolve { produtos, descartados } em vez de lançar: um card ilegível no meio de
+// 50 não pode derrubar a vitrine inteira, mas some do resultado e é contado.
+function validarProdutosDaVitrine(lista) {
+  if (!Array.isArray(lista)) throw new Error("Esperava uma lista de produtos.");
+  if (lista.length > MAX_PRODUTOS_DA_VITRINE) {
+    throw new Error(`Lote grande demais: ${lista.length} produtos (o teto é ${MAX_PRODUTOS_DA_VITRINE}).`);
+  }
+
+  const { detectStore } = require("../scraping/urlGuard");
+  const produtos = [];
+  const descartados = [];
+  const vistos = new Set();
+
+  for (const bruto of lista) {
+    const p = bruto && typeof bruto === "object" ? bruto : {};
+    const name = typeof p.name === "string" ? p.name.trim() : "";
+    const link = typeof p.link === "string" ? p.link.trim() : "";
+    const price = typeof p.price === "number" ? p.price : null;
+
+    if (!name) { descartados.push({ link, motivo: "sem nome" }); continue; }
+    if (!Number.isFinite(price) || price <= 0) { descartados.push({ link, motivo: "sem preço" }); continue; }
+    if (detectStore(link) !== "Mercado Livre") { descartados.push({ link, motivo: "link não é do Mercado Livre" }); continue; }
+    if (vistos.has(link)) { descartados.push({ link, motivo: "repetido" }); continue; }
+    vistos.add(link);
+
+    // Só os campos do catálogo entram. Aceitar o objeto inteiro deixaria o
+    // payload de fora escrever coluna que ele não tem por que escrever.
+    produtos.push({
+      name, link, price,
+      img: typeof p.img === "string" ? p.img : null,
+      originalPrice: typeof p.originalPrice === "number" ? p.originalPrice : null,
+      discount: Number.isFinite(p.discount) ? p.discount : null,
+      rating: Number.isFinite(p.rating) ? p.rating : null,
+      reviewsCount: Number.isFinite(p.reviewsCount) ? p.reviewsCount : null,
+      seller: typeof p.seller === "string" ? p.seller : null,
+      freeShipping: !!p.freeShipping,
+      sold: Number.isFinite(p.sold) ? p.sold : null,
+      store: "Mercado Livre",
+    });
+  }
+
+  return { produtos, descartados };
+}
+
+// A porta do agente. `parcial` NUNCA pode ser esquecido: o laço que parou no muro
+// ou no teto de páginas viu um pedaço da vitrine, e gravar isso como lista fechada
+// autorizaria o sistema a dizer "fora da vitrine" para produto que está nela.
+async function gravarVitrineLocal(campaignId, lista, { parcial = false } = {}) {
+  const cupom = await coupons.getCoupon(campaignId);
+  if (!cupom) throw new Error("Esse cupom não está no sistema — puxe os cupons primeiro.");
+
+  const { produtos, descartados } = validarProdutosDaVitrine(lista);
+  const r = await gravarVitrine(campaignId, cupom, produtos, { parcial: !!parcial });
+  return { ...r, descartados: descartados.length };
 }
 
 // Traz para o sistema UMA campanha que ainda não está aqui — a que uma palavra
@@ -274,6 +432,9 @@ async function importCampaign(campaignId, { withProducts = true, maxProducts = n
     withProducts,
     maxProducts: maxProducts || cfg.maxProductsPerCoupon,
     onProgress,
+    // Um cupom só, escolhido a dedo por quem testou a palavra — e sem ativar ele
+    // a busca traz a campanha sem produto nenhum, que é metade do que se pediu.
+    activate: booleano(cfg.activateCoupons, DEFAULT_CONFIG.activateCoupons),
   });
   if (!achado.coupon) return { ok: false, reason: achado.reason };
 
@@ -285,12 +446,25 @@ async function importCampaign(campaignId, { withProducts = true, maxProducts = n
   const palavras = await coupons.restampCodesFromChecks();
   await coupons.recoverCodesFromCoupons();
 
+  // As amostras do card vêm no próprio cupom que a busca achou, e são o que salva
+  // o caso comum aqui: a campanha que a palavra apontou quase sempre está NÃO
+  // ativada, e cupom não ativado não tem vitrine nenhuma pra ler.
+  let amostras = 0;
+  if ((achado.coupon.sampleItemIds || []).length) {
+    const a = await coupons.replaceCouponSamples(id, achado.coupon.sampleItemIds);
+    amostras = a.vinculados;
+  }
+
   let produtos = 0;
   let vinculos = 0;
   if (achado.products?.length) {
     const itens = achado.products.map(p => ({ ...p, key: productKey(p) }));
     await catalog.upsertProducts(itens);
-    const v = await coupons.replaceCouponProducts(id, itens.map(p => ({ productKey: p.key, productUrl: p.link })));
+    const v = await coupons.replaceCouponProducts(
+      id,
+      itens.map(p => ({ productKey: p.key, productUrl: p.link })),
+      { origem: achado.parcial ? "landing" : "vitrine" },
+    );
     produtos = itens.length;
     vinculos = v.vinculados;
   }
@@ -301,6 +475,7 @@ async function importCampaign(campaignId, { withProducts = true, maxProducts = n
     coupon: await coupons.getCoupon(id),
     produtos,
     vinculos,
+    amostras,
     palavrasRecarimbadas: palavras.recarimbados,
     avisoVitrine: achado.reasonVitrine || null,
   };
@@ -430,6 +605,10 @@ module.exports = {
   writeConfig,
   persistRun,
   syncOneCoupon,
+  gravarVitrine,
+  gravarVitrineLocal,
+  validarProdutosDaVitrine,
+  MAX_PRODUTOS_DA_VITRINE,
   importCampaign,
   startImport,
   importStatus,

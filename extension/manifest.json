@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Nimbus — coletor de vitrine",
+  "version": "1.0.0",
+  "description": "Colhe os produtos da vitrine de um cupom do Mercado Livre, a pedido da tela de admin do Nimbus.",
+  "permissions": [
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://*.mercadolivre.com.br/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "js": [
+        "ponte.js"
+      ],
+      "matches": [
+        "https://sistema.nimbuspromocoes.com/*",
+        "https://nimbuspromocoes.com/*",
+        "https://www.nimbuspromocoes.com/*",
+        "https://*.ngrok-free.dev/*",
+        "https://*.ngrok-free.app/*",
+        "https://*.ngrok.dev/*",
+        "https://*.ngrok.app/*",
+        "https://*.ngrok.io/*",
+        "http://localhost/*",
+        "http://localhost:*/*",
+        "http://127.0.0.1:*/*"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -71,6 +71,33 @@ function wallKind(html, url) {
   return null;
 }
 
+// Os cabeçalhos de uma navegação de verdade — não só o User-Agent.
+//
+// Medido em 26/08/2026: em `lista.mercadolivre.com.br` (a vitrine do cupom), o
+// fetch com só UA + Accept-Language é redirecionado para
+// `/gz/account-verification`, enquanto o MESMO fetch com o jogo completo abaixo
+// responde 200. A landing `/social/` abre dos dois jeitos, então isso nunca tinha
+// aparecido — e é por isso que mora aqui, num lugar só: quem escrever o próximo
+// leitor sem navegador não vai adivinhar quais desses seis cabeçalhos importam.
+//
+// Não é disfarce novo: é mandar o que o navegador manda numa navegação comum.
+function browserHeaders() {
+  const { UA } = require("./scraper");   // lazy: scraper requer este módulo
+  return {
+    "User-Agent": UA,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8",
+    "sec-ch-ua": '"Chromium";v="124", "Not.A/Brand";v="24"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "sec-fetch-dest": "document",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-site": "none",
+    "sec-fetch-user": "?1",
+    "upgrade-insecure-requests": "1",
+  };
+}
+
 // É landing de PRODUTO de afiliado? (`/social/<id>` e variações com query)
 function isSocialLandingUrl(url) {
   try { return /^\/social\//i.test(new URL(url).pathname); } catch { return false; }
@@ -181,12 +208,11 @@ function isTransientFetchError(err) {
 // que revalida CADA redirect contra o urlGuard — o link vem de mensagem de
 // WhatsApp, e encurtador pode apontar pra qualquer lugar.
 async function fetchSocialLanding(url, { timeoutMs = FETCH_TIMEOUT_MS } = {}) {
-  const { UA } = require("./scraper");   // lazy: scraper requer este módulo
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const { res, finalUrl } = await urlGuard.safeFetchFollow(url, {
-      headers: { "User-Agent": UA, "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8" },
+      headers: browserHeaders(),
       signal: controller.signal,
     });
     if (!res.ok) {
@@ -201,6 +227,7 @@ async function fetchSocialLanding(url, { timeoutMs = FETCH_TIMEOUT_MS } = {}) {
 }
 
 module.exports = {
+  browserHeaders,
   parseSocialLanding,
   fetchSocialLanding,
   isTransientFetchError,

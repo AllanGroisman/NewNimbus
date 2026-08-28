@@ -310,6 +310,60 @@ function notifyMLCookie(userId, ok, tag) {
   catch { /* notificação é acessório */ }
 }
 
+// O POST cru da API de link curto do ML. Existe separado porque há DOIS donos
+// possíveis para essa chamada: o usuário (link pro grupo dele, com a tag dele) e a
+// conta do SISTEMA (ler a vitrine de um cupom pela landing de afiliado). O
+// caminho do usuário carrega cache, telemetria e aviso de cookie vencido, que não
+// fazem sentido no outro — o que os dois compartilham é só isto aqui.
+async function postCreateLink({ cookie, tag, url, signal = undefined }) {
+  const res = await fetch(ML_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Cookie": cookie,
+      "User-Agent": UA,
+      "Origin": "https://www.mercadolivre.com.br",
+      "Referer": "https://www.mercadolivre.com.br/afiliados",
+    },
+    body: JSON.stringify({ urls: [url], tag }),
+    signal,
+  });
+  const data = res.ok ? await res.json().catch(() => null) : null;
+  return { status: res.status, ok: res.ok, data, shortUrl: data?.urls?.[0]?.short_url || null };
+}
+
+// Link de afiliado gerado com a conta do SISTEMA, não com a de um usuário.
+//
+// Serve pra LER: a landing que sai daqui é a única forma de ver a vitrine de um
+// cupom sem navegador (ver scraping/ml-vitrine-landing.js). Precisa da tag da
+// conta do sistema — sem ela devolve o motivo, e quem chamou degrada em silêncio.
+// A regra do getScraperMLSession vale igual: NUNCA cai no cookie ou na tag de um
+// usuário.
+async function criarLinkAfiliadoMLSistema(url, { signal = undefined } = {}) {
+  const session = getScraperMLSession();
+  if (!session?.cookie) {
+    return { shortUrl: null, kind: ML_LINK_KIND.SEM_CONFIG, reason: "Sem sessão do Mercado Livre do sistema — cole o cookie em Admin › Mercado Livre." };
+  }
+  if (!session.tag) {
+    return { shortUrl: null, kind: ML_LINK_KIND.SEM_CONFIG, reason: "Sem a tag de afiliado da conta do sistema — preencha em Admin › Mercado Livre." };
+  }
+  try {
+    const r = await postCreateLink({ cookie: session.cookie, tag: session.tag, url, signal });
+    if (r.status === 401 || r.status === 403) {
+      return { shortUrl: null, kind: ML_LINK_KIND.COOKIE, reason: "O cookie da conta do sistema venceu — cole um novo em Admin › Mercado Livre." };
+    }
+    if (!r.ok) {
+      return { shortUrl: null, kind: ML_LINK_KIND.ERRO, reason: `O Mercado Livre respondeu HTTP ${r.status} ao gerar o link.` };
+    }
+    if (!r.shortUrl) {
+      return { shortUrl: null, kind: ML_LINK_KIND.LINK_RECUSADO, reason: "O Mercado Livre não aceita esta URL no programa de afiliados." };
+    }
+    return { shortUrl: r.shortUrl, kind: ML_LINK_KIND.OK, reason: null };
+  } catch (err) {
+    return { shortUrl: null, kind: ML_LINK_KIND.ERRO, reason: `Falha ao gerar o link: ${err.message}` };
+  }
+}
+
 // Cria o link de afiliado e DIZ POR QUE falhou quando falha.
 // Devolve { shortUrl, kind, reason }.
 async function criarLinkAfiliadoML(userId, linkOriginal) {
@@ -333,17 +387,7 @@ async function criarLinkAfiliadoML(userId, linkOriginal) {
 
   const s = ensureStats(userId).ml;
   try {
-    const res = await fetch(ML_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Cookie": cookie,
-        "User-Agent": UA,
-        "Origin": "https://www.mercadolivre.com.br",
-        "Referer": "https://www.mercadolivre.com.br/afiliados",
-      },
-      body: JSON.stringify({ urls: [linkOriginal], tag }),
-    });
+    const res = await postCreateLink({ cookie, tag, url: linkOriginal });
 
     if (!res.ok) {
       // 401/403 é cookie vencido — o único caso aqui que exige AÇÃO de quem usa.
@@ -363,8 +407,7 @@ async function criarLinkAfiliadoML(userId, linkOriginal) {
       };
     }
 
-    const data = await res.json();
-    const short = data?.urls?.[0]?.short_url || null;
+    const { data, shortUrl: short } = res;
     if (!short) {
       // Respondeu 200: o cookie está vivo, quem não serve é o link.
       s.lastSuccessAt = new Date().toISOString();
@@ -602,10 +645,15 @@ function clearScraperShopeeAdminCreds() {
 function readScraperMLAdminSession() {
   const raw = appConfig.get(SCRAPER_ML_ADMIN_KEY);
   if (!raw || typeof raw !== "object") {
-    return { cookie: null, updatedAt: null, lastCheckAt: null, lastCheckOk: null, lastCheckReason: null };
+    return { cookie: null, tag: null, updatedAt: null, lastCheckAt: null, lastCheckOk: null, lastCheckReason: null };
   }
   return {
     cookie: raw.cookie || null,
+    // A TAG de afiliado da conta do sistema. Fica junto do cookie porque é da
+    // MESMA conta, e é opcional: sem ela o Hub e a aba de cupons continuam
+    // funcionando — quem precisa dela é só a leitura da vitrine pela landing de
+    // afiliado (scraping/ml-vitrine-landing.js), que gera link curto pra ler.
+    tag: raw.tag || null,
     updatedAt: raw.updatedAt || null,
     lastCheckAt: raw.lastCheckAt || null,
     lastCheckOk: typeof raw.lastCheckOk === "boolean" ? raw.lastCheckOk : null,
@@ -616,19 +664,31 @@ function readScraperMLAdminSession() {
 // Cookie no formato de header ("k=v; k2=v2"). Validação frouxa de propósito:
 // só o suficiente pra pegar cola errada (URL, JSON, texto solto) sem palpitar
 // sobre quais cookies o ML usa hoje.
-function writeScraperMLAdminSession({ cookie }) {
-  const clean = String(cookie || "").trim();
-  if (!clean) throw new Error("Cole o cookie de sessão da conta do sistema.");
-  if (!clean.includes("=") || clean.length < 20) {
-    throw new Error("Isso não parece um cookie — esperado algo como \"nome=valor; outro=valor\".");
+function writeScraperMLAdminSession({ cookie = undefined, tag = undefined }) {
+  // As duas coisas têm ciclos de vida diferentes — o cookie vence toda semana, a
+  // tag não muda nunca —, então cada uma pode ser salva sozinha. `undefined` =
+  // "não mexi nisso"; string vazia na tag = "apague".
+  const anterior = readScraperMLAdminSession();
+
+  let clean = anterior.cookie;
+  if (cookie !== undefined || !anterior.cookie) {
+    clean = String(cookie || "").trim();
+    if (!clean) throw new Error("Cole o cookie de sessão da conta do sistema.");
+    if (!clean.includes("=") || clean.length < 20) {
+      throw new Error("Isso não parece um cookie — esperado algo como \"nome=valor; outro=valor\".");
+    }
   }
+  const mudouCookie = clean !== anterior.cookie;
+  const tagLimpa = tag === undefined ? anterior.tag : (String(tag || "").trim() || null);
   const next = {
     cookie: clean,
-    updatedAt: new Date().toISOString(),
-    // Cookie novo → o resultado do teste anterior não vale mais.
-    lastCheckAt: null,
-    lastCheckOk: null,
-    lastCheckReason: null,
+    tag: tagLimpa,
+    updatedAt: mudouCookie ? new Date().toISOString() : anterior.updatedAt,
+    // Cookie novo → o resultado do teste anterior não vale mais. Mexer só na tag
+    // não invalida teste nenhum: ela não tem nada a ver com entrar no Hub.
+    lastCheckAt: mudouCookie ? null : anterior.lastCheckAt,
+    lastCheckOk: mudouCookie ? null : anterior.lastCheckOk,
+    lastCheckReason: mudouCookie ? null : anterior.lastCheckReason,
   };
   appConfig.set(SCRAPER_ML_ADMIN_KEY, next);
   return next;
@@ -670,11 +730,14 @@ function recordMLHubCheck({ ok, reason, kind, manual } = {}) {
 // De propósito NÃO cai no cookie de nenhum usuário: raspar com a conta de um
 // cliente sem ele saber não é aceitável (o Shopee tem esse fallback por herança).
 function getScraperMLSession() {
-  if (process.env.ML_SCRAPER_COOKIE) {
-    return { cookie: process.env.ML_SCRAPER_COOKIE.trim(), source: "env" };
-  }
+  // A tag pode vir por env sozinha (ML_SCRAPER_TAG), inclusive junto do cookie de
+  // env — são duas coisas independentes, e a conta é a mesma.
+  const tagEnv = process.env.ML_SCRAPER_TAG ? process.env.ML_SCRAPER_TAG.trim() : null;
   const admin = readScraperMLAdminSession();
-  if (admin.cookie) return { cookie: admin.cookie, source: "admin" };
+  if (process.env.ML_SCRAPER_COOKIE) {
+    return { cookie: process.env.ML_SCRAPER_COOKIE.trim(), tag: tagEnv || admin.tag || null, source: "env" };
+  }
+  if (admin.cookie) return { cookie: admin.cookie, tag: tagEnv || admin.tag || null, source: "admin" };
   return null;
 }
 
@@ -1021,6 +1084,8 @@ async function warmup() {
 // ────────────────────────────────────────────────────────────────────────
 
 module.exports = {
+  criarLinkAfiliadoMLSistema,
+  postCreateLink,
   // ML
   gerarLinkAfiliadoML,
   criarLinkAfiliadoML,

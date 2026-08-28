@@ -421,3 +421,162 @@ describe("crawlFilter — a varredura de UMA campanha (findCampaignId)", () => {
     expect(r.coupons.find(c => c.campaignId === "13422085").scope).toBe("store");
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────
+// A amostra da vitrine (os `item_ids` do bloco de telemetria)
+// ────────────────────────────────────────────────────────────────────────
+//
+// Os ids das 4 miniaturas do card não estão no card: estão em
+// `tracking.view.eventData.coupons_list[]`, num campo IRMÃO de `segmentations`.
+// É fácil procurar no lugar errado — `segmentations.item_ids` existe e vem
+// sempre vazio —, e é fácil o ML mudar isso de lugar sem avisar. Daí estes
+// testes: as fixtures são recortes de dumps de verdade, então o dia em que o
+// campo sair do modelo, quebra aqui e não em produção com vínculo faltando.
+describe("sampleIdsFromTracking (a amostra da vitrine)", () => {
+  it("tira os MLBs do bloco de telemetria, por campanha", () => {
+    const mapa = ml.sampleIdsFromTracking(landing);
+    expect(mapa.size).toBeGreaterThan(0);
+    expect(mapa.get("13907402")).toEqual([
+      "MLB4714381579", "MLB6781617356", "MLB4751231153", "MLB4751243865",
+    ]);
+  });
+
+  it("ignora o que não é MLB e não repete id", () => {
+    const mapa = ml.sampleIdsFromTracking({
+      tracking: { view: { eventData: { coupons_list: [
+        { campaign_id: "1", item_ids: ["MLB123456789", "MLB123456789", "lixo", null, "MLB-987654321"] },
+        { campaign_id: "2", item_ids: [] },
+        { item_ids: ["MLB111111111"] },   // sem campanha: não dá pra vincular
+      ] } } },
+    });
+    expect(mapa.get("1")).toEqual(["MLB123456789", "MLB987654321"]);
+    expect(mapa.has("2")).toBe(false);
+    expect(mapa.size).toBe(1);
+  });
+
+  it("página sem telemetria não quebra — devolve mapa vazio", () => {
+    expect(ml.sampleIdsFromTracking(null).size).toBe(0);
+    expect(ml.sampleIdsFromTracking({}).size).toBe(0);
+    expect(ml.sampleIdsFromTracking({ tracking: { view: {} } }).size).toBe(0);
+  });
+});
+
+describe("sampleItemIds chega no cupom", () => {
+  it("pela aba (parseLanding)", () => {
+    const cupons = ml.parseLanding(landing).coupons;
+    expect(cupons.every(c => Array.isArray(c.sampleItemIds))).toBe(true);
+    const c = cupons.find(x => x.campaignId === "13907402");
+    expect(c.sampleItemIds).toHaveLength(4);
+    // A amostra existe para cupom NÃO ativado também — e é justamente nele que
+    // ela é o único vínculo possível, porque vitrine ele não tem.
+    const inativo = cupons.find(x => !x.activated && x.sampleItemIds.length);
+    expect(inativo ? inativo.sampleItemIds.length : 4).toBeGreaterThan(0);
+  });
+
+  it("pela lista cheia (parseFilterProps), que só serve camelCase", () => {
+    const cupons = ml.parseFilterProps(filterProps, "ce_vertical").coupons;
+    const c = cupons.find(x => x.campaignId === "13907402");
+    expect(c.sampleItemIds).toHaveLength(4);
+  });
+
+  it("cupom sem telemetria fica com a lista vazia, não com undefined", () => {
+    const c = ml.parseCoupon({ campaign_id: "999", title: { text: "10% OFF" } });
+    expect(c.sampleItemIds).toEqual([]);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// Ativar cupom ("Eu quero") — a única ESCRITA na conta do ML
+// ────────────────────────────────────────────────────────────────────────
+//
+// Contexto (27/08/2026): o ML só entrega a URL da vitrine para cupom ATIVADO. O
+// não ativado vem com `action.type === "button"` e nada mais — e sem vitrine o
+// sistema não sabe quais produtos o cupom cobre.
+//
+// Ativar é escrita na conta, e a conta é a MESMA do Hub de Afiliados. Por isso a
+// regra de QUEM ativar é pura e tem teste: cada item que sai daqui vira um clique
+// de verdade na conta do Allan, e ativar o cupom errado não tem desfazer.
+describe("aAtivar — quem pode receber o clique", () => {
+  const cupom = (over = {}) => ({
+    campaignId: "1", scope: "campaign", activated: false,
+    activationLabel: "Aplicar cupom 10 por cento OFF Em produtos selecionados",
+    expiresAt: new Date(Date.now() + 864e5).toISOString(),
+    ...over,
+  });
+
+  it("deixa passar o cupom de campanha não ativado", () => {
+    expect(ml.aAtivar([cupom()], { max: 20 })).toHaveLength(1);
+  });
+
+  it("cupom de LOJA fica de fora — vale só para um vendedor, ativar é escrita à toa", () => {
+    expect(ml.aAtivar([cupom({ scope: "store" })], { max: 20 })).toEqual([]);
+  });
+
+  it("já ativado fica de fora", () => {
+    expect(ml.aAtivar([cupom({ activated: true })], { max: 20 })).toEqual([]);
+  });
+
+  it("vencido fica de fora — ativar cupom morto é sujeira na conta", () => {
+    expect(ml.aAtivar([cupom({ expiresAt: new Date(Date.now() - 864e5).toISOString() })], { max: 20 })).toEqual([]);
+  });
+
+  it("sem rótulo fica de fora: sem ele não se sabe QUAL botão é o dele", () => {
+    expect(ml.aAtivar([cupom({ activationLabel: null })], { max: 20 })).toEqual([]);
+  });
+
+  it("respeita o teto — é ele que protege a conta da rajada de cliques", () => {
+    // Rótulos distintos de propósito: cupom diferente com rótulo igual é ambíguo
+    // e o `aAtivar` descarta — o que este teste mede é o TETO, não a ambiguidade.
+    const muitos = Array.from({ length: 50 }, (_, i) =>
+      cupom({ campaignId: String(i), activationLabel: `Aplicar cupom ${i} por cento OFF` }));
+    expect(ml.aAtivar(muitos, { max: 20 })).toHaveLength(20);
+    expect(ml.aAtivar(muitos, { max: 0 })).toEqual([]);
+  });
+
+  it("cupom sem data de validade passa (o ML nem sempre manda)", () => {
+    expect(ml.aAtivar([cupom({ expiresAt: null })], { max: 5 })).toHaveLength(1);
+  });
+});
+
+describe("parseCoupon — o rótulo que liga o modelo ao botão", () => {
+  const cupons = ml.parseLanding(landing).coupons;
+
+  it("o cupom não ativado guarda o rótulo do 'Aplicar'", () => {
+    const semVitrine = cupons.filter(c => !c.containerUrl && !c.activated);
+    expect(semVitrine.length).toBeGreaterThan(0);
+    // O rótulo é o que evita clicar no cupom errado: "Aplicar" sozinho se repete
+    // dezenas de vezes na página.
+    expect(semVitrine.every(c => typeof c.activationLabel === "string" && /Aplicar/i.test(c.activationLabel))).toBe(true);
+  });
+
+  it("a lista PAGINADA também guarda o rótulo — é ela que a rodada usa", () => {
+    // Aqui mora o bug de verdade, e é uma lição sobre onde apontar o teste: a aba
+    // inicial (`parseLanding`) lê `rawCoupons`, em snake_case, com `sr_label` — e
+    // sempre funcionou. A lista paginada (`parseFilterProps`) vem em camelCase,
+    // com `srLabel`, e é essa que a rodada percorre. O código lia só o snake, então
+    // caía no `label` = "Aplicar" exatamente no caminho que importa, enquanto os
+    // testes da aba passavam verdes.
+    const daLista = ml.parseFilterProps(filterProps, null).coupons.filter(c => c.activationLabel);
+    expect(daLista.length).toBeGreaterThan(1);
+    expect(daLista.map(c => c.activationLabel)).not.toContain("Aplicar");
+    for (const c of daLista) expect(c.activationLabel.length).toBeGreaterThan("Aplicar".length);
+  });
+
+  it("o rótulo IDENTIFICA o cupom — nunca é o texto solto do botão", () => {
+    // Este teste existe por causa de um bug de verdade: o código lia `sr_label` e
+    // o ML manda `srLabel`, então caía no `label` irmão — que é "Aplicar", igual
+    // em todos os cards. O efeito não era "não ativa": era casar o primeiro botão
+    // da página e ativar OUTRO cupom na conta. A asserção antiga (/Aplicar/i)
+    // passava feliz com o bug, por isso aqui se exige unicidade.
+    const rotulos = cupons.filter(c => c.activationLabel).map(c => c.activationLabel);
+    expect(rotulos.length).toBeGreaterThan(1);
+    expect(rotulos).not.toContain("Aplicar");
+    expect(new Set(rotulos).size).toBe(rotulos.length);
+  });
+
+  it("o cupom que já tem vitrine não tem rótulo de ativação", () => {
+    const comVitrine = cupons.filter(c => c.containerUrl);
+    expect(comVitrine.length).toBeGreaterThan(0);
+    expect(comVitrine.every(c => c.activationLabel === null)).toBe(true);
+  });
+});

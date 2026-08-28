@@ -65,6 +65,13 @@ const CHECKOUT_ERROR_RE = /(ocorreu um problema|algo deu errado|tivemos um probl
 const CHECKOUT_ERROR_CODE_RE = /\b[A-Z]{2,6}\d{0,3}-[A-Z0-9]{6,}\b/;
 const CHECKOUT_READY_RE = /forma de pagamento|como (voc[êe] )?quer pagar|resumo da compra|revise (sua|a) compra|finalizar compra|meios de pagamento|endere[çc]o de entrega/i;
 const CHECKOUT_READY_WAIT_MS = 30000;
+// A tela de PAGAMENTO, e só ela. Mais estreita que a CHECKOUT_READY_RE de
+// propósito: aquela reconhece "resumo da compra" e "endereço de entrega", que
+// aparecem desde o primeiro passo. Esta é o que separa "o checkout montou" de
+// "cheguei onde o cupom existe" — e essa diferença era o bug: o "Resumo da
+// compra" mostra a linha "Cupons" desde a tela de entrega, mas ali ela não abre
+// popup nenhum, e a automação parava três telas antes da certa.
+const PAYMENT_STEP_RE = /forma de pagamento|formas de pagamento|como (voc[êe] )?quer pagar|escolha como pagar|meios de pagamento|escolha o meio de pagamento/i;
 
 // Respostas que interessam guardar: as que falam de cupom/desconto. Vale como
 // filtro largo de propósito — o nome exato da API só se descobre olhando o dump.
@@ -83,7 +90,9 @@ const CONTINUE_RE = /^continuar( compra)?$/i;
 // "Continuar COMPRANDO" está fora de propósito: esse é o link de voltar pra loja,
 // e clicar nele joga a automação pra fora do checkout gastando um passo à toa.
 const CONTINUE_STEP_RE = /^continuar( compra| para .{0,30})?$/i;
-const MAX_CHECKOUT_STEPS = 6;
+// Com o cupom só valendo na tela de pagamento (ver PAYMENT_STEP_RE), a caminhada
+// ficou mais longa por desenho: 6 já estourava antes, sem nem chegar lá.
+const MAX_CHECKOUT_STEPS = 10;
 // Inclui o plural de propósito: na tela "Escolha como pagar" a linha aparece como
 // "Cupons de desconto", e o singular sozinho passava batido.
 const COUPON_OPEN_RE = /(inserir|adicionar|usar|tenho|aplicar).{0,12}(cupom|cupons|c[óo]digo)|c[óo]digos? de desconto|cupom de desconto|cupons de desconto|^cupons?$/i;
@@ -380,6 +389,39 @@ function readBuyForm(page) {
   });
 }
 
+// Escolhe a primeira variação disponível da PDP (tamanho, cor, voltagem…).
+//
+// Produto com variação não vende antes de alguém escolher, e o botão "Comprar
+// agora" fica desabilitado dizendo isso no texto — foi assim que o teste morreu
+// em 18/08 com um tênis. O picker do ML é uma lista de <a>/<label> dentro de
+// `.ui-pdp-variations`; os indisponíveis vêm marcados com `--disabled`.
+//
+// Só a PRIMEIRA disponível, e só uma vez: escolher variação muda o produto que
+// está sendo testado, então isso é um plano B honesto, não o caminho normal —
+// e o resultado avisa qual foi escolhida.
+async function pickFirstVariation(page) {
+  const escolheu = await page.evaluate(() => {
+    const caixa = document.querySelector(".ui-pdp-variations, [class*='variations']");
+    if (!caixa) return null;
+    const opcoes = Array.from(caixa.querySelectorAll("a, label, li, button"))
+      .filter(el => el.offsetParent !== null)
+      .filter(el => !/--disabled|--unavailable/.test(el.className || ""))
+      .filter(el => el.getAttribute("aria-disabled") !== "true" && !el.disabled)
+      .filter(el => !/^(sim|n[ãa]o)$/i.test((el.textContent || "").trim()));
+    const alvo = opcoes.find(el => el.getAttribute("aria-checked") !== "true" && !/--selected/.test(el.className || ""))
+              || opcoes[0];
+    if (!alvo) return null;
+    const texto = (alvo.getAttribute("aria-label") || alvo.textContent || "").replace(/\s+/g, " ").trim().slice(0, 60);
+    (alvo.closest("a, label, button, [role='button']") || alvo).click();
+    return texto || "(sem nome)";
+  }).catch(() => null);
+
+  if (!escolheu) return null;
+  // Escolher variação recarrega a PDP (o ML troca a URL do anúncio).
+  await sleep(SETTLE_MS * 2);
+  return escolheu;
+}
+
 // Espera o checkout sair do "Preparando tudo para sua compra" e virar tela de
 // verdade. Devolve { ready, url, bodyText } — `ready:false` quando o ML devolveu
 // a gente pra fora do checkout (acontece quando o pedido não pode ser montado).
@@ -411,11 +453,19 @@ async function goToCheckout(page) {
     return false;
   };
 
-  const form = await readBuyForm(page);
+  let form = await readBuyForm(page);
+
+  // Botão desabilitado costuma querer dizer "escolha a variação primeiro".
+  // Tenta escolher uma e relê o formulário — uma vez só.
+  let variacao = null;
+  if (form?.bloqueado) {
+    variacao = await pickFirstVariation(page);
+    if (variacao) form = await readBuyForm(page);
+  }
 
   if (form?.bloqueado) {
     return {
-      reached: false, via: null, url: page.url(),
+      reached: false, via: null, url: page.url(), variacao,
       blockedReason: form.texto || "O botão de compra está desabilitado nesta página.",
     };
   }
@@ -424,11 +474,11 @@ async function goToCheckout(page) {
     const alvo = new URL(form.action);
     for (const [k, v] of Object.entries(form.campos)) alvo.searchParams.set(k, v);
     await page.goto(alvo.href, { waitUntil: "domcontentloaded", timeout: NAV_WAIT_MS }).catch(() => {});
-    if (await esperarSaida()) return { reached: true, via: "form-compra", url: page.url(), blockedReason: null };
+    if (await esperarSaida()) return { reached: true, via: "form-compra", url: page.url(), blockedReason: null, variacao };
   }
 
   if (await clickByPattern(page, BUY_NOW_RE, { maxLen: 60 })) {
-    if (await esperarSaida()) return { reached: true, via: "comprar-agora", url: page.url(), blockedReason: null };
+    if (await esperarSaida()) return { reached: true, via: "comprar-agora", url: page.url(), blockedReason: null, variacao };
   }
 
   if (await clickByPattern(page, ADD_TO_CART_RE, { maxLen: 60 })) {
@@ -437,28 +487,70 @@ async function goToCheckout(page) {
       await page.goto("https://www.mercadolivre.com.br/gz/cart", { waitUntil: "domcontentloaded", timeout: NAV_WAIT_MS }).catch(() => {});
     }
     await clickByPattern(page, CONTINUE_RE, { maxLen: 60 });
-    if (await esperarSaida()) return { reached: true, via: "carrinho", url: page.url(), blockedReason: null };
-    return { reached: false, via: "carrinho", url: page.url(), blockedReason: null };
+    if (await esperarSaida()) return { reached: true, via: "carrinho", url: page.url(), blockedReason: null, variacao };
+    return { reached: false, via: "carrinho", url: page.url(), blockedReason: null, variacao };
   }
 
-  return { reached: false, via: null, url: page.url(), blockedReason: null };
+  return { reached: false, via: null, url: page.url(), blockedReason: null, variacao };
 }
 
-// A tela atual já tem por onde entrar com um cupom?
+// A página onde a gente PAROU é mesmo a de um produto?
+//
+// Nasceu de um teste que devolveu "a página oferece 22 cupons" para um tênis: o
+// link colado vinha do perfil de afiliado (`source=affiliate-profile`), e o ML
+// mandou a sessão do sistema para `/social/<apelido>/lists` — a vitrine do
+// afiliado, que é uma página cheia de cupons e nenhum deles do produto. Ler
+// cupom de uma página que não é a do produto não é resultado ruim, é resultado
+// FALSO: vira "esse produto tem 22 cupons" na tela.
+//
+// Puro, e por isso testado sem navegador.
+function isProductPage(finalUrl) {
+  let u;
+  try { u = new URL(String(finalUrl || "")); } catch { return false; }
+  const caminho = decodeURIComponent(u.pathname);
+
+  // O perfil/vitrine do afiliado nunca é produto.
+  if (/^\/social\//i.test(caminho)) return false;
+
+  return /\/p\/MLB\d+/i.test(caminho)
+      || /\/up\/MLBU\d+/i.test(caminho)
+      || /\/MLB-?\d{6,}/i.test(caminho)
+      || /^produto\./i.test(u.hostname);
+}
+
+// O que esta tela tem de cupom — e são DUAS coisas diferentes:
+//
+//   `campo` — um input de cupom à mostra. Aqui não há dúvida: é digitar e aplicar.
+//   `linha` — só um texto ("Cupons", "Inserir código do cupom") que PODE abrir um
+//             popup. O "Resumo da compra" mostra essa linha desde a tela de
+//             entrega, e ali ela não abre nada.
+//
+// Juntar as duas num único booleano era o bug: a automação declarava "achei o
+// cupom" na tela de entrega, clicava numa linha morta e devolvia "não achei o
+// campo" como se o layout do ML tivesse mudado.
 function hasCouponEntry(page) {
   return page.evaluate((source, flags) => {
     const rx = new RegExp(source, flags);
-    const temCampo = Array.from(document.querySelectorAll("input")).some(el => {
+    const campo = Array.from(document.querySelectorAll("input")).some(el => {
       const pista = `${el.name || ""} ${el.id || ""} ${el.placeholder || ""} ${el.getAttribute("aria-label") || ""}`;
       return el.offsetParent !== null && /cupom|coupon|c[óo]digo de desconto/i.test(pista);
     });
-    if (temCampo) return true;
-    return Array.from(document.querySelectorAll("button, [role='button'], a, label, span"))
+    const linha = Array.from(document.querySelectorAll("button, [role='button'], a, label, span"))
       .some(el => {
         const t = (el.textContent || "").replace(/\s+/g, " ").trim();
         return el.offsetParent !== null && t && t.length <= 60 && rx.test(t);
       });
-  }, COUPON_OPEN_RE.source, COUPON_OPEN_RE.flags);
+    return { campo, linha };
+  }, COUPON_OPEN_RE.source, COUPON_OPEN_RE.flags).catch(() => ({ campo: false, linha: false }));
+}
+
+// Estamos na tela de PAGAMENTO? É lá — e só lá — que a linha "Inserir código do
+// cupom" do resumo abre o popup de verdade.
+async function isPaymentStep(page) {
+  const { titulo } = await readStepHeading(page);
+  if (PAYMENT_STEP_RE.test(titulo || "")) return true;
+  const { bodyText } = await snapshotPage(page).catch(() => ({ bodyText: "" }));
+  return PAYMENT_STEP_RE.test(bodyText || "");
 }
 
 // Marca a primeira opção de um passo que exige escolha (forma de entrega, por
@@ -524,10 +616,18 @@ async function waitForStepChange(page, antes, ms = STEP_CHANGE_WAIT_MS) {
 
 // O checkout do ML caiu? Devolve o código do erro (ou "" quando caiu sem código),
 // e null quando a tela está normal.
+// O `bodyText` sozinho não bastava: em 18/08 a tela era só o título "Ocorreu um
+// problema", sem o "tente novamente" que a CHECKOUT_ERROR_RE exige a até 140
+// chars de distância. O resultado saiu como "não existe botão Continuar nessa
+// tela" — verdade, e mandando consertar o lugar errado: o problema era do ML.
+const CHECKOUT_ERROR_TITLE_RE = /^\s*(ocorreu um problema|algo deu errado|tivemos um problema)/i;
+
 async function readCheckoutError(page) {
   const { bodyText } = await snapshotPage(page).catch(() => ({ bodyText: "" }));
-  if (!CHECKOUT_ERROR_RE.test(bodyText || "")) return null;
-  return (bodyText.match(CHECKOUT_ERROR_CODE_RE) || [""])[0];
+  const { titulo } = await readStepHeading(page);
+  const caiu = CHECKOUT_ERROR_RE.test(bodyText || "") || CHECKOUT_ERROR_TITLE_RE.test(titulo || "");
+  if (!caiu) return null;
+  return (String(bodyText || "").match(CHECKOUT_ERROR_CODE_RE) || [""])[0];
 }
 
 // Espera a tela PARAR de mexer antes de clicar. Marcar a forma de entrega dispara
@@ -553,12 +653,20 @@ async function waitForQuiet(page, ms = QUIET_WAIT_MS) {
 // Vai anotando a trilha (tela por tela, o que foi clicado, por que parou). Quando
 // o ML mudar o fluxo, é a trilha que diz em qual tela consertar — a primeira
 // versão só devolvia o número de passos, e isso não bastou pra achar o problema.
-async function advanceToCouponStep(page, { onStep = null } = {}) {
+//
+// `tentarAbrir(page)` é chamado quando a tela mostra por onde entrar com o cupom;
+// ele devolve `{ found }`. Existe como callback (e não depois, no chamador) por
+// causa do desfecho que mais aparecia no histórico: clicar na linha do cupom e o
+// campo não abrir. Antes isso encerrava a caminhada e virava veredito
+// "indeterminado"; agora é só mais uma tela que não deu, e o checkout continua
+// andando até a próxima.
+async function advanceToCouponStep(page, { onStep = null, tentarAbrir = null } = {}) {
   const trail = [];
   let passos = 0;
   let motivo = "limite-de-passos";
   let jaRecarregou = false;
   let erroFinal = "";
+  let abertura = null;
 
   for (; passos < MAX_CHECKOUT_STEPS; passos++) {
     const { titulo } = await readStepHeading(page);
@@ -566,9 +674,26 @@ async function advanceToCouponStep(page, { onStep = null } = {}) {
     trail.push(passo);
     if (onStep) await onStep(passos + 1, page);
 
-    if (await hasCouponEntry(page)) {
-      passo.parou = "achei-o-cupom";
-      return { reached: true, steps: passos, trail, motivo: "achei-o-cupom" };
+    const entrada = await hasCouponEntry(page);
+    // Um campo à mostra é resposta fechada — não interessa em que tela estamos.
+    // Já a LINHA do resumo só vale na tela de pagamento: nas de entrega ela está
+    // lá o tempo todo e não abre nada.
+    const valeTentar = entrada.campo || (entrada.linha && await isPaymentStep(page));
+    if (valeTentar) {
+      passo.cupom = entrada.campo ? "campo" : "linha";
+      if (!tentarAbrir) {
+        passo.parou = "achei-o-cupom";
+        return { reached: true, steps: passos, trail, motivo: "achei-o-cupom", abertura: null };
+      }
+      abertura = await tentarAbrir(page);
+      if (abertura?.found) {
+        passo.parou = "achei-o-cupom";
+        return { reached: true, steps: passos, trail, motivo: "achei-o-cupom", abertura };
+      }
+      // Não abriu. Segue o checkout: pode ser que o cupom só apareça de verdade
+      // um passo à frente.
+      passo.parou = "cupom-nao-abriu";
+      motivo = "cupom-nao-abriu";
     }
 
     // O checkout do ML caiu. Ele mesmo pede "tente novamente", e recarregar a URL
@@ -618,8 +743,12 @@ async function advanceToCouponStep(page, { onStep = null } = {}) {
     await waitForCheckoutReady(page);
   }
 
-  const reached = await hasCouponEntry(page);
-  return { reached, steps: passos, trail, erro: erroFinal || null, motivo: reached ? "achei-o-cupom" : motivo };
+  // Se em alguma tela a linha do cupom foi clicada e o campo não abriu, é ISSO
+  // que explica o fim da caminhada — mesmo que ela tenha morrido depois num
+  // "sem botão Continuar" (na tela de pagamento não existe "Continuar", só
+  // "Pagar", e a automação nunca encosta nele).
+  const motivoFinal = abertura && !abertura.found ? "cupom-nao-abriu" : motivo;
+  return { reached: false, steps: passos, trail, erro: erroFinal || null, motivo: motivoFinal, abertura };
 }
 
 // Abre o campo de cupom do checkout, digita o código e aplica.
@@ -687,21 +816,28 @@ async function openCouponField(page) {
 // Abre o campo de cupom do checkout, digita o código e aplica.
 // Devolve { stepReached, fieldFound, applied, couponOpen, steps, trail, motivo }.
 async function applyCouponAtCheckout(page, code, { onStep = null, onStage = null } = {}) {
-  const caminho = await advanceToCouponStep(page, { onStep });
-  const trilha = { steps: caminho.steps, trail: caminho.trail, motivo: caminho.motivo };
-  if (!caminho.reached) return { stepReached: false, fieldFound: false, applied: false, couponOpen: null, totalBefore: null, totalAfter: null, ...trilha };
-
   // O total tem que ser lido na MESMA tela nos dois momentos. Lendo o "antes" na
   // tela de entrega e o "depois" na de pagamento, os dois números são de coisas
   // diferentes (com e sem frete) — e uma queda dessas viraria "cupom válido" sem
   // que cupom nenhum tivesse entrado. É a prova mais forte do veredito; não pode
-  // ser comparação de laranja com banana.
-  const totalBefore = extractCheckoutTotal((await snapshotPage(page)).bodyText);
+  // ser comparação de laranja com banana. Por isso ele é lido AQUI, dentro do
+  // callback: é o último instante antes de o popup do cupom cobrir a tela.
+  let totalBefore = null;
 
-  const abertura = await openCouponField(page);
-  if (onStage) await onStage("cupom-aberto", page);
-  if (!abertura.found) {
-    return { stepReached: true, fieldFound: false, applied: false, couponOpen: abertura, totalBefore, totalAfter: null, ...trilha };
+  const caminho = await advanceToCouponStep(page, {
+    onStep,
+    tentarAbrir: async (p) => {
+      totalBefore = extractCheckoutTotal((await snapshotPage(p)).bodyText);
+      const r = await openCouponField(p);
+      if (onStage) await onStage("cupom-aberto", p);
+      return r;
+    },
+  });
+
+  const trilha = { steps: caminho.steps, trail: caminho.trail, motivo: caminho.motivo };
+  const abertura = caminho.abertura || null;
+  if (!caminho.reached) {
+    return { stepReached: !!abertura, fieldFound: false, applied: false, couponOpen: abertura, totalBefore, totalAfter: null, ...trilha };
   }
 
   const fieldFound = await page.evaluate((valor) => {
@@ -769,6 +905,7 @@ function describeStall({ steps = 0, trail = [], motivo = "" } = {}) {
     "tela-nao-mudou": "cliquei em \"Continuar\" e a tela continuou a mesma — o botão provavelmente está desabilitado esperando alguma coisa (frete recalculando, um dado que a ferramenta não preenche).",
     "sem-botao-continuar": "não existe um botão \"Continuar\" nessa tela — daqui pra frente só há botões de pagar/confirmar, e a ferramenta nunca clica neles.",
     "limite-de-passos": `andei ${steps} tela(s) e o campo de cupom não apareceu em nenhuma.`,
+    "cupom-nao-abriu": "achei a linha do cupom na tela de pagamento, cliquei nela e o campo pra digitar não abriu — e daí pra frente o checkout não tinha mais para onde avançar.",
     "checkout-quebrou": `o checkout do ML caiu com "Ocorreu um problema"${ultima?.erro ? ` (${ultima.erro})` : ""} e não voltou nem depois de recarregar. É erro do lado deles: espere alguns minutos e teste de novo.`,
   }[motivo] || "o checkout mudou de forma no meio do caminho.";
   return `Cheguei no checkout mas não avancei até a tela do cupom. ${onde}: ${porque}`;
@@ -820,6 +957,18 @@ async function runCouponFlow(cookie, { url, code = null, mode = "leitura" } = {}
       return out;
     }
 
+    // Antes de ler cupom nenhum: isto é a página de um produto? Um link de perfil
+    // de afiliado leva a sessão do sistema pra vitrine do afiliado, e os cupons
+    // de lá não são deste produto.
+    if (!isProductPage(r.finalUrl)) {
+      out.notProductPage = true;
+      out.verdict = {
+        ok: false, status: "indeterminado", discount: null,
+        reason: `Esse link não abriu a página de um produto — a sessão do sistema parou em ${r.finalUrl}. Link de perfil de afiliado ("source=affiliate-profile", "/social/…") leva pra vitrine do afiliado, não pro produto: abra o produto no ML e cole o link direto dele.`,
+      };
+      return out;
+    }
+
     out.clipped = parseProductCoupons(await readProductCouponTexts(r.page));
 
     if (mode !== "checkout" || !code) return out;
@@ -830,6 +979,7 @@ async function runCouponFlow(cookie, { url, code = null, mode = "leitura" } = {}
     out.checkout.via = ida.via;
     out.checkout.url = ida.url;
     out.checkout.blockedReason = ida.blockedReason || null;
+    out.checkout.variacao = ida.variacao || null;
     out.checkout.cartUsed = ida.via === "carrinho";
     await stage("checkout", r.page);
 
@@ -837,7 +987,9 @@ async function runCouponFlow(cookie, { url, code = null, mode = "leitura" } = {}
       out.verdict = {
         ok: false, status: "indeterminado", discount: null,
         reason: ida.blockedReason
-          ? `O produto não pode ser comprado direto: "${ida.blockedReason}". Escolha a variação na página do ML e cole aqui o link já com ela.`
+          ? (ida.variacao
+              ? `O produto não pode ser comprado direto nem depois de eu escolher "${ida.variacao}": "${ida.blockedReason}". Escolha a variação na página do ML e cole aqui o link já com ela.`
+              : `O produto não pode ser comprado direto: "${ida.blockedReason}". Escolha a variação na página do ML e cole aqui o link já com ela.`)
           : `Não deu pra chegar no checkout a partir da página do produto (parou em ${ida.url}). A tela de compra pode ter mudado.`,
       };
       return out;
@@ -952,6 +1104,27 @@ function pushHistory(entry) {
 // Um teste por vez: cada um abre um Chrome e mexe na conta do sistema. Dois
 // simultâneos dobram a chance de CAPTCHA e podem brigar pelo mesmo carrinho.
 let _running = null;
+// O que o caminho rápido apurou quando ele NÃO concluiu. Vai junto no resultado
+// do checkout: "o cupom existe e está valendo, só não sei se cobre este produto"
+// é metade da resposta, e some se não for carregada adiante.
+let _quickPendente = null;
+
+// O caminho rápido linha a linha, no mesmo formato do `buildChecks`.
+function buildQuickChecks(quick) {
+  const checks = [
+    { key: "palavra", label: "O ML reconhece a palavra", ok: !!quick.campaignId,
+      value: quick.campaignId ? `campanha ${quick.campaignId}` : (quick.mlMessage || "não") },
+    { key: "cupom", label: "Cupom no sistema", ok: !!quick.coupon,
+      value: quick.coupon ? (quick.coupon.title || quick.coupon.campaignId) : "não está aqui" },
+    { key: "vitrine", label: "Produto na vitrine do cupom",
+      ok: quick.cobertura === "na-vitrine",
+      value: { "na-vitrine": "sim", "fora-da-vitrine": "não", "sem-vitrine": "vitrine nunca raspada" }[quick.cobertura] || "—" },
+    { key: "preco", label: "Preço antes → depois", ok: Number.isFinite(quick.priceAfter),
+      value: `${formatMoney(quick.priceBefore)} → ${formatMoney(quick.priceAfter)}` },
+    { key: "veredito", label: "Veredito", ok: quick.status === "valido", value: quick.reason },
+  ];
+  return checks;
+}
 
 // A trilha do checkout em uma linha: "Entrega → Pagamento". É o que a tela do
 // admin mostra pra dizer até onde a automação chegou.
@@ -990,6 +1163,34 @@ function buildChecks(flow, { mode, code }) {
 async function testCoupon({ url, code = null, mode = "leitura" } = {}) {
   if (_running) throw new Error("Já tem um teste de cupom rodando — espere ele terminar.");
 
+  // É a MESMA conta do ML da rodada de cupons e do Hub. Dois Chromes nela ao
+  // mesmo tempo dobram a chance de CAPTCHA — e o CAPTCHA vale pra conta, então
+  // derruba os três juntos. É a mesma recusa que o `startImport` já faz.
+  const mlCupons = require("./ml-cupons");
+  if (mlCupons.isRunning()) {
+    throw new Error("Tem uma rodada de cupons do ML rodando — espere ela terminar para testar um cupom.");
+  }
+
+  // A trava tem que valer para o teste INTEIRO, caminho rápido incluído: ele
+  // também pode abrir um Chrome (o teste de palavra na aba /cupons). Marcar só na
+  // hora do checkout deixava duas requisições passarem pela guarda acima e
+  // chegarem juntas na conta do sistema.
+  _running = executarTeste({ url, code, mode });
+  try {
+    const out = await _running;
+    pushHistory({
+      at: out.at, durationMs: out.durationMs, url: out.url, code: out.code,
+      mode: out.mode, status: out.status, reason: out.reason, discount: out.discount, fonte: out.fonte,
+    });
+    return out;
+  } finally {
+    _running = null;
+    _quickPendente = null;
+    pruneRuns(SHOTS_DIR);
+  }
+}
+
+async function executarTeste({ url, code = null, mode = "leitura" } = {}) {
   const affiliate = require("./affiliate");   // lazy: evita ciclo no boot
   const session = affiliate.getScraperMLSession();
   if (!session) {
@@ -1001,9 +1202,40 @@ async function testCoupon({ url, code = null, mode = "leitura" } = {}) {
     throw new Error("Por enquanto só testo cupom de produto do Mercado Livre.");
   }
   const cleanCode = normalizeCode(code);
-  const cleanMode = mode === "checkout" ? "checkout" : "leitura";
-  if (cleanMode === "checkout" && !cleanCode) {
-    throw new Error("Escreva o código do cupom pra testar no checkout (ou use o modo só leitura).");
+  const cleanMode = ["checkout", "rapido", "leitura"].includes(mode) ? mode : "leitura";
+  if (cleanMode !== "leitura" && !cleanCode) {
+    throw new Error("Escreva o código do cupom pra testar (ou use o modo só leitura).");
+  }
+
+  // O caminho rápido primeiro: ele responde pelo que o sistema já sabe, em
+  // segundos e sem levar o produto ao checkout. O checkout só continua existindo
+  // pro que ele não conclui — e desde 25/08/2026 o ML barra o Chrome com CAPTCHA
+  // já na página do produto, então quanto menos se depender dele, melhor.
+  if (cleanMode !== "leitura") {
+    const t0Rapido = Date.now();
+    const quick = await require("../coupons/quick-check").quickCheck({ url: cleanUrl, code: cleanCode });
+    if (quick.conclui || cleanMode === "rapido") {
+      return {
+        at: new Date().toISOString(),
+        durationMs: Date.now() - t0Rapido,
+        url: cleanUrl, code: cleanCode, mode: cleanMode, store,
+        status: quick.status,
+        reason: quick.reason,
+        discount: quick.discount,
+        fonte: "rapido",
+        quick,
+        clipped: [],
+        totalBefore: quick.priceBefore ?? null,
+        totalAfter: quick.priceAfter ?? null,
+        checkout: null,
+        finalUrl: cleanUrl,
+        checks: buildQuickChecks(quick),
+        shots: null,
+      };
+    }
+    // Não concluiu e o modo permite ir adiante: o checkout assume, e o que o
+    // caminho rápido descobriu vai junto no resultado.
+    _quickPendente = quick;
   }
 
   const t0 = Date.now();
@@ -1013,46 +1245,36 @@ async function testCoupon({ url, code = null, mode = "leitura" } = {}) {
   // rodado depois, quando a tela já podia estar diferente.
   const shots = makeStageRecorder(path.join(SHOTS_DIR, stamp));
 
-  _running = (async () => {
-    const flow = await runCouponFlow(session.cookie, { url: cleanUrl, code: cleanCode, mode: cleanMode }, { onStage: shots.onStage });
-    const verdict = flow.verdict || {
-      ok: true, status: "leitura", discount: null,
-      reason: flow.clipped.length
-        ? `A página oferece ${flow.clipped.length} cupom(ns). Nenhum código foi testado no checkout.`
-        : "A página não oferece nenhum cupom, e nenhum código foi testado no checkout.",
-    };
+  const flow = await runCouponFlow(session.cookie, { url: cleanUrl, code: cleanCode, mode: cleanMode }, { onStage: shots.onStage });
+  const verdict = flow.verdict || {
+    ok: true, status: "leitura", discount: null,
+    reason: flow.clipped.length
+      ? `A página oferece ${flow.clipped.length} cupom(ns). Nenhum código foi testado no checkout.`
+      : "A página não oferece nenhum cupom, e nenhum código foi testado no checkout.",
+  };
 
-    return {
-      at: new Date().toISOString(),
-      durationMs: Date.now() - t0,
-      url: cleanUrl,
-      code: cleanCode,
-      mode: cleanMode,
-      store,
-      status: verdict.status,
-      reason: verdict.reason,
-      discount: verdict.discount,
-      clipped: flow.clipped,
-      totalBefore: flow.totalBefore,
-      totalAfter: flow.totalAfter,
-      checkout: flow.checkout,
-      finalUrl: flow.finalUrl,
-      checks: buildChecks(flow, { mode: cleanMode, code: cleanCode }),
-      shots: { dir: shots.outDir, files: shots.salvos },
-    };
-  })();
-
-  try {
-    const out = await _running;
-    pushHistory({
-      at: out.at, durationMs: out.durationMs, url: out.url, code: out.code,
-      mode: out.mode, status: out.status, reason: out.reason, discount: out.discount,
-    });
-    return out;
-  } finally {
-    _running = null;
-    pruneRuns(SHOTS_DIR);
-  }
+  return {
+    at: new Date().toISOString(),
+    durationMs: Date.now() - t0,
+    url: cleanUrl,
+    code: cleanCode,
+    mode: cleanMode,
+    store,
+    status: verdict.status,
+    reason: verdict.reason,
+    discount: verdict.discount,
+    clipped: flow.clipped,
+    totalBefore: flow.totalBefore,
+    totalAfter: flow.totalAfter,
+    checkout: flow.checkout,
+    finalUrl: flow.finalUrl,
+    fonte: cleanMode === "leitura" ? "leitura" : "checkout",
+    // O que o caminho rápido apurou antes de passar a bola. Sem isso a tela
+    // esquece que o ML já disse que o cupom existe e está valendo.
+    quick: _quickPendente,
+    checks: buildChecks(flow, { mode: cleanMode, code: cleanCode }),
+    shots: { dir: shots.outDir, files: shots.salvos },
+  };
 }
 
 function isRunning() {
@@ -1116,6 +1338,8 @@ module.exports = {
   collectMessages,
   classifyCouponResult,
   buildChecks,
+  buildQuickChecks,
+  isProductPage,
   VERDICT_PATTERNS,
   HISTORY_MAX,
 };

@@ -115,3 +115,46 @@ BACKUP_RETAIN_REMOTE_DAYS=30       # depois da janela, 1 por dia até N dias
 BACKUP_ALERT_LOCAL_MAX_H=3         # alerta se o dump local passar dessa idade
 BACKUP_ALERT_REMOTE_MAX_H=6        # alerta se o snapshot remoto passar dessa idade
 ```
+
+## Sonda visual: por que a busca de produtos de um cupom só traz a prévia
+
+`cupom-produtos-visual.js` fotografa, em ordem, cada página do caminho que o botão
+"Sincronizar produtos" percorre — e grava tudo em **`debug-cupom/`** na raiz do
+projeto (gitignorada, uma subpasta por rodada, as antigas podadas).
+
+```
+node scripts/cupom-produtos-visual.js --campaign 13471229
+node scripts/cupom-produtos-visual.js --url "<containerUrl>" --paginas 3 --keep 10
+```
+
+| Arquivo | O quê |
+| --- | --- |
+| `00-cupom.json` | A linha do banco. Sem `containerUrl` o caminho termina aqui (cupom não ativado não tem vitrine). |
+| `01-link-afiliado.json` | O link curto do ML — o passo escondido do caminho da landing. |
+| `02-landing.*` | A landing de afiliado como o **parser** a vê: HTML do fetch cru, o print dela renderizada, e o JSON com as duas assinaturas comparadas e o **inventário dos quatro blocos** (só o `carousel-featured` é a vitrine). |
+| `03-landing-navegador.*` | A mesma landing no Chrome logado — pra comparar com o fetch. |
+| `04-vitrine-p<N>.*` | A vitrine murada (`lista.mercadolivre.com.br/_Container_…`), **forçada**. |
+| `resumo.json` / `LEIA.md` | A narrativa: onde o fluxo de produção teria parado, e quanto cada caminho entregou. |
+
+A resposta que ela documenta: a vitrine no navegador **só é tentada quando a
+landing falha** (`coupons/sync.js:syncOneCoupon` e
+`scraping/ml-cupons.js:scrapeCouponProducts` retornam assim que a landing
+responde, com `parcial: true`). Por isso só chegam os 3–8 produtos da prévia. A
+sonda força a etapa do navegador de propósito — é o único jeito de fotografar o
+que existe do outro lado do muro.
+
+Só lê: não ativa cupom, não escreve no banco, nunca grava o cookie.
+
+## A vitrine dos cupons: a extensão do Chrome
+
+Não há script aqui para isso, e a ausência é o ponto. A vitrine de um cupom
+(`lista.mercadolivre.com.br/_Container_…`) responde CAPTCHA para navegador
+automatizado — e a sonda acima provou que isso acontece **mesmo rodando fora da
+VPS**. O que o Mercado Livre barra é o navegador automatizado, não a máquina (o
+mesmo diagnóstico que destravou o repasse em 25/08).
+
+Então quem colhe é uma **extensão do Chrome** (`extension/`, na raiz): você clica
+em "no meu Chrome" na linha do cupom em *Admin › Cupom › Cupons do ML*, ela abre a
+vitrine numa aba em segundo plano com a sua sessão, colhe, e a própria tela grava.
+
+Instalação e detalhes: `extension/README.md`.

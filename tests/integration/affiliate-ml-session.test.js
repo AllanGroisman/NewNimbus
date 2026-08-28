@@ -81,7 +81,7 @@ describe("getScraperMLSession", () => {
 
   it("usa a sessão do admin quando salva", () => {
     affiliate.writeScraperMLAdminSession({ cookie: SYSTEM_COOKIE });
-    expect(affiliate.getScraperMLSession()).toEqual({ cookie: SYSTEM_COOKIE, source: "admin" });
+    expect(affiliate.getScraperMLSession()).toEqual({ cookie: SYSTEM_COOKIE, tag: null, source: "admin" });
   });
 
   it("env ML_SCRAPER_COOKIE ganha do admin", () => {
@@ -117,9 +117,82 @@ describe("isolamento entre a sessão do sistema e o cookie do usuário", () => {
 
     affiliate.clearMLConfig(TEST_USER_ID);
     expect(affiliate.readMLConfig(TEST_USER_ID).cookie).toBe(null);
-    expect(affiliate.getScraperMLSession()).toEqual({ cookie: SYSTEM_COOKIE, source: "admin" });
+    expect(affiliate.getScraperMLSession()).toEqual({ cookie: SYSTEM_COOKIE, tag: null, source: "admin" });
   });
 });
 
 // O liga/desliga do Hub e a prioridade entre as fontes moram em
 // tests/unit/ml-scraper-sources.test.js (chave própria desde a tarefa 57).
+
+// A TAG de afiliado da conta do sistema.
+//
+// Ela entrou junto do cookie porque é da MESMA conta, mas as duas têm ciclos de
+// vida diferentes: o cookie vence toda hora e é recolado, a tag não muda. Se
+// recolar o cookie apagasse a tag, a leitura da vitrine pela landing pararia de
+// funcionar toda vez que alguém consertasse a sessão — e o motivo seria
+// invisível.
+describe("a tag de afiliado da conta do sistema", () => {
+  const SYSTEM_COOKIE2 = "ssid=cookie-da-conta-do-sistema; orguseridp=123456";
+
+  it("é opcional: sem ela a sessão continua válida pro Hub e pros cupons", () => {
+    affiliate.writeScraperMLAdminSession({ cookie: SYSTEM_COOKIE2 });
+    expect(affiliate.getScraperMLSession().tag).toBe(null);
+  });
+
+  it("sobrevive à troca de cookie", () => {
+    affiliate.writeScraperMLAdminSession({ cookie: SYSTEM_COOKIE2, tag: "minhatag" });
+    expect(affiliate.getScraperMLSession().tag).toBe("minhatag");
+
+    affiliate.writeScraperMLAdminSession({ cookie: "ssid=cookie-novo; b=c" });
+    expect(affiliate.getScraperMLSession().tag).toBe("minhatag");
+  });
+
+  it("string vazia apaga a tag — é como se pede pra tirar", () => {
+    affiliate.writeScraperMLAdminSession({ cookie: SYSTEM_COOKIE2, tag: "minhatag" });
+    affiliate.writeScraperMLAdminSession({ cookie: SYSTEM_COOKIE2, tag: "" });
+    expect(affiliate.getScraperMLSession().tag).toBe(null);
+  });
+
+  it("sem tag, o link de sistema não é nem tentado — e diz o porquê", async () => {
+    affiliate.writeScraperMLAdminSession({ cookie: SYSTEM_COOKIE2 });
+    const r = await affiliate.criarLinkAfiliadoMLSistema("https://lista.mercadolivre.com.br/_Container_1");
+    expect(r.shortUrl).toBe(null);
+    expect(r.reason).toContain("tag");
+  });
+});
+
+// Cookie e tag salvos separadamente. Antes disso, mexer na tag exigia recolar o
+// cookie inteiro — e recolar o cookie apagava a tag. As duas coisas são da mesma
+// conta, mas o cookie vence toda semana e a tag não muda nunca.
+describe("salvar cookie e tag em separado", () => {
+  const COOKIE = "ssid=cookie-da-conta-do-sistema; orguseridp=123456";
+
+  it("a tag pode ser salva sozinha, depois que existe cookie", () => {
+    affiliate.writeScraperMLAdminSession({ cookie: COOKIE });
+    affiliate.writeScraperMLAdminSession({ tag: "sotag" });
+    const s = affiliate.getScraperMLSession();
+    expect(s.cookie).toBe(COOKIE);
+    expect(s.tag).toBe("sotag");
+  });
+
+  it("mexer só na tag não invalida o teste de acesso ao Hub", () => {
+    affiliate.writeScraperMLAdminSession({ cookie: COOKIE });
+    affiliate.recordMLHubCheck({ ok: true, reason: "entrou", manual: true });
+    expect(affiliate.readScraperMLAdminSession().lastCheckOk).toBe(true);
+
+    affiliate.writeScraperMLAdminSession({ tag: "outratag" });
+    expect(affiliate.readScraperMLAdminSession().lastCheckOk).toBe(true);
+  });
+
+  it("cookie novo continua invalidando o teste anterior", () => {
+    affiliate.writeScraperMLAdminSession({ cookie: COOKIE });
+    affiliate.recordMLHubCheck({ ok: true, reason: "entrou", manual: true });
+    affiliate.writeScraperMLAdminSession({ cookie: "ssid=outro-cookie-bem-grande; x=y" });
+    expect(affiliate.readScraperMLAdminSession().lastCheckOk).toBe(null);
+  });
+
+  it("sem cookie nenhum, salvar só a tag é recusado", () => {
+    affiliate.clearScraperMLAdminSession();
+    expect(() => affiliate.writeScraperMLAdminSession({ tag: "sotag" })).toThrow();
+  });
+});

@@ -2302,10 +2302,15 @@ app.get("/api/admin/scrap-tester/history", auth.requireAuth, auth.requireAdmin, 
 
 // ── Teste de cupom do Mercado Livre (Admin › Cupom) ────────────────────────
 //
-// Abre a página do produto com a sessão da conta do sistema e, no modo
-// "checkout", leva o item até a tela de pagamento pra aplicar o código e ler o
-// que o ML responde. Diagnóstico: não grava nada na fila, não envia nada e
-// NUNCA finaliza compra. Demora ~40-60s. Body: { url, code, mode }.
+// Três modos, do mais barato pro mais caro. Body: { url, code, mode }.
+//
+//   "rapido"   — responde pelo que o sistema já sabe (a palavra na aba /cupons +
+//                a vitrine do cupom no banco). Segundos, sem checkout.
+//   "checkout" — tenta o rápido primeiro e só leva o item à tela de pagamento
+//                quando ele não conclui. Aí sim demora ~40-90s.
+//   "leitura"  — só a página do produto, pra ver o cupom que a loja oferece ali.
+//
+// Diagnóstico: não grava nada na fila, não envia nada e NUNCA finaliza compra.
 app.post("/api/admin/ml-coupon/test", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
     const result = await mlCoupon.testCoupon({
@@ -2438,6 +2443,30 @@ app.post("/api/admin/ml-cupons/:campaignId/sync-produtos", auth.requireAuth, aut
   }
 });
 
+// A vitrine colhida pela EXTENSÃO do Chrome do admin (`extension/`, na raiz).
+//
+// Existe porque a vitrine do cupom não abre para navegador automatizado — nem na
+// VPS nem na máquina do admin (sonda de 27/08, prints em `debug-cupom/`). Quem
+// percorre é uma aba do Chrome dele, com a sessão dele; a extensão colhe os cards
+// e a tela do admin manda pra cá com o login que já está aberto.
+//
+// `parcial: true` quando a coleta parou no meio (muro, teto de páginas). O que
+// entra sem `parcial` vira LISTA FECHADA no banco, e é isso que autoriza o
+// sistema a responder "fora da vitrine" — por isso a validação vive no
+// coupons/sync.js e não aqui.
+app.post("/api/admin/ml-cupons/:campaignId/vitrine-local", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const r = await mlCupons.gravarVitrineLocal(String(req.params.campaignId), body.products, {
+      parcial: body.parcial === true || body.parcial === "true",
+    });
+    res.json(r);
+  } catch (err) {
+    console.error("[ml-cupons.vitrine-local]", err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // Trazer UMA campanha que o teste de palavra apontou e o sistema não tem. É o
 // passo seguinte ao POST /code: aquele descobre o id da campanha, este vai buscá-la
 // na lista da conta e gravar — sem precisar rodar a coleta inteira.
@@ -2547,6 +2576,9 @@ function mlSessionPayload() {
     source: active ? active.source : null,
     cookieLength: active?.cookie ? active.cookie.length : 0,
     cookiePreview: active?.cookie ? active.cookie.slice(0, 30) : null,
+    // A tag NÃO é segredo (ela vai no link que o cliente recebe), então vai
+    // inteira — ao contrário do cookie, que só sai como tamanho e prévia.
+    tag: active?.tag || null,
     updatedAt: admin.updatedAt,
     lastCheckAt: admin.lastCheckAt,
     lastCheckOk: admin.lastCheckOk,
@@ -2560,7 +2592,13 @@ app.get("/api/admin/scraper/ml/session", auth.requireAuth, auth.requireAdmin, (r
 
 app.put("/api/admin/scraper/ml/session", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
-    affiliate.writeScraperMLAdminSession({ cookie: (req.body || {}).cookie });
+    const body = req.body || {};
+    // Campo ausente = não mexer nele. É o que permite salvar só a tag sem ter que
+    // recolar o cookie inteiro, e vice-versa.
+    const patch = {};
+    if (body.cookie !== undefined) patch.cookie = body.cookie;
+    if (body.tag !== undefined) patch.tag = body.tag;
+    affiliate.writeScraperMLAdminSession(patch);
     if (!await confirmConfigSaved(res)) return;
     res.json({ ok: true, ...mlSessionPayload() });
   } catch (err) {

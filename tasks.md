@@ -22,3 +22,5 @@
 11. [] Teste de cupom não está funcionando, me parece que é por causa do captcha do ML ou pq a pagina ali mudou. Revisa a forma como se faz e as paginas do ML.
 
 12. [] A parte superior esquerda da página, onde tem a marca, escrito Nimbus e painel admistrativo. Quero que tire o escrito "painel admistrativo" e quero que a junção da marca com o escrito seja clicável para ir para a Home do Sistema (a home pode ser o menu de campanhas)
+
+13. [] Quero arrumar o scrap dos produtos de um cupom no ML.

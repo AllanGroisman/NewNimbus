@@ -11,7 +11,7 @@ import { createRequire } from "module";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const mlCoupon = require(path.resolve(__dirname, "..", "..", "backend", "scraping", "ml-coupon.js"));
-const { parseMoney, normalizeCode, extractCheckoutTotal, parseProductCoupons, buildChecks, describeTrail, describeStall, describeCouponOpen } = mlCoupon;
+const { parseMoney, normalizeCode, extractCheckoutTotal, parseProductCoupons, buildChecks, buildQuickChecks, isProductPage, describeTrail, describeStall, describeCouponOpen } = mlCoupon;
 
 describe("parseMoney", () => {
   it("formato brasileiro com milhar e centavos", () => {
@@ -192,7 +192,49 @@ describe("describeTrail", () => {
   });
 });
 
+describe("buildQuickChecks", () => {
+  const base = {
+    campaignId: "123", coupon: { campaignId: "123", title: "10% OFF" },
+    cobertura: "na-vitrine", priceBefore: 200, priceAfter: 180,
+    status: "valido", reason: "cobre este produto",
+  };
+
+  it("marca as quatro etapas do caminho rápido", () => {
+    const checks = buildQuickChecks(base);
+    expect(checks.map(c => c.key)).toEqual(["palavra", "cupom", "vitrine", "preco", "veredito"]);
+    expect(checks.every(c => c.ok)).toBe(true);
+  });
+
+  // A tela não pode mostrar "vitrine: não" quando a verdade é "não sei": são
+  // conclusões diferentes e só uma delas descarta o cupom.
+  it("vitrine nunca raspada aparece com esse nome, não como 'não'", () => {
+    const checks = buildQuickChecks({ ...base, cobertura: "sem-vitrine", priceBefore: null, priceAfter: null, status: "indeterminado" });
+    const vitrine = checks.find(c => c.key === "vitrine");
+    expect(vitrine.ok).toBe(false);
+    expect(vitrine.value).toContain("nunca raspada");
+  });
+
+  it("palavra que o ML não reconheceu mostra a frase dele", () => {
+    const checks = buildQuickChecks({ ...base, campaignId: null, coupon: null, mlMessage: "Confira se o cupom está correto" });
+    const palavra = checks.find(c => c.key === "palavra");
+    expect(palavra.ok).toBe(false);
+    expect(palavra.value).toContain("Confira");
+  });
+});
+
 describe("describeStall", () => {
+  // O desfecho que mais apareceu no histórico até 20/08: a automação achava a
+  // linha "Cupons" no resumo da tela de ENTREGA e parava ali. Agora ela só tenta
+  // na tela de pagamento — e, se mesmo lá o campo não abrir, o motivo tem nome.
+  it("explica quando a linha do cupom não abriu o campo", () => {
+    const txt = describeStall({
+      steps: 4, motivo: "cupom-nao-abriu",
+      trail: [{ passo: 4, titulo: "Escolha como pagar" }],
+    });
+    expect(txt).toContain("Escolha como pagar");
+    expect(txt).toContain("não abriu");
+  });
+
   it("diz a tela e o motivo quando a escolha do passo não pegou", () => {
     const txt = describeStall({
       steps: 1, motivo: "opcao-nao-marcada",
@@ -264,5 +306,28 @@ describe("describeCouponOpen", () => {
 
   it("sem nada registrado ainda responde alguma coisa", () => {
     expect(describeCouponOpen(null)).toMatch(/cupom/i);
+  });
+});
+
+// Um link de perfil de afiliado leva a sessão do sistema pra vitrine do afiliado
+// — uma página cheia de cupons e nenhum deles do produto. Ler cupom dali não é
+// resultado ruim, é resultado FALSO: um teste real devolveu "a página oferece 22
+// cupons" para um tênis por causa disso.
+describe("isProductPage", () => {
+  it("perfil e vitrine de afiliado não são produto", () => {
+    expect(isProductPage("https://www.mercadolivre.com.br/social/olju9662794/lists")).toBe(false);
+    expect(isProductPage("https://www.mercadolivre.com.br/social/olju9662794")).toBe(false);
+  });
+
+  it("muro do ML não é produto", () => {
+    expect(isProductPage("https://www.mercadolivre.com.br/gz/account-verification?go=x")).toBe(false);
+    expect(isProductPage("")).toBe(false);
+    expect(isProductPage(null)).toBe(false);
+  });
+
+  it("as três numerações de produto do ML valem", () => {
+    expect(isProductPage("https://www.mercadolivre.com.br/x/p/MLB62933980")).toBe(true);
+    expect(isProductPage("https://www.mercadolivre.com.br/tenis-x/up/MLBU4592952086?a=1")).toBe(true);
+    expect(isProductPage("https://produto.mercadolivre.com.br/MLB-123456789-x")).toBe(true);
   });
 });

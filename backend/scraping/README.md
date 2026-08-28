@@ -106,6 +106,79 @@ o `HUB_CATEGORIES`). O cookie não vai pros arquivos.
 
 ## Testar cupom do ML (Admin › Cupom)
 
+> **26/08/2026 — leia isto antes de mexer aqui.** Mapa do que esta máquina ainda
+> consegue abrir no ML, medido com `curl` (UA de browser), com o jogo COMPLETO de
+> cabeçalhos de navegação (`ml-social.js:browserHeaders`) e com o Chrome:
+>
+> | superfície | UA só | headers completos | Chrome + cookie |
+> |---|---|---|---|
+> | home `mercadolivre.com.br` | 200 | 200 | — |
+> | `/social/<apelido>` (landing de afiliado) | 200 | 200 | — |
+> | PDP (`/p/MLB…`, `/up/MLBU…`) | `account-verification` | — | `/captcha/wall` em ~6 s |
+> | `lista.mercadolivre.com.br` (**a vitrine do cupom**) | `account-verification` | **200 com desafio JS** | `/captcha/wall` |
+>
+> A linha da vitrine mudou, e a diferença importa: com os cabeçalhos completos o
+> ML para de redirecionar para `account-verification` e passa a servir 200 — mas o
+> que vem é uma página de ~11 KB que **não é o CAPTCHA visual**: é um teste de
+> JavaScript com prova de trabalho (`/security/bot_challenge`), que um `fetch` não
+> executa. Ou seja: a vitrine continua fora de alcance sem navegador, só que agora
+> se sabe exatamente qual é o muro.
+>
+> Resolver essa prova de trabalho por fora seria contornar a proteção anti-bot do
+> ML de propósito — está **fora de escopo por decisão do dono**, e não é o que o
+> código faz em lugar nenhum. O que existe hoje no lugar disso são os dois
+> caminhos da seção "De onde vêm os produtos de um cupom", abaixo.
+>
+> Três dumps do checkout (`scripts/ml-coupon-dump.js`, produtos e horários
+> diferentes) morreram no CAPTCHA antes de a PDP abrir, então os seletores do
+> popup de cupom **não puderam ser conferidos contra a tela de hoje**.
+>
+> O que sobrou funcionando: o teste de PALAVRA na aba `/cupons` (`checkWord`) e a
+> landing `/social/` do `ml-social.js`. O caminho rápido é construído em cima do
+> primeiro.
+
+### O caminho rápido (`coupons/quick-check.js`) — o padrão
+
+A pergunta é "este CÓDIGO dá desconto NESTE produto?", e o sistema quase sempre já
+sabe. `quickCheck` costura três coisas que já existiam e nunca tinham sido juntadas:
+
+1. `coupons/sync.checkWord` — o que o ML acha da palavra (campanha, vencido,
+   esgotado, não existe). É a aba `/cupons`, **não** o checkout, e ela responde.
+2. `ml_coupon_products` — quais produtos a vitrine daquele cupom cobre.
+3. `coupons/price.precoComCupom` — a conta do desconto.
+
+A decisão mora em `decide()`, que é **pura** (e por isso testada em
+`tests/unit/coupon-quick-check.test.js`, sem banco e sem rede). Duas regras que
+não podem se perder:
+
+- **`sem-vitrine` ≠ `fora-da-vitrine`.** Zero vínculos para a campanha é FALTA DE
+  DADO, não resposta. Tratar isso como "não vale pra este produto" descartaria
+  cupom bom — o prejuízo exato que a ferramenta existe pra evitar. Esse caso
+  devolve `conclui: false`, e a tela oferece o botão que raspa a vitrine daquele
+  cupom (`coupons/sync.syncOneCoupon`).
+- **O preço diz QUANTO, não SE.** Quem responde "vale neste produto?" é a vitrine.
+  Sem preço o veredito sai igual, só sem o valor. A única exceção é o cupom com
+  compra mínima: aí o preço vira parte da regra e, sem ele, não se conclui.
+
+O preço vem **só do catálogo local** (`catalog.getByLink`, sem cutoff de idade).
+Nada de rede: o `scrapeSingleProduct` precisaria da tag de afiliado de um usuário
+(isto é diagnóstico do admin, não tem dono) e sem ela termina caindo no navegador,
+que é justamente o que este caminho existe pra evitar.
+
+### Os três modos
+
+| modo | o que faz | quanto demora |
+|---|---|---|
+| `rapido` (padrão) | só o caminho rápido | segundos |
+| `checkout` | o rápido e, **só se ele não concluir**, o checkout | 40-90 s |
+| `leitura` | só a PDP, pro cupom que a loja oferece ali | ~15 s |
+
+O resultado carrega `fonte` (`rapido`/`checkout`/`leitura`) e `quick` (o que o
+caminho rápido apurou, mesmo quando passou a bola). A tela mostra os dois: "o
+sistema já sabia" e "o ML respondeu agora" não são a mesma garantia.
+
+### O checkout
+
 Existem **dois cupons diferentes** e o `ml-coupon.js` responde pelos dois:
 
 1. O que a **loja oferece na própria página** (o "clipado"): aparece na PDP e dá pra
@@ -142,8 +215,28 @@ lá na frente.
   a **mesma conta do Hub** — se aparecer aqui, confira se o Hub ainda entra.
 
 O caminho até o cupom, visto por dentro (18/08): **Escolha a forma de entrega →
-Escolha quando sua compra chegará → Escolha como pagar**. O cupom mora na última, e
-são **dois momentos**: um link "Inserir código do cupom" — que fica no **"Resumo da
+Escolha quando sua compra chegará → Escolha como pagar**. O cupom mora na última —
+e **essa era a causa raiz do teste nunca ter funcionado**: o "Resumo da compra" da
+coluna direita mostra a linha "Cupons" desde a PRIMEIRA tela, e o `hasCouponEntry`
+antigo devolvia um único booleano. A automação declarava "achei o cupom" na tela de
+entrega, clicava numa linha que ali não abre nada e devolvia "não achei o campo"
+como se o layout do ML tivesse mudado — foi o desfecho de 2 das 12 rodadas
+guardadas, e variações dele nas outras.
+
+Hoje `hasCouponEntry` devolve `{ campo, linha }`: um **campo** à mostra vale em
+qualquer tela; a **linha** do resumo só vale quando `isPaymentStep` confirma que
+estamos na tela de pagamento (`PAYMENT_STEP_RE`, mais estreita que a
+`CHECKOUT_READY_RE` de propósito). E se, mesmo lá, o clique não abrir o campo, isso
+deixou de encerrar a caminhada: `advanceToCouponStep` recebe um `tentarAbrir` e,
+quando ele falha, **continua andando** pelo checkout (motivo `cupom-nao-abriu`).
+Por isso o `MAX_CHECKOUT_STEPS` subiu de 6 pra 10.
+
+Produto com variação ("Escolha Tamanho para continuar") tem plano B: o
+`pickFirstVariation` marca a primeira opção disponível da PDP e relê o formulário,
+uma vez só. Como isso muda o produto que está sendo testado, a variação escolhida
+vai no resultado.
+
+Nessa tela de pagamento o cupom aparece em **dois momentos**: um link "Inserir código do cupom" — que fica no **"Resumo da
 compra"**, na coluna da direita, logo abaixo do frete, e não na lista de meios de
 pagamento — e abre um **popup**, onde
 se digita e se confirma em "Inserir" (outros layouts dizem "Adicionar"/"Aplicar"; a
@@ -270,6 +363,170 @@ A vitrine em si é uma listagem comum do ML, então quem lê os cards é o
   navegador, mostrava 48;
 - **a paginação é `_Desde_49` no caminho**, não `?page=` (`containerPageUrl`).
 
+**Desde 27/08/2026 a rodada ATIVA os cupons.** Era decisão do projeto não fazer —
+"Eu quero" é escrita na conta, e a conta é a mesma do Hub — e foi revertida a
+pedido do dono da conta, porque sem ativar o cupom entra no sistema sem vitrine e
+o teste de cupom responde "não sei" para sempre. Os freios ficam no código:
+
+- `aAtivar` (pura, testada) decide QUEM: só campanha, só não ativado, só não
+  vencido, e só quem tem `activationLabel` — o rótulo de acessibilidade do botão.
+  Sem ele não dá pra saber qual "Aplicar" é o daquele cupom, e a página tem
+  dezenas deles.
+- `ativarNaPagina` clica com pausa e **se verifica**: só conta como ativado quem
+  volta do modelo do ML com `activated: true` **e** `containerUrl`. Clique dado
+  não é ativação — se o ML mudar o botão, o número vai a zero em vez de mentir.
+- Teto por rodada (`maxActivationsPerRun`, padrão 20) e parada imediata no
+  primeiro muro: verificação vale para a CONTA e derrubaria o Hub junto.
+
+Desligar: *Limites da rodada* → "ativar os cupons automaticamente".
+
+### De onde vêm os produtos de um cupom (as três coleções)
+
+Desde 26/08/2026 `ml_coupon_products` guarda **três coleções**, separadas pela
+coluna `origem`, e confundi-las custa caro:
+
+| origem | o que é | quantos | como chega | é lista fechada? |
+|---|---|---|---|---|
+| `vitrine` | a lista COMPLETA do cupom | dezenas | `scrapeCouponProducts` abre o `_Container_` no Chrome | **sim** |
+| `landing` | a prévia da landing de afiliado | 3 a 8 | `ml-vitrine-landing.js`, sem navegador (~2 s) | não |
+| `amostra` | as miniaturas do card do cupom | sempre 4 | de graça, no modelo que a rodada já lê | não |
+
+As três são coleções separadas e **cada uma só apaga a si mesma**. Sem isso,
+raspar a vitrine apagaria as amostras e a rodada seguinte apagaria a vitrine —
+zerando uma à outra em looping.
+
+A amostra existe porque a vitrine está atrás do muro anti-bot (a tabela lá em
+cima). Os ids dela **não estão no card**: o card traz `items[].image_url` e
+`alt_text` (é o `sampleItems`), sem id nenhum. Os MLBs vivem no bloco de
+telemetria da mesma página — `tracking.view.eventData.coupons_list[]`, num campo
+`item_ids` **irmão** de `segmentations` (cuidado: `segmentations.item_ids` também
+existe, e vem sempre vazio). Quem lê é `sampleIdsFromTracking`, e nos dumps
+guardados 72 de 72 cupons trazem os 4.
+
+Duas coisas que a amostra resolve e a vitrine não:
+
+- ela existe para o cupom **não ativado**, que não tem vitrine para raspar de jeito
+  nenhum (ver a tabela de ativação acima) — e esse é o caso da maioria;
+- ela não custa requisição nenhuma: vem no HTML que a rodada já baixou.
+
+Como o ML dá só o id, a URL gravada é sintética:
+`https://www.mercadolivre.com.br/x/p/MLB<id>` — a **mesma** forma que
+`coupons/quick-check.js:chavesCandidatas` monta a partir de
+`pdp_filters=item_id:MLB…`. Isso não é detalhe de estilo: o `productKey` é um hash
+da URL, então as duas pontas montando URLs diferentes dariam chaves diferentes e o
+vínculo nunca casaria com nada. Amostra **não** entra no catálogo (o ML não manda
+nome nem preço, e produto de catálogo sem isso é lixo que a fila teria que
+aprender a ignorar) e **não** carimba `productsSyncedAt`, que continua querendo
+dizer só "a vitrine foi raspada".
+
+**A regra que erra caro** (`coupons/quick-check.js:coberturaDoProduto`): um vínculo
+que casa é resposta, venha de onde vier — foi o ML que disse que aquele produto
+está coberto. Mas `fora-da-vitrine` só pode sair quando o cupom tem vitrine DE
+VERDADE (`coupons/pg.js:hasVitrine`). Cinco itens de prévia que não casam não
+provam nada: o produto pode estar nos outros 43 da vitrine que ninguém leu. Contar
+prévia ali transformaria "não sei" em "não vale" e descartaria cupom bom — o mesmo
+prejuízo de tratar `sem-vitrine` como `fora-da-vitrine`, só por outra porta.
+Tem teste com banco em `tests/integration/coupons-amostra.test.js`.
+
+O `deleteMany` do `replaceCouponProducts` é escopado por origem, e produto que
+estava numa coleção fraca e apareceu na vitrine é **promovido**, não duplicado: a
+chave é a mesma.
+
+### A landing de afiliado da vitrine (o caminho que funciona hoje)
+
+É o truque do repasse aplicado à vitrine: a `containerUrl` passa pela API de link
+curto do **próprio ML** (com a conta do sistema) e a landing que sai é lida por
+`fetch`, sem navegador. Quem faz é `scraping/ml-vitrine-landing.js`, e o
+`scrapeCouponProducts` tenta esse caminho **antes** de abrir o Chrome — se ele
+responder, o navegador nem é aberto.
+
+Medido em 26/08/2026, três cupons: funciona, e é rápido (~2 s por cupom, contra
+~30 s do navegador). Mas **não traz a vitrine inteira**: o ML monta uma PRÉVIA — 3,
+5 e 8 produtos nos três testes, com `totalElements` batendo — e o "Mostrar mais"
+devolve pra página murada. Por isso os vínculos entram com `origem: "landing"` e
+**não** contam como vitrine em `hasVitrine`.
+
+**A armadilha, e ela é cara:** a landing tem quatro blocos e três são recomendação
+para o perfil do afiliado — "Para você", "Mais vendidos", "Ofertas". Num teste real
+foram **41 dos 46 MLBs da página**, e nenhum deles tem a ver com o cupom. Só o
+`carousel-featured` é a vitrine, e ele se identifica sozinho: o `seeMoreLink` dele
+aponta de volta pra URL pedida. `parseVitrineLanding` **confere isso e recusa**
+quando não bate (`kind: "outra-vitrine"`) — sem essa conferência o sistema
+carimbaria "coberto pelo cupom" em item aleatório e a fila do repasse anunciaria
+desconto que não existe. Tem teste pra isso em
+`tests/unit/ml-vitrine-landing.test.js`, com a armadilha plantada na fixture.
+
+Precisa da **TAG de afiliado da conta do sistema**, que agora mora junto do cookie
+(chave `scraper-ml-admin`, campo `tag`, ou a env `ML_SCRAPER_TAG`). Cookie e tag se
+salvam em separado de propósito: o cookie vence toda semana e a tag não muda nunca
+— antes, recolar um apagava o outro. Sem tag, este caminho simplesmente não roda e
+a rodada cai no navegador, como antes. Vale a mesma regra do `getScraperMLSession`:
+**nunca** o cookie ou a tag de um usuário.
+
+A sonda, pra quando o ML mudar a landing:
+
+```
+node scripts/ml-vitrine-landing-probe.js --url "<containerUrl>" --tag <TAG>
+node scripts/ml-vitrine-landing-probe.js --campaign 13471229 --tag <TAG>
+```
+
+Ela grava `createlink.json`, `landing.html`, `state.json` e um `meta.json` com o
+veredito em `backend/logs/ml-vitrine/<ts>/` — e, como as outras sondas, nunca grava
+o cookie e nunca ativa cupom. Cuidado ao ler a saída dela: contar MLB no HTML cru
+**mente** (foi a primeira leitura errada desta sonda), por causa dos blocos de
+recomendação. O número que vale é o do `carousel-featured`.
+
+### Por que a busca de produtos só traz a prévia (e a sonda visual)
+
+A vitrine no navegador **só é tentada quando a landing falha**: tanto
+`coupons/sync.js:syncOneCoupon` quanto `scraping/ml-cupons.js:scrapeCouponProducts`
+chamam `vitrinePelaLanding` primeiro e **retornam ali mesmo** com `parcial: true`
+quando ela responde. Como hoje ela quase sempre responde, o laço de
+`lista.mercadolivre.com.br/_Container_…` praticamente não roda — e o que chega são
+os 3–8 produtos da prévia, com `origem: "landing"`.
+
+Para ver isso de olho, `scripts/cupom-produtos-visual.js` fotografa cada página do
+caminho em `debug-cupom/<ts>-<campaignId>/` na raiz do projeto: o link curto, a
+landing como o parser a vê, a mesma landing no Chrome logado e — **forçada**, que é
+a diferença dela para o fluxo real — a vitrine murada, página por página.
+
+```
+node scripts/cupom-produtos-visual.js --campaign 13471229
+```
+
+### A extensão do Chrome (a vitrine que nenhum robô alcança)
+
+A sonda acima fechou o diagnóstico: a vitrine responde `/captcha/wall/logged` —
+**e responde isso rodando fora da VPS também**. Confirma o que o repasse já sabia
+(`ml-social.js`): o Mercado Livre barra o navegador **automatizado**, não a
+máquina. Trocar de IP não resolve; parar de subir Chrome pelo Puppeteer resolve.
+
+E a landing não cobre esse buraco: o `carousel-featured` dela é servido pelo
+**serviço de recomendação** (`client: home_affiliate-profile`, `totalElements` de
+3 a 8) e o "Mostrar mais" devolve para a página murada. Não há como paginar.
+
+Daí a extensão (`extension/`, na raiz do projeto). O admin clica em "no meu
+Chrome" na linha do cupom; a extensão abre a vitrine numa aba em segundo plano —
+navegador de verdade, sessão de verdade —, lê os `.poly-card`, pagina o `_Desde_`
+e devolve a lista para a tela, que grava em
+`POST /api/admin/ml-cupons/:campaignId/vitrine-local`. Quando o ML pede
+verificação, a aba **vem para a frente e o humano resolve**; a extensão não
+insiste sozinha e nunca vê credencial nenhuma.
+
+O que muda no dado é o ponto inteiro: o que vem dali entra com `origem: "vitrine"`
+(lista fechada), então `hasVitrine` passa a valer e o `quick-check` ganha de volta
+a resposta **"fora-da-vitrine"**, que a prévia da landing nunca pode dar. Se a
+coleta parou no meio, ela diz `parcial: true` e o backend grava como `"landing"`.
+
+Dois avisos de manutenção:
+
+- `extension/colher.js` é **gêmeo** do `harvestMLCards` daqui: mesmos seletores,
+  arquivos separados (um é módulo Node, o outro a extensão injeta, e não há build
+  no meio). Quando o ML mudar o card, os dois mudam.
+- A porteira do que chega de fora vive em `coupons/sync.js:validarProdutosDaVitrine`
+  — pura, e dura de propósito: o payload vem do navegador e carimba o dado mais
+  caro da tabela.
+
 ### Loja × campanha (e por que o cupom de loja é descartado)
 
 O ML mistura na mesma aba dois bichos diferentes: o cupom **de campanha** ("Em
@@ -315,8 +572,11 @@ carimbada no `ml_coupons.code`.
 
 ### Onde os dados ficam
 
-- `ml_coupons` — o cupom (PK `campaign_id`).
-- `ml_coupon_products` — o vínculo cupom ↔ produto pelo `productKey` do catálogo.
+- `ml_coupons` — o cupom (PK `campaign_id`). `sampleItemIds` são os 4 MLBs da
+  amostra, guardados no cupom para se poder regravar os vínculos sem reabrir a
+  página.
+- `ml_coupon_products` — o vínculo cupom ↔ produto pelo `productKey` do catálogo,
+  com `origem` ∈ `vitrine` | `amostra` (ver acima).
 - `ml_coupon_codes` — as palavras testadas e a resposta do ML.
 - `catalog_products.couponCampaignId` — **coluna**, não payload: o upsert do
   scraping reescreve o payload inteiro (`catalog/pg.js:toRow`), então o cupom
@@ -362,9 +622,10 @@ redundância:
 `couponCampaignId` só é preenchido quando `couponBoost` ≠ `off`, e `off` é o
 default — sem ele a variável nunca calcularia nada na campanha comum.
 
-### A sonda
+### As sondas
 
 ```
+node scripts/ml-vitrine-landing-probe.js --url "<containerUrl>" --tag <TAG>
 node scripts/ml-cupons-dump.js
 node scripts/ml-cupons-dump.js --grouping tb_vertical --limit 60
 node scripts/ml-cupons-dump.js --container 13471229

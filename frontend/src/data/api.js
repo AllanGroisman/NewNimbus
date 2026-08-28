@@ -562,6 +562,12 @@ export async function adminMlCuponsImportStatus() {
 export async function adminMlCuponsSyncProducts(campaignId) {
   return http("POST", `/api/admin/ml-cupons/${encodeURIComponent(campaignId)}/sync-produtos`, undefined, { timeoutMs: SLOW_TIMEOUT_MS });
 }
+// A vitrine colhida pela extensão no Chrome do admin (extension/ na raiz). O
+// `parcial` é o campo caro: coleta interrompida (muro, teto de páginas) não pode
+// entrar como lista fechada — o backend grava origem "landing" quando ele vem.
+export async function adminMlCuponsImportVitrine(campaignId, { products, parcial = false } = {}) {
+  return http("POST", `/api/admin/ml-cupons/${encodeURIComponent(campaignId)}/vitrine-local`, { products, parcial }, { timeoutMs: SLOW_TIMEOUT_MS });
+}
 export async function adminMlCuponsProducts(campaignId, { page = 1, pageSize = 50 } = {}) {
   return http("GET", `/api/admin/ml-cupons/${encodeURIComponent(campaignId)}/produtos?page=${page}&pageSize=${pageSize}`);
 }

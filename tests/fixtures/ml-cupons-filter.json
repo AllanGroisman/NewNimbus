@@ -1,983 +1,1217 @@
 {
- "filteredCouponsData": {
-  "totalCouponsQuantity": {
-   "number": 372,
-   "text": "372 Cupons",
-   "color": "rgba(0,0,0,0.55)"
+  "filteredCouponsData": {
+    "totalCouponsQuantity": {
+      "number": 372,
+      "text": "372 Cupons",
+      "color": "rgba(0,0,0,0.55)"
+    },
+    "appliedFilters": [
+      {
+        "key": "ce_vertical",
+        "title": "Eletrônicos, Áudio e Vídeo"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "total": 13,
+      "text": {
+        "totalPagesText": "de 13",
+        "previousPageText": "Anterior",
+        "nextPageText": "Próximo"
+      }
+    },
+    "coupons": [
+      {
+        "campaignId": "13907402",
+        "backgroundColor": "rgba(255,255,255,1)",
+        "icon": "tickets",
+        "iconUrl": "https://http2.mlstatic.com/D_Q_NP_812859-MLU108649200857_032026-G.jpg",
+        "title": {
+          "text": "50% OFF INTERNACIONAL CN",
+          "color": "rgba(0,0,0,0.9)",
+          "accessibility": {
+            "title": {
+              "fractionalAmount": "50",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "50% OFF INTERNACIONAL CN",
+              "srLabel": "Cupom ativado de 50% OFF INTERNACIONAL CN"
+            }
+          }
+        },
+        "initialSubtitle": {
+          "text": "Em produtos selecionados",
+          "color": "rgba(0,0,0,0.9)"
+        },
+        "amount": {
+          "minAmount": "Sem compra mínima.",
+          "minAmountColor": "rgba(0,0,0,0.55)",
+          "capAmount": "Limite de R$ 90",
+          "capAmountColor": "rgba(0,0,0,0.55)",
+          "accessibility": {
+            "minAmount": {
+              "fractionalAmount": "1",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "Sem compra mínima."
+            },
+            "capAmount": {
+              "fractionalAmount": "90",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "Limite de {amount}"
+            }
+          }
+        },
+        "action": {
+          "text": "Conferir",
+          "type": "link",
+          "value": "https://lista.mercadolivre.com.br/_Container_13907402?coupon_campaign_id=13907402",
+          "color": "rgba(52,131,250,1)",
+          "accessibility": {
+            "activationAnnouncement": {},
+            "srLabel": "Conferir produtos do cupom 50 por cento OFF INTERNACIONAL CN Em produtos selecionados",
+            "label": "Conferir"
+          }
+        },
+        "code": "",
+        "inputCode": "",
+        "isVerified": false,
+        "isNewFollowerCoupon": false,
+        "items": [
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_726224-CBT111273376862_052026-I.jpg",
+            "altText": "Drone Dobrável Com Câmera Dupla 4k E Controle Preto"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_912073-CBT111738998819_052026-I.jpg",
+            "altText": "Teclado Gamer Attack Shark R85he Mecânico Usb Noite Iluminada Pela Lua"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_916072-CBT112966966571_062026-I.jpg",
+            "altText": "Massageador Elétrico Para Pescoço E Ombros Com Aqu 127/220v Verde"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_606174-CBT111856149118_062026-I.jpg",
+            "altText": "Controlador De Jogos Sem Fio Control Pc/android/ios 1pc White Orange"
+          }
+        ],
+        "help": {
+          "icon": "info",
+          "actionText": "Entendi",
+          "altText": "Termos e condições Cupom 50% OFF"
+        },
+        "status": {
+          "id": "ACTIVE"
+        },
+        "expirationDate": {
+          "text": "Vence 31 de dezembro",
+          "color": "rgba(0,0,0,0.55)",
+          "icon": "clock"
+        },
+        "futureCouponInfo": {
+          "scarcity_display": "date",
+          "reminder_text": "Disponível em",
+          "start_date": "2026-07-02T06:00Z",
+          "scarcity_text": "Disponível até",
+          "expiration_date": "2026-12-31T03:00Z"
+        }
+      },
+      {
+        "campaignId": "13422085",
+        "backgroundColor": "rgba(255,255,255,1)",
+        "icon": "store",
+        "iconUrl": "https://http2.mlstatic.com/D_Q_NP_712922-MLU114244986962_082026-Z.jpg",
+        "title": {
+          "text": "5% OFF",
+          "color": "rgba(0,0,0,0.9)",
+          "accessibility": {
+            "title": {
+              "fractionalAmount": "5",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "5% OFF",
+              "srLabel": "Cupom ativado de 5% OFF em produtos de Tecprintrp10"
+            }
+          }
+        },
+        "initialSubtitle": {
+          "text": "Em produtos de Tecprintrp10",
+          "color": "rgba(0,0,0,0.9)"
+        },
+        "amount": {
+          "minAmount": "Compra mínima R$ 1.900",
+          "minAmountColor": "rgba(0,0,0,0.55)",
+          "capAmount": "Limite de R$ 200",
+          "capAmountColor": "rgba(0,0,0,0.55)",
+          "accessibility": {
+            "minAmount": {
+              "fractionalAmount": "1.900",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "Compra mínima{amount}"
+            },
+            "capAmount": {
+              "fractionalAmount": "200",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "Limite de {amount}"
+            }
+          }
+        },
+        "action": {
+          "text": "Conferir",
+          "type": "link",
+          "value": "https://lista.mercadolivre.com.br/_CustId_69438105?coupon_campaign_id=13422085",
+          "color": "rgba(52,131,250,1)",
+          "accessibility": {
+            "activationAnnouncement": {},
+            "srLabel": "Conferir produtos do cupom 5 por cento OFF Em produtos de Tecprintrp10",
+            "label": "Conferir"
+          }
+        },
+        "code": "",
+        "inputCode": "",
+        "isVerified": false,
+        "isNewFollowerCoupon": false,
+        "items": [
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_914127-MLA100083087207_122025-I.webp",
+            "altText": "Impressora Laser Brother Hl-l1232 Monocromática Wi-fi Preto 127v"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_782735-MLA99814962854_122025-I.jpg",
+            "altText": "Impressora Multifuncional Brother Dcpt530dw Tank Wifi Color Cor Preto 127/220v"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_778429-MLA79216641862_092024-I.jpg",
+            "altText": "Impressora 3d Creality Ender 3 V3 Ke - Preta Preto Preto 127/220v"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_709681-MLA113660184429_062026-I.jpg",
+            "altText": "Impressora Multifuncional L4360 Wi-fi Ecotank Epson Preto 127/220v"
+          }
+        ],
+        "help": {
+          "icon": "info",
+          "actionText": "Entendi",
+          "altText": "Termos e condições Cupom 5% OFF"
+        },
+        "status": {
+          "id": "ACTIVE"
+        },
+        "expirationDate": {
+          "text": "Está esgotando!",
+          "color": "rgba(255,119,51,1)"
+        },
+        "futureCouponInfo": {
+          "scarcity_display": "date",
+          "reminder_text": "Disponível em",
+          "start_date": "2026-08-04T03:00Z",
+          "scarcity_text": "Disponível até",
+          "expiration_date": "2026-09-04T02:59:59Z"
+        }
+      },
+      {
+        "campaignId": "13491809",
+        "backgroundColor": "rgba(255,255,255,1)",
+        "icon": "default",
+        "iconUrl": "https://http2.mlstatic.com/D_Q_NP_630110-MLU108648422959_032026-G.jpg",
+        "title": {
+          "text": "10% OFF Saúde",
+          "color": "rgba(0,0,0,0.9)",
+          "accessibility": {
+            "title": {
+              "fractionalAmount": "10",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "10% OFF Saúde",
+              "srLabel": "Cupom 10% OFF Saúde"
+            }
+          }
+        },
+        "initialSubtitle": {
+          "text": "Em produtos selecionados",
+          "color": "rgba(0,0,0,0.9)"
+        },
+        "amount": {
+          "minAmount": "Compra mínima R$ 79",
+          "minAmountColor": "rgba(0,0,0,0.55)",
+          "capAmount": "Limite de R$ 25",
+          "capAmountColor": "rgba(0,0,0,0.55)",
+          "accessibility": {
+            "minAmount": {
+              "fractionalAmount": "79",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "Compra mínima{amount}"
+            },
+            "capAmount": {
+              "fractionalAmount": "25",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "Limite de {amount}"
+            }
+          }
+        },
+        "action": {
+          "text": "Aplicar",
+          "type": "button",
+          "accessibility": {
+            "activationAnnouncement": {},
+            "srLabel": "Aplicar cupom 10 por cento OFF Saúde Em produtos selecionados",
+            "label": "Aplicar"
+          }
+        },
+        "code": "6XpqK70r_HMTLe-4XwbWwnMpbGZL8HzUWLv37RcbPFlNxQoSQf1iyCxJkWM5cztpL15tKxSNHtwVXEwL8FnDMg==",
+        "inputCode": "6XpqK70r_HMTLe-4XwbWwnMpbGZL8HzUWLv37RcbPFlNxQoSQf1iyCxJkWM5cztpL15tKxSNHtwVXEwL8FnDMg==",
+        "isVerified": false,
+        "isNewFollowerCoupon": false,
+        "items": [
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_902631-MLA111404998705_052026-I.webp",
+            "altText": "Umidificador De Ar Ultrassónico Bivolt 127v 220v Ambiente Portátil 360° Difusor De Aromas Aromatizador Silencioso Led Rgb Quarto Bebe Com Tanque De Água Grande De 2,5 Litros Grande Risemberg Branco"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_885563-MLA92298124252_092025-I.jpg",
+            "altText": "Seringa Insulina Uniqmed 0,5ml 5mmx0,23mm 32g 100 Unidades 0.5 Ml"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_660573-MLA115192909463_072026-I.jpg",
+            "altText": "Monitor De Pressão Arterial De Braço Comfort Hem-7122 Omron Cor Branco"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_739071-MLA96861458440_112025-I.jpg",
+            "altText": "Luvas Descartáveis Antiderrapantes Medix Nitrila Cor Azul Tamanho P Em Kit De 10 X 100 Unidades"
+          }
+        ],
+        "help": {
+          "icon": "info",
+          "actionText": "Entendi",
+          "altText": "Termos e condições Cupom 10% OFF"
+        },
+        "status": {
+          "id": "INACTIVE"
+        },
+        "expirationDate": {
+          "text": "Vence 31 de agosto",
+          "color": "rgba(0,0,0,0.55)",
+          "icon": "clock"
+        },
+        "futureCouponInfo": {
+          "scarcity_display": "date",
+          "reminder_text": "Disponível em",
+          "start_date": "2026-08-18T13:15Z",
+          "scarcity_text": "Disponível até",
+          "expiration_date": "2026-09-01T02:59Z"
+        }
+      },
+      {
+        "campaignId": "14063164",
+        "backgroundColor": "rgba(255,255,255,1)",
+        "icon": "tickets",
+        "iconUrl": "https://http2.mlstatic.com/D_Q_NP_812859-MLU108649200857_032026-G.jpg",
+        "title": {
+          "text": "70% OFF INTERNACIONAL CN",
+          "color": "rgba(0,0,0,0.9)",
+          "accessibility": {
+            "title": {
+              "fractionalAmount": "70",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "70% OFF INTERNACIONAL CN",
+              "srLabel": "Cupom ativado de 70% OFF INTERNACIONAL CN"
+            }
+          }
+        },
+        "initialSubtitle": {
+          "text": "Em produtos selecionados",
+          "color": "rgba(0,0,0,0.9)"
+        },
+        "amount": {
+          "minAmount": "Sem compra mínima.",
+          "minAmountColor": "rgba(0,0,0,0.55)",
+          "capAmount": "Limite de R$ 150",
+          "capAmountColor": "rgba(0,0,0,0.55)",
+          "accessibility": {
+            "minAmount": {
+              "fractionalAmount": "1",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "Sem compra mínima."
+            },
+            "capAmount": {
+              "fractionalAmount": "150",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "Limite de {amount}"
+            }
+          }
+        },
+        "action": {
+          "text": "Conferir",
+          "type": "link",
+          "value": "https://lista.mercadolivre.com.br/_Container_14063164-326431003?coupon_campaign_id=14063164",
+          "color": "rgba(52,131,250,1)",
+          "accessibility": {
+            "activationAnnouncement": {},
+            "srLabel": "Conferir produtos do cupom 70 por cento OFF INTERNACIONAL CN Em produtos selecionados",
+            "label": "Conferir"
+          }
+        },
+        "code": "",
+        "inputCode": "",
+        "isVerified": false,
+        "isNewFollowerCoupon": false,
+        "items": [
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_870347-CBT114631889131_072026-I.jpg",
+            "altText": "Mini Ventilador Portátil Recarregável Com Clipe Verde Rosa"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_617833-CBT114445131974_082026-I.jpg",
+            "altText": "Tapete De Banheiro Antiderrapante Absorvente 80x50 Cm Rosa Liso"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_934181-CBT113906739387_062026-I.jpg",
+            "altText": "Sutiã Tomara Que Caia Sem Bojo Com Fecho Frontal White Liso M"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_606786-CBT112042797885_052026-I.jpg",
+            "altText": "Kit 7 Pulseiras Boho Ajustáveis Com Pingentes Dourado 5.73 Cm"
+          }
+        ],
+        "help": {
+          "icon": "info",
+          "actionText": "Entendi",
+          "altText": "Termos e condições Cupom 70% OFF"
+        },
+        "status": {
+          "id": "ACTIVE"
+        },
+        "expirationDate": {
+          "text": "Vence 31 de agosto",
+          "color": "rgba(0,0,0,0.55)",
+          "icon": "clock"
+        },
+        "futureCouponInfo": {
+          "scarcity_display": "date",
+          "reminder_text": "Disponível em",
+          "start_date": "2026-08-05T10:10Z",
+          "scarcity_text": "Disponível até",
+          "expiration_date": "2026-09-01T02:59Z"
+        }
+      },
+      {
+        "campaignId": "14087636",
+        "backgroundColor": "rgba(255,255,255,1)",
+        "icon": "store",
+        "iconUrl": "https://http2.mlstatic.com/D_Q_NP_712922-MLU114244986962_082026-Z.jpg",
+        "title": {
+          "text": "10% OFF",
+          "color": "rgba(0,0,0,0.9)",
+          "accessibility": {
+            "title": {
+              "fractionalAmount": "10",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "10% OFF",
+              "srLabel": "Cupom ativado de 10% OFF em produtos de Cookeletroraro Oficial"
+            }
+          }
+        },
+        "initialSubtitle": {
+          "text": "Em produtos de Cookeletroraro Oficial",
+          "color": "rgba(0,0,0,0.9)"
+        },
+        "amount": {
+          "minAmount": "Sem compra mínima.",
+          "minAmountColor": "rgba(0,0,0,0.55)",
+          "capAmount": "Limite de R$ 10.000",
+          "capAmountColor": "rgba(0,0,0,0.55)",
+          "accessibility": {
+            "minAmount": {
+              "fractionalAmount": "1",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "Sem compra mínima."
+            },
+            "capAmount": {
+              "fractionalAmount": "10.000",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "Limite de {amount}"
+            }
+          }
+        },
+        "action": {
+          "text": "Conferir",
+          "type": "link",
+          "value": "https://lista.mercadolivre.com.br/_CustId_191591332?coupon_campaign_id=14087636",
+          "color": "rgba(52,131,250,1)",
+          "accessibility": {
+            "activationAnnouncement": {},
+            "srLabel": "Conferir produtos do cupom 10 por cento OFF Em produtos de Cookeletroraro Oficial",
+            "label": "Conferir"
+          }
+        },
+        "code": "",
+        "inputCode": "",
+        "isVerified": false,
+        "isNewFollowerCoupon": false,
+        "items": [
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_907851-MLA99925685631_112025-I.jpg",
+            "altText": "Lavadora De Roupas Lavamax Eco 20 Kg Branca Suggar Branco 127v"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_940876-MLA99583785996_122025-I.jpg",
+            "altText": "Filtro Refrigerador Samsung (quadrado) Da-9708006c"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_809963-MLA99497443289_112025-I.jpg",
+            "altText": "Refil Filtro Acqua Pure Electrolux Purificador Pc01 E Pe15 Azul-marinho"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_757108-MLA99950930197_112025-I.jpg",
+            "altText": "Depurador Slim 60cm Preto Dps161pt Suggar 127v"
+          }
+        ],
+        "help": {
+          "icon": "info",
+          "actionText": "Entendi",
+          "altText": "Termos e condições Cupom 10% OFF"
+        },
+        "status": {
+          "id": "ACTIVE"
+        },
+        "expirationDate": {
+          "text": "Vence 10 de setembro",
+          "color": "rgba(0,0,0,0.55)",
+          "icon": "clock"
+        },
+        "futureCouponInfo": {
+          "scarcity_display": "date",
+          "reminder_text": "Disponível em",
+          "start_date": "2026-08-11T03:00Z",
+          "scarcity_text": "Disponível até",
+          "expiration_date": "2026-09-11T02:59:59Z"
+        }
+      },
+      {
+        "campaignId": "13474243",
+        "backgroundColor": "rgba(255,255,255,1)",
+        "icon": "store",
+        "iconUrl": "https://http2.mlstatic.com/D_Q_NP_712922-MLU114244986962_082026-Z.jpg",
+        "title": {
+          "text": "6% OFF",
+          "color": "rgba(0,0,0,0.9)",
+          "accessibility": {
+            "title": {
+              "fractionalAmount": "6",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "6% OFF",
+              "srLabel": "Cupom ativado de 6% OFF em produtos de Universalcases2"
+            }
+          }
+        },
+        "initialSubtitle": {
+          "text": "Em produtos de Universalcases2",
+          "color": "rgba(0,0,0,0.9)"
+        },
+        "amount": {
+          "minAmount": "Compra mínima R$ 930",
+          "minAmountColor": "rgba(0,0,0,0.55)",
+          "capAmount": "Limite de R$ 1.000",
+          "capAmountColor": "rgba(0,0,0,0.55)",
+          "accessibility": {
+            "minAmount": {
+              "fractionalAmount": "930",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "Compra mínima{amount}"
+            },
+            "capAmount": {
+              "fractionalAmount": "1.000",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "Limite de {amount}"
+            }
+          }
+        },
+        "action": {
+          "text": "Conferir",
+          "type": "link",
+          "value": "https://lista.mercadolivre.com.br/_CustId_158172234?coupon_campaign_id=13474243",
+          "color": "rgba(52,131,250,1)",
+          "accessibility": {
+            "activationAnnouncement": {},
+            "srLabel": "Conferir produtos do cupom 6 por cento OFF Em produtos de Universalcases2",
+            "label": "Conferir"
+          }
+        },
+        "code": "",
+        "inputCode": "",
+        "isVerified": false,
+        "isNewFollowerCoupon": false,
+        "items": [
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_942346-MLA95682296707_102025-I.webp",
+            "altText": "Flight Duplo Para Electrovoice Ev Elx200-12p"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_951279-MLB89607325893_082025-I.jpg",
+            "altText": "Case Para Ma Wing E Monitor Ate 27 Polegadas Com Gaveta Preto"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_950164-MLB112801006668_072026-I.jpg",
+            "altText": "Case Para Teclado Yamaha Modx M6 Preto"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_815723-MLB31828281707_082019-I.webp",
+            "altText": "Case Duplo Para Tv70 Polegadas Com Rodas Tv 70"
+          }
+        ],
+        "help": {
+          "icon": "info",
+          "actionText": "Entendi",
+          "altText": "Termos e condições Cupom 6% OFF"
+        },
+        "status": {
+          "id": "ACTIVE"
+        },
+        "expirationDate": {
+          "text": "Vence em quinta-feira",
+          "color": "rgba(0,0,0,0.55)",
+          "icon": "clock"
+        },
+        "futureCouponInfo": {
+          "scarcity_display": "date",
+          "reminder_text": "Disponível em",
+          "start_date": "2026-08-14T03:00Z",
+          "scarcity_text": "Disponível até",
+          "expiration_date": "2026-08-21T02:59:59Z"
+        }
+      },
+      {
+        "campaignId": "14094436",
+        "backgroundColor": "rgba(255,255,255,1)",
+        "icon": "default",
+        "iconUrl": "https://http2.mlstatic.com/D_Q_NP_630110-MLU108648422959_032026-G.jpg",
+        "title": {
+          "text": "20% OFF LIQUIDA",
+          "color": "rgba(0,0,0,0.9)",
+          "accessibility": {
+            "title": {
+              "fractionalAmount": "20",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "20% OFF LIQUIDA",
+              "srLabel": "Cupom 20% OFF LIQUIDA"
+            }
+          }
+        },
+        "initialSubtitle": {
+          "text": "Em produtos selecionados",
+          "color": "rgba(0,0,0,0.9)"
+        },
+        "amount": {
+          "minAmount": "Sem compra mínima.",
+          "minAmountColor": "rgba(0,0,0,0.55)",
+          "capAmount": "Limite de R$ 1.000",
+          "capAmountColor": "rgba(0,0,0,0.55)",
+          "accessibility": {
+            "minAmount": {
+              "fractionalAmount": "1",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "Sem compra mínima."
+            },
+            "capAmount": {
+              "fractionalAmount": "1.000",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "Limite de {amount}"
+            }
+          }
+        },
+        "action": {
+          "text": "Aplicar",
+          "type": "button",
+          "accessibility": {
+            "activationAnnouncement": {},
+            "srLabel": "Aplicar cupom 20 por cento OFF LIQUIDA Em produtos selecionados",
+            "label": "Aplicar"
+          }
+        },
+        "code": "NICmU2OLi26Fyys1iN8xcYsGB0NU0vkAtB1WExzigSG6Mr3v_dz7yPIuI7UM_wh8wPD1VN90kMOQ2Od2zs2ybg==",
+        "inputCode": "NICmU2OLi26Fyys1iN8xcYsGB0NU0vkAtB1WExzigSG6Mr3v_dz7yPIuI7UM_wh8wPD1VN90kMOQ2Od2zs2ybg==",
+        "isVerified": false,
+        "isNewFollowerCoupon": false,
+        "items": [
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_894878-MLA99479469566_112025-I.jpg",
+            "altText": "Travel System Safety 1st, Mobi Trio, 0 A 15kg, Black & White"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_869930-MLA111861395703_052026-I.webp",
+            "altText": "Shampoo Anticaída E Afinamento Ducray Anaphase Para Queda Crónica 200ml"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_812772-MLA103142207116_012026-I.jpg",
+            "altText": "Óculos De Sol Masculino Khim An4341 Tamanho 56 Preto Arnette Cor Sólida"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_956338-MLA96185539655_102025-I.jpg",
+            "altText": "Smartwatch Multi M2r 1,43 Amoled Proteção Ip67 Preto - Wr206"
+          }
+        ],
+        "help": {
+          "icon": "info",
+          "actionText": "Entendi",
+          "altText": "Termos e condições Cupom 20% OFF"
+        },
+        "status": {
+          "id": "INACTIVE"
+        },
+        "expirationDate": {
+          "text": "Vence 31 de agosto",
+          "color": "rgba(0,0,0,0.55)",
+          "icon": "clock"
+        },
+        "futureCouponInfo": {
+          "scarcity_display": "date",
+          "reminder_text": "Disponível em",
+          "start_date": "2026-08-11T14:00Z",
+          "scarcity_text": "Disponível até",
+          "expiration_date": "2026-09-01T02:59Z"
+        }
+      },
+      {
+        "campaignId": "14030498",
+        "backgroundColor": "rgba(255,255,255,1)",
+        "icon": "default",
+        "iconUrl": "https://http2.mlstatic.com/D_Q_NP_630110-MLU108648422959_032026-G.jpg",
+        "title": {
+          "text": "R$ 20 OFF em Áudio",
+          "color": "rgba(0,0,0,0.9)",
+          "accessibility": {
+            "title": {
+              "fractionalAmount": "20",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "{amount} OFF em Áudio",
+              "srLabel": "Cupom {amount} OFF em Áudio"
+            }
+          }
+        },
+        "initialSubtitle": {
+          "text": "Em produtos selecionados",
+          "color": "rgba(0,0,0,0.9)"
+        },
+        "amount": {
+          "minAmount": "Compra mínima R$ 100",
+          "minAmountColor": "rgba(0,0,0,0.55)",
+          "capAmount": "Limite de R$ 20",
+          "capAmountColor": "rgba(0,0,0,0.55)",
+          "accessibility": {
+            "minAmount": {
+              "fractionalAmount": "100",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "Compra mínima{amount}"
+            },
+            "capAmount": {
+              "fractionalAmount": "20",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "Limite de {amount}"
+            }
+          }
+        },
+        "action": {
+          "text": "Aplicar",
+          "type": "button",
+          "accessibility": {
+            "activationAnnouncement": {},
+            "srLabel": "Aplicar cupom 20 reais OFF em Áudio Em produtos selecionados",
+            "label": "Aplicar"
+          }
+        },
+        "code": "j-raabBjHFt5MveAN3NJBq0_F-HEuTK-EgG059bPk5clAsygFzVz10CxxUyRCTyNQWOV4M_YYgtVc7IODBALaw==",
+        "inputCode": "j-raabBjHFt5MveAN3NJBq0_F-HEuTK-EgG059bPk5clAsygFzVz10CxxUyRCTyNQWOV4M_YYgtVc7IODBALaw==",
+        "isVerified": false,
+        "isNewFollowerCoupon": false,
+        "items": [
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_825005-MLA112458910702_062026-I.webp",
+            "altText": "Caixa De Som Boombox Plus Aiwa Bbs-01-lbl 200w Bluetooth 30h Ip66 Usb Rgb Azul 127/220v"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_845858-MLA99444150348_112025-I.jpg",
+            "altText": "Caixa De Som Bluetooth Portátil Go 4 Jbl Azul 127/220v"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_764138-MLA100028202183_122025-I.jpg",
+            "altText": "Fone De Ouvido Headphone Aiwa Hp 04 B Bluetooth Anc Enc Modo Ambiente Preta"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_812534-MLA99524049864_122025-I.jpg",
+            "altText": "Caixa De Som Speaker Aiwa Aws-sp-01 Bluetooth Cor Preto 127/220v"
+          }
+        ],
+        "help": {
+          "icon": "info",
+          "actionText": "Entendi",
+          "altText": "Termos e condições Cupom R$ 20 OFF"
+        },
+        "status": {
+          "id": "INACTIVE"
+        },
+        "expirationDate": {
+          "text": "Vence 31 de agosto",
+          "color": "rgba(0,0,0,0.55)",
+          "icon": "clock"
+        },
+        "futureCouponInfo": {
+          "scarcity_display": "date",
+          "reminder_text": "Disponível em",
+          "start_date": "2026-08-01T10:00Z",
+          "scarcity_text": "Disponível até",
+          "expiration_date": "2026-09-01T02:59Z"
+        }
+      }
+    ],
+    "tracking": {
+      "view": {
+        "eventData": {
+          "origin": "filter",
+          "coupons_list": [
+            {
+              "campaign_id": "13907402",
+              "code": "",
+              "title": "50% OFF INTERNACIONAL CN",
+              "min_amount": 1,
+              "cap_amount": 90,
+              "currency": "BRL",
+              "status_id": "ACTIVE",
+              "expiration_date": "2026-12-31T03:00:00Z",
+              "scarcity_flag": false,
+              "created_by": "meli",
+              "grouped_by": "Mais de 10%",
+              "given_discount": 90,
+              "discount_type": "PERCENT",
+              "discount_value": 50,
+              "segmentations": {
+                "categories": [],
+                "collectors": [],
+                "containers": [
+                  {
+                    "id": "MLB1681616",
+                    "name": "CBT M6ALL"
+                  },
+                  {
+                    "id": "MLB1689951",
+                    "name": "CBT M6old"
+                  },
+                  {
+                    "id": "MLB1689940",
+                    "name": "CBT M6NEW"
+                  }
+                ],
+                "container": {
+                  "id": "1702179",
+                  "name": "13907402"
+                },
+                "store_ids": []
+              },
+              "installments": false,
+              "payment_methods": false,
+              "item_ids": [
+                "MLB4714381579",
+                "MLB6781617356",
+                "MLB4751231153",
+                "MLB4751243865"
+              ]
+            },
+            {
+              "campaign_id": "13422085",
+              "code": "",
+              "title": "5% OFF",
+              "min_amount": 1900,
+              "cap_amount": 200,
+              "currency": "BRL",
+              "status_id": "ACTIVE",
+              "expiration_date": "2026-09-04T02:59:59Z",
+              "scarcity_flag": true,
+              "created_by": "seller",
+              "grouped_by": "Casa, Móveis e Decoração",
+              "given_discount": 200,
+              "discount_type": "PERCENT",
+              "discount_value": 5,
+              "segmentations": {
+                "categories": [],
+                "collectors": [
+                  "69438105"
+                ],
+                "containers": [],
+                "store_ids": []
+              },
+              "installments": false,
+              "payment_methods": false,
+              "item_ids": [
+                "MLB5848807144",
+                "MLB6068286738",
+                "MLB7070583940",
+                "MLB6797139404"
+              ]
+            },
+            {
+              "campaign_id": "13491809",
+              "code": "6XpqK70r_HMTLe-4XwbWwnMpbGZL8HzUWLv37RcbPFlNxQoSQf1iyCxJkWM5cztpL15tKxSNHtwVXEwL8FnDMg==",
+              "title": "10% OFF Saúde",
+              "min_amount": 79,
+              "cap_amount": 25,
+              "currency": "BRL",
+              "status_id": "INACTIVE",
+              "expiration_date": "2026-09-01T02:59:00Z",
+              "scarcity_flag": false,
+              "created_by": "meli",
+              "grouped_by": "Mais Categorias",
+              "given_discount": 25,
+              "discount_type": "PERCENT",
+              "discount_value": 10,
+              "segmentations": {
+                "categories": [],
+                "collectors": [],
+                "containers": [
+                  {
+                    "id": "MLB1458435",
+                    "name": "Cupom Health Goods High ASP"
+                  }
+                ],
+                "store_ids": []
+              },
+              "installments": false,
+              "payment_methods": false,
+              "item_ids": [
+                "MLB7359295226",
+                "MLB3818808667",
+                "MLB4453703507",
+                "MLB3986739303"
+              ]
+            },
+            {
+              "campaign_id": "14063164",
+              "code": "",
+              "title": "70% OFF INTERNACIONAL CN",
+              "min_amount": 1,
+              "cap_amount": 150,
+              "currency": "BRL",
+              "status_id": "ACTIVE",
+              "expiration_date": "2026-09-01T02:59:00Z",
+              "scarcity_flag": false,
+              "created_by": "meli",
+              "grouped_by": "Moda e acessórios",
+              "given_discount": 150,
+              "discount_type": "PERCENT",
+              "discount_value": 70,
+              "segmentations": {
+                "categories": [],
+                "collectors": [],
+                "containers": [
+                  {
+                    "id": "MLB1752674",
+                    "name": "0818 MLB M6 NP bidding"
+                  },
+                  {
+                    "id": "MLB1733508",
+                    "name": "M6 NP bidding"
+                  },
+                  {
+                    "id": "MLB1742352",
+                    "name": "M6 NP bidding2"
+                  }
+                ],
+                "container": {
+                  "id": "1752800",
+                  "name": "14063164 326431003"
+                },
+                "store_ids": []
+              },
+              "installments": false,
+              "payment_methods": false,
+              "item_ids": [
+                "MLB6910736480",
+                "MLB6725378074",
+                "MLB4827395459",
+                "MLB6822087880"
+              ]
+            },
+            {
+              "campaign_id": "14087636",
+              "code": "",
+              "title": "10% OFF",
+              "min_amount": 1,
+              "cap_amount": 10000,
+              "currency": "BRL",
+              "status_id": "ACTIVE",
+              "expiration_date": "2026-09-11T02:59:59Z",
+              "scarcity_flag": false,
+              "created_by": "seller",
+              "grouped_by": "Eletrônicos, Áudio e Vídeo",
+              "given_discount": 10000,
+              "discount_type": "PERCENT",
+              "discount_value": 10,
+              "segmentations": {
+                "categories": [],
+                "collectors": [
+                  "191591332"
+                ],
+                "containers": [],
+                "store_ids": []
+              },
+              "installments": false,
+              "payment_methods": false,
+              "item_ids": [
+                "MLB3949268295",
+                "MLB4122911509",
+                "MLB5526350680",
+                "MLB3322072915"
+              ]
+            },
+            {
+              "campaign_id": "13474243",
+              "code": "",
+              "title": "6% OFF",
+              "min_amount": 930,
+              "cap_amount": 1000,
+              "currency": "BRL",
+              "status_id": "ACTIVE",
+              "expiration_date": "2026-08-21T02:59:59Z",
+              "scarcity_flag": false,
+              "created_by": "seller",
+              "grouped_by": "Entretenimento",
+              "given_discount": 1000,
+              "discount_type": "PERCENT",
+              "discount_value": 6,
+              "segmentations": {
+                "categories": [],
+                "collectors": [
+                  "158172234"
+                ],
+                "containers": [],
+                "store_ids": []
+              },
+              "installments": false,
+              "payment_methods": false,
+              "item_ids": [
+                "MLB3905343823",
+                "MLB4090847503",
+                "MLB4834996649",
+                "MLB1598325217"
+              ]
+            }
+          ]
+        }
+      }
+    }
   },
-  "appliedFilters": [
-   {
-    "key": "ce_vertical",
-    "title": "Eletrônicos, Áudio e Vídeo"
-   }
-  ],
-  "pagination": {
-   "page": 1,
-   "total": 13,
-   "text": {
-    "totalPagesText": "de 13",
-    "previousPageText": "Anterior",
-    "nextPageText": "Próximo"
-   }
-  },
-  "coupons": [
-   {
-    "campaignId": "13907402",
-    "backgroundColor": "rgba(255,255,255,1)",
-    "icon": "tickets",
-    "iconUrl": "https://http2.mlstatic.com/D_Q_NP_812859-MLU108649200857_032026-G.jpg",
-    "title": {
-     "text": "50% OFF INTERNACIONAL CN",
-     "color": "rgba(0,0,0,0.9)",
-     "accessibility": {
-      "title": {
-       "fractionalAmount": "50",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "50% OFF INTERNACIONAL CN",
-       "srLabel": "Cupom ativado de 50% OFF INTERNACIONAL CN"
-      }
-     }
-    },
-    "initialSubtitle": {
-     "text": "Em produtos selecionados",
-     "color": "rgba(0,0,0,0.9)"
-    },
-    "amount": {
-     "minAmount": "Sem compra mínima.",
-     "minAmountColor": "rgba(0,0,0,0.55)",
-     "capAmount": "Limite de R$ 90",
-     "capAmountColor": "rgba(0,0,0,0.55)",
-     "accessibility": {
-      "minAmount": {
-       "fractionalAmount": "1",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "Sem compra mínima."
+  "activeCouponsData": {
+    "coupons": [
+      {
+        "campaignId": "13907402",
+        "backgroundColor": "rgba(255,255,255,1)",
+        "icon": "tickets",
+        "iconUrl": "https://http2.mlstatic.com/D_Q_NP_812859-MLU108649200857_032026-G.jpg",
+        "title": {
+          "text": "50% OFF INTERNACIONAL CN",
+          "color": "rgba(0,0,0,0.9)",
+          "accessibility": {
+            "title": {
+              "fractionalAmount": "50",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "50% OFF INTERNACIONAL CN",
+              "srLabel": "Cupom ativado de 50% OFF INTERNACIONAL CN"
+            }
+          }
+        },
+        "initialSubtitle": {
+          "text": "Em produtos selecionados",
+          "color": "rgba(0,0,0,0.9)"
+        },
+        "amount": {
+          "minAmount": "Sem compra mínima.",
+          "minAmountColor": "rgba(0,0,0,0.55)",
+          "capAmount": "Limite de R$ 90",
+          "capAmountColor": "rgba(0,0,0,0.55)",
+          "accessibility": {
+            "minAmount": {
+              "fractionalAmount": "1",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "Sem compra mínima."
+            },
+            "capAmount": {
+              "fractionalAmount": "90",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "Limite de {amount}"
+            }
+          }
+        },
+        "action": {
+          "text": "Conferir",
+          "type": "link",
+          "value": "https://lista.mercadolivre.com.br/_Container_13907402?coupon_campaign_id=13907402",
+          "color": "rgba(52,131,250,1)",
+          "accessibility": {
+            "activationAnnouncement": {},
+            "srLabel": "Conferir produtos do cupom 50 por cento OFF INTERNACIONAL CN Em produtos selecionados",
+            "label": "Conferir"
+          }
+        },
+        "code": "",
+        "inputCode": "",
+        "isVerified": false,
+        "isNewFollowerCoupon": false,
+        "items": [
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_726224-CBT111273376862_052026-I.jpg",
+            "altText": "Drone Dobrável Com Câmera Dupla 4k E Controle Preto"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_912073-CBT111738998819_052026-I.jpg",
+            "altText": "Teclado Gamer Attack Shark R85he Mecânico Usb Noite Iluminada Pela Lua"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_916072-CBT112966966571_062026-I.jpg",
+            "altText": "Massageador Elétrico Para Pescoço E Ombros Com Aqu 127/220v Verde"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_606174-CBT111856149118_062026-I.jpg",
+            "altText": "Controlador De Jogos Sem Fio Control Pc/android/ios 1pc White Orange"
+          }
+        ],
+        "help": {
+          "icon": "info",
+          "actionText": "Entendi",
+          "altText": "Termos e condições Cupom 50% OFF"
+        },
+        "status": {
+          "id": "ACTIVE"
+        },
+        "expirationDate": {
+          "text": "Vence 31 de dezembro",
+          "color": "rgba(0,0,0,0.55)",
+          "icon": "clock"
+        },
+        "futureCouponInfo": {
+          "scarcity_display": "date",
+          "reminder_text": "Disponível em",
+          "start_date": "2026-07-02T06:00Z",
+          "scarcity_text": "Disponível até",
+          "expiration_date": "2026-12-31T03:00Z"
+        }
       },
-      "capAmount": {
-       "fractionalAmount": "90",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "Limite de {amount}"
+      {
+        "campaignId": "14063164",
+        "backgroundColor": "rgba(255,255,255,1)",
+        "icon": "tickets",
+        "iconUrl": "https://http2.mlstatic.com/D_Q_NP_812859-MLU108649200857_032026-G.jpg",
+        "title": {
+          "text": "70% OFF INTERNACIONAL CN",
+          "color": "rgba(0,0,0,0.9)",
+          "accessibility": {
+            "title": {
+              "fractionalAmount": "70",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "70% OFF INTERNACIONAL CN",
+              "srLabel": "Cupom ativado de 70% OFF INTERNACIONAL CN"
+            }
+          }
+        },
+        "initialSubtitle": {
+          "text": "Em produtos selecionados",
+          "color": "rgba(0,0,0,0.9)"
+        },
+        "amount": {
+          "minAmount": "Sem compra mínima.",
+          "minAmountColor": "rgba(0,0,0,0.55)",
+          "capAmount": "Limite de R$ 150",
+          "capAmountColor": "rgba(0,0,0,0.55)",
+          "accessibility": {
+            "minAmount": {
+              "fractionalAmount": "1",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "Sem compra mínima."
+            },
+            "capAmount": {
+              "fractionalAmount": "150",
+              "decimalAmount": "0",
+              "currencyId": "BRL",
+              "label": "Limite de {amount}"
+            }
+          }
+        },
+        "action": {
+          "text": "Conferir",
+          "type": "link",
+          "value": "https://lista.mercadolivre.com.br/_Container_14063164-326431003?coupon_campaign_id=14063164",
+          "color": "rgba(52,131,250,1)",
+          "accessibility": {
+            "activationAnnouncement": {},
+            "srLabel": "Conferir produtos do cupom 70 por cento OFF INTERNACIONAL CN Em produtos selecionados",
+            "label": "Conferir"
+          }
+        },
+        "code": "",
+        "inputCode": "",
+        "isVerified": false,
+        "isNewFollowerCoupon": false,
+        "items": [
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_870347-CBT114631889131_072026-I.jpg",
+            "altText": "Mini Ventilador Portátil Recarregável Com Clipe Verde Rosa"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_617833-CBT114445131974_082026-I.jpg",
+            "altText": "Tapete De Banheiro Antiderrapante Absorvente 80x50 Cm Rosa Liso"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_934181-CBT113906739387_062026-I.jpg",
+            "altText": "Sutiã Tomara Que Caia Sem Bojo Com Fecho Frontal White Liso M"
+          },
+          {
+            "imageUrl": "https://http2.mlstatic.com/D_606786-CBT112042797885_052026-I.jpg",
+            "altText": "Kit 7 Pulseiras Boho Ajustáveis Com Pingentes Dourado 5.73 Cm"
+          }
+        ],
+        "help": {
+          "icon": "info",
+          "actionText": "Entendi",
+          "altText": "Termos e condições Cupom 70% OFF"
+        },
+        "status": {
+          "id": "ACTIVE"
+        },
+        "expirationDate": {
+          "text": "Vence 31 de agosto",
+          "color": "rgba(0,0,0,0.55)",
+          "icon": "clock"
+        },
+        "futureCouponInfo": {
+          "scarcity_display": "date",
+          "reminder_text": "Disponível em",
+          "start_date": "2026-08-05T10:10Z",
+          "scarcity_text": "Disponível até",
+          "expiration_date": "2026-09-01T02:59Z"
+        }
       }
-     }
-    },
-    "action": {
-     "text": "Conferir",
-     "type": "link",
-     "value": "https://lista.mercadolivre.com.br/_Container_13907402?coupon_campaign_id=13907402",
-     "color": "rgba(52,131,250,1)",
-     "accessibility": {
-      "activationAnnouncement": {},
-      "srLabel": "Conferir produtos do cupom 50 por cento OFF INTERNACIONAL CN Em produtos selecionados",
-      "label": "Conferir"
-     }
-    },
-    "code": "",
-    "inputCode": "",
-    "isVerified": false,
-    "isNewFollowerCoupon": false,
-    "items": [
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_726224-CBT111273376862_052026-I.jpg",
-      "altText": "Drone Dobrável Com Câmera Dupla 4k E Controle Preto"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_912073-CBT111738998819_052026-I.jpg",
-      "altText": "Teclado Gamer Attack Shark R85he Mecânico Usb Noite Iluminada Pela Lua"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_916072-CBT112966966571_062026-I.jpg",
-      "altText": "Massageador Elétrico Para Pescoço E Ombros Com Aqu 127/220v Verde"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_606174-CBT111856149118_062026-I.jpg",
-      "altText": "Controlador De Jogos Sem Fio Control Pc/android/ios 1pc White Orange"
-     }
-    ],
-    "help": {
-     "icon": "info",
-     "actionText": "Entendi",
-     "altText": "Termos e condições Cupom 50% OFF"
-    },
-    "status": {
-     "id": "ACTIVE"
-    },
-    "expirationDate": {
-     "text": "Vence 31 de dezembro",
-     "color": "rgba(0,0,0,0.55)",
-     "icon": "clock"
-    },
-    "futureCouponInfo": {
-     "scarcity_display": "date",
-     "reminder_text": "Disponível em",
-     "start_date": "2026-07-02T06:00Z",
-     "scarcity_text": "Disponível até",
-     "expiration_date": "2026-12-31T03:00Z"
-    }
-   },
-   {
-    "campaignId": "13422085",
-    "backgroundColor": "rgba(255,255,255,1)",
-    "icon": "store",
-    "iconUrl": "https://http2.mlstatic.com/D_Q_NP_712922-MLU114244986962_082026-Z.jpg",
-    "title": {
-     "text": "5% OFF",
-     "color": "rgba(0,0,0,0.9)",
-     "accessibility": {
-      "title": {
-       "fractionalAmount": "5",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "5% OFF",
-       "srLabel": "Cupom ativado de 5% OFF em produtos de Tecprintrp10"
-      }
-     }
-    },
-    "initialSubtitle": {
-     "text": "Em produtos de Tecprintrp10",
-     "color": "rgba(0,0,0,0.9)"
-    },
-    "amount": {
-     "minAmount": "Compra mínima R$ 1.900",
-     "minAmountColor": "rgba(0,0,0,0.55)",
-     "capAmount": "Limite de R$ 200",
-     "capAmountColor": "rgba(0,0,0,0.55)",
-     "accessibility": {
-      "minAmount": {
-       "fractionalAmount": "1.900",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "Compra mínima{amount}"
-      },
-      "capAmount": {
-       "fractionalAmount": "200",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "Limite de {amount}"
-      }
-     }
-    },
-    "action": {
-     "text": "Conferir",
-     "type": "link",
-     "value": "https://lista.mercadolivre.com.br/_CustId_69438105?coupon_campaign_id=13422085",
-     "color": "rgba(52,131,250,1)",
-     "accessibility": {
-      "activationAnnouncement": {},
-      "srLabel": "Conferir produtos do cupom 5 por cento OFF Em produtos de Tecprintrp10",
-      "label": "Conferir"
-     }
-    },
-    "code": "",
-    "inputCode": "",
-    "isVerified": false,
-    "isNewFollowerCoupon": false,
-    "items": [
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_914127-MLA100083087207_122025-I.webp",
-      "altText": "Impressora Laser Brother Hl-l1232 Monocromática Wi-fi Preto 127v"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_782735-MLA99814962854_122025-I.jpg",
-      "altText": "Impressora Multifuncional Brother Dcpt530dw Tank Wifi Color Cor Preto 127/220v"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_778429-MLA79216641862_092024-I.jpg",
-      "altText": "Impressora 3d Creality Ender 3 V3 Ke - Preta Preto Preto 127/220v"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_709681-MLA113660184429_062026-I.jpg",
-      "altText": "Impressora Multifuncional L4360 Wi-fi Ecotank Epson Preto 127/220v"
-     }
-    ],
-    "help": {
-     "icon": "info",
-     "actionText": "Entendi",
-     "altText": "Termos e condições Cupom 5% OFF"
-    },
-    "status": {
-     "id": "ACTIVE"
-    },
-    "expirationDate": {
-     "text": "Está esgotando!",
-     "color": "rgba(255,119,51,1)"
-    },
-    "futureCouponInfo": {
-     "scarcity_display": "date",
-     "reminder_text": "Disponível em",
-     "start_date": "2026-08-04T03:00Z",
-     "scarcity_text": "Disponível até",
-     "expiration_date": "2026-09-04T02:59:59Z"
-    }
-   },
-   {
-    "campaignId": "13491809",
-    "backgroundColor": "rgba(255,255,255,1)",
-    "icon": "default",
-    "iconUrl": "https://http2.mlstatic.com/D_Q_NP_630110-MLU108648422959_032026-G.jpg",
-    "title": {
-     "text": "10% OFF Saúde",
-     "color": "rgba(0,0,0,0.9)",
-     "accessibility": {
-      "title": {
-       "fractionalAmount": "10",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "10% OFF Saúde",
-       "srLabel": "Cupom 10% OFF Saúde"
-      }
-     }
-    },
-    "initialSubtitle": {
-     "text": "Em produtos selecionados",
-     "color": "rgba(0,0,0,0.9)"
-    },
-    "amount": {
-     "minAmount": "Compra mínima R$ 79",
-     "minAmountColor": "rgba(0,0,0,0.55)",
-     "capAmount": "Limite de R$ 25",
-     "capAmountColor": "rgba(0,0,0,0.55)",
-     "accessibility": {
-      "minAmount": {
-       "fractionalAmount": "79",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "Compra mínima{amount}"
-      },
-      "capAmount": {
-       "fractionalAmount": "25",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "Limite de {amount}"
-      }
-     }
-    },
-    "action": {
-     "text": "Aplicar",
-     "type": "button",
-     "accessibility": {
-      "activationAnnouncement": {},
-      "srLabel": "Aplicar cupom 10 por cento OFF Saúde Em produtos selecionados",
-      "label": "Aplicar"
-     }
-    },
-    "code": "6XpqK70r_HMTLe-4XwbWwnMpbGZL8HzUWLv37RcbPFlNxQoSQf1iyCxJkWM5cztpL15tKxSNHtwVXEwL8FnDMg==",
-    "inputCode": "6XpqK70r_HMTLe-4XwbWwnMpbGZL8HzUWLv37RcbPFlNxQoSQf1iyCxJkWM5cztpL15tKxSNHtwVXEwL8FnDMg==",
-    "isVerified": false,
-    "isNewFollowerCoupon": false,
-    "items": [
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_902631-MLA111404998705_052026-I.webp",
-      "altText": "Umidificador De Ar Ultrassónico Bivolt 127v 220v Ambiente Portátil 360° Difusor De Aromas Aromatizador Silencioso Led Rgb Quarto Bebe Com Tanque De Água Grande De 2,5 Litros Grande Risemberg Branco"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_885563-MLA92298124252_092025-I.jpg",
-      "altText": "Seringa Insulina Uniqmed 0,5ml 5mmx0,23mm 32g 100 Unidades 0.5 Ml"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_660573-MLA115192909463_072026-I.jpg",
-      "altText": "Monitor De Pressão Arterial De Braço Comfort Hem-7122 Omron Cor Branco"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_739071-MLA96861458440_112025-I.jpg",
-      "altText": "Luvas Descartáveis Antiderrapantes Medix Nitrila Cor Azul Tamanho P Em Kit De 10 X 100 Unidades"
-     }
-    ],
-    "help": {
-     "icon": "info",
-     "actionText": "Entendi",
-     "altText": "Termos e condições Cupom 10% OFF"
-    },
-    "status": {
-     "id": "INACTIVE"
-    },
-    "expirationDate": {
-     "text": "Vence 31 de agosto",
-     "color": "rgba(0,0,0,0.55)",
-     "icon": "clock"
-    },
-    "futureCouponInfo": {
-     "scarcity_display": "date",
-     "reminder_text": "Disponível em",
-     "start_date": "2026-08-18T13:15Z",
-     "scarcity_text": "Disponível até",
-     "expiration_date": "2026-09-01T02:59Z"
-    }
-   },
-   {
-    "campaignId": "14063164",
-    "backgroundColor": "rgba(255,255,255,1)",
-    "icon": "tickets",
-    "iconUrl": "https://http2.mlstatic.com/D_Q_NP_812859-MLU108649200857_032026-G.jpg",
-    "title": {
-     "text": "70% OFF INTERNACIONAL CN",
-     "color": "rgba(0,0,0,0.9)",
-     "accessibility": {
-      "title": {
-       "fractionalAmount": "70",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "70% OFF INTERNACIONAL CN",
-       "srLabel": "Cupom ativado de 70% OFF INTERNACIONAL CN"
-      }
-     }
-    },
-    "initialSubtitle": {
-     "text": "Em produtos selecionados",
-     "color": "rgba(0,0,0,0.9)"
-    },
-    "amount": {
-     "minAmount": "Sem compra mínima.",
-     "minAmountColor": "rgba(0,0,0,0.55)",
-     "capAmount": "Limite de R$ 150",
-     "capAmountColor": "rgba(0,0,0,0.55)",
-     "accessibility": {
-      "minAmount": {
-       "fractionalAmount": "1",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "Sem compra mínima."
-      },
-      "capAmount": {
-       "fractionalAmount": "150",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "Limite de {amount}"
-      }
-     }
-    },
-    "action": {
-     "text": "Conferir",
-     "type": "link",
-     "value": "https://lista.mercadolivre.com.br/_Container_14063164-326431003?coupon_campaign_id=14063164",
-     "color": "rgba(52,131,250,1)",
-     "accessibility": {
-      "activationAnnouncement": {},
-      "srLabel": "Conferir produtos do cupom 70 por cento OFF INTERNACIONAL CN Em produtos selecionados",
-      "label": "Conferir"
-     }
-    },
-    "code": "",
-    "inputCode": "",
-    "isVerified": false,
-    "isNewFollowerCoupon": false,
-    "items": [
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_870347-CBT114631889131_072026-I.jpg",
-      "altText": "Mini Ventilador Portátil Recarregável Com Clipe Verde Rosa"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_617833-CBT114445131974_082026-I.jpg",
-      "altText": "Tapete De Banheiro Antiderrapante Absorvente 80x50 Cm Rosa Liso"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_934181-CBT113906739387_062026-I.jpg",
-      "altText": "Sutiã Tomara Que Caia Sem Bojo Com Fecho Frontal White Liso M"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_606786-CBT112042797885_052026-I.jpg",
-      "altText": "Kit 7 Pulseiras Boho Ajustáveis Com Pingentes Dourado 5.73 Cm"
-     }
-    ],
-    "help": {
-     "icon": "info",
-     "actionText": "Entendi",
-     "altText": "Termos e condições Cupom 70% OFF"
-    },
-    "status": {
-     "id": "ACTIVE"
-    },
-    "expirationDate": {
-     "text": "Vence 31 de agosto",
-     "color": "rgba(0,0,0,0.55)",
-     "icon": "clock"
-    },
-    "futureCouponInfo": {
-     "scarcity_display": "date",
-     "reminder_text": "Disponível em",
-     "start_date": "2026-08-05T10:10Z",
-     "scarcity_text": "Disponível até",
-     "expiration_date": "2026-09-01T02:59Z"
-    }
-   },
-   {
-    "campaignId": "14087636",
-    "backgroundColor": "rgba(255,255,255,1)",
-    "icon": "store",
-    "iconUrl": "https://http2.mlstatic.com/D_Q_NP_712922-MLU114244986962_082026-Z.jpg",
-    "title": {
-     "text": "10% OFF",
-     "color": "rgba(0,0,0,0.9)",
-     "accessibility": {
-      "title": {
-       "fractionalAmount": "10",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "10% OFF",
-       "srLabel": "Cupom ativado de 10% OFF em produtos de Cookeletroraro Oficial"
-      }
-     }
-    },
-    "initialSubtitle": {
-     "text": "Em produtos de Cookeletroraro Oficial",
-     "color": "rgba(0,0,0,0.9)"
-    },
-    "amount": {
-     "minAmount": "Sem compra mínima.",
-     "minAmountColor": "rgba(0,0,0,0.55)",
-     "capAmount": "Limite de R$ 10.000",
-     "capAmountColor": "rgba(0,0,0,0.55)",
-     "accessibility": {
-      "minAmount": {
-       "fractionalAmount": "1",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "Sem compra mínima."
-      },
-      "capAmount": {
-       "fractionalAmount": "10.000",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "Limite de {amount}"
-      }
-     }
-    },
-    "action": {
-     "text": "Conferir",
-     "type": "link",
-     "value": "https://lista.mercadolivre.com.br/_CustId_191591332?coupon_campaign_id=14087636",
-     "color": "rgba(52,131,250,1)",
-     "accessibility": {
-      "activationAnnouncement": {},
-      "srLabel": "Conferir produtos do cupom 10 por cento OFF Em produtos de Cookeletroraro Oficial",
-      "label": "Conferir"
-     }
-    },
-    "code": "",
-    "inputCode": "",
-    "isVerified": false,
-    "isNewFollowerCoupon": false,
-    "items": [
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_907851-MLA99925685631_112025-I.jpg",
-      "altText": "Lavadora De Roupas Lavamax Eco 20 Kg Branca Suggar Branco 127v"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_940876-MLA99583785996_122025-I.jpg",
-      "altText": "Filtro Refrigerador Samsung (quadrado) Da-9708006c"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_809963-MLA99497443289_112025-I.jpg",
-      "altText": "Refil Filtro Acqua Pure Electrolux Purificador Pc01 E Pe15 Azul-marinho"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_757108-MLA99950930197_112025-I.jpg",
-      "altText": "Depurador Slim 60cm Preto Dps161pt Suggar 127v"
-     }
-    ],
-    "help": {
-     "icon": "info",
-     "actionText": "Entendi",
-     "altText": "Termos e condições Cupom 10% OFF"
-    },
-    "status": {
-     "id": "ACTIVE"
-    },
-    "expirationDate": {
-     "text": "Vence 10 de setembro",
-     "color": "rgba(0,0,0,0.55)",
-     "icon": "clock"
-    },
-    "futureCouponInfo": {
-     "scarcity_display": "date",
-     "reminder_text": "Disponível em",
-     "start_date": "2026-08-11T03:00Z",
-     "scarcity_text": "Disponível até",
-     "expiration_date": "2026-09-11T02:59:59Z"
-    }
-   },
-   {
-    "campaignId": "13474243",
-    "backgroundColor": "rgba(255,255,255,1)",
-    "icon": "store",
-    "iconUrl": "https://http2.mlstatic.com/D_Q_NP_712922-MLU114244986962_082026-Z.jpg",
-    "title": {
-     "text": "6% OFF",
-     "color": "rgba(0,0,0,0.9)",
-     "accessibility": {
-      "title": {
-       "fractionalAmount": "6",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "6% OFF",
-       "srLabel": "Cupom ativado de 6% OFF em produtos de Universalcases2"
-      }
-     }
-    },
-    "initialSubtitle": {
-     "text": "Em produtos de Universalcases2",
-     "color": "rgba(0,0,0,0.9)"
-    },
-    "amount": {
-     "minAmount": "Compra mínima R$ 930",
-     "minAmountColor": "rgba(0,0,0,0.55)",
-     "capAmount": "Limite de R$ 1.000",
-     "capAmountColor": "rgba(0,0,0,0.55)",
-     "accessibility": {
-      "minAmount": {
-       "fractionalAmount": "930",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "Compra mínima{amount}"
-      },
-      "capAmount": {
-       "fractionalAmount": "1.000",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "Limite de {amount}"
-      }
-     }
-    },
-    "action": {
-     "text": "Conferir",
-     "type": "link",
-     "value": "https://lista.mercadolivre.com.br/_CustId_158172234?coupon_campaign_id=13474243",
-     "color": "rgba(52,131,250,1)",
-     "accessibility": {
-      "activationAnnouncement": {},
-      "srLabel": "Conferir produtos do cupom 6 por cento OFF Em produtos de Universalcases2",
-      "label": "Conferir"
-     }
-    },
-    "code": "",
-    "inputCode": "",
-    "isVerified": false,
-    "isNewFollowerCoupon": false,
-    "items": [
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_942346-MLA95682296707_102025-I.webp",
-      "altText": "Flight Duplo Para Electrovoice Ev Elx200-12p"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_951279-MLB89607325893_082025-I.jpg",
-      "altText": "Case Para Ma Wing E Monitor Ate 27 Polegadas Com Gaveta Preto"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_950164-MLB112801006668_072026-I.jpg",
-      "altText": "Case Para Teclado Yamaha Modx M6 Preto"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_815723-MLB31828281707_082019-I.webp",
-      "altText": "Case Duplo Para Tv70 Polegadas Com Rodas Tv 70"
-     }
-    ],
-    "help": {
-     "icon": "info",
-     "actionText": "Entendi",
-     "altText": "Termos e condições Cupom 6% OFF"
-    },
-    "status": {
-     "id": "ACTIVE"
-    },
-    "expirationDate": {
-     "text": "Vence em quinta-feira",
-     "color": "rgba(0,0,0,0.55)",
-     "icon": "clock"
-    },
-    "futureCouponInfo": {
-     "scarcity_display": "date",
-     "reminder_text": "Disponível em",
-     "start_date": "2026-08-14T03:00Z",
-     "scarcity_text": "Disponível até",
-     "expiration_date": "2026-08-21T02:59:59Z"
-    }
-   },
-   {
-    "campaignId": "14094436",
-    "backgroundColor": "rgba(255,255,255,1)",
-    "icon": "default",
-    "iconUrl": "https://http2.mlstatic.com/D_Q_NP_630110-MLU108648422959_032026-G.jpg",
-    "title": {
-     "text": "20% OFF LIQUIDA",
-     "color": "rgba(0,0,0,0.9)",
-     "accessibility": {
-      "title": {
-       "fractionalAmount": "20",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "20% OFF LIQUIDA",
-       "srLabel": "Cupom 20% OFF LIQUIDA"
-      }
-     }
-    },
-    "initialSubtitle": {
-     "text": "Em produtos selecionados",
-     "color": "rgba(0,0,0,0.9)"
-    },
-    "amount": {
-     "minAmount": "Sem compra mínima.",
-     "minAmountColor": "rgba(0,0,0,0.55)",
-     "capAmount": "Limite de R$ 1.000",
-     "capAmountColor": "rgba(0,0,0,0.55)",
-     "accessibility": {
-      "minAmount": {
-       "fractionalAmount": "1",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "Sem compra mínima."
-      },
-      "capAmount": {
-       "fractionalAmount": "1.000",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "Limite de {amount}"
-      }
-     }
-    },
-    "action": {
-     "text": "Aplicar",
-     "type": "button",
-     "accessibility": {
-      "activationAnnouncement": {},
-      "srLabel": "Aplicar cupom 20 por cento OFF LIQUIDA Em produtos selecionados",
-      "label": "Aplicar"
-     }
-    },
-    "code": "NICmU2OLi26Fyys1iN8xcYsGB0NU0vkAtB1WExzigSG6Mr3v_dz7yPIuI7UM_wh8wPD1VN90kMOQ2Od2zs2ybg==",
-    "inputCode": "NICmU2OLi26Fyys1iN8xcYsGB0NU0vkAtB1WExzigSG6Mr3v_dz7yPIuI7UM_wh8wPD1VN90kMOQ2Od2zs2ybg==",
-    "isVerified": false,
-    "isNewFollowerCoupon": false,
-    "items": [
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_894878-MLA99479469566_112025-I.jpg",
-      "altText": "Travel System Safety 1st, Mobi Trio, 0 A 15kg, Black & White"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_869930-MLA111861395703_052026-I.webp",
-      "altText": "Shampoo Anticaída E Afinamento Ducray Anaphase Para Queda Crónica 200ml"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_812772-MLA103142207116_012026-I.jpg",
-      "altText": "Óculos De Sol Masculino Khim An4341 Tamanho 56 Preto Arnette Cor Sólida"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_956338-MLA96185539655_102025-I.jpg",
-      "altText": "Smartwatch Multi M2r 1,43 Amoled Proteção Ip67 Preto - Wr206"
-     }
-    ],
-    "help": {
-     "icon": "info",
-     "actionText": "Entendi",
-     "altText": "Termos e condições Cupom 20% OFF"
-    },
-    "status": {
-     "id": "INACTIVE"
-    },
-    "expirationDate": {
-     "text": "Vence 31 de agosto",
-     "color": "rgba(0,0,0,0.55)",
-     "icon": "clock"
-    },
-    "futureCouponInfo": {
-     "scarcity_display": "date",
-     "reminder_text": "Disponível em",
-     "start_date": "2026-08-11T14:00Z",
-     "scarcity_text": "Disponível até",
-     "expiration_date": "2026-09-01T02:59Z"
-    }
-   },
-   {
-    "campaignId": "14030498",
-    "backgroundColor": "rgba(255,255,255,1)",
-    "icon": "default",
-    "iconUrl": "https://http2.mlstatic.com/D_Q_NP_630110-MLU108648422959_032026-G.jpg",
-    "title": {
-     "text": "R$ 20 OFF em Áudio",
-     "color": "rgba(0,0,0,0.9)",
-     "accessibility": {
-      "title": {
-       "fractionalAmount": "20",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "{amount} OFF em Áudio",
-       "srLabel": "Cupom {amount} OFF em Áudio"
-      }
-     }
-    },
-    "initialSubtitle": {
-     "text": "Em produtos selecionados",
-     "color": "rgba(0,0,0,0.9)"
-    },
-    "amount": {
-     "minAmount": "Compra mínima R$ 100",
-     "minAmountColor": "rgba(0,0,0,0.55)",
-     "capAmount": "Limite de R$ 20",
-     "capAmountColor": "rgba(0,0,0,0.55)",
-     "accessibility": {
-      "minAmount": {
-       "fractionalAmount": "100",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "Compra mínima{amount}"
-      },
-      "capAmount": {
-       "fractionalAmount": "20",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "Limite de {amount}"
-      }
-     }
-    },
-    "action": {
-     "text": "Aplicar",
-     "type": "button",
-     "accessibility": {
-      "activationAnnouncement": {},
-      "srLabel": "Aplicar cupom 20 reais OFF em Áudio Em produtos selecionados",
-      "label": "Aplicar"
-     }
-    },
-    "code": "j-raabBjHFt5MveAN3NJBq0_F-HEuTK-EgG059bPk5clAsygFzVz10CxxUyRCTyNQWOV4M_YYgtVc7IODBALaw==",
-    "inputCode": "j-raabBjHFt5MveAN3NJBq0_F-HEuTK-EgG059bPk5clAsygFzVz10CxxUyRCTyNQWOV4M_YYgtVc7IODBALaw==",
-    "isVerified": false,
-    "isNewFollowerCoupon": false,
-    "items": [
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_825005-MLA112458910702_062026-I.webp",
-      "altText": "Caixa De Som Boombox Plus Aiwa Bbs-01-lbl 200w Bluetooth 30h Ip66 Usb Rgb Azul 127/220v"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_845858-MLA99444150348_112025-I.jpg",
-      "altText": "Caixa De Som Bluetooth Portátil Go 4 Jbl Azul 127/220v"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_764138-MLA100028202183_122025-I.jpg",
-      "altText": "Fone De Ouvido Headphone Aiwa Hp 04 B Bluetooth Anc Enc Modo Ambiente Preta"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_812534-MLA99524049864_122025-I.jpg",
-      "altText": "Caixa De Som Speaker Aiwa Aws-sp-01 Bluetooth Cor Preto 127/220v"
-     }
-    ],
-    "help": {
-     "icon": "info",
-     "actionText": "Entendi",
-     "altText": "Termos e condições Cupom R$ 20 OFF"
-    },
-    "status": {
-     "id": "INACTIVE"
-    },
-    "expirationDate": {
-     "text": "Vence 31 de agosto",
-     "color": "rgba(0,0,0,0.55)",
-     "icon": "clock"
-    },
-    "futureCouponInfo": {
-     "scarcity_display": "date",
-     "reminder_text": "Disponível em",
-     "start_date": "2026-08-01T10:00Z",
-     "scarcity_text": "Disponível até",
-     "expiration_date": "2026-09-01T02:59Z"
-    }
-   }
-  ]
- },
- "activeCouponsData": {
-  "coupons": [
-   {
-    "campaignId": "13907402",
-    "backgroundColor": "rgba(255,255,255,1)",
-    "icon": "tickets",
-    "iconUrl": "https://http2.mlstatic.com/D_Q_NP_812859-MLU108649200857_032026-G.jpg",
-    "title": {
-     "text": "50% OFF INTERNACIONAL CN",
-     "color": "rgba(0,0,0,0.9)",
-     "accessibility": {
-      "title": {
-       "fractionalAmount": "50",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "50% OFF INTERNACIONAL CN",
-       "srLabel": "Cupom ativado de 50% OFF INTERNACIONAL CN"
-      }
-     }
-    },
-    "initialSubtitle": {
-     "text": "Em produtos selecionados",
-     "color": "rgba(0,0,0,0.9)"
-    },
-    "amount": {
-     "minAmount": "Sem compra mínima.",
-     "minAmountColor": "rgba(0,0,0,0.55)",
-     "capAmount": "Limite de R$ 90",
-     "capAmountColor": "rgba(0,0,0,0.55)",
-     "accessibility": {
-      "minAmount": {
-       "fractionalAmount": "1",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "Sem compra mínima."
-      },
-      "capAmount": {
-       "fractionalAmount": "90",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "Limite de {amount}"
-      }
-     }
-    },
-    "action": {
-     "text": "Conferir",
-     "type": "link",
-     "value": "https://lista.mercadolivre.com.br/_Container_13907402?coupon_campaign_id=13907402",
-     "color": "rgba(52,131,250,1)",
-     "accessibility": {
-      "activationAnnouncement": {},
-      "srLabel": "Conferir produtos do cupom 50 por cento OFF INTERNACIONAL CN Em produtos selecionados",
-      "label": "Conferir"
-     }
-    },
-    "code": "",
-    "inputCode": "",
-    "isVerified": false,
-    "isNewFollowerCoupon": false,
-    "items": [
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_726224-CBT111273376862_052026-I.jpg",
-      "altText": "Drone Dobrável Com Câmera Dupla 4k E Controle Preto"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_912073-CBT111738998819_052026-I.jpg",
-      "altText": "Teclado Gamer Attack Shark R85he Mecânico Usb Noite Iluminada Pela Lua"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_916072-CBT112966966571_062026-I.jpg",
-      "altText": "Massageador Elétrico Para Pescoço E Ombros Com Aqu 127/220v Verde"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_606174-CBT111856149118_062026-I.jpg",
-      "altText": "Controlador De Jogos Sem Fio Control Pc/android/ios 1pc White Orange"
-     }
-    ],
-    "help": {
-     "icon": "info",
-     "actionText": "Entendi",
-     "altText": "Termos e condições Cupom 50% OFF"
-    },
-    "status": {
-     "id": "ACTIVE"
-    },
-    "expirationDate": {
-     "text": "Vence 31 de dezembro",
-     "color": "rgba(0,0,0,0.55)",
-     "icon": "clock"
-    },
-    "futureCouponInfo": {
-     "scarcity_display": "date",
-     "reminder_text": "Disponível em",
-     "start_date": "2026-07-02T06:00Z",
-     "scarcity_text": "Disponível até",
-     "expiration_date": "2026-12-31T03:00Z"
-    }
-   },
-   {
-    "campaignId": "14063164",
-    "backgroundColor": "rgba(255,255,255,1)",
-    "icon": "tickets",
-    "iconUrl": "https://http2.mlstatic.com/D_Q_NP_812859-MLU108649200857_032026-G.jpg",
-    "title": {
-     "text": "70% OFF INTERNACIONAL CN",
-     "color": "rgba(0,0,0,0.9)",
-     "accessibility": {
-      "title": {
-       "fractionalAmount": "70",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "70% OFF INTERNACIONAL CN",
-       "srLabel": "Cupom ativado de 70% OFF INTERNACIONAL CN"
-      }
-     }
-    },
-    "initialSubtitle": {
-     "text": "Em produtos selecionados",
-     "color": "rgba(0,0,0,0.9)"
-    },
-    "amount": {
-     "minAmount": "Sem compra mínima.",
-     "minAmountColor": "rgba(0,0,0,0.55)",
-     "capAmount": "Limite de R$ 150",
-     "capAmountColor": "rgba(0,0,0,0.55)",
-     "accessibility": {
-      "minAmount": {
-       "fractionalAmount": "1",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "Sem compra mínima."
-      },
-      "capAmount": {
-       "fractionalAmount": "150",
-       "decimalAmount": "0",
-       "currencyId": "BRL",
-       "label": "Limite de {amount}"
-      }
-     }
-    },
-    "action": {
-     "text": "Conferir",
-     "type": "link",
-     "value": "https://lista.mercadolivre.com.br/_Container_14063164-326431003?coupon_campaign_id=14063164",
-     "color": "rgba(52,131,250,1)",
-     "accessibility": {
-      "activationAnnouncement": {},
-      "srLabel": "Conferir produtos do cupom 70 por cento OFF INTERNACIONAL CN Em produtos selecionados",
-      "label": "Conferir"
-     }
-    },
-    "code": "",
-    "inputCode": "",
-    "isVerified": false,
-    "isNewFollowerCoupon": false,
-    "items": [
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_870347-CBT114631889131_072026-I.jpg",
-      "altText": "Mini Ventilador Portátil Recarregável Com Clipe Verde Rosa"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_617833-CBT114445131974_082026-I.jpg",
-      "altText": "Tapete De Banheiro Antiderrapante Absorvente 80x50 Cm Rosa Liso"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_934181-CBT113906739387_062026-I.jpg",
-      "altText": "Sutiã Tomara Que Caia Sem Bojo Com Fecho Frontal White Liso M"
-     },
-     {
-      "imageUrl": "https://http2.mlstatic.com/D_606786-CBT112042797885_052026-I.jpg",
-      "altText": "Kit 7 Pulseiras Boho Ajustáveis Com Pingentes Dourado 5.73 Cm"
-     }
-    ],
-    "help": {
-     "icon": "info",
-     "actionText": "Entendi",
-     "altText": "Termos e condições Cupom 70% OFF"
-    },
-    "status": {
-     "id": "ACTIVE"
-    },
-    "expirationDate": {
-     "text": "Vence 31 de agosto",
-     "color": "rgba(0,0,0,0.55)",
-     "icon": "clock"
-    },
-    "futureCouponInfo": {
-     "scarcity_display": "date",
-     "reminder_text": "Disponível em",
-     "start_date": "2026-08-05T10:10Z",
-     "scarcity_text": "Disponível até",
-     "expiration_date": "2026-09-01T02:59Z"
-    }
-   }
-  ]
- }
+    ]
+  }
 }

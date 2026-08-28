@@ -10,15 +10,20 @@
 //   3. O testador de PALAVRA: os cupons desta aba não têm palavra (são "Eu quero"
 //      ou automáticos), mas o ML aceita uma palavra digitada e responde a que
 //      campanha ela pertence. Não dá para listar as palavras — só testar.
-import { Fragment, useState, useEffect, useCallback } from "react";
+import { Fragment, useState, useEffect, useCallback, useRef } from "react";
 import { PRIMARY, PRIMARY_DARK } from "../data/constants";
 import {
   adminMlCupons, adminMlCuponsStatus, adminMlCuponsRun, adminMlCuponsCancel,
   adminMlCuponsSaveConfig, adminMlCuponsProducts, adminMlCuponsSyncProducts,
   adminMlCuponsTestWord, adminMlCuponsCodes, adminMlCuponsClearAll,
-  adminMlCuponsImportCampaign, adminMlCuponsImportStatus, errText,
+  adminMlCuponsImportCampaign, adminMlCuponsImportStatus, adminMlCuponsImportVitrine, errText,
 } from "../data/api";
+import { coletorPronto, raparVitrine } from "../data/coletor";
 import Modal from "../components/ui/Modal";
+
+// Entre uma vitrine e a próxima, no lote. Dez listagens seguidas sem respiro é o
+// padrão que faz o ML pedir verificação — e a sessão aqui é a do próprio admin.
+const PAUSA_ENTRE_VITRINES_MS = 4000;
 
 const brl = (v) => (typeof v === "number" ? `R$ ${v.toFixed(2).replace(".", ",")}` : "—");
 const dia = (v) => (v ? new Date(v).toLocaleDateString("pt-BR") : "—");
@@ -44,6 +49,16 @@ export default function CuponsDoML() {
   const [filtros, setFiltros] = useState({ q: "", scope: "", onlyValid: true, page: 1 });
   const [erro, setErro] = useState(null);
   const [aberto, setAberto] = useState(null);        // campaignId com os produtos à mostra
+  // A extensão que colhe a vitrine no Chrome do próprio admin (extension/ na raiz).
+  // `null` enquanto não se sabe: o botão fica quieto em vez de piscar de cinza a
+  // ativo na montagem.
+  const [temColetor, setTemColetor] = useState(null);
+  const [colhendo, setColhendo] = useState(null);    // campaignId sendo colhido
+  const [colhendoTodas, setColhendoTodas] = useState(false);
+  // `ref` e não `state`: o laço do lote precisa ler o valor ATUAL a cada volta, e
+  // um state ficaria congelado na closure em que o laço começou.
+  const pararRef = useRef(false);
+  const [progresso, setProgresso] = useState(null);  // texto do andamento
   const [produtos, setProdutos] = useState({});      // campaignId → { items, total }
   const [sincronizando, setSincronizando] = useState(null);
   const [confirmarLimpeza, setConfirmarLimpeza] = useState(false);
@@ -113,6 +128,87 @@ export default function CuponsDoML() {
     }
   };
 
+  useEffect(() => { coletorPronto().then(setTemColetor); }, []);
+
+  // Raspar a vitrine na aba do próprio Chrome. O caminho existe porque a vitrine
+  // do cupom responde CAPTCHA para navegador automatizado — na aba do admin, com
+  // a sessão dele, é só uma página. Ver extension/README.md.
+  // Colhe UM cupom. Devolve o que aconteceu em vez de mexer no `erro` da tela,
+  // porque quem chama em lote precisa decidir se para ou segue — e um `setErro`
+  // por cupom apagaria o anterior.
+  const colherUm = async (c, prefixo = "") => {
+    setColhendo(c.campaignId);
+    setProgresso(`${prefixo}abrindo a vitrine numa aba…`);
+    // Muro visto durante ESTE cupom. A extensão traz a aba para a frente e espera
+    // o humano, então o cupom ainda pode dar certo — mas a sessão já foi
+    // questionada, e é isso que o lote precisa saber.
+    let viuMuro = false;
+    try {
+      const r = await raparVitrine(c.containerUrl, {
+        onProgresso: (p) => {
+          if (p.tipo === "muro") viuMuro = true;
+          setProgresso(prefixo + (p.tipo === "muro"
+            // O único momento em que a aba vem para a frente: a decisão é do humano.
+            ? "o Mercado Livre pediu verificação — resolva na aba que abriu"
+            : `página ${p.pagina} · ${p.produtos} produto(s)`));
+        },
+      });
+      if (!r.produtos.length) return { ok: false, muro: viuMuro, vazia: true, motivo: r.motivo || null };
+      setProgresso(`${prefixo}gravando…`);
+      const salvo = await adminMlCuponsImportVitrine(c.campaignId, { products: r.produtos, parcial: r.parcial });
+      setProdutos(p => ({ ...p, [c.campaignId]: undefined }));
+      return { ok: true, muro: viuMuro, produtos: salvo.produtos, parcial: r.parcial };
+    } catch (err) {
+      return { ok: false, muro: viuMuro, motivo: errText(err, "Não deu pra colher a vitrine desse cupom.") };
+    } finally {
+      setColhendo(null);
+    }
+  };
+
+  const colher = async (c) => {
+    setErro(null);
+    const r = await colherUm(c);
+    if (!r.ok) {
+      setErro(r.vazia
+        ? `A vitrine não devolveu produto nenhum${r.motivo ? ` (${r.motivo})` : ""}.`
+        : r.motivo);
+      setProgresso(null);
+      return;
+    }
+    setAberto(null);
+    recarregar();
+    setProgresso(`✅ ${r.produtos} produto(s)${r.parcial ? " — parcial, a vitrine não veio inteira" : ""}`);
+  };
+
+  // Todas as vitrines, uma atrás da outra, nas abas deste Chrome.
+  //
+  // Sequencial de propósito: a extensão abre uma aba por vez, e paralelizar aqui
+  // só serviria para o ML ver dez listagens simultâneas da mesma conta. Entre um
+  // cupom e outro entra uma pausa pelo mesmo motivo.
+  const colherTodas = async () => {
+    const alvos = lista.items.filter(c => c.containerUrl);
+    if (!alvos.length) return;
+    pararRef.current = false;
+    setColhendoTodas(true);
+    setErro(null);
+    let ok = 0, falhas = 0, parado = null;
+    for (let i = 0; i < alvos.length; i++) {
+      if (pararRef.current) { parado = "Interrompido por você"; break; }
+      const c = alvos[i];
+      const r = await colherUm(c, `${i + 1}/${alvos.length} · `);
+      if (r.ok) ok++; else falhas++;
+      // Muro é estado da SESSÃO, não deste cupom: seguir para o próximo é pedir
+      // para o ML olhar com mais atenção ainda. Para-se depois de terminar este,
+      // porque o humano pode já ter resolvido a verificação no meio dele.
+      if (r.muro) { parado = "O Mercado Livre pediu verificação — parei aqui de propósito"; break; }
+      if (i < alvos.length - 1) await new Promise(res => setTimeout(res, PAUSA_ENTRE_VITRINES_MS));
+    }
+    setColhendoTodas(false);
+    setAberto(null);
+    recarregar();
+    setProgresso(`${parado ? `⏸ ${parado}. ` : "✅ "}${ok} vitrine(s) colhida(s)${falhas ? `, ${falhas} sem produto` : ""}.`);
+  };
+
   const sincronizar = async (campaignId) => {
     setSincronizando(campaignId);
     setErro(null);
@@ -148,6 +244,10 @@ export default function CuponsDoML() {
   const s = status?.stats;
   const rodando = !!status?.running;
   const semCupom = !s?.cupons;
+  // Quantos cupons DESTA página têm vitrine para abrir. É da página mesmo, não do
+  // total guardado: o lote percorre o que está na tela, e prometer um número que
+  // ele não vai percorrer seria mentira.
+  const comVitrine = lista.items.filter(c => c.containerUrl).length;
 
   return (
     <div>
@@ -165,6 +265,10 @@ export default function CuponsDoML() {
             <Numero label="Ainda válidos" valor={s.validos} />
             <Numero label="Com vitrine raspada" valor={s.comVitrine} />
             <Numero label="Vínculos cupom↔produto" valor={s.vinculos} />
+            {/* Quanto do número acima é prévia (landing ou miniaturas do card) e
+                não vitrine fechada. Fica ao lado de propósito: sem ele, "3.000
+                vínculos" parece cobertura que o sistema não tem. */}
+            <Numero label="…destes, parciais" valor={s.parciais ?? 0} />
             <Numero label="Produtos do catálogo com cupom" valor={s.catalogo} />
             <Numero label="Com palavra descoberta" valor={s.comCodigo} />
           </div>
@@ -176,6 +280,28 @@ export default function CuponsDoML() {
           </button>
           {rodando && (
             <button onClick={cancelar} style={botaoSecundario}>Cancelar</button>
+          )}
+          {/* O lote das vitrines. Fica desligado durante a rodada do servidor de
+              propósito: as duas usam a MESMA conta do ML, uma pelo navegador do
+              servidor e outra pelo seu, e somar as duas é dobrar a pressão sobre
+              a sessão sem ninguém pedir. */}
+          {temColetor && comVitrine > 0 && (
+            colhendoTodas ? (
+              <button onClick={() => { pararRef.current = true; }} style={botaoSecundario}>
+                Parar a colheita
+              </button>
+            ) : (
+              <button
+                onClick={colherTodas}
+                disabled={rodando || !!colhendo}
+                style={botaoSecundario}
+                title={rodando
+                  ? "Espere a rodada do servidor terminar — as duas usam a mesma conta do ML."
+                  : `Abre a vitrine de ${comVitrine} cupom(ns), uma aba por vez, neste Chrome. Demora alguns minutos.`}
+              >
+                Colher todas as vitrines ({comVitrine})
+              </button>
+            )
           )}
           {/* Desabilitado durante a rodada porque a rota devolve 409 — melhor não
               deixar clicar do que explicar o erro depois de confirmar. */}
@@ -199,7 +325,7 @@ export default function CuponsDoML() {
           <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 10 }}>
             Última rodada: {new Date(status.lastRun).toLocaleString("pt-BR")}
             {typeof status.lastDuration === "number" && ` · ${(status.lastDuration / 1000).toFixed(0)}s`}
-            {status.lastResult && ` · ${status.lastResult.cupons} cupons (${status.lastResult.novos} novos), ${status.lastResult.vinculos} vínculos, ${status.lastResult.catalogoCarimbado} produtos do catálogo carimbados`}
+            {status.lastResult && ` · ${status.lastResult.cupons} cupons (${status.lastResult.novos} novos)${status.lastResult.ativados ? `, ${status.lastResult.ativados} ativados` : ""}, ${status.lastResult.vinculos} vínculos, ${status.lastResult.catalogoCarimbado} produtos do catálogo carimbados`}
             {status.lastResult?.cuponsDeLojaIgnorados ? ` · ${status.lastResult.cuponsDeLojaIgnorados} de loja ignorados` : ""}
           </div>
         )}
@@ -240,6 +366,26 @@ export default function CuponsDoML() {
             </label>
           </div>
         </div>
+
+        {progresso && (
+          <div style={{ marginBottom: 10, fontSize: 12, color: "var(--color-text-secondary)" }}>
+            {colhendo ? "⟳ " : ""}{progresso}
+          </div>
+        )}
+
+        {/* Sem a extensão o botão "no meu Chrome" some — e sumir sem explicação é
+            pior do que não existir. Esta linha diz onde ele foi parar. */}
+        {temColetor === false && (
+          <div style={{ marginBottom: 10, fontSize: 11, color: "var(--color-text-secondary)" }}>
+            O “raspar” abre o navegador no servidor, e o Mercado Livre barra ele com CAPTCHA. Para colher a
+            vitrine numa aba <b>deste</b> Chrome, instale a extensão da pasta <code>extension/</code> do
+            projeto (chrome://extensions › modo do desenvolvedor › “Carregar sem compactação”) e recarregue
+            esta página. Se já instalou e o botão não veio, o endereço desta página —{" "}
+            <code>{typeof window !== "undefined" ? window.location.origin : ""}</code> — precisa estar em{" "}
+            <code>content_scripts.matches</code> do <code>extension/manifest.json</code>; depois de mexer,
+            recarregue a extensão (↻) e esta página.
+          </div>
+        )}
 
         {lista.items.length === 0 ? (
           <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
@@ -286,8 +432,27 @@ export default function CuponsDoML() {
                           <button onClick={() => sincronizar(c.campaignId)} disabled={sincronizando === c.campaignId} style={botaoLink}>
                             {sincronizando === c.campaignId ? "⟳" : "raspar"}
                           </button>
-                          {c.containerUrl && (
+                          {c.containerUrl && temColetor && (
+                            <button onClick={() => colher(c)} disabled={!!colhendo} style={botaoLink}>
+                              {colhendo === c.campaignId ? "⟳ colhendo" : "no meu Chrome"}
+                            </button>
+                          )}
+                          {c.containerUrl ? (
                             <a href={c.containerUrl} target="_blank" rel="noreferrer" style={{ ...botaoLink, textDecoration: "none" }}>ML ↗</a>
+                          ) : (
+                            // Sem containerUrl não há vitrine para abrir: o ML só
+                            // revela a URL dela depois do "Eu quero". O link vai
+                            // para a lista de cupons da conta, e NÃO para este
+                            // cupom — porque cupom não ativado não tem página
+                            // própria no ML. O texto diz isso, senão parece que o
+                            // sistema errou o endereço.
+                            <a
+                              href="https://www.mercadolivre.com.br/cupons"
+                              target="_blank"
+                              rel="noreferrer"
+                              title={'Este cupom ainda não foi ativado, e cupom não ativado não tem página própria no ML — o link abre a lista dos seus cupons. A rodada ativa sozinha até o teto que você definiu; cupons cujo rótulo o ML repete entre campanhas diferentes ficam de fora, porque não dá para saber qual botão é qual.'}
+                              style={{ ...botaoLink, textDecoration: "none", color: "var(--color-text-secondary)" }}
+                            >meus cupons ↗</a>
                           )}
                         </div>
                       </td>
@@ -344,6 +509,22 @@ export default function CuponsDoML() {
   );
 }
 
+// Os produtos de um cupom vêm de três lugares e valem coisas diferentes, então a
+// tela não pode mostrar os três como se fossem a mesma coisa:
+//
+//   vitrine — a lista inteira, raspada da página do cupom (_Container_).
+//   landing — a prévia de 3-8 itens que a landing de afiliado entrega sem abrir
+//             navegador. É o que funciona hoje, com o muro anti-bot de pé.
+//   amostra — as 4 miniaturas que o card do cupom mostra na aba /cupons, e o
+//             ÚNICO vínculo possível do cupom não ativado.
+//
+// Quem olha esta lista precisa saber qual está vendo: "5 produtos" de prévia não
+// quer dizer que o cupom cobre só 5.
+const ORIGEM = {
+  vitrine: "vitrine",
+  landing: "prévia (landing)",
+  amostra: "miniatura do card",
+};
 function Produtos({ dados }) {
   if (!dados) return <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>carregando…</span>;
   if (!dados.items.length) {
@@ -353,10 +534,15 @@ function Produtos({ dados }) {
       </span>
     );
   }
+  const parciais = dados.items.filter(p => p.origem !== "vitrine").length;
+  const soParcial = parciais === dados.items.length;
   return (
     <div>
       <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 6 }}>
         {dados.total} produto(s) neste cupom
+        {soParcial
+          ? " — só uma prévia; a vitrine completa dele ainda não foi raspada"
+          : parciais ? ` (${parciais} de prévia, não da vitrine completa)` : ""}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {dados.items.map(p => (
@@ -366,6 +552,9 @@ function Produtos({ dados }) {
               {p.catalog?.name || p.productUrl}
             </a>
             <span style={{ color: "var(--color-text-secondary)" }}>{brl(p.catalog?.price)}</span>
+            <span style={{ color: "var(--color-text-secondary)" }}>
+              {ORIGEM[p.origem] || p.origem || "vitrine"}
+            </span>
             <span style={{ color: p.inCatalog ? PRIMARY_DARK : "var(--color-text-secondary)" }}>
               {p.inCatalog ? "no catálogo" : "fora do catálogo"}
             </span>
@@ -417,6 +606,16 @@ function Config({ config, onSaved }) {
             onChange={e => setCfg(c => ({ ...c, skipStoreCoupons: e.target.checked }))} />
           ignorar cupom de loja (só campanha do ML)
         </label>
+        <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6, paddingBottom: 8 }}>
+          <input type="checkbox" checked={cfg.activateCoupons !== false}
+            onChange={e => setCfg(c => ({ ...c, activateCoupons: e.target.checked }))} />
+          ativar os cupons automaticamente (“Eu quero”)
+        </label>
+        <div>
+          <label style={labelStyle}>Ativações por rodada</label>
+          <input type="number" min={0} max={100} value={cfg.maxActivationsPerRun ?? 20}
+            onChange={e => setCfg(c => ({ ...c, maxActivationsPerRun: Number(e.target.value) }))} style={{ ...inputStyle, width: 110 }} />
+        </div>
         <button onClick={salvar} disabled={salvando} style={botaoSecundario}>{salvando ? "salvando…" : "salvar"}</button>
       </div>
       <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 8 }}>
@@ -427,6 +626,13 @@ function Config({ config, onSaved }) {
         abrir): ignorá-lo o descarta antes de virar página no Chrome, e o limite acima passa
         a contar só cupom de campanha.
       </div>
+      <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 8 }}>
+        <b>Ativar é ESCRITA na sua conta do Mercado Livre</b> — é o mesmo “Eu quero” que você
+        clicaria à mão, e não há como desfazer por aqui. É também a única forma de o cupom ter
+        vitrine: sem ativar, o ML não diz quais produtos ele cobre. A conta é a mesma do Hub de
+        Afiliados, então a rodada ativa poucos por vez, com pausa, e para no primeiro pedido de
+        verificação. O número acima é o teto por rodada.
+      </div>
     </details>
   );
 }
@@ -436,6 +642,7 @@ function Config({ config, onSaved }) {
 function textoProgresso(p) {
   if (!p) return "começando...";
   if (p.etapa === "abrindo") return "abrindo a página de cupons do ML...";
+  if (p.etapa === "ativando") return `ativando ${p.title || "o cupom"} na conta do ML...`;
   if (p.etapa === "vitrine") return `lendo a vitrine de ${p.title || "cupom"}...`;
   if (p.etapa === "cupons") return `procurando na lista — página ${p.pagina}${p.de ? `/${p.de}` : ""}, ${p.cupons} cupons vistos`;
   return "procurando...";

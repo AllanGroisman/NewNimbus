@@ -38,6 +38,9 @@ export default function PageAdminML() {
 function MLSessionSection() {
   const [data, setData] = useState(null);
   const [cookie, setCookie] = useState("");
+  // A tag é editada separado do cookie: ela quase nunca muda e o cookie é
+  // recolado toda semana. `null` = ninguém mexeu, mostra o que veio do servidor.
+  const [tag, setTag] = useState(null);
   const [msg, setMsg] = useState(null);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -54,9 +57,16 @@ function MLSessionSection() {
     setSaving(true);
     setMsg(null);
     try {
-      const r = await adminScraperMLSessionSave({ cookie: cookie.trim() });
+      // Manda só o que foi editado: campo ausente é "não mexi nisso". É o que
+      // permite trocar a tag sem recolar o cookie, e recolar o cookie sem perder
+      // a tag.
+      const r = await adminScraperMLSessionSave({
+        ...(cookie.trim() ? { cookie: cookie.trim() } : {}),
+        ...(tag === null ? {} : { tag: tag.trim() }),
+      });
       setData(r);
       setCookie("");
+      setTag(null);
       setMsg({ type: "ok", text: "Sessão salva. Clique em “Testar acesso ao Hub” pra confirmar que ela entra." });
     } catch (err) {
       setMsg({ type: "err", text: errText(err, "Não foi possível salvar a sessão.") });
@@ -98,6 +108,10 @@ function MLSessionSection() {
 
   if (loadError) return <AlertBanner tone="error" message={loadError} onRetry={load} />;
 
+  // Dá pra salvar o cookie sozinho, a tag sozinha, ou os dois. O que não dá é
+  // salvar a tag antes de existir um cookie — sem sessão não há conta.
+  const temEdicao = !!cookie.trim() || (tag !== null && tag.trim() !== (data?.tag || "") && (data?.configured || !!cookie.trim()));
+
   const badge = !data?.configured ? { color: "gray", text: "Não configurada" }
     : data.lastCheckOk === true ? { color: "green", text: "Acessa o Hub" }
     : data.lastCheckOk === false ? { color: "amber", text: "Falhou no último teste" }
@@ -126,7 +140,22 @@ function MLSessionSection() {
         placeholder="Cole aqui o cookie copiado pela extensão Extrator Nimbus"
         style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 12, resize: "vertical", boxSizing: "border-box", fontFamily: "monospace" }}
       />
+      <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", margin: "12px 0 4px" }}>
+        TAG de afiliado da conta do sistema <span style={{ opacity: 0.7 }}>(opcional)</span>
+      </label>
+      <input
+        value={tag === null ? (data?.tag || "") : tag}
+        onChange={e => setTag(e.target.value)}
+        placeholder="ex.: nomedaconta"
+        style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 12, boxSizing: "border-box", fontFamily: "monospace" }}
+      />
       <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 6, lineHeight: 1.5 }}>
+        Serve só pra <strong>ler</strong>: com ela o robô consegue ver os produtos da vitrine de um cupom sem abrir
+        navegador (é o único caminho que o ML não bloqueia hoje). O Hub e a coleta de cupons funcionam sem ela.
+        Não tem nada a ver com a TAG de nenhum cliente — os links dos grupos continuam saindo com a tag de cada um.
+      </div>
+
+      <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 10, lineHeight: 1.5 }}>
         <strong>Como pegar:</strong> instale a extensão <a href="https://chromewebstore.google.com/detail/extrator-nimbus/jppbabekibjgclmbacibonalflchgdlh" target="_blank" rel="noreferrer" style={{ color: PRIMARY }}>Extrator Nimbus</a> no
         Chrome → entre na conta do sistema em mercadolivre.com.br → clique no ícone da extensão → cole aqui.
       </div>
@@ -141,7 +170,7 @@ function MLSessionSection() {
       )}
 
       <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
-        <button onClick={save} disabled={saving || !cookie.trim()} style={{ padding: "7px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: (saving || !cookie.trim()) ? "not-allowed" : "pointer", fontWeight: 500, opacity: (saving || !cookie.trim()) ? 0.6 : 1 }}>
+        <button onClick={save} disabled={saving || !temEdicao} style={{ padding: "7px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: (saving || !temEdicao) ? "not-allowed" : "pointer", fontWeight: 500, opacity: (saving || !temEdicao) ? 0.6 : 1 }}>
           {saving ? "Salvando..." : "Salvar"}
         </button>
         <button onClick={test} disabled={testing || !data?.configured} title={!data?.configured ? "Salve o cookie primeiro" : "Abre o Hub num navegador de verdade (~30s)"} style={{ padding: "7px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: (testing || !data?.configured) ? "not-allowed" : "pointer", opacity: (testing || !data?.configured) ? 0.5 : 1 }}>
@@ -157,6 +186,7 @@ function MLSessionSection() {
       {data && (data.updatedAt || data.lastCheckAt) && (
         <div style={{ marginTop: 14, paddingTop: 12, borderTop: "0.5px solid var(--color-border-tertiary)", fontSize: 11, color: "var(--color-text-secondary)", lineHeight: 1.6 }}>
           {data.updatedAt && <div>Cookie atualizado em: {new Date(data.updatedAt).toLocaleString("pt-BR")}</div>}
+          <div>Tag de afiliado: {data.tag ? <strong>{data.tag}</strong> : "não configurada — a vitrine dos cupons não será lida"}</div>
           {data.lastCheckAt && (
             <div style={{ color: data.lastCheckOk ? undefined : "var(--danger-text)" }}>
               {data.lastCheckOk ? "✓" : "✗"} Última verificação: {new Date(data.lastCheckAt).toLocaleString("pt-BR")}

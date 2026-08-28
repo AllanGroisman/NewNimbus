@@ -52,10 +52,16 @@ async function upsertCoupons(coupons, { origin = "page" } = {}) {
       raw: c.raw || {},
       lastSeenAt: agora,
     };
+    // Os ids da amostra só são ESCRITOS quando vieram: o cupom pode chegar por um
+    // caminho que não lê o bloco de telemetria (uma busca por campanha, um dump
+    // parcial), e gravar `[]` ali apagaria a amostra que a rodada anterior achou.
+    // Lista vazia aqui é "não sei", não "não tem" — a mesma disciplina do
+    // sem-vitrine ≠ fora-da-vitrine, um nível abaixo.
+    const comIds = (c.sampleItemIds || []).length ? { sampleItemIds: c.sampleItemIds } : {};
     const r = await prisma().mlCoupon.upsert({
       where: { campaignId: c.campaignId },
-      create: { campaignId: c.campaignId, origin, firstSeenAt: agora, ...row },
-      update: row,
+      create: { campaignId: c.campaignId, origin, firstSeenAt: agora, ...row, sampleItemIds: c.sampleItemIds || [] },
+      update: { ...row, ...comIds },
     });
     if (r.firstSeenAt.getTime() === r.lastSeenAt.getTime()) novos++; else atualizados++;
   }
@@ -68,7 +74,12 @@ async function upsertCoupons(coupons, { origin = "page" } = {}) {
 //
 // Vínculo que não veio nesta rodada é APAGADO: o cupom deixou de cobrir aquele
 // produto, e um vínculo velho vira promessa falsa na fila do repasse.
-async function replaceCouponProducts(campaignId, items) {
+//
+// O apagamento é escopado por ORIGEM, e isso não é detalhe: vitrine e amostra são
+// duas coleções que chegam por caminhos diferentes e em momentos diferentes. Sem o
+// escopo, raspar a vitrine apagaria as amostras (e a rodada seguinte, que só
+// consegue as amostras, apagaria a vitrine inteira) — cada uma zerando a outra.
+async function replaceCouponProducts(campaignId, items, { origem = "vitrine" } = {}) {
   const agora = nowish();
   const chaves = [];
 
@@ -77,17 +88,47 @@ async function replaceCouponProducts(campaignId, items) {
     chaves.push(it.productKey);
     await prisma().mlCouponProduct.upsert({
       where: { campaignId_productKey: { campaignId, productKey: it.productKey } },
-      create: { campaignId, productKey: it.productKey, productUrl: it.productUrl, firstSeenAt: agora, lastSeenAt: agora },
-      update: { productUrl: it.productUrl, lastSeenAt: agora },
+      // Produto que já estava como amostra e apareceu na vitrine é PROMOVIDO: o
+      // vínculo passa a ser o forte, e some da coleção fraca sozinho.
+      create: { campaignId, productKey: it.productKey, productUrl: it.productUrl, origem, firstSeenAt: agora, lastSeenAt: agora },
+      update: { productUrl: it.productUrl, origem, lastSeenAt: agora },
     });
   }
 
   const { count: removidos } = await prisma().mlCouponProduct.deleteMany({
-    where: { campaignId, productKey: { notIn: chaves.length ? chaves : ["__nenhum__"] } },
+    where: { campaignId, origem, productKey: { notIn: chaves.length ? chaves : ["__nenhum__"] } },
   });
-  await prisma().mlCoupon.update({ where: { campaignId }, data: { productsSyncedAt: agora } }).catch(() => {});
+  // `productsSyncedAt` quer dizer "a VITRINE foi raspada" e continua querendo
+  // dizer só isso — a amostra não é vitrine e não pode carimbar esse campo, senão
+  // a tela pararia de oferecer o botão de raspar justamente onde ele é preciso.
+  if (origem === "vitrine") {
+    await prisma().mlCoupon.update({ where: { campaignId }, data: { productsSyncedAt: agora } }).catch(() => {});
+  }
 
   return { vinculados: chaves.length, removidos };
+}
+
+// As 4 miniaturas do card do cupom, gravadas como vínculo parcial.
+//
+// Vem de `ml_coupons.sampleItemIds` (ml-cupons.js:sampleIdsFromTracking). Como o
+// ML não dá a URL do anúncio ali — só o id —, a URL é a sintética de catálogo, a
+// MESMA forma que coupons/quick-check.js:chavesCandidatas monta a partir de
+// `pdp_filters=item_id:MLB…`. É isso que faz a chave bater dos dois lados: se as
+// duas pontas não usarem a mesma URL, o hash sai diferente e o vínculo nunca casa.
+function linkSinteticoML(itemId) {
+  const n = (String(itemId || "").match(/MLB-?(\d{6,})/i) || [])[1];
+  return n ? `https://www.mercadolivre.com.br/x/p/MLB${n}` : null;
+}
+
+async function replaceCouponSamples(campaignId, itemIds) {
+  const { productKey } = require("../catalog/product-key");
+  const items = [];
+  for (const id of itemIds || []) {
+    const link = linkSinteticoML(id);
+    if (!link) continue;
+    items.push({ productKey: productKey({ link }), productUrl: link });
+  }
+  return replaceCouponProducts(String(campaignId), items, { origem: "amostra" });
 }
 
 // Carimba no catálogo qual campanha cobre cada produto — e tira o carimbo do que
@@ -252,13 +293,14 @@ async function listCoupons({ page = 1, pageSize = 50, sortBy = "lastSeen_desc", 
 }
 
 // Os produtos de um cupom, com o que o catálogo sabe sobre cada um.
-async function couponProducts(campaignId, { page = 1, pageSize = 50 } = {}) {
+async function couponProducts(campaignId, { page = 1, pageSize = 50, origem = null } = {}) {
   const take = Math.min(200, Math.max(5, Number(pageSize) || 50));
   const skip = (Math.max(1, Number(page) || 1) - 1) * take;
+  const where = origem ? { campaignId, origem } : { campaignId };
 
   const [total, links] = await Promise.all([
-    prisma().mlCouponProduct.count({ where: { campaignId } }),
-    prisma().mlCouponProduct.findMany({ where: { campaignId }, orderBy: { lastSeenAt: "desc" }, skip, take }),
+    prisma().mlCouponProduct.count({ where }),
+    prisma().mlCouponProduct.findMany({ where, orderBy: { lastSeenAt: "desc" }, skip, take }),
   ]);
 
   const chaves = links.map(l => l.productKey);
@@ -277,12 +319,47 @@ async function couponProducts(campaignId, { page = 1, pageSize = 50 } = {}) {
     items: links.map(l => ({
       productKey: l.productKey,
       productUrl: l.productUrl,
+      origem: l.origem || "vitrine",
       firstSeenAt: l.firstSeenAt,
       lastSeenAt: l.lastSeenAt,
       inCatalog: mapa.has(l.productKey),
       catalog: mapa.get(l.productKey) || null,
     })),
   };
+}
+
+// Este produto está na vitrine DESTA campanha?
+//
+// Existe separado do `couponsForKeys` porque as duas perguntas são diferentes: o
+// `couponsForKeys` devolve o MELHOR cupom de cada produto, então um produto
+// coberto por duas campanhas responde por só uma delas — e o teste de cupom
+// pergunta por uma campanha específica.
+async function hasCouponProduct(campaignId, productKey) {
+  return !!(await couponProductOrigem(campaignId, productKey));
+}
+
+// O mesmo vínculo, mas dizendo de ONDE ele veio ("vitrine" | "amostra"), ou null
+// se não existe. A tela usa isso para não dar à amostra o peso da vitrine: as duas
+// respondem "o cupom cobre este produto", mas uma vem da lista inteira e a outra
+// de 4 miniaturas.
+async function couponProductOrigem(campaignId, productKey) {
+  if (!campaignId || !productKey) return null;
+  const row = await prisma().mlCouponProduct.findUnique({
+    where: { campaignId_productKey: { campaignId: String(campaignId), productKey } },
+    select: { origem: true },
+  });
+  return row ? (row.origem || "vitrine") : null;
+}
+
+// Esta campanha tem vitrine RASPADA (não só as amostras do card)?
+//
+// É a pergunta que separa "o produto não está na vitrine" de "não sei": só quem
+// tem a lista completa pode dizer que um produto está fora dela. Quatro amostras
+// não autorizam essa frase — ver coupons/quick-check.js:coberturaDoProduto.
+async function hasVitrine(campaignId) {
+  if (!campaignId) return false;
+  const n = await prisma().mlCouponProduct.count({ where: { campaignId: String(campaignId), origem: "vitrine" } });
+  return n > 0;
 }
 
 // Os cupons que cobrem um lote de produtos, para a tela do catálogo e para a fila
@@ -357,16 +434,20 @@ async function findCodeCheck(code, { maxAgeHours = 24 } = {}) {
 
 async function stats() {
   const agora = nowish();
-  const [cupons, validos, comVitrine, vinculos, comCodigo, ultimo] = await Promise.all([
+  const [cupons, validos, comVitrine, vinculos, parciais, comCodigo, ultimo] = await Promise.all([
     prisma().mlCoupon.count(),
     prisma().mlCoupon.count({ where: { OR: [{ expiresAt: null }, { expiresAt: { gt: agora } }] } }),
     prisma().mlCoupon.count({ where: { productsSyncedAt: { not: null } } }),
     prisma().mlCouponProduct.count(),
+    // Quanto do total de vínculos NÃO é vitrine fechada — a prévia da landing e
+    // as miniaturas do card. Sem essa separação o número grande do painel esconde
+    // que quase nenhum cupom tem a lista completa.
+    prisma().mlCouponProduct.count({ where: { NOT: { origem: "vitrine" } } }),
     prisma().mlCoupon.count({ where: { code: { not: null } } }),
     prisma().mlCoupon.findFirst({ orderBy: { lastSeenAt: "desc" }, select: { lastSeenAt: true } }),
   ]);
   const catalogo = await prisma().catalogProduct.count({ where: { couponCampaignId: { not: null } } });
-  return { cupons, validos, comVitrine, vinculos, comCodigo, catalogo, ultimaColeta: ultimo?.lastSeenAt || null };
+  return { cupons, validos, comVitrine, vinculos, parciais, comCodigo, catalogo, ultimaColeta: ultimo?.lastSeenAt || null };
 }
 
 // Faxina: cupom vencido há mais de `days` dias não interessa a ninguém, e os
@@ -436,10 +517,15 @@ module.exports = {
   findCouponByCode,
   recoverCodesFromCoupons,
   replaceCouponProducts,
+  replaceCouponSamples,
+  linkSinteticoML,
+  hasVitrine,
   syncCatalogCoupons,
   recordCodeCheck,
   listCoupons,
   couponProducts,
+  hasCouponProduct,
+  couponProductOrigem,
   couponsForKeys,
   getCoupon,
   listCodeChecks,

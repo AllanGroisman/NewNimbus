@@ -1,0 +1,296 @@
+[
+ {
+  "campaignId": "13305789",
+  "activated": true,
+  "scope": "campaign",
+  "expiresAt": "2027-01-01T02:59:00.000Z",
+  "activationLabel": null
+ },
+ {
+  "campaignId": "14063164",
+  "activated": true,
+  "scope": "campaign",
+  "expiresAt": "2026-09-01T02:59:00.000Z",
+  "activationLabel": null
+ },
+ {
+  "campaignId": "13422085",
+  "activated": true,
+  "scope": "store",
+  "expiresAt": "2026-09-04T02:59:59.000Z",
+  "activationLabel": null
+ },
+ {
+  "campaignId": "14167118",
+  "activated": true,
+  "scope": "campaign",
+  "expiresAt": "2026-11-01T02:59:00.000Z",
+  "activationLabel": null
+ },
+ {
+  "campaignId": "14094436",
+  "activated": true,
+  "scope": "campaign",
+  "expiresAt": "2026-09-01T02:59:00.000Z",
+  "activationLabel": null
+ },
+ {
+  "campaignId": "13529507",
+  "activated": true,
+  "scope": "campaign",
+  "expiresAt": "2026-09-01T02:59:00.000Z",
+  "activationLabel": null
+ },
+ {
+  "campaignId": "14137080",
+  "activated": false,
+  "scope": "campaign",
+  "expiresAt": "2026-12-31T03:00:00.000Z",
+  "activationLabel": "Aplicar cupom 70 por cento OFF INTERNACIONAL CN Em produtos selecionados"
+ },
+ {
+  "campaignId": "13907402",
+  "activated": true,
+  "scope": "campaign",
+  "expiresAt": "2026-12-31T03:00:00.000Z",
+  "activationLabel": null
+ },
+ {
+  "campaignId": "13483471",
+  "activated": true,
+  "scope": "store",
+  "expiresAt": "2026-09-17T02:59:59.000Z",
+  "activationLabel": null
+ },
+ {
+  "campaignId": "14078052",
+  "activated": false,
+  "scope": "campaign",
+  "expiresAt": "2026-10-01T02:59:00.000Z",
+  "activationLabel": "Aplicar cupom 40 por cento OFF em Smart Home Em produtos selecionados"
+ },
+ {
+  "campaignId": "13999830",
+  "activated": false,
+  "scope": "campaign",
+  "expiresAt": "2026-09-01T03:00:00.000Z",
+  "activationLabel": "Aplicar cupom 8 por cento OFF INTERNACIONAL Em produtos selecionados"
+ },
+ {
+  "campaignId": "14133538",
+  "activated": true,
+  "scope": "store",
+  "expiresAt": "2026-09-01T02:59:00.000Z",
+  "activationLabel": null
+ },
+ {
+  "campaignId": "13373945",
+  "activated": false,
+  "scope": "campaign",
+  "expiresAt": "2026-09-01T03:00:00.000Z",
+  "activationLabel": "Aplicar cupom 8 por cento OFF INTERNACIONAL Em produtos selecionados"
+ },
+ {
+  "campaignId": "13374243",
+  "activated": false,
+  "scope": "campaign",
+  "expiresAt": "2026-09-01T03:00:00.000Z",
+  "activationLabel": "Aplicar cupom 10 por cento OFF INTERNACIONAL Em produtos selecionados"
+ },
+ {
+  "campaignId": "14057660",
+  "activated": true,
+  "scope": "campaign",
+  "expiresAt": "2026-09-01T02:59:00.000Z",
+  "activationLabel": null
+ },
+ {
+  "campaignId": "13520039",
+  "activated": false,
+  "scope": "campaign",
+  "expiresAt": "2027-01-01T02:59:00.000Z",
+  "activationLabel": "Aplicar cupom 35 reais OFF em ADIDAS Em produtos selecionados"
+ },
+ {
+  "campaignId": "13403381",
+  "activated": true,
+  "scope": "store",
+  "expiresAt": "2026-08-31T02:59:59.000Z",
+  "activationLabel": null
+ },
+ {
+  "campaignId": "13463561",
+  "activated": true,
+  "scope": "campaign",
+  "expiresAt": "2026-09-01T02:59:00.000Z",
+  "activationLabel": null
+ },
+ {
+  "campaignId": "14091942",
+  "activated": false,
+  "scope": "campaign",
+  "expiresAt": "2026-09-01T02:59:00.000Z",
+  "activationLabel": "Aplicar cupom 30 reais OFF 1° Compra Mercado Em produtos selecionados"
+ },
+ {
+  "campaignId": "13463545",
+  "activated": false,
+  "scope": "campaign",
+  "expiresAt": "2026-09-01T02:59:00.000Z",
+  "activationLabel": "Aplicar cupom 15 por cento OFF em Yopro Em produtos selecionados"
+ },
+ {
+  "campaignId": "13468841",
+  "activated": false,
+  "scope": "campaign",
+  "expiresAt": "2026-09-01T02:59:00.000Z",
+  "activationLabel": "Aplicar cupom 16.99 reais OFF em PRINGLES Em produtos selecionados"
+ },
+ {
+  "campaignId": "14077888",
+  "activated": false,
+  "scope": "campaign",
+  "expiresAt": "2026-09-01T02:59:00.000Z",
+  "activationLabel": "Aplicar cupom 30 por cento OFF em Sustagen Em produtos selecionados"
+ },
+ {
+  "campaignId": "13505559",
+  "activated": true,
+  "scope": "store",
+  "expiresAt": "2026-09-21T02:59:59.000Z",
+  "activationLabel": null
+ },
+ {
+  "campaignId": "14136068",
+  "activated": false,
+  "scope": "campaign",
+  "expiresAt": "2026-08-31T03:00:00.000Z",
+  "activationLabel": "Aplicar cupom 30 reais OFF na sua moto Em produtos selecionados"
+ },
+ {
+  "campaignId": "14070846",
+  "activated": true,
+  "scope": "store",
+  "expiresAt": "2026-09-07T02:59:59.000Z",
+  "activationLabel": null
+ },
+ {
+  "campaignId": "14104204",
+  "activated": false,
+  "scope": "campaign",
+  "expiresAt": "2026-09-01T02:45:00.000Z",
+  "activationLabel": "Aplicar cupom 20 por cento OFF TROCA DE ÓLEO Em produtos selecionados"
+ },
+ {
+  "campaignId": "14070778",
+  "activated": true,
+  "scope": "store",
+  "expiresAt": "2026-09-07T02:59:59.000Z",
+  "activationLabel": null
+ },
+ {
+  "campaignId": "14103888",
+  "activated": true,
+  "scope": "campaign",
+  "expiresAt": "2026-09-01T02:59:00.000Z",
+  "activationLabel": null
+ },
+ {
+  "campaignId": "13431817",
+  "activated": false,
+  "scope": "campaign",
+  "expiresAt": "2026-09-01T03:00:00.000Z",
+  "activationLabel": "Aplicar cupom 10 por cento OFF MELIFESTA Em produtos selecionados"
+ },
+ {
+  "campaignId": "14126998",
+  "activated": true,
+  "scope": "campaign",
+  "expiresAt": "2026-09-01T03:00:00.000Z",
+  "activationLabel": null
+ },
+ {
+  "campaignId": "14137958",
+  "activated": true,
+  "scope": "store",
+  "expiresAt": "2026-08-28T02:59:59.000Z",
+  "activationLabel": null
+ },
+ {
+  "campaignId": "13420271",
+  "activated": true,
+  "scope": "store",
+  "expiresAt": "2026-09-01T02:59:59.000Z",
+  "activationLabel": null
+ },
+ {
+  "campaignId": "14030828",
+  "activated": true,
+  "scope": "store",
+  "expiresAt": "2026-08-31T02:59:59.000Z",
+  "activationLabel": null
+ },
+ {
+  "campaignId": "13392425",
+  "activated": true,
+  "scope": "store",
+  "expiresAt": "2026-08-29T02:59:59.000Z",
+  "activationLabel": null
+ },
+ {
+  "campaignId": "13598722",
+  "activated": false,
+  "scope": "campaign",
+  "expiresAt": "2026-10-01T02:59:00.000Z",
+  "activationLabel": "Aplicar cupom 10 por cento OFF em Smartphones Em produtos selecionados"
+ },
+ {
+  "campaignId": "13805172",
+  "activated": false,
+  "scope": "campaign",
+  "expiresAt": "2026-10-01T02:59:00.000Z",
+  "activationLabel": "Aplicar cupom 10 por cento OFF em Smartphones Em produtos selecionados"
+ },
+ {
+  "campaignId": "13210175",
+  "activated": false,
+  "scope": "campaign",
+  "expiresAt": "2026-10-01T02:59:00.000Z",
+  "activationLabel": "Aplicar cupom 100 reais OFF em Smartphones Em produtos selecionados"
+ },
+ {
+  "campaignId": "13177599",
+  "activated": false,
+  "scope": "campaign",
+  "expiresAt": "2026-10-01T02:59:00.000Z",
+  "activationLabel": "Aplicar cupom 300 reais OFF em Smartphones Em produtos selecionados"
+ },
+ {
+  "campaignId": "14034424",
+  "activated": false,
+  "scope": "campaign",
+  "expiresAt": "2026-09-01T02:00:00.000Z",
+  "activationLabel": "Aplicar cupom 600 reais OFF em Informática Em produtos selecionados"
+ },
+ {
+  "campaignId": "13820166",
+  "activated": false,
+  "scope": "campaign",
+  "expiresAt": "2026-10-01T02:59:00.000Z",
+  "activationLabel": "Aplicar cupom 1000 reais OFF em Motorola Em produtos selecionados"
+ },
+ {
+  "campaignId": "14154652",
+  "activated": false,
+  "scope": "campaign",
+  "expiresAt": "2026-09-01T02:59:00.000Z",
+  "activationLabel": "Aplicar cupom 500 reais OFF NOTEBOOKS LENOVO Em produtos selecionados"
+ },
+ {
+  "campaignId": "14168856",
+  "activated": false,
+  "scope": "campaign",
+  "expiresAt": "2026-09-01T02:59:00.000Z",
+  "activationLabel": "Aplicar cupom 250 reais OFF em Dell Em produtos selecionados"
+ }
+]

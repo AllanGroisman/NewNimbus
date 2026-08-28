@@ -444,6 +444,10 @@ model MlCoupon {
   iconUrl          String?
   groupings        Json      @default("[]")
   sampleItems      Json      @default("[]")
+  // Os MLBs das miniaturas do card (ml-cupons.js:sampleIdsFromTracking). São 4
+  // produtos reais da vitrine que o ML entrega no próprio modelo da aba — o único
+  // vínculo que existe para o cupom NÃO ativado, que não tem vitrine pra raspar.
+  sampleItemIds    Json      @default("[]")
   raw              Json      @default("{}")
   firstSeenAt      DateTime  @default(now())
   lastSeenAt       DateTime  @default(now())
@@ -468,6 +472,15 @@ model MlCouponProduct {
   campaignId  String   @map("campaign_id")
   productKey  String
   productUrl  String
+  // De onde veio o vínculo, e é o que decide o peso dele:
+  //   "vitrine" — raspado da vitrine (_Container_) no navegador: a lista COMPLETA.
+  //   "landing" — a prévia (3-8 itens) que a landing de afiliado entrega sem
+  //               navegador (scraping/ml-vitrine-landing.js).
+  //   "amostra" — as 4 miniaturas do card do cupom (ml_coupons.sampleItemIds).
+  // Os três provam que o produto ESTÁ coberto. Só "vitrine" é lista fechada, e
+  // por isso só ele autoriza um "fora da vitrine" (coupons/quick-check.js).
+  // As três são coleções separadas: cada uma só apaga a si mesma.
+  origem      String   @default("vitrine")
   firstSeenAt DateTime @default(now())
   lastSeenAt  DateTime @default(now())
 

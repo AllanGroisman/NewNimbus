@@ -64,6 +64,7 @@ const CARD_SELECTORS = ["[class*='coupon' i]", ".andes-card", "[class*='card' i]
 const NAV_TIMEOUT_MS = 45000;
 const COUPON_PAUSE_MS = 2000;        // entre a vitrine de um cupom e a do próximo
 const PAGE_PAUSE_MS = 400;           // entre páginas da mesma vitrine
+const LANDING_PAUSE_MS = 300;        // entre cupons quando a vitrine veio pela landing (sem navegador)
 const CONTAINER_MAX_PAGES = 3;
 const CONTAINER_PAGE_SIZE = 48;      // o `_Desde_` do ML anda de 48 em 48 (1, 49, 97...)
 
@@ -156,10 +157,39 @@ function detectScope(raw, containerUrl, subtitulo) {
   return { scope: daLoja ? "store" : "campaign", sellerName: daLoja ? sellerName : null };
 }
 
+// Os MLBs das 4 miniaturas que o card do cupom mostra — a AMOSTRA da vitrine.
+//
+// Achado em 26/08: eles não estão no card. O card traz só `items[].image_url` e
+// `alt_text` (é o `sampleItems`), sem id nenhum. Os ids vivem no bloco de
+// telemetria da mesma página — `tracking.view.eventData.coupons_list[]` —, num
+// campo `item_ids` IRMÃO de `segmentations` (fácil de procurar no lugar errado:
+// `segmentations.item_ids` existe e vem sempre vazio). Nos dumps guardados, 72 de
+// 72 cupons trazem, sempre 4.
+//
+// Por que isso vale ouro aqui: são produtos reais da vitrine que chegam de graça,
+// no HTML que a rodada JÁ baixa, e para TODO cupom — inclusive o não ativado, que
+// não tem vitrine pra raspar de jeito nenhum. Não é a vitrine inteira, e é por isso
+// que eles são gravados marcados (`origem: "amostra"`): servem de prova POSITIVA
+// ("está coberto"), nunca de prova negativa.
+function sampleIdsFromTracking(bloco) {
+  const lista = bloco?.tracking?.view?.eventData?.coupons_list;
+  const mapa = new Map();
+  if (!Array.isArray(lista)) return mapa;
+  for (const c of lista) {
+    if (!c?.campaign_id) continue;
+    const ids = (Array.isArray(c.item_ids) ? c.item_ids : [])
+      .map(id => (String(id).match(/MLB-?(\d{6,})/i) || [])[1])
+      .filter(Boolean)
+      .map(n => `MLB${n}`);
+    if (ids.length) mapa.set(String(c.campaign_id), [...new Set(ids)]);
+  }
+  return mapa;
+}
+
 // Um cupom do modelo do ML → a linha que o sistema guarda.
 // `raw` é o item de `groupings[].rawCoupons[]` (snake_case, que é o formato do ML;
 // o camelCase da mesma lista é conversão do front deles e pode sumir sem aviso).
-function parseCoupon(raw, groupings = []) {
+function parseCoupon(raw, groupings = [], sampleItemIds = []) {
   if (!raw || !raw.campaign_id) return null;
 
   const titulo = raw.title?.text || "";
@@ -193,6 +223,17 @@ function parseCoupon(raw, groupings = []) {
     containerUrl,
     activated: raw.status?.id === "ACTIVE",
     activationType: raw.activation_type || null,
+    // O rótulo do botão "Aplicar", quando o cupom ainda não foi aceito. É o que
+    // liga o MODELO (que sabe o campaignId) ao BOTÃO no DOM: o texto "Aplicar"
+    // sozinho se repete dezenas de vezes na página, e clicar no errado ativa o
+    // cupom errado na conta. Ex.: "Aplicar cupom 10 por cento OFF Saúde Em
+    // produtos selecionados".
+    // Só o `srLabel` serve. O `label` irmão dele é o texto visível — "Aplicar",
+    // idêntico em todos os cards —, e usá-lo de reserva foi um bug real: casava o
+    // primeiro botão da página e ativava OUTRO cupom.
+    activationLabel: raw.action?.type === "button"
+      ? (raw.action.accessibility?.srLabel || raw.action.accessibility?.sr_label || null)
+      : null,
     // O token de ativação, quando o cupom ainda não foi aceito. NÃO é uma palavra
     // digitável — guardado só pra diagnóstico, nunca mostrado como "o código".
     activationToken: raw.code || null,
@@ -201,6 +242,10 @@ function parseCoupon(raw, groupings = []) {
     expiresText: raw.expiration_date?.text || null,
     iconUrl: toHttps(raw.icon_url),
     sampleItems: (raw.items || []).map(it => ({ img: toHttps(it.image_url), name: it.alt_text || null })).filter(x => x.img),
+    // Os ids das mesmas miniaturas — vêm de outro pedaço do modelo, por isso
+    // chegam por parâmetro (ver sampleIdsFromTracking). Sem ordem garantida
+    // contra o sampleItems: quem importa aqui é o id, não a foto ao lado.
+    sampleItemIds: [...(sampleItemIds || [])],
     groupings: [...groupings],
     // O que o ML disse sobre o card. É o que sustenta o `scope` acima, e responde
     // "por que esse virou loja?" meses depois — a coluna `ml_coupons.raw` existe
@@ -221,6 +266,7 @@ function parseLanding(landing) {
   }
 
   const evt = landing.tracking?.view?.eventData || {};
+  const amostras = sampleIdsFromTracking(landing);
   const porId = new Map();
   const grupos = [];
 
@@ -231,7 +277,7 @@ function parseLanding(landing) {
       // O camelCase (`coupons[]`) e o snake_case (`rawCoupons[]`) descrevem o mesmo
       // cupom; parseCoupon lê o snake, então normaliza o camelCase que sobrar.
       const item = raw.campaign_id ? raw : camelToRaw(raw);
-      const c = parseCoupon(item, g.key ? [g.key] : []);
+      const c = parseCoupon(item, g.key ? [g.key] : [], amostras.get(String(item.campaign_id)) || []);
       if (!c) continue;
       const anterior = porId.get(c.campaignId);
       if (anterior) {
@@ -304,8 +350,12 @@ function parseFilterProps(props, grouping = null) {
 
   const porId = new Map();
   for (const bloco of [d, props.activeCouponsData]) {
+    // Cada bloco tem o SEU tracking: o cupom que só aparece em `activeCouponsData`
+    // tem os ids dele lá, e não no `filteredCouponsData`.
+    const amostras = sampleIdsFromTracking(bloco);
     for (const c of bloco?.coupons || []) {
-      const item = parseCoupon(c.campaign_id ? c : camelToRaw(c), grouping ? [grouping] : []);
+      const cru = c.campaign_id ? c : camelToRaw(c);
+      const item = parseCoupon(cru, grouping ? [grouping] : [], amostras.get(String(cru.campaign_id)) || []);
       if (!item || porId.has(item.campaignId)) continue;
       porId.set(item.campaignId, item);
     }
@@ -515,7 +565,7 @@ function withCuponsPage(cookie, onPage) {
 // aparecer, em vez de ir até o `limit`. Sem isso, procurar um cupom que está na
 // página 2 custaria as 40 páginas do teto — navegação com a conta do Hub, que é
 // justamente o que se economiza aqui.
-async function crawlFilter(page, { grouping = null, limit = 200, skipStore = false, onProgress = null, findCampaignId = null } = {}) {
+async function crawlFilter(page, { grouping = null, limit = 200, skipStore = false, onProgress = null, findCampaignId = null, ativar = null } = {}) {
   const alvo = findCampaignId ? String(findCampaignId) : null;
   const porId = new Map();
   let total = null;
@@ -523,6 +573,9 @@ async function crawlFilter(page, { grouping = null, limit = 200, skipStore = fal
   let ignoradosLoja = 0;
   let paginasSemNovidade = 0;
   let achou = false;
+  let ativados = 0;
+  let semBotao = 0;
+  let blocked = null;
 
   for (let n = 1; n <= MAX_FILTER_PAGES && porId.size < limit; n++) {
     await page.goto(filterUrl({ grouping, page: n }), { waitUntil: "networkidle2", timeout: NAV_TIMEOUT_MS });
@@ -537,6 +590,26 @@ async function crawlFilter(page, { grouping = null, limit = 200, skipStore = fal
     // aqui é melhor que insistir — quem chama compara com `pages` e sabe qual dos
     // dois foi.
     if (!parsed.coupons.length) break;
+
+    // A ativação acontece AQUI, na página que acabou de ser lida: é onde os cards
+    // estão, e evita renavegar só para clicar. O `restantes` é do chamador e vale
+    // para a rodada inteira — várias páginas, várias categorias.
+    if (ativar && ativar.restantes?.n > 0) {
+      const r = await ativarNaPagina(page, parsed.coupons, ativar);
+      ativados += r.ativados.length;
+      semBotao += (r.semBotao || []).length;
+      if (r.blocked) { blocked = r.blocked; break; }
+      // O cupom recém-ativado ganhou `containerUrl`: é essa versão que precisa
+      // entrar na coleta, senão a rodada guardaria a de antes do clique — sem
+      // vitrine, que é justamente o que se foi ali corrigir.
+      if (r.ativados.length) {
+        const novos = new Map(r.ativados.map(c => [c.campaignId, c]));
+        parsed.coupons = parsed.coupons.map(c => {
+          const atualizado = novos.get(c.campaignId);
+          return atualizado ? { ...atualizado, groupings: c.groupings } : c;
+        });
+      }
+    }
 
     let novosNaPagina = 0;
     for (const c of parsed.coupons) {
@@ -566,7 +639,143 @@ async function crawlFilter(page, { grouping = null, limit = 200, skipStore = fal
     await sleep(FILTER_PAUSE_MS + Math.floor(Math.random() * 500));
   }
 
-  return { total, pages, ignoradosLoja, achou, coupons: [...porId.values()] };
+  return { total, pages, ignoradosLoja, achou, ativados, semBotao, blocked, coupons: [...porId.values()] };
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Ativar cupom ("Eu quero") — a única ESCRITA que este arquivo faz na conta
+// ────────────────────────────────────────────────────────────────────────
+//
+// Por que passou a existir: o ML só entrega a URL da vitrine
+// (`action.type === "link"`) para cupom ATIVADO. O não ativado vem com
+// `action.type === "button"` e nada mais — sem vitrine, o sistema não sabe quais
+// produtos o cupom cobre e o teste de cupom responde "não sei".
+//
+// Durante muito tempo o projeto escolheu NÃO ativar, porque clicar em "Aplicar" é
+// escrita na conta, e a conta é a mesma do Hub de Afiliados. A escolha foi
+// revertida a pedido do dono da conta, com dois freios que ficam no código e não
+// na boa intenção: teto por rodada e pausa entre cliques.
+
+const APLICAR_PAUSE_MS = 1500;   // entre um "Aplicar" e o próximo
+
+// Quem PODE ser ativado. Pura — e é aqui que mora o erro caro, porque cada item
+// desta lista vira uma escrita na conta de verdade:
+//
+//   - cupom de LOJA fica de fora: vale só para os produtos de um vendedor e não
+//     serve à fila do repasse, então ativá-lo é escrita à toa.
+//   - já ativado fica de fora (é o caso comum, e o clique não teria botão).
+//   - vencido fica de fora: ativar cupom morto é sujeira na conta.
+//   - sem `activationLabel` fica de fora: sem o rótulo não há como saber QUAL
+//     botão é o dele, e clicar no palpite ativa o cupom errado.
+//   - rótulo REPETIDO entre cupons diferentes fica de fora, pelo mesmo motivo.
+//     Acontece de verdade: numa página real, "Aplicar cupom 8 por cento OFF
+//     INTERNACIONAL" era o rótulo de DOIS cupons (13999830 e 13373945), com
+//     limites de desconto diferentes. Não dá para saber qual botão é de qual, e
+//     um chute aqui é escrita irreversível na conta — então nenhum dos dois vai.
+function aAtivar(cupons, { max = 20, agora = Date.now() } = {}) {
+  if (!Array.isArray(cupons) || max <= 0) return [];
+  const venceu = (c) => {
+    if (!c.expiresAt) return false;
+    const t = new Date(c.expiresAt).getTime();
+    return Number.isFinite(t) && t <= agora;
+  };
+  const podem = cupons
+    .filter(c => c && c.scope === "campaign" && !c.activated && c.activationLabel && !venceu(c));
+  // A contagem é sobre TODOS os candidatos da página, não sobre os que couberem
+  // no teto: um rótulo ambíguo continua ambíguo mesmo que o gêmeo dele fique de
+  // fora do corte.
+  const quantos = new Map();
+  for (const c of podem) quantos.set(c.activationLabel, (quantos.get(c.activationLabel) || 0) + 1);
+  return podem.filter(c => quantos.get(c.activationLabel) === 1).slice(0, max);
+}
+
+// Clica no "Aplicar" DAQUELE cupom, casando o rótulo de acessibilidade exato.
+// Devolve true se achou e clicou. Recusa botão desabilitado pelo mesmo motivo do
+// clickByPattern: `.click()` num botão morto não faz nada e quem chamou fica
+// achando que ativou.
+function clicarAplicar(page, label) {
+  return page.evaluate((alvo) => {
+    const bloqueado = (el) => el.disabled === true || el.getAttribute("aria-disabled") === "true";
+    const candidatos = Array.from(document.querySelectorAll("[aria-label]"))
+      .filter(el => el.getAttribute("aria-label") === alvo && el.offsetParent !== null);
+    // Casar com vários botões é NORMAL: o ML mostra o mesmo card em vários
+    // carrosséis (um cupom chegou a aparecer 9 vezes na mesma página). São
+    // clones do mesmo cupom, então clicar no primeiro visível está certo.
+    // Quem garante que o rótulo pertence a UM cupom só é o `aAtivar`, no modelo,
+    // que é o único lugar onde isso é verificável.
+    for (const el of candidatos) {
+      const clicavel = el.closest("button, [role='button'], a") || el;
+      if (bloqueado(el) || bloqueado(clicavel)) continue;
+      clicavel.click();
+      return true;
+    }
+    return false;
+  }, label).catch(() => false);
+}
+
+// Relê os cupons da página aberta, seja ela a lista filtrada ou a aba inicial.
+// É o que transforma "cliquei" em "o ML confirma que ativou".
+async function relerCupons(page) {
+  const props = await readPageProps(page);
+  const daLista = props ? parseFilterProps(props, null).coupons : [];
+  if (daLista.length) return daLista;
+  const landing = await readLanding(page);
+  return landing ? parseLanding(landing).coupons : [];
+}
+
+// Ativa, NA PÁGINA JÁ ABERTA, os cupons pedidos. Devolve os que o ML confirmou.
+//
+// A confirmação é o ponto do desenho: conta-se quem VOLTOU do modelo do ML com
+// `activated: true` e com `containerUrl`, não quem recebeu clique. Assim nenhum
+// palpite sobre o DOM do ML precisa estar certo para o número ser verdadeiro — se
+// o clique não pegou, o cupom não entra na conta e a rodada segue.
+//
+// `restantes` é um objeto MUTÁVEL de propósito: o teto vale para a rodada inteira,
+// e a rodada passa por várias páginas e várias categorias.
+async function ativarNaPagina(page, cupons, { restantes = { n: 20 }, onAtivou = null } = {}) {
+  const alvos = aAtivar(cupons, { max: restantes.n });
+  if (!alvos.length) return { ativados: [], clicados: 0, semBotao: [], blocked: null };
+
+  let clicados = 0;
+  // Rótulo que não achou botão na página. Sem isto a falha é MUDA: a rodada
+  // termina com "0 ativados" e nada dizendo se ninguém precisava ou se o clique
+  // não encontrou nada — foi assim que o bug do `sr_label` passou despercebido.
+  const semBotao = [];
+  for (const c of alvos) {
+    if (restantes.n <= 0) break;
+    // Muro é estado da SESSÃO, e a sessão é a mesma do Hub: insistir depois dele
+    // derruba os dois. Parar aqui é o freio que impede uma rodada de virar
+    // verificação de conta.
+    const blocked = await detectBlockPage(page, "Mercado Livre");
+    if (blocked?.blocked) return { ativados: [], clicados, semBotao, blocked };
+
+    if (await clicarAplicar(page, c.activationLabel)) {
+      clicados++;
+      restantes.n--;
+    } else {
+      semBotao.push(c.activationLabel);
+    }
+    await sleep(APLICAR_PAUSE_MS + Math.floor(Math.random() * 600));
+  }
+
+  if (!clicados) return { ativados: [], clicados: 0, semBotao, blocked: null };
+
+  // O ML atualiza o card por XHR: reler cedo demais devolve o estado anterior.
+  await sleep(1500);
+  const depois = await relerCupons(page);
+  const porId = new Map(depois.map(c => [c.campaignId, c]));
+  const ativados = [];
+  for (const c of alvos) {
+    const agora = porId.get(c.campaignId);
+    if (agora?.activated && agora.containerUrl) {
+      ativados.push(agora);
+      if (onAtivou) await onAtivou(agora);
+    } else {
+      // Devolve o que foi gasto sem resultado: o teto protege a conta de CLIQUES,
+      // e um clique que não ativou já foi dado.
+    }
+  }
+  return { ativados, clicados, semBotao, blocked: null };
 }
 
 // A vitrine de UM cupom: os produtos que aquele cupom cobre.
@@ -574,6 +783,30 @@ async function crawlFilter(page, { grouping = null, limit = 200, skipStore = fal
 // É uma página de listagem normal do ML, então quem lê os cards é o harvestMLCards
 // do scraper.js — o mesmo código da vitrine pública e do teste de produto. Escrever
 // leitura de card nova aqui seria uma terceira cópia dos mesmos seletores.
+// A vitrine pela landing de afiliado: sem navegador, sem CAPTCHA, e sem gastar a
+// conta do sistema. Devolve produtos ou null — falhar aqui é normal e silencioso,
+// porque o caminho do navegador continua existindo atrás.
+//
+// O que vem daqui é uma PRÉVIA (o ML manda 3-8 produtos, não a vitrine inteira),
+// então quem grava marca como `origem: "landing"` — prova positiva de cobertura,
+// nunca lista fechada. Ver scraping/ml-vitrine-landing.js.
+async function vitrinePelaLanding(coupon) {
+  const url = containerUrlFor(coupon);
+  if (!url) return null;
+  try {
+    const r = await require("./ml-vitrine-landing").fetchVitrineLanding(url);
+    if (!r.ok || !r.products.length) return { ok: false, reason: r.reason, kind: r.kind };
+    for (const p of r.products) {
+      p.img = upgradeMLImageUrl(p.img);
+      p.store = "Mercado Livre";
+    }
+    return { ok: true, products: r.products, total: r.total, reason: r.reason };
+  } catch (err) {
+    // Nunca derruba a rodada: este é o caminho barato, o caro vem depois.
+    return { ok: false, reason: err.message, kind: "erro" };
+  }
+}
+
 async function scrapeCouponProducts(browser, coupon, { maxProducts = 100, maxPages = CONTAINER_MAX_PAGES } = {}) {
   const url = containerUrlFor(coupon);
   if (!url) {
@@ -584,6 +817,15 @@ async function scrapeCouponProducts(browser, coupon, { maxProducts = 100, maxPag
         : "cupom não ativado — o ML só mostra a vitrine depois do \"Eu quero\", e ativar mexeria na conta do sistema",
       products: [], url: null,
     };
+  }
+
+  // Primeiro a landing de afiliado: ela não abre navegador, não corre risco de
+  // CAPTCHA e não mexe na conta. Se ela responder, a vitrine no Chrome nem é
+  // tentada — hoje esse caminho está barrado de qualquer jeito, e cada tentativa
+  // aproxima a conta do sistema de uma verificação que derrubaria o Hub junto.
+  const pelaLanding = await vitrinePelaLanding(coupon);
+  if (pelaLanding?.ok) {
+    return { ok: true, reason: pelaLanding.reason, products: pelaLanding.products.slice(0, maxProducts), url, parcial: true };
   }
 
   const vistos = new Set();
@@ -717,7 +959,7 @@ async function checkCouponWord(cookie, word) {
 //
 // `onProgress(parcial)` é o mesmo do `runPull`: a varredura pode levar minutos e é
 // por ele que a tela mostra onde ela está.
-async function findCampaign(cookie, campaignId, { withProducts = true, maxProducts = 100, onProgress = null } = {}) {
+async function findCampaign(cookie, campaignId, { withProducts = true, maxProducts = 100, onProgress = null, activate = false } = {}) {
   const alvo = String(campaignId || "").trim();
   if (!alvo) throw new Error("Sem campanha para buscar.");
 
@@ -761,18 +1003,30 @@ async function findCampaign(cookie, campaignId, { withProducts = true, maxProduc
       };
     }
 
+    // 2b. Ativar, quando pedido. Sem isso o passo 3 não tem o que abrir: o ML só
+    //     dá a URL da vitrine depois do "Eu quero". A página aberta é justamente a
+    //     que contém o card — a aba (passo 1) ou a página da lista onde ele
+    //     apareceu (passo 2) —, então o clique é aqui mesmo.
+    let ativado = false;
+    if (activate && !cupom.activated) {
+      if (onProgress) await onProgress({ etapa: "ativando", campaignId: alvo, title: cupom.title });
+      const res = await ativarNaPagina(r.page, [cupom], { restantes: { n: 1 } });
+      if (res.ativados.length) { cupom = { ...res.ativados[0], groupings: cupom.groupings }; ativado = true; }
+    }
+
     // 3. A vitrine. Falhar aqui NÃO invalida a importação: a campanha em si já é
     //    ganho, e o botão "Sincronizar produtos" da linha tenta de novo depois.
     let products = [];
+    let parcial = false;
     let reasonVitrine = null;
     if (withProducts) {
       if (onProgress) await onProgress({ etapa: "vitrine", campaignId: alvo, title: cupom.title });
       const res = await scrapeCouponProducts(r.browser, cupom, { maxProducts });
-      if (res.ok) products = res.products || [];
+      if (res.ok) { products = res.products || []; parcial = !!res.parcial; }
       else reasonVitrine = res.reason;
     }
 
-    return { coupon: cupom, products, reasonVitrine };
+    return { coupon: cupom, products, parcial, reasonVitrine, ativado };
   } finally {
     await r.browser.close().catch(() => {});
   }
@@ -805,7 +1059,7 @@ function cancel() { _cancel = true; }
 //
 // `onProgress(parcial)` é chamado a cada etapa — é por onde a tela do admin
 // acompanha uma rodada que dura minutos.
-async function runPull({ groupings = [], limit = 60, withProducts = true, maxProductsPerCoupon = 100, skipStore = true } = {}, { onProgress = null } = {}) {
+async function runPull({ groupings = [], limit = 60, withProducts = true, maxProductsPerCoupon = 100, skipStore = true, activateCoupons = false, maxActivations = 20 } = {}, { onProgress = null } = {}) {
   if (_running) throw new Error("Já tem uma rodada de cupons rodando — espere ela terminar.");
 
   const affiliate = require("./affiliate");   // lazy: evita ciclo no boot
@@ -827,6 +1081,10 @@ async function runPull({ groupings = [], limit = 60, withProducts = true, maxPro
     let produtosVinculados = 0;
     let cuponsComVitrine = 0;
     let ignoradosLoja = 0;
+    let ativados = 0;
+    // O teto de ativações é UM para a rodada inteira, não por categoria: o que se
+    // está limitando é quantas escritas a conta do ML recebe de uma vez.
+    const restantes = { n: activateCoupons ? Math.max(0, maxActivations) : 0 };
 
     try {
       // A primeira parada é a aba em si: é ela que diz se a sessão vale, quantos
@@ -852,8 +1110,24 @@ async function runPull({ groupings = [], limit = 60, withProducts = true, maxPro
       for (const g of alvos) {
         if (_cancel) { avisos.push("Rodada cancelada."); break; }
         const chave = g?.key ?? g ?? null;
-        const lista = await crawlFilter(r.page, { grouping: chave, limit, skipStore, onProgress });
+        const lista = await crawlFilter(r.page, {
+          grouping: chave, limit, skipStore, onProgress,
+          ativar: restantes.n > 0 ? { restantes, onAtivou: null } : null,
+        });
         ignoradosLoja += lista.ignoradosLoja || 0;
+        ativados += lista.ativados || 0;
+        // "Tentei clicar e não achei o botão" é diferente de "não tinha o que
+        // ativar", e só quem vê a rodada pode decidir o que fazer com isso.
+        if (lista.semBotao) {
+          avisos.push(`Não achei o botão "Aplicar" de ${lista.semBotao} cupom(ns) — o ML pode ter mudado a página.`);
+        }
+        // Muro durante a ativação derruba a rodada inteira: ele vale para a CONTA,
+        // e seguir para as vitrines só o confirmaria mais rápido.
+        if (lista.blocked) {
+          affiliate.recordMLHubCheck({ ok: false, reason: lista.blocked.reason, kind: lista.blocked.kind });
+          avisos.push(`Parei ao ativar cupons: ${lista.blocked.reason}`);
+          break;
+        }
         if (!lista.coupons.length) {
           avisos.push(lista.ignoradosLoja
             ? `A lista de "${chave || "todos"}" só trouxe cupom de loja (${lista.ignoradosLoja} ignorados).`
@@ -883,13 +1157,18 @@ async function runPull({ groupings = [], limit = 60, withProducts = true, maxPro
             avisos.push(`Parei nas vitrines: ${res.reason}`);
             break;
           }
-          vitrines.push({ campaignId: cupom.campaignId, url: res.url, ok: res.ok, reason: res.reason, products: res.products });
+          // `parcial` viaja até a gravação: é ele que decide se estes produtos
+          // entram como vitrine (lista fechada) ou como prévia da landing.
+          vitrines.push({ campaignId: cupom.campaignId, url: res.url, ok: res.ok, reason: res.reason, products: res.products, parcial: !!res.parcial });
           if (res.ok) {
-            cuponsComVitrine++;
+            if (!res.parcial) cuponsComVitrine++;
             produtosVinculados += res.products.length;
           }
           if (onProgress) await onProgress({ etapa: "vitrines", cupons: cupons.length, vitrines: vitrines.length, produtos: produtosVinculados });
-          await sleep(COUPON_PAUSE_MS + Math.floor(Math.random() * 800));
+          // A pausa longa existe pra não parecer robô navegando. O caminho da
+          // landing não navega em nada — são duas chamadas HTTP —, então esperar
+          // 2s por cupom ali só faria a rodada demorar horas à toa.
+          await sleep(res.parcial ? LANDING_PAUSE_MS : COUPON_PAUSE_MS + Math.floor(Math.random() * 800));
         }
       }
 
@@ -902,6 +1181,7 @@ async function runPull({ groupings = [], limit = 60, withProducts = true, maxPro
         categoriasDoML,
         cupons,
         vitrines,
+        ativados,
         cuponsComVitrine,
         ignoradosLoja,
         produtosVinculados,
@@ -1038,12 +1318,16 @@ module.exports = {
   parseAmount,
   detectScope,
   camelToRaw,
+  sampleIdsFromTracking,
   parseCoupon,
   parseLanding,
   parseFilterProps,
   filterUrl,
   crawlFilter,
   containerUrlFor,
+  vitrinePelaLanding,
+  aAtivar,
+  ativarNaPagina,
   containerPageUrl,
   extractLandingFromHtml,
   classifyCuponsResult,

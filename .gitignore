@@ -82,3 +82,6 @@ backend/backups/
 *.7z
 tmp/
 temp/
+
+# Prints de diagnóstico do caminho de produtos de cupom (scripts/cupom-produtos-visual.js)
+debug-cupom/

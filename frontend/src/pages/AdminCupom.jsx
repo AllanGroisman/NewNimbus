@@ -9,7 +9,7 @@
 // Nada é gravado na fila e nada é enviado: é diagnóstico.
 import { useState, useEffect, useCallback } from "react";
 import { PRIMARY, PRIMARY_DARK } from "../data/constants";
-import { adminCouponTest, adminCouponHistory, errText } from "../data/api";
+import { adminCouponTest, adminCouponHistory, adminMlCuponsSyncProducts, errText } from "../data/api";
 import CuponsDoML from "./AdminCupomML";
 
 // Semáforo por desfecho. Os "cupom existe mas não serve" ficam em amarelo de
@@ -29,6 +29,31 @@ const STATUS = {
 };
 
 const brl = (v) => (typeof v === "number" ? `R$ ${v.toFixed(2).replace(".", ",")}` : "—");
+
+// De onde saiu o veredito. Importa porque "o sistema já sabia" e "o ML respondeu
+// agora" não são a mesma garantia, e a tela não pode passar um pelo outro.
+const FONTE = {
+  rapido: "respondido pelo que o sistema já sabe",
+  checkout: "respondido pelo checkout do ML",
+  leitura: "só a página do produto",
+};
+
+const COBERTURA = {
+  "na-vitrine": "o produto está na vitrine do cupom",
+  "fora-da-vitrine": "o produto NÃO está na vitrine do cupom",
+  "sem-vitrine": "a vitrine desse cupom nunca foi raspada",
+};
+
+// De onde veio o vínculo que respondeu. Os três dizem "o cupom cobre este
+// produto", mas não com a mesma força: só a vitrine é a lista inteira. A prévia
+// da landing (3-8 itens) e as miniaturas do card (4) são o que o sistema consegue
+// enquanto a vitrine estiver atrás do muro anti-bot do ML — valem como resposta,
+// e a tela diz de onde ela saiu em vez de fingir que é a mesma coisa.
+const COBERTURA_ORIGEM = {
+  vitrine: "pela vitrine raspada",
+  landing: "pela prévia da landing de afiliado",
+  amostra: "pelas miniaturas do card do cupom",
+};
 
 // Duas perguntas diferentes moram nesta página, e cada uma tem a sua aba:
 // "Testar cupom" é o diagnóstico de UM código num produto; "Cupons do ML" é a
@@ -75,7 +100,10 @@ export default function PageAdminCupom() {
 function TestarNoCheckout() {
   const [url, setUrl] = useState("");
   const [code, setCode] = useState("");
-  const [mode, setMode] = useState("checkout");
+  // "rapido" é o padrão porque é o que responde: ele usa o que o sistema já sabe
+  // (a palavra na aba /cupons + a vitrine do cupom) e não depende do checkout,
+  // que o ML barra com CAPTCHA desde 25/08.
+  const [mode, setMode] = useState("rapido");
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
@@ -114,9 +142,11 @@ function TestarNoCheckout() {
         <div style={{ fontWeight: 500, marginBottom: 4 }}>Testar um cupom</div>
         <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12, lineHeight: 1.5 }}>
           Usa a conta do Mercado Livre do sistema (a mesma do Hub — Admin › Mercado Livre).
-          No modo <b>Leitura + checkout</b> o produto é levado até a tela de pagamento pra
-          aplicar o código e ler a resposta do ML: <b>a compra nunca é finalizada</b>. Nada é
-          gravado na fila e nada é enviado. Leva de 40 a 60 segundos.
+          O modo <b>Rápido</b> responde em segundos pelo que o sistema já sabe: o que o ML diz
+          da palavra e se o produto está na vitrine daquele cupom. O modo <b>Rápido + checkout</b>
+          faz o mesmo e, <i>só quando isso não conclui</i>, leva o produto até a tela de pagamento
+          pra aplicar o código — aí leva de 40 a 90 segundos e <b>a compra nunca é finalizada</b>.
+          Nada é gravado na fila e nada é enviado.
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 640 }}>
@@ -148,8 +178,9 @@ function TestarNoCheckout() {
             <label style={labelStyle}>O que fazer</label>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {[
+                ["rapido", "Rápido", "Responde pelo que o sistema já sabe. Segundos, sem checkout."],
+                ["checkout", "Rápido + checkout", "Se o rápido não concluir, aplica o código na tela de pagamento."],
                 ["leitura", "Só leitura", "Lê os cupons que a página oferece. Não mexe em carrinho."],
-                ["checkout", "Leitura + checkout", "Também aplica o código na tela de pagamento."],
               ].map(([val, label, hint]) => (
                 <button
                   key={val}
@@ -186,7 +217,7 @@ function TestarNoCheckout() {
                 opacity: running || !podeRodar ? 0.6 : 1,
               }}
             >
-              {running ? "⟳ Testando (~1 min)..." : "Testar cupom"}
+              {running ? (mode === "rapido" ? "⟳ Testando..." : "⟳ Testando (~1 min)...") : "Testar cupom"}
             </button>
           </div>
         </div>
@@ -228,6 +259,75 @@ function TestarNoCheckout() {
   );
 }
 
+// O que o caminho rápido apurou. Aparece tanto quando ele resolveu sozinho
+// quanto quando ele passou a bola pro checkout — nesse segundo caso é ele que
+// explica POR QUE não deu (quase sempre: a vitrine do cupom nunca foi raspada).
+function CaminhoRapido({ quick, fonte }) {
+  const [sincronizando, setSincronizando] = useState(false);
+  const [aviso, setAviso] = useState(null);
+
+  const sincronizar = async () => {
+    setSincronizando(true);
+    setAviso(null);
+    try {
+      const r = await adminMlCuponsSyncProducts(quick.campaignId);
+      setAviso(r?.produtos
+        ? `Vitrine raspada: ${r.produtos} produto(s). Rode o teste de novo.`
+        : "O ML não devolveu produto nenhum pra essa campanha.");
+    } catch (err) {
+      setAviso(errText(err, "Não deu pra raspar a vitrine agora."));
+    } finally {
+      setSincronizando(false);
+    }
+  };
+
+  return (
+    <div style={{ marginBottom: 12, padding: "8px 10px", borderRadius: 8, background: "var(--color-background-secondary)", fontSize: 12 }}>
+      <div style={{ color: "var(--color-text-secondary)", marginBottom: 4 }}>
+        O que o sistema já sabia{fonte === "checkout" ? " (antes de chamar o checkout)" : ""}
+      </div>
+      <div>
+        Palavra:{" "}
+        {quick.campaignId ? <>campanha <b>{quick.campaignId}</b></> : <b>o ML não reconheceu</b>}
+        {quick.mlMessage && ` · "${quick.mlMessage}"`}
+        {quick.cached && " · resposta guardada de um teste anterior"}
+      </div>
+      {quick.coupon && (
+        <div>Cupom: <b>{quick.coupon.title || quick.coupon.campaignId}</b></div>
+      )}
+      <div>
+        Vitrine: {COBERTURA[quick.cobertura] || quick.cobertura}
+        {quick.coberturaOrigem && COBERTURA_ORIGEM[quick.coberturaOrigem] && (
+          <span style={{ color: "var(--color-text-secondary)" }}> ({COBERTURA_ORIGEM[quick.coberturaOrigem]})</span>
+        )}
+      </div>
+      {Number.isFinite(quick.price) && (
+        <div>
+          Preço: <b>{brl(quick.priceBefore)}</b>
+          {Number.isFinite(quick.priceAfter) && <> → <b>{brl(quick.priceAfter)}</b></>}
+          {quick.priceSource === "catalogo" && " (do catálogo)"}
+        </div>
+      )}
+
+      {quick.cobertura === "sem-vitrine" && quick.campaignId && (
+        <div style={{ marginTop: 8 }}>
+          <button
+            onClick={sincronizar}
+            disabled={sincronizando}
+            style={{
+              padding: "5px 10px", borderRadius: 6, fontSize: 12, cursor: sincronizando ? "not-allowed" : "pointer",
+              border: `1px solid ${PRIMARY}`, background: "transparent", color: PRIMARY_DARK,
+            }}
+          >
+            {sincronizando ? "⟳ raspando a vitrine..." : "Raspar a vitrine deste cupom"}
+          </button>
+          {aviso && <div style={{ marginTop: 6, color: "var(--color-text-secondary)" }}>{aviso}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Resultado({ result }) {
   const st = STATUS[result.status] || { label: result.status, color: "var(--color-text-secondary)" };
   return (
@@ -236,10 +336,13 @@ function Resultado({ result }) {
         <span style={{ fontWeight: 600, color: st.color }}>{st.label}</span>
         <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
           {result.code ? `código ${result.code} · ` : ""}{((result.durationMs || 0) / 1000).toFixed(1)}s
+          {result.fonte && ` · ${FONTE[result.fonte] || result.fonte}`}
         </span>
       </div>
 
       <div style={{ fontSize: 13, marginBottom: 12 }}>{result.reason}</div>
+
+      {result.quick && <CaminhoRapido quick={result.quick} fonte={result.fonte} />}
 
       {result.checkout?.attempted && (
         <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
