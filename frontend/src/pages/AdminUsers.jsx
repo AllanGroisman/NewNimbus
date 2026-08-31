@@ -45,12 +45,17 @@ const SUB_STATUS = {
   inactive:   { label: "Sem plano",  color: "gray" },
 };
 
+// As chaves têm que ser os status que o backend de fato emite (whatsapp/local.js:
+// connected | connecting | awaiting_qr | disconnected | logged_out) mais o
+// "offline" que a API injeta quando não há sessão viva. As antigas "qr" e
+// "reconnecting" não existiam e caíam cruas no fallback.
 const SESSION_STATUS = {
-  connected:    { label: "conectado",    color: "green" },
-  connecting:   { label: "conectando",   color: "amber" },
-  qr:           { label: "aguardando QR", color: "amber" },
-  reconnecting: { label: "reconectando", color: "amber" },
-  offline:      { label: "desconectado", color: "gray" },
+  connected:    { label: "conectado",     color: "green" },
+  connecting:   { label: "conectando",    color: "amber" },
+  awaiting_qr:  { label: "aguardando QR", color: "amber" },
+  disconnected: { label: "desconectado",  color: "gray" },
+  logged_out:   { label: "precisa relogar", color: "red" },
+  offline:      { label: "desconectado",  color: "gray" },
 };
 
 // Uma assinatura conta como paga quando o Stripe diz active/trialing. past_due
@@ -104,6 +109,38 @@ function OperacaoBadges({ counts }) {
         </Badge>
       )}
     </>
+  );
+}
+
+// Os números do usuário direto na linha, cada um com seu status: a contagem de
+// `OperacaoBadges` diz quantos conectaram, não quais — e era só pra ver "qual
+// número" que se abria a ficha de um usuário por vez.
+// O status vira texto colorido, não Badge: são as cores do Badge traduzidas pras
+// vars do tema, porque aqui a cor pinta a própria linha de info secundária.
+const COR_STATUS = {
+  green: "var(--success-text)",
+  amber: "var(--warn-text)",
+  red:   "var(--danger-text)",
+  gray:  "var(--color-text-secondary)",
+};
+
+function NumerosDaLinha({ numbers }) {
+  if (!numbers?.length) return null;
+  return (
+    <span style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+      <span>📲</span>
+      {numbers.map((n, i) => {
+        const st = n.stuck ? { label: "travado", color: "red" } : SESSION_STATUS[n.status] || { label: n.status, color: "gray" };
+        const cor = COR_STATUS[st.color] || COR_STATUS.gray;
+        return (
+          <span key={n.id}>
+            {i > 0 && <span style={{ marginRight: 6 }}>·</span>}
+            {n.label && n.phone ? `${n.label} · ${n.phone}` : (n.label || n.phone || n.id)}{" "}
+            <span style={{ color: cor }}>({st.label})</span>
+          </span>
+        );
+      })}
+    </span>
   );
 }
 
@@ -302,7 +339,7 @@ export default function PageAdminUsers({ currentUser }) {
   const [loading, setLoading]       = useState(true);
   const [error, setError]           = useState(null);
   const [search, setSearch]         = useState("");
-  const [filter, setFilter]         = useState("all"); // all | paying | unverified | suspended | admin
+  const [filter, setFilter]         = useState("all"); // all | paying | canceled | canceling | unverified | suspended | admin
 
   // Bloqueio de cadastro (beta fechado). null = ainda carregando.
   const [regBlocked, setRegBlocked] = useState(null);
@@ -438,12 +475,18 @@ export default function PageAdminUsers({ currentUser }) {
   const isPagando  = u => PAGANDO.has(u.subscription?.status) && !u.subscription?.crossMode;
   const isAtrasado = u => ATRASADO.has(u.subscription?.status) && !u.subscription?.crossMode;
   const isOperando = u => (u.counts?.activeGroups || 0) > 0 && (u.counts?.connectedNumbers || 0) > 0;
+  // Dois grupos disjuntos e ambos invisíveis até aqui: quem já foi embora
+  // (status canceled) e quem avisou que vai (cancelAtPeriodEnd, ainda pagando).
+  const isCancelado  = u => u.subscription?.status === "canceled";
+  const isCancelando = u => isPagando(u) && !!u.subscription?.cancelAtPeriodEnd;
 
   const filtered = users.filter(u => {
     if (filter === "paying" && !isPagando(u)) return false;
     if (filter === "unverified" && u.emailVerified) return false;
     if (filter === "suspended" && !u.suspended) return false;
     if (filter === "admin" && u.role !== "admin") return false;
+    if (filter === "canceled" && !isCancelado(u)) return false;
+    if (filter === "canceling" && !isCancelando(u)) return false;
     if (search) {
       const s = search.toLowerCase();
       return (u.name || "").toLowerCase().includes(s) || (u.email || "").toLowerCase().includes(s);
@@ -457,6 +500,8 @@ export default function PageAdminUsers({ currentUser }) {
   const pagandoCount    = users.filter(isPagando).length;
   const atrasadoCount   = users.filter(isAtrasado).length;
   const operandoCount   = users.filter(isOperando).length;
+  const canceladoCount  = users.filter(isCancelado).length;
+  const cancelandoCount = users.filter(isCancelando).length;
 
   // Quebra por plano entre quem está pagando — "12 pagando" sem dizer de quê é
   // a mesma ambiguidade que este trabalho veio consertar.
@@ -572,6 +617,8 @@ export default function PageAdminUsers({ currentUser }) {
       <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
         {filterBtn("all",        "Todos",           0)}
         {filterBtn("paying",     "Pagando",         pagandoCount)}
+        {filterBtn("canceled",   "Cancelados",      canceladoCount)}
+        {filterBtn("canceling",  "Cancelamento agendado", cancelandoCount)}
         {filterBtn("unverified", "Não verificados", unverifiedCount)}
         {filterBtn("suspended",  "Suspensos",       suspendedCount)}
         {filterBtn("admin",      "Admins",          adminCount)}
@@ -628,6 +675,7 @@ export default function PageAdminUsers({ currentUser }) {
                         {u.phone && <span>📱 {u.phone}</span>}
                         {u.createdAt && <span>Criado {dt(u.createdAt)}</span>}
                         {u.counts?.repasseGroups > 0 && <span>{u.counts.repasseGroups} de repasse</span>}
+                        <NumerosDaLinha numbers={u.numbers} />
                         {u.suspended && u.suspendedAt && (
                           <span style={{ color: "var(--danger-text)" }}>Suspenso em {dt(u.suspendedAt)}</span>
                         )}

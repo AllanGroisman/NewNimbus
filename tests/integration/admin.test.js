@@ -127,6 +127,13 @@ describe("Admin — users", () => {
     expect(linha.counts.activeGroups).toBe(1);
     expect(linha.counts.numbers).toBe(2);
     expect(linha.counts.connectedNumbers).toBe(1);
+
+    // A linha também traz os números em si: sem isso, saber QUAL número caiu
+    // exigia abrir a ficha de um usuário por vez.
+    const porId = Object.fromEntries(linha.numbers.map(n => [n.id, n]));
+    expect(Object.keys(porId).sort()).toEqual(["n1", "n2"]);
+    expect(porId.n1).toMatchObject({ label: "Um", status: "connected" });
+    expect(porId.n2).toMatchObject({ label: "Dois", status: "offline" });
   });
 
   it("GET /:id/detail devolve a ficha completa e nao vaza credencial de afiliado", async () => {

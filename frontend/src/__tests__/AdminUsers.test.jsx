@@ -33,6 +33,7 @@ function user(over = {}) {
     emailVerified: true, suspended: false, createdAt: "2026-01-10T12:00:00.000Z",
     subscription: null,
     counts: { groups: 0, activeGroups: 0, repasseGroups: 0, numbers: 0, connectedNumbers: 0 },
+    numbers: [],
     ...over,
   };
 }
@@ -118,8 +119,10 @@ describe("Admin › Usuários", () => {
     ]);
     render(<PageAdminUsers currentUser={{ id: "admin" }} />);
 
-    const card = (await screen.findByText("Operando")).parentElement;
-    expect(card.textContent).toMatch(/1de 3/);
+    // O card já existe no primeiro render, com a lista ainda vazia — esperar
+    // só por ele media "0 de 0" metade das vezes.
+    await waitFor(() =>
+      expect(screen.getByText("Operando").parentElement.textContent).toMatch(/1de 3/));
   });
 
   it("clicar no usuário busca a ficha uma vez e reaproveita no segundo clique", async () => {
@@ -176,5 +179,66 @@ describe("Admin › Usuários", () => {
     adminUserDetail.mockResolvedValue(ficha());
     fireEvent.click(screen.getByRole("button", { name: /Tentar de novo/ }));
     expect(await screen.findByText("Assinatura")).toBeInTheDocument();
+  });
+
+  it("os números do WhatsApp aparecem na linha, com status, sem abrir a ficha", async () => {
+    mostrar([user({
+      counts: { groups: 0, activeGroups: 0, repasseGroups: 0, numbers: 2, connectedNumbers: 1 },
+      numbers: [
+        { id: "n1", label: "Loja", phone: "5511999", status: "connected", stuck: false },
+        { id: "n2", label: null, phone: "5521888", status: "disconnected", stuck: false },
+      ],
+    })]);
+    render(<PageAdminUsers currentUser={{ id: "admin" }} />);
+
+    // A contagem já dizia "1 conectado"; o que faltava era saber QUAL número.
+    expect(await screen.findByText(/Loja · 5511999/)).toBeInTheDocument();
+    expect(screen.getByText("5521888")).toBeInTheDocument();
+    expect(screen.getByText("(conectado)")).toBeInTheDocument();
+    expect(screen.getByText("(desconectado)")).toBeInTheDocument();
+    // Nada disso pode custar a rota que junta seis consultas.
+    expect(adminUserDetail).not.toHaveBeenCalled();
+  });
+
+  it("status de sessão que o backend emite de verdade não aparece cru", async () => {
+    mostrar([user({ numbers: [{ id: "n1", phone: "5511999", status: "awaiting_qr", stuck: false }] })]);
+    render(<PageAdminUsers currentUser={{ id: "admin" }} />);
+
+    // "awaiting_qr" é o que whatsapp/local.js emite — o mapa antigo esperava
+    // "qr" e deixava a string crua na tela.
+    expect(await screen.findByText("(aguardando QR)")).toBeInTheDocument();
+    expect(screen.queryByText(/awaiting_qr/)).not.toBeInTheDocument();
+  });
+
+  it("'Cancelados' isola quem já saiu, sem varrer junto quem só agendou", async () => {
+    mostrar([
+      user({ id: "a", name: "Cancelado", subscription: sub({ status: "canceled", planId: "free", effectivePlanId: "free" }) }),
+      user({ id: "b", name: "Agendado", subscription: sub({ cancelAtPeriodEnd: true }) }),
+      user({ id: "c", name: "Pagante", subscription: sub() }),
+    ]);
+    render(<PageAdminUsers currentUser={{ id: "admin" }} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Cancelados (1)" }));
+    expect(screen.getByText("Cancelado")).toBeInTheDocument();
+    expect(screen.queryByText("Agendado")).not.toBeInTheDocument();
+    expect(screen.queryByText("Pagante")).not.toBeInTheDocument();
+  });
+
+  it("'Cancelamento agendado' pega quem ainda paga mas já avisou que sai", async () => {
+    mostrar([
+      user({ id: "a", name: "Cancelado", subscription: sub({ status: "canceled", planId: "free", effectivePlanId: "free" }) }),
+      user({ id: "b", name: "Agendado", subscription: sub({ cancelAtPeriodEnd: true }) }),
+      user({ id: "c", name: "Pagante", subscription: sub() }),
+    ]);
+    render(<PageAdminUsers currentUser={{ id: "admin" }} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Cancelamento agendado (1)" }));
+    expect(screen.getByText("Agendado")).toBeInTheDocument();
+    expect(screen.queryByText("Cancelado")).not.toBeInTheDocument();
+
+    // Agendado continua pagando hoje: sumir do filtro "Pagando" seria mentira.
+    fireEvent.click(screen.getByRole("button", { name: "Pagando (2)" }));
+    expect(screen.getByText("Agendado")).toBeInTheDocument();
+    expect(screen.getByText("Pagante")).toBeInTheDocument();
   });
 });

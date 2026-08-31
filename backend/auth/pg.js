@@ -929,7 +929,7 @@ async function listUsers() {
       subscription: true,
       state:   { select: { planPaused: true } },
       groups:  { select: { id: true, paused: true, scraping: true } },
-      numbers: { select: { id: true } },
+      numbers: { select: { id: true, label: true, phone: true } },
     },
   });
   // Status ao vivo das sessões, uma leitura só pra lista inteira (SCAN no Redis
@@ -944,9 +944,22 @@ async function listUsers() {
     const { subscription, state, groups, numbers, ...row } = u;
     const { active, repasse } = summarizeGroups(groups, state?.planPaused);
     const sessions = sessionsByUser[u.id] || [];
+    const byNumberId = new Map(sessions.map(s => [String(s.numberId), s]));
     return {
       ...publicUser(row),
       subscription: decorateSubscription(subscription),
+      // Os telefones vêm na própria lista: identificar de qual número se trata
+      // era o único motivo pra abrir a ficha de um usuário por vez.
+      numbers: numbers.map(n => {
+        const live = byNumberId.get(String(n.id));
+        return {
+          id: n.id,
+          label: n.label,
+          phone: n.phone,
+          status: live?.status || "offline",
+          stuck: live?.stuck || false,
+        };
+      }),
       counts: {
         groups: groups.length,
         activeGroups: active,
