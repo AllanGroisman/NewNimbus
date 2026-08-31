@@ -1458,6 +1458,16 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     saveWith();
   };
 
+  // A aba de Busca de Produtos salva sozinha (não tem botão de salvar), então
+  // ela grava só o que edita — `scraping` e `categories`. Os demais campos vão
+  // com o valor já salvo do grupo pra que o autosave não promova de carona uma
+  // edição pendente da aba Gerenciar (nome, cooldown) ou da Agendamento.
+  const saveSearchTab = () => saveWith({
+    schedule: group.schedule,
+    name: group.name,
+    whatsappGroupIds: group.whatsappGroupIds || [],
+  });
+
   // Dirty state por aba — usado pra (a) escurecer o botão de salvar quando
   // não há alterações, e (b) impedir cliques inúteis. JSON.stringify é
   // suficiente porque todos os objetos são produzidos por código com keys
@@ -2844,11 +2854,9 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           lockMessageFor={lockMessageForStore}
           refilling={refilling}
           triggerRefill={triggerRefill}
-          save={save}
+          save={saveSearchTab}
           dirty={searchTabDirty}
-          filtersDirty={filtersDirty}
           saved={saved}
-          saveBtnStyle={saveBtnStyle}
           refillMsg={refillMsg}
           pending={pending}
           queue={queue}

@@ -596,6 +596,11 @@ Na fila do repasse isso vira `group.scraping.couponBoost` ∈ `off` (default) |
 WHERE do catálogo; `prefer` busca 3× o lote e põe quem tem cupom na frente sem
 bagunçar a ordem escolhida pela campanha.
 
+Hoje não há controle disso na interface: os chips que ficavam na aba de busca de
+produtos foram removidos, então campanha nova nasce sem o campo e cai no `off`. A
+lógica segue no lugar para quem já tem o valor gravado, e para o dia que o
+controle voltar.
+
 ### `{preco_com_cupom}` na mensagem
 
 O modelo de mensagem tem a variável `{preco_com_cupom}`: o preço **já com o

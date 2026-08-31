@@ -46,6 +46,11 @@ const PENDING_HINT = "Você mudou a busca — clique em Buscar (ou aperte Enter)
 export const DEFAULT_REFILL_THRESHOLD = 5;
 export const MAX_REFILL_THRESHOLD = 50;
 export const MAX_REFILL_TIMES = 12;
+// A aba não tem botão de salvar: ela grava sozinha depois que o usuário para de
+// mexer. O debounce existe pra não gravar letra a letra nos campos de texto e
+// número (palavras-chave, faixa de preço, tamanho do lote).
+const AUTOSAVE_MS = 800;
+
 const SECTIONS_KEY = "nimbus.searchTab.sections";
 const VIEW_KEY = "nimbus.searchTab.view";
 
@@ -121,7 +126,7 @@ export default function ProductSearchTab({
   categories = [], onToggleCategory, categoryLimit,
   selectedSources = [], onToggleSource, lockMessageFor = () => null,
   refilling, triggerRefill, refillMsg,
-  save, dirty, filtersDirty, saved, saveBtnStyle,
+  save, dirty, saved,
   pending = [], queue = [], history = [], cooldownMinutes = 0,
   onAddCatalogProduct,
 }) {
@@ -137,6 +142,18 @@ export default function ProductSearchTab({
     ? Math.min(MAX_REFILL_THRESHOLD, Number(scraping.refillThreshold))
     : DEFAULT_REFILL_THRESHOLD;
   const refillTimes = Array.isArray(scraping.refillTimes) ? scraping.refillTimes : [];
+
+  // Autosave: esta aba não tem botão de salvar. Assim que há alteração pendente
+  // (`dirty`), agenda a gravação; qualquer mexida nova reinicia o relógio, então
+  // uma rajada de edições vira um save só. O ref evita reinstalar o timer quando
+  // o pai recria o `save` a cada render.
+  const saveRef = useRef(save);
+  useEffect(() => { saveRef.current = save; });
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const t = setTimeout(() => saveRef.current(), AUTOSAVE_MS);
+    return () => clearTimeout(t);
+  }, [dirty, scraping, categories]);
 
   const [page, setPage] = useState(1);
   // Os filtros que a lista atual reflete. Nascem iguais aos da campanha, pra a
@@ -449,6 +466,12 @@ export default function ProductSearchTab({
 
   return (
     <div>
+      {/* Aviso de que gravou — a aba salva sozinha, então o único retorno é
+          este texto, que some junto com o `saved` do dashboard (2s). */}
+      <div aria-live="polite" style={{ height: 16, marginBottom: 2, textAlign: "right", fontSize: 12, color: PRIMARY_DARK }}>
+        {saved ? "✓ Salvo" : ""}
+      </div>
+
       {/* ── 1. Faixa de contexto: o que a campanha busca e como preenche a
              fila. Compacta de propósito — resumo de uma linha e um botão que
              abre o painel inteiro logo abaixo, sem empurrar a lista pra longe. */}
@@ -742,32 +765,6 @@ export default function ProductSearchTab({
           <div style={hintStyle}>De 1 a {MAX_BATCH}.</div>
         </div>
 
-        {/* Cupom do ML: vale só para o preenchimento AUTOMÁTICO da fila. A lista
-            de produtos aqui de baixo continua mostrando tudo — o cupom é uma
-            preferência de quem entra na fila sozinho, não um filtro de busca. */}
-        <div style={{ paddingTop: 14 }}>
-          <div style={{ fontSize: 13, fontWeight: 500 }}>Produtos com cupom do Mercado Livre</div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-            {[
-              ["off", "Tanto faz"],
-              ["prefer", "Preferir com cupom"],
-              ["only", "Só com cupom"],
-            ].map(([id, label]) => (
-              <button
-                key={id}
-                onClick={() => setScraping(s => ({ ...s, couponBoost: id }))}
-                style={chipStyle({ active: (scraping.couponBoost || "off") === id })}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <div style={hintStyle}>
-            Vale no preenchimento automático da fila. Os cupons vêm de Admin › Cupom › Cupons do ML;
-            com “só com cupom”, a fila pode vir vazia se nenhum produto da campanha estiver num cupom.
-          </div>
-        </div>
-
         <div style={{ display: "flex", alignItems: "center", gap: 12, paddingTop: 14 }}>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 13, fontWeight: 500 }}>Misturar a fila depois de preencher</div>
@@ -960,25 +957,11 @@ export default function ProductSearchTab({
           </div>
         )}
 
-        {/* Salvar sem sair daqui: os filtros ficam no topo da aba e a barra de
-            salvar mora lá no rodapé, depois da lista inteira. É o mesmo `save`
-            (grava as escolhas da aba toda), só que aceso pelos filtros. */}
+        {/* Sem botão de salvar: o que for mexido aqui é gravado sozinho. */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 16, paddingTop: 12, borderTop: "0.5px solid var(--color-border-tertiary)" }}>
           <span style={{ flex: 1, fontSize: 12, color: "var(--color-text-secondary)" }}>
-            {saved
-              ? "Filtros salvos."
-              : filtersDirty
-                ? "Filtros alterados e ainda não salvos."
-                : "A campanha usa estes filtros pra preencher a fila."}
+            A campanha usa estes filtros pra preencher a fila.
           </span>
-          <button
-            onClick={save}
-            disabled={!filtersDirty}
-            title={filtersDirty ? "Salvar as escolhas desta aba" : "Sem alterações pra salvar"}
-            style={{ ...saveBtnStyle(filtersDirty), padding: "7px 16px", fontSize: 12 }}
-          >
-            {saved ? "✓ Salvo!" : "Salvar filtros"}
-          </button>
         </div>
         </div>
         )}
@@ -1223,31 +1206,6 @@ export default function ProductSearchTab({
       {pending.length > 0 && (
         <div style={{ marginBottom: 20, padding: "10px 14px", borderRadius: 10, background: "var(--color-background-secondary)", fontSize: 12, color: "var(--color-text-secondary)" }}>
           {pending.length} produto{pending.length !== 1 ? "s" : ""} aguardando revisão — aprove ou rejeite na aba <strong>Fila</strong>.
-        </div>
-      )}
-
-      {/* ── Barra fixa de salvar: as configurações desta aba ficam
-             espalhadas pela rolagem, então o aviso acompanha a tela. ──── */}
-      {(dirty || saved) && (
-        <div style={{
-          position: "sticky", bottom: 0, zIndex: 5,
-          display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
-          padding: "10px 14px", marginTop: 8,
-          borderRadius: 12, border: `0.5px solid ${saved ? PRIMARY : "var(--warn-border)"}`,
-          background: saved ? PRIMARY_LIGHT : "var(--warn-bg)",
-          boxShadow: "0 -2px 12px rgba(0,0,0,0.08)",
-        }}>
-          <span style={{ flex: 1, fontSize: 12, color: saved ? PRIMARY_DARK : "var(--warn-text)" }}>
-            {saved ? "Configurações salvas." : "Você tem alterações não salvas nesta aba."}
-          </span>
-          <button
-            onClick={save}
-            disabled={!dirty && !saved}
-            title={dirty ? "Salvar as configurações desta aba" : "Sem alterações pra salvar"}
-            style={saveBtnStyle(dirty)}
-          >
-            {saved ? "✓ Salvo!" : "Salvar configurações"}
-          </button>
         </div>
       )}
 

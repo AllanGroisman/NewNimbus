@@ -57,9 +57,7 @@ function Harness({
       triggerRefill={rest.triggerRefill || vi.fn()}
       save={rest.save || vi.fn()}
       dirty={rest.dirty || false}
-      filtersDirty={rest.filtersDirty || false}
-      saved={false}
-      saveBtnStyle={() => ({})}
+      saved={rest.saved || false}
       refillMsg={null}
       pending={rest.pending || []}
       queue={rest.queue || []}
@@ -290,14 +288,12 @@ describe("ProductSearchTab — filtros", () => {
     expect(nota).toHaveValue(5);
   });
 
-  it("o painel de filtros tem o próprio Salvar", async () => {
-    const save = vi.fn();
-    render(<Harness save={save} filtersDirty />);
+  it("o painel de filtros não tem botão de salvar — grava sozinho", async () => {
+    render(<Harness />);
     await waitFor(() => expect(browseCatalog).toHaveBeenCalled());
 
     abrirFiltros();
-    fireEvent.click(screen.getByRole("button", { name: "Salvar filtros" }));
-    expect(save).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: /^Salvar/ })).not.toBeInTheDocument();
   });
 });
 
@@ -856,16 +852,26 @@ describe("ProductSearchTab — lista por páginas", () => {
   });
 });
 
-describe("ProductSearchTab — barra de salvar", () => {
-  it("só aparece quando há alteração não salva", async () => {
-    const { rerender } = render(<Harness />);
+describe("ProductSearchTab — autosave", () => {
+  it("não tem botão de salvar em lugar nenhum da aba", async () => {
+    render(<Harness dirty />);
     await screen.findByText("Headset Gamer XYZ");
-    expect(screen.queryByRole("button", { name: "Salvar configurações" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Salvar/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/alterações não salvas/)).not.toBeInTheDocument();
+  });
 
+  it("grava sozinho quando há alteração pendente e avisa que salvou", async () => {
     const save = vi.fn();
+    const { rerender } = render(<Harness save={save} />);
+    await screen.findByText("Headset Gamer XYZ");
+    // Sem alteração pendente ninguém grava.
+    expect(save).not.toHaveBeenCalled();
+
     rerender(<Harness dirty save={save} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Salvar configurações" }));
-    expect(save).toHaveBeenCalled();
-    expect(screen.getByText(/alterações não salvas/)).toBeInTheDocument();
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1), { timeout: 2000 });
+
+    // O único retorno visual é o aviso discreto, que o dashboard apaga sozinho.
+    rerender(<Harness save={save} saved />);
+    expect(screen.getByText("✓ Salvo")).toBeInTheDocument();
   });
 });

@@ -28,14 +28,24 @@ Erro 400: origin_mismatch
 
 9. [] Quero exigir telefone dos usuários. Como tu sugere que seja feito?
 
-10. [] Na aba de busca de produtos, quero que tire aquele salvar alterações que aparece na parte debaixo da tela. Tb o que mais que tu acha que da pra melhorar nesta tela? Ta meio ruim ficar salvando as alterações toda hora, quanto menos precisar desse botão, melhor.
+10. [x] Na aba de busca de produtos, quero que tire aquele salvar alterações que aparece na parte debaixo da tela.
 
-11. [] Teste de cupom não está funcionando, me parece que é por causa do captcha do ML ou pq a pagina ali mudou. Revisa a forma como se faz e as paginas do ML.
+11. [] Na aba busca de produtos o que mais que tu acha que da pra melhorar nesta tela? Ta meio ruim ficar salvando as alterações toda hora, quanto menos precisar desse botão, melhor.
 
-12. [x] A parte superior esquerda da página, onde tem a marca, escrito Nimbus e painel admistrativo. Quero que tire o escrito "painel admistrativo" e quero que a junção da marca com o escrito seja clicável para ir para a Home do Sistema (a home pode ser o menu de campanhas)
+12. [] Teste de cupom não está funcionando, me parece que é por causa do captcha do ML ou pq a pagina ali mudou. Revisa a forma como se faz e as paginas do ML.
 
-13. [] Quero arrumar o scrap dos produtos de um cupom no ML.
+13. [x] A parte superior esquerda da página, onde tem a marca, escrito Nimbus e painel admistrativo. Quero que tire o escrito "painel admistrativo" e quero que a junção da marca com o escrito seja clicável para ir para a Home do Sistema (a home pode ser o menu de campanhas)
 
-14. [] Nos cupons, quero que exclua os antigos que já não funcionam mais.
+14. [] Quero arrumar o scrap dos produtos de um cupom no ML.
 
-15. [] Nos cupons, quero que todos os cupons que são detectados no repasse sejam adicionados na lista e que se não estiverem, seja feito o scraping de seus produtos.
+15. [] Nos cupons, quero que exclua os antigos que já não funcionam mais.
+
+16. [] Nos cupons, quero que todos os cupons que são detectados no repasse sejam adicionados na lista e que se não estiverem, seja feito o scraping de seus produtos.
+
+17. [] Revise a tela de busca de produtos, por exemplo, diz que vai preencher so ate 20 produtos, mas passou do limite. Verifica se ta tudo certo.
+
+18. [x] Tira a parte "Produtos com cupom do Mercado Livre
+Tanto faz
+Preferir com cupom
+Só com cupom
+Vale no preenchimento automático da fila. Os cupons vêm de Admin › Cupom › Cupons do ML; com “só com cupom”, a fila pode vir vazia se nenhum produto da campanha estiver num cupom." da aba de busca de produtos.
