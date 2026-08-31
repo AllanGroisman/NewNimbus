@@ -461,7 +461,11 @@ describe("GET /api/ofertas — exclusão por campanha (groupId)", () => {
     expect(comFila.body.total).toBe(3);
   });
 
-  it("tira o enviado dentro do cooldown, mas não o enviado há muito tempo", async () => {
+  // Tira TUDO que a campanha já enviou, e não só o que está dentro do cooldown:
+  // é esse o corte que o preenchimento faz (scheduler.refillQueue exclui o
+  // histórico inteiro). Enquanto era só o cooldown, a lista da aba oferecia
+  // "Adicionar de novo" em produto que o automático nunca ia pegar.
+  it("tira tudo que a campanha já enviou, recente ou antigo", async () => {
     await seed();
     const todos = await catalog.query({ categories: ["gamer"], limit: 100 });
     const recente = todos.find(p => p.name === "Mouse Nimbus 502");
@@ -475,13 +479,16 @@ describe("GET /api/ofertas — exclusão por campanha (groupId)", () => {
 
     const res = await auth("get", `/api/ofertas?categories=gamer&page=1&pageSize=24&groupId=${GID}`);
     const nomes = res.body.items.map(p => p.name);
-    expect(nomes).not.toContain("Mouse Nimbus 502");
-    // Passou o cooldown de 24h: volta a ser elegível.
-    expect(nomes).toContain("Teclado Nimbus 501");
-    expect(res.body.total).toBe(2);
+    expect(nomes).not.toContain("Mouse Nimbus 502");   // enviado agora
+    expect(nomes).not.toContain("Teclado Nimbus 501"); // enviado há 5 dias
+    expect(res.body.total).toBe(1);
 
-    const comRecentes = await auth("get", `/api/ofertas?categories=gamer&page=1&pageSize=24&groupId=${GID}&hideRecent=0`);
-    expect(comRecentes.body.items.map(p => p.name)).toContain("Mouse Nimbus 502");
+    // hideRecent=0 traz os dois de volta — é a chave "Mostrar já enviados" da
+    // aba, pra quem quer reenviar um produto à mão.
+    const comEnviados = await auth("get", `/api/ofertas?categories=gamer&page=1&pageSize=24&groupId=${GID}&hideRecent=0`);
+    const nomesComEnviados = comEnviados.body.items.map(p => p.name);
+    expect(nomesComEnviados).toContain("Mouse Nimbus 502");
+    expect(nomesComEnviados).toContain("Teclado Nimbus 501");
   });
 
   it("exclusão e filtros valem juntos, no total também", async () => {

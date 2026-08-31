@@ -1806,10 +1806,12 @@ app.get("/api/ofertas", auth.requireAuth, async (req, res) => {
     const limit = paginated ? pageSize : Math.min(200, Math.max(1, parseInt(req.query.limit) || 50));
     const offset = paginated ? (page - 1) * pageSize : 0;
 
-    // Com `groupId`, a lista já sai sem o que a campanha tem na fila / mandou há
-    // pouco — o mesmo corte que o preenchimento faz. Antes isso era escondido no
-    // navegador depois de receber, o que deixava a página pela metade e fazia o
-    // `total` contar justamente o que a tela escondia.
+    // Com `groupId`, a lista já sai sem o que a campanha tem na fila e sem o que
+    // ela já mandou alguma vez — o mesmo corte que o preenchimento faz. Antes isso
+    // era escondido no navegador depois de receber, o que deixava a página pela
+    // metade e fazia o `total` contar justamente o que a tela escondia.
+    // `hideRecent=0` traz os já enviados de volta (o botão "Adicionar de novo" do
+    // card), e aí sim o tempo de espera entra, na confirmação de reenvio.
     let excludeKeys = null;
     const gid = req.query.groupId ? String(req.query.groupId) : null;
     if (gid) {
@@ -1819,7 +1821,6 @@ app.get("/api/ofertas", auth.requireAuth, async (req, res) => {
       excludeKeys = await storage.loadExcludeKeys(req.user.id, gid, {
         queued: req.query.hideQueued !== "0",
         recent: req.query.hideRecent !== "0",
-        cooldownMinutesFor: scheduler.cooldownMinutes,
       });
     }
 

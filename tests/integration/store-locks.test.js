@@ -156,7 +156,10 @@ describe("Campanha com loja trancada", () => {
     await expect(scheduler.sendNextNow(user.id, 9110)).rejects.toThrow(/ML em manutenção/);
   });
 
-  it("fila é limpa dos itens da loja que acabou de trancar", async () => {
+  // A trava impede BUSCAR naquela loja, não entregar o que já foi buscado — é a
+  // mesma regra que faz o repasse enviar um link capturado de loja trancada. E
+  // fila só encolhe por envio ou por decisão do usuário (task 20).
+  it("o que já estava na fila continua lá quando a loja tranca", async () => {
     await catalog.upsertProducts([mlProduct(9121, { category: "gamer", discount: 40 })]);
     const { user, auth } = await createProUser();
     const group = makeGroup({ id: 9120, categories: ["gamer"], sources: ["ml", "amazon"], auto: true });
@@ -171,6 +174,8 @@ describe("Campanha com loja trancada", () => {
     await scheduler.refillNow(user.id, 9120);
     const after = await storage.loadState(user.id);
     const g = after.groups.find(x => x.id === 9120);
-    expect(g.queue.some(i => i.store === "Mercado Livre")).toBe(false);
+    expect(g.queue.some(i => i.store === "Mercado Livre")).toBe(true);
+    // Mas nada NOVO daquela loja entra: o refill acima não somou mais nenhum ML.
+    expect(g.queue.length).toBe(before.groups.find(x => x.id === 9120).queue.length);
   });
 });

@@ -241,8 +241,10 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                     </div>
                     <div>
                       <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Fila</div>
-                      <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-primary)" }}>{g.queue.length}</div>
-                      {g.pending.length > 0 && <div style={{ fontSize: 11, color: "var(--warn-text)", marginTop: 1 }}>+{g.pending.length} p/ revisar</div>}
+                      {/* Um número só: fila + aguardando revisão, igual ao resto do
+                          sistema (frontend/src/data/refill.js). */}
+                      <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-primary)" }}>{g.queue.length + g.pending.length}</div>
+                      {g.pending.length > 0 && <div style={{ fontSize: 11, color: "var(--warn-text)", marginTop: 1 }}>{g.pending.length} p/ revisar</div>}
                     </div>
                     <div>
                       <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Lojas</div>

@@ -161,29 +161,6 @@ function batchSize(scraping) {
   return Math.min(MAX_BATCH, Math.max(1, Math.round(n)));
 }
 
-// O que fazer com os produtos que têm cupom do ML (coupons/pg.js):
-//   "off"    — nada, é como sempre foi (default; campanha antiga não muda de comportamento);
-//   "prefer" — os com cupom vêm primeiro, e o resto completa o lote;
-//   "only"   — só produtos com cupom.
-//
-// Puro, e defensivo de propósito: config velha (sem o campo) e config com lixo
-// caem no "off", que é o único valor que não muda nada em campanha nenhuma.
-const COUPON_MODES = new Set(["off", "prefer", "only"]);
-
-function couponMode(scraping) {
-  const m = scraping && scraping.couponBoost;
-  return COUPON_MODES.has(m) ? m : "off";
-}
-
-// Os que têm cupom primeiro, mantendo a ordem original dentro de cada bloco (a
-// campanha já escolheu "maior desconto" ou "menor preço" — o cupom desempata,
-// não reordena tudo).
-function sortByCoupon(produtos, comCupom) {
-  const com = [], sem = [];
-  for (const p of produtos) (comCupom.has(p.key) ? com : sem).push(p);
-  return [...com, ...sem];
-}
-
 // Quando o preenchimento automático dispara:
 //   "threshold" (default) — quando a fila está acabando, dentro da janela de envio;
 //   "schedule"            — nos horários escolhidos pelo usuário, com janela ou não.
@@ -247,53 +224,6 @@ function autoRefillDue(group, now, inWindowNow) {
 // Registra que o horário já rodou hoje (nada a fazer no modo por fila).
 function markAutoRefill(groupId, now, slot) {
   if (slot) _lastAutoRefill.set(groupId, `${now.toDateString()} ${slot}`);
-}
-
-// Extrai cats/srcs/filters do grupo em formato canônico (Sets) pro itemMatchesCampaign.
-function campaignFilterCtx(group) {
-  const catList = Array.isArray(group.categories) && group.categories.length
-    ? group.categories
-    : (group.category ? [group.category] : []);
-  const cats = catList.length ? new Set(catList) : null;
-  // Set vazio (todas as lojas trancadas) é intencional: nenhum item casa, então
-  // a fila é limpa em vez de virar "sem filtro de loja".
-  const srcs = new Set(sourcesForCampaign(group));
-  const filters = (group.scraping && group.scraping.filters) || {};
-  return { cats, srcs, filters };
-}
-
-// True se o item ainda passa nos filtros atuais da campanha (sources, categorias,
-// minDiscount, etc). Items adicionados manualmente (manual: true) sempre passam
-// — usuário escolheu adicionar, então não removemos por mudança de config.
-function itemMatchesCampaign(item, ctx) {
-  if (!item) return false;
-  if (item.manual) return true;
-  const { cats, srcs, filters } = ctx;
-  if (cats) {
-    const pcat = typeof item.category === "string" ? item.category : (item.category?.id || null);
-    if (!pcat || !cats.has(pcat)) return false;
-  }
-  if (srcs) {
-    const sid = catalog.storeToId ? catalog.storeToId(item.store) : null;
-    if (!sid || !srcs.has(sid)) return false;
-  }
-  const { minDiscount = 0, minPrice = 0, maxPrice, minRating = 0, minSales = 0, keywords = "" } = filters || {};
-  if (minDiscount > 0 && (!item.discount || item.discount < minDiscount)) return false;
-  if (minPrice > 0 && (item.price == null || item.price < minPrice)) return false;
-  if (maxPrice != null && Number.isFinite(maxPrice) && maxPrice > 0 && (item.price == null || item.price > maxPrice)) return false;
-  if (minRating > 0 && (item.rating || 0) < minRating) return false;
-  // Mesma regra do catálogo: soldCount (Shopee) quando existe, senão o texto de vendas.
-  if (minSales > 0) {
-    const sales = item.soldCount != null && Number.isFinite(Number(item.soldCount))
-      ? Number(item.soldCount)
-      : catalog.parseSold(item.sold);
-    if (sales < minSales) return false;
-  }
-  if (keywords && String(keywords).trim()) {
-    const terms = String(keywords).toLowerCase().split(",").map(t => t.trim()).filter(Boolean);
-    if (terms.length && !terms.some(t => (item.name || "").toLowerCase().includes(t))) return false;
-  }
-  return true;
 }
 
 // Grupo está pausado quando depende de uma loja com gating (ML ou Shopee) e o
@@ -453,7 +383,6 @@ async function refillQueue(userId, group) {
   const sources = activeSources(group.scraping?.sources);
   const cdMin = cooldownMinutes(group.schedule);
   const target = isAutoApprove(group) ? "queue" : "pending";
-  const filterCtx = campaignFilterCtx(group);
 
   // Recalcula keys do history pra detectar duplicatas
   const historyKeys = (group.history || []).map(h => ({ k: productKey(h), sentAt: h.sentAt }));
@@ -462,31 +391,34 @@ async function refillQueue(userId, group) {
   );
   const histKeySet = new Set(historyKeys.map(h => h.k));
 
-  // Limpa duplicatas, já-enviados e stale (config mudou — item não bate mais
-  // com sources/categorias/filtros atuais). Items manuais nunca são considerados
-  // stale, pois usuário adicionou explicitamente.
+  // Só duas limpezas, e nenhuma delas é "mudou de ideia no filtro": item repetido
+  // na própria lista e item que já foi enviado (está no histórico) — os dois são
+  // item inválido, não item fora de filtro.
+  //
+  // Filtro aqui é regra de ENTRADA: o que já está na fila só sai por envio ou
+  // porque o usuário tirou. Antes a fila era podada a cada tick contra os filtros
+  // atuais, e mexer num campo da aba Busca de Produtos (que salva sozinha) fazia
+  // metade da fila sumir em silêncio.
   const queueSeen = new Set();
   const cleanedQueue = (group.queue || []).filter(q => {
     const k = productKey(q);
     if (histKeySet.has(k)) return false;
     if (queueSeen.has(k)) return false;
-    if (!itemMatchesCampaign(q, filterCtx)) return false;
     queueSeen.add(k);
     return true;
   });
   const removedFromQueue = (group.queue || []).length - cleanedQueue.length;
   if (removedFromQueue > 0) {
-    console.log(`[scheduler] "${group.name}": removidos ${removedFromQueue} itens da fila (duplicatas/já-enviados/stale)`);
+    console.log(`[scheduler] "${group.name}": removidos ${removedFromQueue} itens da fila (duplicatas/já-enviados)`);
   }
 
-  // Mesma limpeza pra pending (descarta já-enviados, duplicatas e stale)
+  // Mesma limpeza pra pending (descarta já-enviados e duplicatas)
   const pendingSeen = new Set();
   const cleanedPending = (group.pending || []).filter(p => {
     const k = productKey(p);
     if (histKeySet.has(k)) return false;
     if (queueSeen.has(k)) return false;
     if (pendingSeen.has(k)) return false;
-    if (!itemMatchesCampaign(p, filterCtx)) return false;
     pendingSeen.add(k);
     return true;
   });
@@ -494,29 +426,51 @@ async function refillQueue(userId, group) {
   // Exclui da query: tudo que está no queue + pending + cooldown
   const excludeKeys = new Set([...queueSeen, ...pendingSeen, ...sentRecentlyKeys, ...histKeySet]);
 
+  // `batchSize` é o TETO da fila, não um lote solto: o preenchimento completa até
+  // ele e para. Antes somava o lote inteiro ao que já estava lá, e a fila passava
+  // do número que a tela promete ("Máximo de produtos na fila").
+  //
+  // O buffer soma fila + pendentes porque é o mesmo buffer que `autoRefillDue`
+  // usa pra disparar: com aprovação automática desligada os itens caem em
+  // `pending`, e contar só a fila deixaria o teto valendo pra metade do caminho.
+  const teto = batchSize(group.scraping);
+  const buffer = cleanedQueue.length + cleanedPending.length;
+  const vagas = Math.max(0, teto - buffer);
+
+  // Fila cheia: nem consulta o catálogo. Esta função roda a cada tick de cada
+  // campanha, e a query com `notIn` da lista inteira de keys não é barata.
+  if (vagas === 0) {
+    return {
+      cleanedQueue, cleanedPending, newItems: [], target, removedFromQueue,
+      skippedAff: 0, skippedSent: 0, teto, vagas: 0, full: true,
+    };
+  }
+
   // sources vazio = todas as lojas da campanha trancadas. Não dá pra chamar
   // catalog.query assim: lista vazia lá significa "sem filtro de loja" e traria
   // produtos de lojas que a campanha não escolheu.
-  // Com cupom em jogo, o SQL faz o corte quando dá ("only") e a busca vem mais
-  // larga quando não dá ("prefer"): reordenar só os 20 que já vieram quase nunca
-  // encontraria um com cupom.
-  const cupom = couponMode(group.scraping);
-  const lote = batchSize(group.scraping);
   const candidates = sources.length
     ? await catalog.query({
         categories: cats.length ? cats : null,
         sources,
         excludeKeys,
-        filters: cupom === "only" ? { ...filters, hasCoupon: true } : filters,
-        limit: cupom === "prefer" ? lote * 3 : lote,
+        filters,
+        limit: vagas,
         sortBy: sortMode(group.scraping),
       })
     : [];
 
   // Os cupons dos candidatos, em uma consulta só. Cupom vencido não vem (a query
   // filtra por expiresAt), então nada aqui promete desconto que já acabou.
-  const cupons = cupom === "off" ? new Map() : await coupons.couponsForKeys(candidates.map(p => p.key));
-  const escolhidos = (cupom === "prefer" ? sortByCoupon(candidates, cupons) : candidates).slice(0, lote);
+  //
+  // Roda sempre, em campanha nenhuma isso é opcional: é daqui que sai a PALAVRA
+  // do cupom que a mensagem manda o cliente digitar ({cupom} do template). Já foi
+  // condicionado ao `couponBoost`, que era o seletor de "só com cupom / preferir
+  // com cupom" da aba — o seletor saiu da tela, e com ele o filtro e a reordenação
+  // (que a prévia da aba nunca aplicou, então a lista prometia uma coisa e o
+  // preenchimento fazia outra). O enriquecimento fica.
+  const cupons = await coupons.couponsForKeys(candidates.map(p => p.key));
+  const escolhidos = candidates.slice(0, vagas);
 
   const rawItems = escolhidos.map(p => ({
     id: p.key,    // a UI de pending busca por `id`
@@ -577,7 +531,15 @@ async function refillQueue(userId, group) {
     console.log(`[scheduler] "${group.name}": +${newItems.length} → ${target} (cats=${cats.join(",") || "todas"}, sources=${sources.join(",")}${skipStr})`);
   }
 
-  return { cleanedQueue, cleanedPending, newItems, target, removedFromQueue, skippedAff: skippedAff.total };
+  // `skippedSent` é o que o catálogo NÃO devolveu por já estar na fila, nos
+  // pendentes ou no histórico — a diferença entre as vagas e o que veio. Serve
+  // pra mensagem da tela explicar por que entrou menos do que cabia.
+  const skippedSent = Math.max(0, vagas - candidates.length);
+
+  return {
+    cleanedQueue, cleanedPending, newItems, target, removedFromQueue,
+    skippedAff: skippedAff.total, skippedSent, teto, vagas, full: false,
+  };
 }
 
 // Atualiza métricas após um envio
@@ -614,9 +576,10 @@ function bumpMetrics(group, ok) {
 // repasse vem da legenda do grupo líder, ou digitada à mão na fila), então é o
 // desconto dela que o cliente vai ver no checkout. Só depois o vínculo de campanha.
 //
-// O terceiro passo não é redundância: `couponCampaignId` só é preenchido no refill
-// quando `couponBoost` ≠ "off" (e "off" é o default), então na campanha comum o
-// item chega sem campanha nenhuma mesmo tendo cupom no catálogo.
+// O terceiro passo não é redundância: o refill preenche `couponCampaignId` com o
+// que o catálogo sabia na hora, e o item pode ficar dias na fila — item antigo
+// (ou de repasse, que não passa pelo refill) chega aqui sem campanha nenhuma
+// mesmo tendo cupom no catálogo hoje.
 //
 // Só Mercado Livre: `ml_coupons` é a aba de cupons do ML, e o desconto de lá não
 // vale num produto da Amazon ou da Shopee. Sem essa trava, um produto da Amazon com
@@ -911,15 +874,8 @@ async function sendNextNow(userId, groupId) {
     throw new Error(`Campanha pausada: ${waGate.reason}.`);
   }
 
-  // Limpa stale antes — usuário clicou "Enviar agora" esperando filtros atuais.
-  const filterCtx = campaignFilterCtx(group);
-  const origQueue = group.queue || [];
-  const prunedQueue = origQueue.filter(q => itemMatchesCampaign(q, filterCtx));
-  if (prunedQueue.length !== origQueue.length) {
-    await storage.updateGroupOps(userId, groupId, { queue: prunedQueue });
-    group.queue = prunedQueue;
-  }
-
+  // Sem poda por filtro: "Enviar agora" manda o primeiro da fila, que é o que a
+  // tela está mostrando. Filtro decide o que ENTRA na fila, não o que fica nela.
   // Tenta refill se queue está vazia — "enviar agora" é ação manual do user,
   // então força os itens pra queue mesmo se a campanha está em modo de revisão.
   let queue = group.queue || [];
@@ -991,23 +947,11 @@ async function processGroup(userId, group, whatsappGroups, numbers, planPaused) 
   // Não está parada por gate: reseta o edge-trigger pra uma próxima parada avisar.
   userNotifier.onCampaignStopped(userId, group.id, group.name, null, false).catch(() => {});
 
-  // Sempre limpa itens stale (config mudou — sources/categorias/filtros não
-  // batem mais). Roda antes do refill+dispatch pra não enviar item que já não
-  // se encaixa na campanha. Refill abaixo pode reescrever updates.queue/pending
-  // com o resultado completo (stale + dup + novos), o que tá ok.
-  const filterCtx = campaignFilterCtx(group);
-  const origQ = group.queue || [];
-  const origP = group.pending || [];
-  const prunedQ = origQ.filter(q => itemMatchesCampaign(q, filterCtx));
-  const prunedP = origP.filter(p => itemMatchesCampaign(p, filterCtx));
-  const removedStale = (origQ.length - prunedQ.length) + (origP.length - prunedP.length);
-  if (removedStale > 0) {
-    console.log(`[scheduler] "${group.name}": removidos ${removedStale} itens stale (config mudou)`);
-    updates.queue = prunedQ;
-    updates.pending = prunedP;
-    group = { ...group, queue: prunedQ, pending: prunedP };
-  }
-
+  // Nada de poda por filtro aqui. Este tick rodava a cada minuto apagando da fila
+  // tudo que não batesse mais com os filtros atuais, sem nada na tela dizendo por
+  // quê: bastava ajustar um campo na aba Busca de Produtos (que salva sozinha) pra
+  // a fila encolher sozinha depois. Filtro é regra de entrada — o que está na fila
+  // sai por envio ou porque o usuário tirou.
   // Refill se a campanha precisa de itens — leve porque consulta catálogo.
   // Dois gatilhos possíveis (autoRefillDue): fila acabando dentro da janela de
   // envio, ou horário fixo escolhido pelo usuário. O "buffer" do primeiro é
@@ -1166,7 +1110,10 @@ async function refillNow(userId, groupId, overrides = {}) {
     if (Array.isArray(overrides.categories)) merged.categories = overrides.categories;
   }
 
-  const { cleanedQueue, cleanedPending, newItems, target, removedFromQueue, skippedAff } = await refillQueue(userId, merged);
+  const {
+    cleanedQueue, cleanedPending, newItems, target, removedFromQueue,
+    skippedAff, skippedSent, teto, vagas, full,
+  } = await refillQueue(userId, merged);
   const updates = {};
   if (target === "queue") {
     const next = [...cleanedQueue, ...newItems];
@@ -1176,7 +1123,10 @@ async function refillNow(userId, groupId, overrides = {}) {
     updates.pending = [...cleanedPending, ...newItems];
     if (cleanedQueue.length !== (group.queue || []).length) updates.queue = cleanedQueue;
   }
-  await storage.updateGroupOps(userId, groupId, updates);
+  // O grupo que volta daqui já é o que ficou GRAVADO: updateGroupOps deduplica
+  // por productKey ao escrever, então contar `updates.queue` aqui podia anunciar
+  // uma fila maior do que a que existe.
+  const saved = await storage.updateGroupOps(userId, groupId, updates);
   // Notifica o dono sobre a busca manual (botão "Buscar agora").
   if (newItems.length) {
     userNotifier.onProductSearch(userId, group.name, {
@@ -1187,11 +1137,18 @@ async function refillNow(userId, groupId, overrides = {}) {
   }
   return {
     target,
-    queueSize: (updates.queue || group.queue || []).length,
-    pendingSize: (updates.pending || group.pending || []).length,
+    queueSize: (saved?.queue || updates.queue || group.queue || []).length,
+    pendingSize: (saved?.pending || updates.pending || group.pending || []).length,
     added: newItems.length,
     removed: removedFromQueue,
     skippedAffiliate: skippedAff || 0,
+    // Quantos o catálogo não tinha pra oferecer porque a campanha já mandou (ou
+    // já tem na fila) — a tela usa isso pra explicar um lote menor que as vagas.
+    skippedSent: skippedSent || 0,
+    // O teto da fila e quantas vagas havia quando esta rodada começou.
+    limit: teto,
+    slots: vagas,
+    full: !!full,
   };
 }
 
@@ -1305,9 +1262,8 @@ module.exports = {
   // poder cobrir esse caminho sem subir WhatsApp.
   sendItem,
   // Funções puras exportadas só pra teste unitário (tests/unit/scheduler-core.test.js).
-  inWindow, activeWindow, windowGate, cooldownMinutes, renderTemplate, itemMatchesCampaign, campaignFilterCtx,
+  inWindow, activeWindow, windowGate, cooldownMinutes, renderTemplate,
   affiliateGate,
   sortMode, batchSize, refillMode, refillThreshold, refillTimes, autoRefillDue, markAutoRefill,
-  couponMode, sortByCoupon,
   shuffleArray, shuffleAfterRefill,
 };

@@ -91,6 +91,35 @@ beforeEach(() => {
   saveGroupQueue.mockClear();
 });
 
+// "Na fila" é um número só em todo lugar: fila + aguardando revisão. É o buffer
+// que o backend usa pro teto e pro limiar do preenchimento — separar os dois na
+// tela dava "Fila (0)" com produtos parados esperando aprovação.
+describe("GroupDashboard — a fila conta os que aguardam revisão", () => {
+  it("a aba Fila soma os pendentes no número", () => {
+    renderDashboard({ group: {
+      queue: [makeItem({ id: "q1" }), makeItem({ id: "q2" })],
+      pending: [makeItem({ id: "p1" })],
+    } });
+    expect(screen.getByRole("button", { name: /Fila \(3\)/ })).toBeInTheDocument();
+  });
+
+  it("o card da visão geral mostra o total sobre o máximo, com a quebra embaixo", () => {
+    renderDashboard({ group: {
+      queue: [makeItem({ id: "q1" }), makeItem({ id: "q2" })],
+      pending: [makeItem({ id: "p1" })],
+      scraping: { auto: true, sources: ["Amazon"], filters: {}, batchSize: 10 },
+    } });
+    expect(screen.getByText("3 de 10")).toBeInTheDocument();
+    expect(screen.getByText("1 aguardando revisão")).toBeInTheDocument();
+  });
+
+  it("sem máximo escolhido, usa o padrão de 20", () => {
+    renderDashboard({ group: { queue: [makeItem({ id: "q1" })] } });
+    expect(screen.getByRole("button", { name: /Fila \(1\)/ })).toBeInTheDocument();
+    expect(screen.getByText("1 de 20")).toBeInTheDocument();
+  });
+});
+
 describe("GroupDashboard — aba Fila com itens", () => {
   function renderQueueTab() {
     const out = renderDashboard({

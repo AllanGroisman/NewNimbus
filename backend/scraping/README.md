@@ -591,15 +591,18 @@ sistema, e ela volta a carimbar o cupom na rodada seguinte
 (`restampCodesFromChecks`, chamado no fim de toda rodada). A rota recusa (409) se
 houver rodada correndo — apagar no meio é apagar o que ela está gravando.
 
-Na fila do repasse isso vira `group.scraping.couponBoost` ∈ `off` (default) |
-`prefer` | `only`, lido em `scheduler.js:couponMode`. `only` vira `hasCoupon` no
-WHERE do catálogo; `prefer` busca 3× o lote e põe quem tem cupom na frente sem
-bagunçar a ordem escolhida pela campanha.
+O `group.scraping.couponBoost` (`off` | `prefer` | `only`) já filtrou e reordenou
+o preenchimento por cupom. **Saiu.** Os chips que o controlavam foram removidos da
+aba de busca de produtos, e a prévia da aba nunca aplicou esse filtro — então a
+lista prometia uma coisa e o preenchimento fazia outra em qualquer campanha que
+tivesse o valor gravado. Hoje o `refillQueue` ignora o campo; resíduo em campanha
+antiga não muda mais nada.
 
-Hoje não há controle disso na interface: os chips que ficavam na aba de busca de
-produtos foram removidos, então campanha nova nasce sem o campo e cai no `off`. A
-lógica segue no lugar para quem já tem o valor gravado, e para o dia que o
-controle voltar.
+O que ficou é o **enriquecimento**, e agora ele roda sempre: todo item que entra
+na fila pelo catálogo passa por `coupons.couponsForKeys`, que preenche `coupon`
+(a palavra), `couponLabel` e `couponCampaignId`. Antes isso era condicionado ao
+`couponBoost`, então a campanha comum entrava sem cupom nenhum mesmo tendo um no
+catálogo.
 
 ### `{preco_com_cupom}` na mensagem
 
@@ -624,8 +627,9 @@ depois `couponsForKeys` pela chave do produto — e nada disso roda fora do Merc
 Livre, porque cupom do ML não desconta produto da Amazon nem da Shopee (uma palavra
 igual nas duas lojas anunciaria um preço que não existe). O terceiro passo não é
 redundância:
-`couponCampaignId` só é preenchido quando `couponBoost` ≠ `off`, e `off` é o
-default — sem ele a variável nunca calcularia nada na campanha comum.
+o refill grava o `couponCampaignId` que valia na hora, e o item fica dias na fila
+— item antigo, ou de repasse (que não passa pelo refill), chega ao envio sem
+campanha nenhuma mesmo tendo cupom no catálogo hoje.
 
 ### As sondas
 

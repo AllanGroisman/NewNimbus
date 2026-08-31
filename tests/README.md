@@ -60,7 +60,7 @@ moram lá.
 - `notify-state-alert.test.js` — `stateAlert` (grace period, aviso de queda/volta, anti-spam).
 - `product-key.test.js` — geração da chave única de produto (hash MLB ou fallback por URL).
 - `repasse-extract.test.js` — extração de URLs das mensagens (wrappers do Baileys, dedupe) e serialização por usuário.
-- `scheduler-core.test.js` — janelas de horário (`inWindow`/`activeWindow`), `cooldownMinutes`, `itemMatchesCampaign` (todos os filtros), `renderTemplate` (inclusive o fallback do `{preco_com_cupom}`), `isAutoApprove`/`isRepasse`.
+- `scheduler-core.test.js` — janelas de horário (`inWindow`/`activeWindow`), `cooldownMinutes`, `renderTemplate` (inclusive o fallback do `{preco_com_cupom}`), `isAutoApprove`/`isRepasse`, `batchSize`/`autoRefillDue`.
 - `scraper-filters.test.js` — filtros ML/Amazon/Shopee (read/write, clamps), `buildAmazonDealsUrl`, backoff da Amazon.
 - `scraper-live.test.js` — **opt-in** (`RUN_LIVE_SCRAPE=1`): scrape real de ML/Amazon com Puppeteer.
 - `scraper-ml-card.test.js` — parsers de card do ML (reviews, vendidos, rating, reconciliação de preço).

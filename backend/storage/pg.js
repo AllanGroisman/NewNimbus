@@ -407,20 +407,23 @@ async function updateGroupOps(userId, groupId, patch) {
 }
 
 // Keys que a busca de produtos não deve mostrar pra uma campanha: o que já está
-// na fila / aguardando revisão (`queued`) e o que foi enviado dentro do tempo de
-// espera pra reenvio (`recent`).
+// na fila / aguardando revisão (`queued`) e o que a campanha JÁ ENVIOU alguma vez
+// (`recent`).
 //
-// Puxa só a coluna productKey, escopada nesse grupo, e corta o cooldown no
-// próprio WHERE. É de propósito bem mais magro que loadState(), que traz o
+// "Já enviou alguma vez", e não "enviou dentro do tempo de espera", porque é esse
+// o corte que o preenchimento faz (scheduler.refillQueue monta o excludeKeys com
+// o histórico inteiro). Enquanto era só o cooldown, a lista da tela oferecia
+// "Adicionar de novo" em produtos que o preenchimento automático nunca ia pegar.
+// O tempo de espera continua valendo pro que é manual: adicionar um já-enviado
+// pela lista ainda passa pela confirmação de reenvio (scheduler.addItemToGroup).
+//
+// Puxa só a coluna productKey, escopada nesse grupo. É de propósito bem mais magro que loadState(), que traz o
 // estado inteiro do usuário em 7 queries: isso aqui roda a cada busca da aba
 // (uma por tecla digitada, depois do debounce, e uma por página virada).
 //
-// `cooldownMinutesFor` recebe o schedule da campanha e devolve os minutos de
-// espera — a regra mora no scheduler, não aqui.
-//
 // Devolve null se o grupo não é desse usuário — quem chama trata como "sem
 // exclusão", nunca como erro.
-async function loadExcludeKeys(userId, groupId, { queued = true, recent = true, cooldownMinutesFor } = {}) {
+async function loadExcludeKeys(userId, groupId, { queued = true, recent = true } = {}) {
   let id;
   try {
     id = BigInt(groupId);
@@ -429,21 +432,15 @@ async function loadExcludeKeys(userId, groupId, { queued = true, recent = true, 
   }
   const group = await prisma().group.findFirst({
     where: { id, userId },
-    select: { schedule: true },
+    select: { id: true },
   });
   if (!group) return null;
-
-  const cdMin = recent && cooldownMinutesFor ? Number(cooldownMinutesFor(group.schedule || {})) || 0 : 0;
-  const since = cdMin > 0 ? new Date(Date.now() - cdMin * 60000) : null;
 
   const [queueRows, pendingRows, historyRows] = await Promise.all([
     queued ? prisma().groupQueueItem.findMany({ where: { groupId: id }, select: { productKey: true } }) : [],
     queued ? prisma().groupPendingItem.findMany({ where: { groupId: id }, select: { productKey: true } }) : [],
-    since
-      ? prisma().groupHistory.findMany({
-          where: { groupId: id, sentAt: { gte: since } },
-          select: { productKey: true },
-        })
+    recent
+      ? prisma().groupHistory.findMany({ where: { groupId: id }, select: { productKey: true } })
       : [],
   ]);
 

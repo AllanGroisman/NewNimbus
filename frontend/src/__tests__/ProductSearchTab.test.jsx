@@ -380,16 +380,16 @@ describe("ProductSearchTab — preenchimento automático", () => {
   it("a chave fica sempre à vista e os ajustes só no Configurar", async () => {
     render(<Harness />);
     expect(await screen.findByRole("switch", { name: "Preencher a fila automaticamente" })).toBeInTheDocument();
-    expect(screen.queryByLabelText("Produtos por vez")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Máximo de produtos na fila")).not.toBeInTheDocument();
 
     abrirConfig();
-    expect(await screen.findByLabelText("Produtos por vez")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Máximo de produtos na fila")).toBeInTheDocument();
 
     abrirConfig();
-    await waitFor(() => expect(screen.queryByLabelText("Produtos por vez")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByLabelText("Máximo de produtos na fila")).not.toBeInTheDocument());
     expect(screen.getByRole("switch", { name: "Preencher a fila automaticamente" })).toBeInTheDocument();
     // O botão de preencher agora também não some junto
-    expect(screen.getByRole("button", { name: /Preencher fila agora/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Completar fila agora/ })).toBeInTheDocument();
   });
 
   it("liga/desliga o preenchimento automático", async () => {
@@ -462,12 +462,47 @@ describe("ProductSearchTab — preenchimento automático", () => {
     expect(screen.queryByRole("button", { name: /Adicionar todos à fila/ })).not.toBeInTheDocument();
   });
 
-  it("a quantidade por vez aparece no botão de preencher", async () => {
-    render(<Harness />);
-    expect(await screen.findByRole("button", { name: /Preencher fila agora \(até 20\)/ })).toBeInTheDocument();
+  // O botão diz quantas VAGAS faltam pra fila chegar no máximo, não o tamanho de
+  // um lote: é isso que o preenchimento realmente vai buscar.
+  it("o botão de preencher diz quantos faltam pra fila chegar no máximo", async () => {
+    render(<Harness queue={[makeProduct(), makeProduct()]} pending={[makeProduct()]} />);
+    expect(await screen.findByRole("button", { name: /Completar fila agora \(faltam 17\)/ })).toBeInTheDocument();
     abrirConfig();
-    fireEvent.change(await screen.findByLabelText("Produtos por vez"), { target: { value: "5" } });
-    expect(screen.getByRole("button", { name: /Preencher fila agora \(até 5\)/ })).toBeInTheDocument();
+    fireEvent.change(await screen.findByLabelText("Máximo de produtos na fila"), { target: { value: "5" } });
+    expect(screen.getByRole("button", { name: /Completar fila agora \(faltam 2\)/ })).toBeInTheDocument();
+  });
+
+  it("fila no máximo desabilita o botão em vez de somar outro lote", async () => {
+    const cheia = Array.from({ length: 20 }, (_, i) => ({ ...makeProduct(), key: `k${i}` }));
+    render(<Harness queue={cheia} />);
+    const btn = await screen.findByRole("button", { name: /Fila cheia \(20\)/ });
+    expect(btn).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /Completar fila agora/ })).not.toBeInTheDocument();
+  });
+
+  // O máximo trava o preenchimento automático, não o add a dedo: o card continua
+  // adicionando, e a tela avisa em vez de fingir que o número é intransponível.
+  it("avisa quando a fila passou do máximo, e o aviso some quando ela baixa", async () => {
+    const acima = Array.from({ length: 21 }, (_, i) => ({ ...makeProduct(), key: `k${i}` }));
+    const { rerender } = render(<Harness queue={acima} />);
+    expect(await screen.findByText(/A fila está em 21, acima do máximo de 20/)).toBeInTheDocument();
+
+    rerender(<Harness queue={acima.slice(0, 19)} />);
+    await waitFor(() => expect(screen.queryByText(/acima do máximo/)).not.toBeInTheDocument());
+  });
+
+  // Pendentes contam junto com a fila — é o mesmo buffer que o backend usa pro teto.
+  it("os que aguardam revisão ocupam vaga no máximo da fila", async () => {
+    const naFila = Array.from({ length: 12 }, (_, i) => ({ ...makeProduct(), key: `q${i}` }));
+    const revisao = Array.from({ length: 5 }, (_, i) => ({ ...makeProduct(), key: `p${i}` }));
+    render(<Harness queue={naFila} pending={revisao} />);
+    expect(await screen.findByRole("button", { name: /Completar fila agora \(faltam 3\)/ })).toBeInTheDocument();
+  });
+
+  it("avisa quando o limiar é maior ou igual ao máximo da fila", async () => {
+    render(<Harness initialScraping={{ auto: true, sources: ["Mercado Livre"], filters: {}, refillThreshold: 20, batchSize: 20 }} />);
+    abrirConfig();
+    expect(await screen.findByText(/a fila já vai estar cheia e nada vai entrar/i)).toBeInTheDocument();
   });
 
   it("a ordem tem um seletor só, em cima da lista, e salva no scraping", async () => {
@@ -485,11 +520,12 @@ describe("ProductSearchTab — preenchimento automático", () => {
   it("preencher fila agora pede confirmação antes de chamar o refill", async () => {
     const triggerRefill = vi.fn();
     render(<Harness triggerRefill={triggerRefill} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Preencher fila agora/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Completar fila agora/ }));
     // O clique só abre o aviso — nada é buscado ainda.
     expect(triggerRefill).not.toHaveBeenCalled();
     const modal = screen.getByRole("dialog");
-    expect(within(modal).getByText(/20 primeiros produtos/)).toBeInTheDocument();
+    // Fila vazia: as 20 vagas do máximo.
+    expect(within(modal).getByText(/até 20 produtos/)).toBeInTheDocument();
     fireEvent.click(within(modal).getByRole("button", { name: "Preencher agora" }));
     expect(triggerRefill).toHaveBeenCalled();
   });
@@ -497,7 +533,7 @@ describe("ProductSearchTab — preenchimento automático", () => {
   it("cancelar a confirmação não preenche a fila", async () => {
     const triggerRefill = vi.fn();
     render(<Harness triggerRefill={triggerRefill} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Preencher fila agora/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Completar fila agora/ }));
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancelar" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(triggerRefill).not.toHaveBeenCalled();
@@ -575,14 +611,15 @@ describe("ProductSearchTab — lista de produtos", () => {
   // recebe o groupId), pra a página vir cheia em vez de encolher depois de
   // carregada. Por isso o que se testa aqui é o parâmetro que sai, não o card
   // que some — o mock devolve sempre a mesma lista.
-  it("a chave 'Enviados recentemente' liga e desliga o hideRecent da busca", async () => {
+  it("a chave 'Já enviados' liga e desliga o hideRecent da busca", async () => {
     render(<Harness history={[makeProduct()]} cooldownMinutes={1440} cooldownLabel="1 dias" />);
     await waitFor(() => expect(browseCatalog).toHaveBeenCalledTimes(1));
-    // Desligada por padrão: o backend esconde os enviados há pouco.
+    // Desligada por padrão: o backend esconde tudo que a campanha já enviou,
+    // que é o mesmo corte do preenchimento automático.
     expect(browseCatalog.mock.calls[0][0].hideRecent).toBe(true);
     expect(browseCatalog.mock.calls[0][0].groupId).toBe("g1");
 
-    fireEvent.click(screen.getByRole("switch", { name: "Mostrar enviados recentemente" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Mostrar os que a campanha já enviou" }));
     await waitFor(() => expect(browseCatalog).toHaveBeenCalledTimes(2));
     expect(browseCatalog.mock.calls[1][0].hideRecent).toBe(false);
   });
@@ -714,8 +751,8 @@ describe("ProductSearchTab — painéis que abrem em botão", () => {
   it("o resumo do preenchimento fica visível com o painel fechado", async () => {
     render(<Harness />);
     await screen.findByText("Headset Gamer XYZ");
-    expect(screen.getByText(/Automático quando faltarem 5 na fila · 20 por vez/)).toBeInTheDocument();
-    expect(screen.queryByLabelText("Produtos por vez")).not.toBeInTheDocument();
+    expect(screen.getByText(/Automático quando faltarem 5 na fila · completa até 20/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Máximo de produtos na fila")).not.toBeInTheDocument();
   });
 
   it("aberto/fechado dos painéis fica guardado no navegador", async () => {
@@ -734,18 +771,18 @@ describe("ProductSearchTab — painéis que abrem em botão", () => {
   it("os dois painéis da faixa não ficam abertos ao mesmo tempo", async () => {
     render(<Harness />);
     fireEvent.click(await screen.findByRole("button", { name: /Configurar/ }));
-    expect(await screen.findByLabelText("Produtos por vez")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Máximo de produtos na fila")).toBeInTheDocument();
 
     abrirOnde();
     expect(await screen.findByRole("button", { name: /Amazon/ })).toBeInTheDocument();
-    expect(screen.queryByLabelText("Produtos por vez")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Máximo de produtos na fila")).not.toBeInTheDocument();
   });
 
   it("Preencher fila agora continua à vista com os painéis fechados", async () => {
     render(<Harness />);
     await screen.findByText("Headset Gamer XYZ");
-    expect(screen.queryByLabelText("Produtos por vez")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Preencher fila agora/ })).toBeEnabled();
+    expect(screen.queryByLabelText("Máximo de produtos na fila")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Completar fila agora/ })).toBeEnabled();
   });
 });
 

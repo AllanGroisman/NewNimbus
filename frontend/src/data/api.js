@@ -394,7 +394,8 @@ export async function fetchOfertas({ category, minDiscount = 0, minPrice = 0, ma
 // Alimenta a prévia da aba "Busca de Produtos" (paginada).
 // Retorna { items, total, page, pageSize, catalogStats }.
 // Com `groupId`, o backend já tira da lista o que essa campanha tem na fila
-// (hideQueued) e o que ela mandou dentro do tempo de espera (hideRecent).
+// (hideQueued) e o que ela já mandou alguma vez (hideRecent) — o mesmo corte que
+// o preenchimento automático faz.
 export async function browseCatalog({
   categories, sources, q = "", minPrice = 0, maxPrice, minDiscount = 0,
   minRating = 0, minSales = 0, sortBy = "discount_desc", page = 1, pageSize = 24,

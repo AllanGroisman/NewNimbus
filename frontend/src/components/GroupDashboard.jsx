@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, storeLockMessage, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, soldText, getGroupCategories, getGroupStats, computeQueueETA, formatETA, formatTimeBR, formatDateBR, isSameDayBR } from "../data/constants";
 import { createWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupQueue, saveGroupQueue, saveItemCoupon, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue, errText } from "../data/api";
+import { refillResultMsg, queueMax } from "../data/refill";
 import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
 import { leadersOf, withLeaders } from "../data/repasseLeaders";
 import { useUnsavedGuard, useRequestNavigation } from "../data/navGuard";
@@ -511,14 +512,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       // Com auto-aprovação OFF, os itens vão pra `pending` (Aguardando revisão),
       // não pra `queue` — então precisamos atualizar os dois.
       if (o) onUpdate(group.id, { queue: o.queue, pending: o.pending });
-      const parts = [];
-      if (r.added > 0) parts.push(`+${r.added} novo${r.added !== 1 ? "s" : ""}`);
-      if (r.removed > 0) parts.push(`-${r.removed} duplicado${r.removed !== 1 ? "s" : ""}`);
-      if (parts.length === 0) parts.push("nada novo no catálogo que passe nos filtros");
-      const destino = r.target === "pending"
-        ? `${r.pendingSize} aguardando revisão`
-        : `fila tem ${r.queueSize} item(ns)`;
-      setRefillMsg({ type: r.added > 0 ? "ok" : "warn", text: `${parts.join(", ")} · ${destino}` });
+      setRefillMsg(refillResultMsg(r));
       setTimeout(() => setRefillMsg(null), 5000);
     } catch (err) {
       // AbortError quando usuário cancela: mensagem amigável, sem alarme.
@@ -1544,6 +1538,13 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   });
 
   const isRepasse = scraping?.kind === "repasse";
+  // "Na fila" é um número só: fila + aguardando revisão. É o mesmo buffer que o
+  // backend usa pra decidir o teto e o limiar do preenchimento
+  // (backend/scheduler.js → refillQueue, autoRefillDue), então separar os dois na
+  // tela fazia o número daqui discordar do número que manda no preenchimento — no
+  // repasse com aprovação manual dava "Fila (0)" com 12 produtos parados.
+  const queueTotal = queue.length + pending.length;
+  const queueLimit = queueMax(scraping);
   const [showRepasseIntro, setShowRepasseIntro] = useState(() => {
     try { return !localStorage.getItem(REPASSE_INTRO_SEEN_KEY); } catch { return true; }
   });
@@ -1559,7 +1560,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     { id: "overview", label: "Visão geral" },
     { id: "manage", label: "Gerenciar" },
     ...(isRepasse ? [] : [{ id: "products", label: "Busca de Produtos" }]),
-    { id: "queue", label: `Fila (${queue.length})`, dot: pending.length > 0 },
+    { id: "queue", label: `Fila (${queueTotal})`, dot: pending.length > 0 },
     { id: "whatsapp", label: `Grupos (${stats.count})` },
     { id: "messages", label: "Modelos Mensagens" },
     { id: "schedule", label: "Janelas de envio", dot: stats.pausedNoWindow },
@@ -1754,7 +1755,12 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           <div data-tour="ov-stats" style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
             <StatCard label="Envios hoje" value={group.sentToday} color={PRIMARY_DARK} />
             <StatCard label="Envios semana" value={group.sentWeek} />
-            <StatCard label="Na fila" value={queue.length} sub={pending.length > 0 ? `${pending.length} aguardando revisão` : undefined} color={pending.length > 0 ? "var(--warn-text)" : undefined} />
+            <StatCard
+              label="Na fila"
+              value={`${queueTotal} de ${queueLimit}`}
+              sub={pending.length > 0 ? `${pending.length} aguardando revisão` : undefined}
+              color={pending.length > 0 ? "var(--warn-text)" : undefined}
+            />
             {(() => {
               const valid = !!group.lastSend && group.lastSend !== "—" && !isNaN(new Date(group.lastSend).getTime());
               const today = valid && isSameDayBR(group.lastSend);
@@ -2874,6 +2880,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 2 }}>Fila de envio</div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
                 {queue.length} produto{queue.length !== 1 ? "s" : ""} agendado{queue.length !== 1 ? "s" : ""}
+                {pending.length > 0 ? <> · {pending.length} aguardando revisão</> : null}
                 {group.lastSend && group.lastSend !== "—" && !isNaN(new Date(group.lastSend).getTime())
                   ? <> · último envio às {formatTimeBR(group.lastSend)}</>
                   : null}

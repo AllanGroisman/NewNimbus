@@ -3,7 +3,7 @@
 
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { app, createTestUser, catalog, scheduler, storage, affiliate, waCalls, resetWa, waConnect } from "../helpers/app.js";
-import { mlProduct, amazonProduct, makeGroup, makeWhatsAppGroup } from "../helpers/fixtures.js";
+import { mlProduct, makeGroup, makeWhatsAppGroup } from "../helpers/fixtures.js";
 
 // Mock do gerarLinkAfiliadoML — evita chamadas HTTP reais ao ML (cookie de teste é inválido).
 // O módulo affiliate é compartilhado por CJS cache, então o spyOn afeta o scheduler também.
@@ -71,7 +71,9 @@ describe("scheduler.refillNow — popa do catalogo", () => {
     expect(r.added).toBe(0);
   });
 
-  it("remove itens stale da fila quando sources muda (so Shopee, fila tem ML/Amazon)", async () => {
+  // Filtro é regra de entrada: trocar a loja da campanha não mexe em quem já está
+  // na fila. Antes o refill expulsava esses itens, e a fila encolhia sozinha.
+  it("trocar as lojas da campanha não tira da fila quem já estava lá", async () => {
     const { user, auth } = await createUserWithMLAffiliate();
     const group = makeGroup({ id: 103, categories: ["gamer"], sources: ["ml"] });
     await auth("put", "/api/state").send({ groups: [group] });
@@ -91,15 +93,81 @@ describe("scheduler.refillNow — popa do catalogo", () => {
 
     const state = await storage.loadState(user.id);
     const g = state.groups.find(g => g.id === 103);
-    expect(g.queue.find(q => q.id === "ml-x")).toBeUndefined();
-    expect(g.queue.find(q => q.id === "amz-x")).toBeUndefined();
+    expect(g.queue.find(q => q.id === "ml-x")).toBeDefined();
+    expect(g.queue.find(q => q.id === "amz-x")).toBeDefined();
     expect(g.queue.find(q => q.id === "manual-x")).toBeDefined();
-    for (const item of g.queue) {
-      expect(item.manual === true || item.store === "Shopee").toBe(true);
-    }
   });
 
-  it("tick remove stale mesmo quando buffer está acima do threshold (sem refill)", async () => {
+  // `batchSize` é o TETO da fila, não um lote solto. Antes o refill somava o lote
+  // inteiro ao que já estava lá, e a fila passava do número que a tela promete.
+  it("completa a fila até o máximo e não passa dele", async () => {
+    await catalog.upsertProducts(
+      Array.from({ length: 8 }, (_, i) => mlProduct(700 + i, { category: "gamer", discount: 30 + i })),
+    );
+    const { user, auth } = await createUserWithMLAffiliate();
+    const group = makeGroup({ id: 110, categories: ["gamer"], sources: ["ml"] });
+    group.scraping.batchSize = 3;
+    await auth("put", "/api/state").send({ groups: [group] });
+
+    const r1 = await scheduler.refillNow(user.id, 110);
+    expect(r1.added).toBe(3);
+    expect(r1.queueSize).toBe(3);
+    expect(r1.limit).toBe(3);
+    expect(r1.full).toBe(false);
+
+    // Segundo clique com a fila já cheia: não busca nada e diz o motivo.
+    const r2 = await scheduler.refillNow(user.id, 110);
+    expect(r2.added).toBe(0);
+    expect(r2.full).toBe(true);
+    expect(r2.queueSize).toBe(3);
+
+    const state = await storage.loadState(user.id);
+    expect(state.groups.find(g => g.id === 110).queue.length).toBe(3);
+  });
+
+  // Fila pela metade: entra só o que falta pro teto, não outro lote inteiro.
+  it("com a fila pela metade, entra só o que falta pro máximo", async () => {
+    await catalog.upsertProducts(
+      Array.from({ length: 8 }, (_, i) => mlProduct(720 + i, { category: "gamer", discount: 30 + i })),
+    );
+    const { user, auth } = await createUserWithMLAffiliate();
+    const group = makeGroup({ id: 111, categories: ["gamer"], sources: ["ml"] });
+    group.scraping.batchSize = 4;
+    await auth("put", "/api/state").send({ groups: [group] });
+
+    await storage.updateGroupOps(user.id, 111, {
+      queue: [{
+        id: "manual-1", key: "manual-1", name: "Manual", link: "https://ml.com/manual",
+        store: "Mercado Livre", category: "gamer", price: 100, discount: 50, manual: true,
+      }],
+    });
+
+    const r = await scheduler.refillNow(user.id, 111);
+    expect(r.added).toBe(3);
+    expect(r.queueSize).toBe(4);
+  });
+
+  // O modo por horários nunca olhou o tamanho da fila: com 12 horários por dia
+  // ela crescia sem teto. Agora quem segura é o teto, não o gatilho.
+  it("modo horários não empilha lote em cima de lote", async () => {
+    await catalog.upsertProducts(
+      Array.from({ length: 10 }, (_, i) => mlProduct(740 + i, { category: "gamer", discount: 30 + i })),
+    );
+    const { user, auth } = await createUserWithMLAffiliate();
+    const group = makeGroup({ id: 112, categories: ["gamer"], sources: ["ml"] });
+    group.scraping.batchSize = 3;
+    await auth("put", "/api/state").send({ groups: [group] });
+
+    for (let i = 0; i < 3; i++) await scheduler.refillNow(user.id, 112);
+
+    const state = await storage.loadState(user.id);
+    expect(state.groups.find(g => g.id === 112).queue.length).toBe(3);
+  });
+
+  // Este tick rodava a cada minuto podando a fila contra os filtros atuais: bastava
+  // apertar um campo na aba Busca de Produtos (que salva sozinha) pra metade da fila
+  // sumir em silêncio, que é a confusão que a task 20 veio resolver.
+  it("tick não tira da fila o que deixou de bater com os filtros", async () => {
     const { user, auth } = await createUserWithMLAffiliate();
     const group = makeGroup({
       id: 104,
@@ -109,57 +177,21 @@ describe("scheduler.refillNow — popa do catalogo", () => {
     });
     await auth("put", "/api/state").send({ groups: [group] });
 
-    const staleQueue = Array.from({ length: 6 }, (_, i) => ({
+    const foraDoFiltro = Array.from({ length: 6 }, (_, i) => ({
       id: `ml-${i}`, key: `ml-${i}`, name: `ML ${i}`,
       link: `https://ml.com/${i}`, store: "Mercado Livre", category: "gamer",
       price: 100, discount: 50,
     }));
-    await storage.updateGroupOps(user.id, 104, { queue: staleQueue });
+    await storage.updateGroupOps(user.id, 104, { queue: foraDoFiltro });
 
     await scheduler.tick();
 
     const state = await storage.loadState(user.id);
     const g = state.groups.find(g => g.id === 104);
-    expect(g.queue.every(q => q.store !== "Mercado Livre")).toBe(true);
-  });
-});
-
-// A busca da aba filtra em SQL (catalog.buildWhere) e o scheduler refiltra em
-// JS (itemMatchesCampaign) pra limpar da fila o que deixou de servir. São duas
-// implementações da mesma regra: se discordarem, o produto entra na fila pela
-// busca e é expulso pela limpeza no tick seguinte — ou o contrário.
-describe("filtros: catálogo (SQL) e itemMatchesCampaign (JS) concordam", () => {
-  const cenario = [
-    mlProduct(451, { category: "gamer", name: "Teclado mecanico 451", discount: 60, price: 300, rating: 4.8, sold: "2 mil vendidos" }),
-    mlProduct(452, { category: "gamer", name: "Teclado barato 452", discount: 10, price: 40, rating: 3.0, sold: "5 vendidos" }),
-    mlProduct(453, { category: "gamer", name: "Mouse sem preco 453", discount: 60, price: null, rating: 4.8, sold: "2 mil vendidos" }),
-    mlProduct(454, { category: "gamer", name: "Monitor sem nota 454", discount: 60, price: 300, rating: null, sold: "2 mil vendidos" }),
-    mlProduct(455, { category: "casa", name: "Teclado de casa 455", discount: 60, price: 300, rating: 4.8, sold: "2 mil vendidos" }),
-    amazonProduct(456, { category: "gamer", name: "Teclado amazon 456", discount: 60, price: 300, rating: 4.8, sold: null }),
-  ];
-
-  const combinacoes = [
-    ["desconto", { minDiscount: 50 }],
-    ["faixa de preço", { minPrice: 100, maxPrice: 500 }],
-    ["nota", { minRating: 4.5 }],
-    ["vendas", { minSales: 1000 }],
-    ["palavra-chave", { keywords: "teclado" }],
-    ["tudo junto", { minDiscount: 50, minPrice: 100, maxPrice: 500, minRating: 4.5, minSales: 1000, keywords: "teclado, mouse" }],
-  ];
-
-  it.each(combinacoes)("mesma resposta pro filtro de %s", async (_nome, filters) => {
-    await catalog.upsertProducts(cenario);
-    const group = makeGroup({ id: 460, categories: ["gamer"], sources: ["ml"], filters });
-
-    const doSql = await catalog.query({
-      categories: ["gamer"], sources: ["ml"], filters, limit: 100,
-    });
-    const todos = await catalog.query({ limit: 100 });
-    const ctx = scheduler.campaignFilterCtx(group);
-    const doJs = todos.filter(p => scheduler.itemMatchesCampaign(p, ctx));
-
-    expect(doJs.map(p => p.name).sort()).toEqual(doSql.map(p => p.name).sort());
-    expect(doSql.length).toBeGreaterThan(0);
+    // O tick pode ter enviado o primeiro da fila (a janela está aberta); o que não
+    // pode é a fila perder item por não bater mais com os filtros da campanha.
+    expect(g.queue.every(q => q.store === "Mercado Livre")).toBe(true);
+    expect(g.queue.length).toBeGreaterThanOrEqual(5);
   });
 });
 

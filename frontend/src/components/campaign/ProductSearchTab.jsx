@@ -10,6 +10,7 @@ import UsageBadge from "../ui/UsageBadge";
 import Badge from "../ui/Badge";
 import { ProductGridCard } from "../ui/ProductCard";
 import Pagination from "../ui/Pagination";
+import { DEFAULT_BATCH, MAX_BATCH, queueMax } from "../../data/refill";
 
 // Ordens aceitas pelo catálogo (backend/catalog/pg.js). O mesmo valor vai pro
 // `scraping.sortBy` da campanha, então a prévia e o preenchimento da fila
@@ -22,8 +23,6 @@ export const SORT_OPTIONS = [
   { id: "lastSeen_desc", label: "Mais recentes" },
 ];
 export const DEFAULT_SORT = "discount_desc";
-export const DEFAULT_BATCH = 20;
-export const MAX_BATCH = 50;
 
 // Tetos dos filtros que têm um: nota vai até 5 e desconto até 100%. Vendas não
 // tem teto — o catálogo chega em dezenas de milhares.
@@ -135,13 +134,26 @@ export default function ProductSearchTab({
   // de mudar de identidade.
   const filters = useMemo(() => scraping.filters || {}, [scraping.filters]);
   const sortBy = SORT_OPTIONS.some(o => o.id === scraping.sortBy) ? scraping.sortBy : DEFAULT_SORT;
-  const batch = Number(scraping.batchSize) > 0 ? Math.min(MAX_BATCH, Number(scraping.batchSize)) : DEFAULT_BATCH;
+  // `batchSize` é o TETO da fila: o preenchimento completa até ele e para. O que
+  // ainda cabe (`vagas`) sai daqui mesmo, sem request — a fila e os pendentes já
+  // chegam como prop.
+  const batch = queueMax(scraping);
   const autoRefill = scraping.autoRefill !== false;
   const refillMode = scraping.refillMode === "schedule" ? "schedule" : "threshold";
   const refillThreshold = Number(scraping.refillThreshold) > 0
     ? Math.min(MAX_REFILL_THRESHOLD, Number(scraping.refillThreshold))
     : DEFAULT_REFILL_THRESHOLD;
   const refillTimes = Array.isArray(scraping.refillTimes) ? scraping.refillTimes : [];
+  // Pendentes contam junto com a fila: é o mesmo buffer que o preenchimento usa
+  // pra decidir quantos cabem (backend/scheduler.js → refillQueue).
+  const naFila = queue.length + pending.length;
+  const vagas = Math.max(0, batch - naFila);
+  const filaCheia = vagas === 0;
+  // Adicionar a dedo pelo card passa por cima do máximo de propósito — é escolha
+  // explícita do usuário, e o backend não bloqueia (addItemToGroup). O que a tela
+  // precisa é parar de fingir que o máximo é intransponível: acima dele o
+  // preenchimento automático fica parado até a fila baixar.
+  const acimaDoMaximo = naFila > batch;
 
   // Autosave: esta aba não tem botão de salvar. Assim que há alteração pendente
   // (`dirty`), agenda a gravação; qualquer mexida nova reinicia o relógio, então
@@ -360,8 +372,11 @@ export default function ProductSearchTab({
     return undefined;
   };
 
-  // Enviados dentro do tempo de espera para reenvio: o preenchimento pula esses
-  // produtos, então por padrão a lista também não os mostra.
+  // Enviados dentro do tempo de espera para reenvio. A lista não usa isso pra
+  // esconder nada (o backend já tira do resultado tudo que a campanha enviou
+  // alguma vez) — serve só pro selo "Enviado há pouco" quando a chave "Mostrar já
+  // enviados" está ligada, que é a diferença entre pedir confirmação de reenvio e
+  // adicionar direto.
   const recentKeys = useMemo(() => {
     const set = new Set();
     if (!(cooldownMinutes > 0)) return set;
@@ -446,8 +461,8 @@ export default function ProductSearchTab({
   const queueSummary = !autoRefill
     ? "Automático desligado — só entra o que você mandar"
     : refillMode === "schedule"
-      ? `Automático às ${timesSummary} · ${batch} por vez`
-      : `Automático quando faltarem ${refillThreshold} na fila · ${batch} por vez`;
+      ? `Automático às ${timesSummary} · completa até ${batch}`
+      : `Automático quando faltarem ${refillThreshold} na fila · completa até ${batch}`;
 
   // Resumo do "Onde buscar", pra o painel fechado ainda dizer onde a campanha
   // está procurando.
@@ -456,7 +471,7 @@ export default function ProductSearchTab({
     `${categories.length} ${categories.length === 1 ? "categoria" : "categorias"}`,
   ].join(" · ");
 
-  // As chaves "Já na fila" e "Enviados recentemente" agora são filtro de
+  // As chaves "Já na fila" e "Já enviados" agora são filtro de
   // servidor (vão no paramsSig), então a página chega pronta. O que ainda pode
   // aparecer com elas desligadas é o que o usuário acabou de adicionar nesta
   // sessão — a lista só é rebuscada quando ele troca de página ou de filtro.
@@ -751,7 +766,7 @@ export default function ProductSearchTab({
         {/* A ordem não fica aqui: é o mesmo `scraping.sortBy` do seletor que
             está em cima da lista de produtos, onde dá pra ver o efeito. */}
         <div style={{ maxWidth: 280, paddingTop: 14 }}>
-          <label style={fieldLabelStyle} htmlFor="pr-batch">Produtos por vez</label>
+          <label style={fieldLabelStyle} htmlFor="pr-batch">Máximo de produtos na fila</label>
           <input
             id="pr-batch" type="number" min={1} max={MAX_BATCH} value={batch}
             onChange={e => {
@@ -762,7 +777,19 @@ export default function ProductSearchTab({
             onBlur={e => { if (e.target.value === "") setScraping(s => ({ ...s, batchSize: DEFAULT_BATCH })); }}
             style={inputStyle}
           />
-          <div style={hintStyle}>De 1 a {MAX_BATCH}.</div>
+          <div style={hintStyle}>
+            O preenchimento completa a fila até esse número e para. De 1 a {MAX_BATCH}.
+          </div>
+          {/* Limiar maior que o teto: o preenchimento até dispara, mas não tem
+              vaga pra nada entrar. Só aviso — o valor salvo continua o que o
+              usuário escreveu. */}
+          {autoRefill && refillMode === "threshold" && refillThreshold >= batch && (
+            <div style={{ ...noteStyle("warn"), marginTop: 10 }}>
+              O limiar ({refillThreshold}) é maior ou igual ao máximo da fila ({batch}) — quando
+              o preenchimento disparar, a fila já vai estar cheia e nada vai entrar. Baixe o
+              limiar ou suba o máximo.
+            </div>
+          )}
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 12, paddingTop: 14 }}>
@@ -998,8 +1025,8 @@ export default function ProductSearchTab({
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-              <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Mostrar enviados recentemente</span>
-              <Toggle label="Mostrar enviados recentemente" value={view.recent} onChange={v => setViewFlag("recent", v)} />
+              <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Mostrar já enviados</span>
+              <Toggle label="Mostrar os que a campanha já enviou" value={view.recent} onChange={v => setViewFlag("recent", v)} />
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
               <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Mostrar já na fila</span>
@@ -1026,11 +1053,17 @@ export default function ProductSearchTab({
           <button
             data-tour="pr-run"
             onClick={() => setAskRefill(true)}
-            disabled={refilling || noSources}
-            title={noSources ? "Escolha ao menos uma loja disponível" : "Salva a configuração e completa a fila agora, sem esperar o horário"}
-            style={{ padding: "9px 20px", borderRadius: 8, border: "none", background: PRIMARY, color: "#fff", fontSize: 13, cursor: refilling ? "wait" : (noSources ? "not-allowed" : "pointer"), fontWeight: 500, opacity: refilling || noSources ? 0.6 : 1 }}
+            disabled={refilling || noSources || filaCheia}
+            title={noSources
+              ? "Escolha ao menos uma loja disponível"
+              : filaCheia
+                ? `A fila está em ${naFila}, no máximo de ${batch}. O preenchimento fica parado até ela baixar — suba o máximo em "Preenchimento automático › Máximo de produtos na fila", ou espere sair o que está na fila.`
+                : "Salva a configuração e completa a fila agora, sem esperar o horário"}
+            style={{ padding: "9px 20px", borderRadius: 8, border: "none", background: PRIMARY, color: "#fff", fontSize: 13, cursor: refilling ? "wait" : (noSources || filaCheia ? "not-allowed" : "pointer"), fontWeight: 500, opacity: refilling || noSources || filaCheia ? 0.6 : 1 }}
           >
-            {refilling ? "⟳ Preenchendo..." : `Preencher fila agora (até ${batch})`}
+            {refilling ? "⟳ Preenchendo..."
+              : filaCheia ? `Fila cheia (${batch})`
+              : `Completar fila agora (faltam ${vagas})`}
           </button>
           {/* O que o botão faz está no pop-up de confirmação, que é onde a
               informação chega na hora de decidir. */}
@@ -1048,6 +1081,14 @@ export default function ProductSearchTab({
             <button onClick={runSearch} style={{ ...chipStyle({ active: false }), padding: "5px 12px", fontSize: 12 }}>
               Tentar de novo
             </button>
+          </div>
+        )}
+
+        {acimaDoMaximo && (
+          <div style={{ ...noteStyle("warn"), marginBottom: 10 }}>
+            A fila está em {naFila}, acima do máximo de {batch} — o preenchimento automático
+            fica parado até ela baixar de {batch}. Você ainda pode adicionar produtos a dedo
+            pelos cards abaixo.
           </div>
         )}
 
@@ -1214,12 +1255,13 @@ export default function ProductSearchTab({
       {askRefill && (
         <Modal title="Preencher a fila agora?" onClose={() => setAskRefill(false)}>
           <div style={{ fontSize: 13, lineHeight: 1.5, marginBottom: 10 }}>
-            Vamos pegar os <strong>{batch} primeiros produtos</strong> desta lista, na ordem em que
-            estão na tela, e mandar pra fila.
+            Vamos completar a fila com <strong>até {vagas} produtos</strong> desta lista, na ordem
+            em que estão na tela — o que falta pra ela chegar no máximo de {batch}.
           </div>
           <div style={{ fontSize: 12, color: "var(--color-text-secondary)", lineHeight: 1.5, marginBottom: 18 }}>
-            O que já está na fila ou foi enviado há pouco é pulado, então pode entrar menos que {batch}.
-            As escolhas desta aba também são salvas.
+            Pode entrar menos por dois motivos: produto sem link de afiliado é descartado, e o
+            catálogo pode não ter {vagas} produtos novos que passem nos filtros. As escolhas
+            desta aba também são salvas.
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button onClick={() => setAskRefill(false)} style={chipStyle({ active: false })}>
@@ -1261,7 +1303,7 @@ function isNew(product) {
 function emptyListText(view) {
   const base = "Nenhum produto do catálogo passa nesses filtros. Afrouxe algum critério, marque mais categorias";
   return (!view.queued || !view.recent)
-    ? `${base}, ou ligue as chaves acima pra ver os que já estão na fila.`
+    ? `${base}, ou ligue as chaves acima pra ver os que já estão na fila ou já foram enviados.`
     : `${base}.`;
 }
 
