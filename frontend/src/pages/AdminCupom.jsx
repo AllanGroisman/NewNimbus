@@ -12,6 +12,7 @@ import { PRIMARY, PRIMARY_DARK } from "../data/constants";
 import { adminCouponTest, adminCouponHistory, adminMlCuponsSyncProducts, errText } from "../data/api";
 import CuponsDoML from "./AdminCupomML";
 import ConfigTest from "./AdminCupomConfig";
+import DescobrirPalavra from "./AdminCupomPalavra";
 
 // Semáforo por desfecho. Os "cupom existe mas não serve" ficam em amarelo de
 // propósito: são respostas úteis do ML, não falha da ferramenta.
@@ -56,11 +57,12 @@ const COBERTURA_ORIGEM = {
   amostra: "pelas miniaturas do card do cupom",
 };
 
-// Três perguntas diferentes moram nesta página, e cada uma tem a sua aba:
+// Quatro perguntas diferentes moram nesta página, e cada uma tem a sua aba:
 // "Testar cupom" é o diagnóstico de UM código num produto; "Cupons do ML" é a
 // lista que o Mercado Livre oferece para a conta do sistema, com os produtos de
-// cada cupom (AdminCupomML.jsx); "Config Test" confere — e conserta — o que a
-// colheita de vitrines precisa pra rodar (AdminCupomConfig.jsx).
+// cada cupom (AdminCupomML.jsx); "Descobrir palavra" descobre a que campanha uma
+// palavra pertence (AdminCupomPalavra.jsx); "Config Test" confere — e conserta —
+// o que a colheita de vitrines precisa pra rodar (AdminCupomConfig.jsx).
 export default function PageAdminCupom() {
   const [aba, setAba] = useState("teste");
 
@@ -77,6 +79,7 @@ export default function PageAdminCupom() {
         {[
           ["teste", "Testar cupom"],
           ["ml", "Cupons do ML"],
+          ["palavra", "Descobrir palavra"],
           ["config", "Config Test"],
         ].map(([id, label]) => (
           <button
@@ -97,6 +100,7 @@ export default function PageAdminCupom() {
 
       {aba === "teste" && <TestarNoCheckout />}
       {aba === "ml" && <CuponsDoML />}
+      {aba === "palavra" && <DescobrirPalavra />}
       {aba === "config" && <ConfigTest />}
     </div>
   );

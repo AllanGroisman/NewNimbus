@@ -579,12 +579,13 @@ export async function adminMlCuponsDiagnosticoLink(url) {
 export async function adminMlCuponsProducts(campaignId, { page = 1, pageSize = 50 } = {}) {
   return http("GET", `/api/admin/ml-cupons/${encodeURIComponent(campaignId)}/produtos?page=${page}&pageSize=${pageSize}`);
 }
-export async function adminMlCupons({ page = 1, pageSize = 50, q, scope, onlyActive, onlyValid, withCode, sortBy } = {}) {
+export async function adminMlCupons({ page = 1, pageSize = 50, q, scope, grouping, onlyActive, onlyValid, withCode, sortBy } = {}) {
   const params = new URLSearchParams();
   params.set("page", page);
   params.set("pageSize", pageSize);
   if (q) params.set("q", q);
   if (scope) params.set("scope", scope);
+  if (grouping) params.set("grouping", grouping);
   if (onlyActive) params.set("onlyActive", "true");
   if (onlyValid) params.set("onlyValid", "true");
   if (withCode) params.set("withCode", "true");

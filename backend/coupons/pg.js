@@ -235,7 +235,7 @@ async function recordCodeCheck({ code, verdict, campaignId = null, message = nul
 // Leitura
 // ────────────────────────────────────────────────────────────────────────
 
-function buildCouponWhere({ q = "", scope = null, onlyActive = false, onlyValid = false, withCode = false } = {}) {
+function buildCouponWhere({ q = "", scope = null, grouping = null, onlyActive = false, onlyValid = false, withCode = false } = {}) {
   const AND = [];
   if (q && String(q).trim()) {
     const t = String(q).trim();
@@ -247,6 +247,10 @@ function buildCouponWhere({ q = "", scope = null, onlyActive = false, onlyValid 
     ] });
   }
   if (scope) AND.push({ scope });
+  // A categoria do ML mora num array Json (jsonb no Postgres) porque o mesmo cupom
+  // aparece em vários grupos — o 13907402 estava em 7. `array_contains` é o filtro
+  // nativo do Prisma pra isso; não dá pra usar igualdade.
+  if (grouping && String(grouping).trim()) AND.push({ groupings: { array_contains: String(grouping).trim() } });
   if (onlyActive) AND.push({ activated: true });
   if (onlyValid) AND.push({ OR: [{ expiresAt: null }, { expiresAt: { gt: nowish() } }] });
   if (withCode) AND.push({ code: { not: null } });
@@ -447,7 +451,22 @@ async function stats() {
     prisma().mlCoupon.findFirst({ orderBy: { lastSeenAt: "desc" }, select: { lastSeenAt: true } }),
   ]);
   const catalogo = await prisma().catalogProduct.count({ where: { couponCampaignId: { not: null } } });
-  return { cupons, validos, comVitrine, vinculos, parciais, comCodigo, catalogo, ultimaColeta: ultimo?.lastSeenAt || null };
+  return { cupons, validos, comVitrine, vinculos, parciais, comCodigo, catalogo, ultimaColeta: ultimo?.lastSeenAt || null, porCategoria: await countByGrouping() };
+}
+
+// Quantos cupons GUARDADOS há em cada categoria do ML. É diferente do `count` que
+// a aba do ML mostra (aquele é o que o ML tem, não o que o sistema colheu), e é o
+// que alimenta o filtro por categoria da tela do admin. `groupings` é um array
+// jsonb, então a contagem passa por jsonb_array_elements_text — um cupom em 7
+// grupos conta 1 em cada.
+async function countByGrouping() {
+  const rows = await prisma().$queryRaw`
+    SELECT g.chave AS chave, COUNT(*)::int AS n
+      FROM "ml_coupons" c,
+           LATERAL jsonb_array_elements_text(c."groupings") AS g(chave)
+     GROUP BY 1
+     ORDER BY 2 DESC`;
+  return rows.map(r => ({ chave: r.chave, n: r.n }));
 }
 
 // Faxina: cupom vencido há mais de `days` dias não interessa a ninguém, e os
@@ -531,6 +550,7 @@ module.exports = {
   listCodeChecks,
   findCodeCheck,
   stats,
+  countByGrouping,
   pruneExpired,
   EXPIRA_COM_FOLGA_MIN,
 };

@@ -16,6 +16,12 @@ const { productKey } = require("../catalog/product-key");
 
 const CONFIG_KEY = "ml-cupons-config";
 const STATUS_KEY = "ml-cupons-status";
+// O dicionário `chave da categoria do ML → nome que aparece na aba` (ce_vertical →
+// "Eletrônicos"). O cupom guarda só a chave (`ml_coupons.groupings`); o nome só o
+// ML diz, e só na leitura da aba. Fica MESCLADO a cada rodada em vez de
+// sobrescrito: uma rodada por categoria não lista as outras, e sobrescrever
+// deixaria a tela do admin mostrando `tb_vertical` cru pro resto.
+const GROUPINGS_KEY = "ml-cupons-groupings";
 
 const DEFAULT_CONFIG = {
   // Chaves de categoria do ML (ce_vertical, tb_vertical…). Vazio = todos os cupons
@@ -103,6 +109,29 @@ function persistStatus() {
   });
 }
 
+// { chave: nome } do que já se viu em alguma rodada. Só leitura — quem escreve é
+// o mergeGroupingLabels().
+function readGroupingLabels() {
+  const raw = appConfig.get(GROUPINGS_KEY);
+  return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+}
+
+// `grupos` é o `groupings` do parseLanding: [{ key, title, count, more }].
+function mergeGroupingLabels(grupos) {
+  if (!Array.isArray(grupos) || !grupos.length) return readGroupingLabels();
+  const mapa = readGroupingLabels();
+  let mudou = false;
+  for (const g of grupos) {
+    const chave = typeof g === "string" ? g : g?.key;
+    const nome = typeof g === "string" ? null : g?.title;
+    if (!chave || !nome || mapa[chave] === nome) continue;
+    mapa[chave] = String(nome).slice(0, 80);
+    mudou = true;
+  }
+  if (mudou) appConfig.set(GROUPINGS_KEY, mapa);
+  return mapa;
+}
+
 function readConfig() {
   const raw = appConfig.get(CONFIG_KEY);
   return raw && typeof raw === "object" ? { ...DEFAULT_CONFIG, ...raw } : { ...DEFAULT_CONFIG };
@@ -167,6 +196,7 @@ function logar(tipo, texto, { dedup = false } = {}) {
 function status() {
   return {
     config: readConfig(),
+    groupingLabels: readGroupingLabels(),
     ..._status,
     running: _status.running || mlCupons.isRunning(),
     // A rodada não pode começar com uma busca de campanha em andamento: é a mesma
@@ -295,6 +325,9 @@ function runOnce(overrides = {}) {
       _status.lastRun = result.at;
       _status.lastDuration = Date.now() - t0;
       _status.lastResult = { ...resumo, totalNoML: result.totalNoML, categoriasDoML: result.categoriasDoML };
+      // O nome das categorias só passa por aqui: guarda antes que a próxima rodada
+      // (que pode ler uma categoria só) apague o resto do lastResult.
+      mergeGroupingLabels(result.categoriasDoML);
       _status.lastError = resumo.avisos.length ? resumo.avisos.join(" ") : null;
       logar("ok", `terminou em ${Math.round((Date.now() - t0) / 1000)}s: ${resumo.cupons} cupons (${resumo.novos} novos), ${resumo.ativados} ativados, ${resumo.vinculos} vínculos, ${resumo.catalogoCarimbado} produtos do catálogo carimbados`);
       for (const aviso of resumo.avisos) logar("aviso", aviso);
@@ -668,8 +701,11 @@ module.exports = {
   importStatus,
   checkWord,
   loadPersistedStatus,
+  readGroupingLabels,
+  mergeGroupingLabels,
   textoDoProgresso,
   CONFIG_KEY,
   STATUS_KEY,
+  GROUPINGS_KEY,
   DEFAULT_CONFIG,
 };
