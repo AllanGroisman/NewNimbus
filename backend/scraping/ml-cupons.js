@@ -1164,7 +1164,12 @@ async function runPull({ groupings = [], limit = 60, withProducts = true, maxPro
             if (!res.parcial) cuponsComVitrine++;
             produtosVinculados += res.products.length;
           }
-          if (onProgress) await onProgress({ etapa: "vitrines", cupons: cupons.length, vitrines: vitrines.length, produtos: produtosVinculados });
+          // `title`/`ok`/`reason` viajam junto pra tela conseguir dizer QUAL vitrine
+          // acabou de abrir, e não só quantas. Os contadores continuam como eram.
+          if (onProgress) await onProgress({
+            etapa: "vitrines", cupons: cupons.length, vitrines: vitrines.length, produtos: produtosVinculados,
+            campaignId: cupom.campaignId, title: cupom.title, ok: !!res.ok, reason: res.reason || null,
+          });
           // A pausa longa existe pra não parecer robô navegando. O caminho da
           // landing não navega em nada — são duas chamadas HTTP —, então esperar
           // 2s por cupom ali só faria a rodada demorar horas à toa.

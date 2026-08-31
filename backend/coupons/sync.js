@@ -52,11 +52,21 @@ let _status = {
   running: false,
   startedAt: null,
   progress: null,
+  // O passo a passo da rodada, pra tela do admin conseguir mostrar o que está
+  // acontecendo em vez de uma linha que se sobrescreve. Vive só em memória e de
+  // propósito: são centenas de linhas por rodada, o valor delas é enquanto a
+  // rodada corre, e o que precisa sobreviver a um restart é o RESUMO — que
+  // continua indo pro app_config no persistStatus().
+  log: [],
   lastRun: null,
   lastDuration: null,
   lastResult: null,
   lastError: null,
 };
+
+// Teto do log. Uma rodada grande emite um evento por cupom, e guardar tudo é
+// segurar megabytes na memória do processo da API pra mostrar 20 linhas na tela.
+const MAX_LOG = 200;
 
 let _promise = null;
 
@@ -119,6 +129,39 @@ function writeConfig(cfg) {
     : DEFAULT_CONFIG.maxActivationsPerRun;
   appConfig.set(CONFIG_KEY, merged);
   return merged;
+}
+
+// O evento cru do scraping virando frase. Puro de propósito: é o que o teste
+// consegue checar sem subir rodada nenhuma, e é a MESMA tradução que a tela
+// mostrava antes numa linha só (AdminCupomML).
+function textoDoProgresso(p) {
+  if (!p || typeof p !== "object") return null;
+  if (p.etapa === "cupons") {
+    const onde = p.grouping ? `de ${p.grouping}` : "geral";
+    const loja = p.ignoradosLoja ? ` (${p.ignoradosLoja} de loja ignorados)` : "";
+    return `lendo a lista ${onde} — página ${p.pagina}/${p.de}, ${p.cupons} cupons${loja}`;
+  }
+  if (p.etapa === "abrindo") return "abrindo a aba de cupons do Mercado Livre";
+  if (p.etapa === "ativando") return `ativando "${p.title || p.campaignId}"`;
+  if (p.etapa === "vitrine") return `abrindo a vitrine de "${p.title || p.campaignId}"`;
+  if (p.etapa === "vitrines") {
+    // O `title` chega desde a mudança em ml-cupons.js; sem ele a frase ainda faz
+    // sentido, só fica sem o nome do cupom.
+    const qual = p.title ? ` · "${p.title}"${p.ok === false ? ` — ${p.reason || "vitrine não veio"}` : ""}` : "";
+    return `vitrines: ${p.vitrines}/${p.cupons} cupons, ${p.produtos} produtos${qual}`;
+  }
+  return null;
+}
+
+// Anexa uma linha ao log da rodada. `dedup` descarta a repetição da MESMA frase:
+// o crawler emite um evento por página e vários saem idênticos, e 40 linhas
+// iguais escondem as que importam.
+function logar(tipo, texto, { dedup = false } = {}) {
+  if (!texto) return;
+  const ultimo = _status.log[_status.log.length - 1];
+  if (dedup && ultimo && ultimo.texto === texto) return;
+  _status.log.push({ at: new Date().toISOString(), tipo, texto });
+  if (_status.log.length > MAX_LOG) _status.log.splice(0, _status.log.length - MAX_LOG);
 }
 
 function status() {
@@ -226,6 +269,8 @@ function runOnce(overrides = {}) {
   _status.startedAt = new Date().toISOString();
   _status.progress = null;
   _status.lastError = null;
+  _status.log = [];
+  logar("info", `começando: ${cfg.groupings?.length ? `categorias ${cfg.groupings.join(", ")}` : "todas as categorias"}, até ${cfg.limitPerGrouping} cupons por categoria${cfg.withProducts ? ", com as vitrines" : ", sem abrir vitrine"}`);
 
   _promise = (async () => {
     try {
@@ -240,7 +285,10 @@ function runOnce(overrides = {}) {
           ? Number(cfg.maxActivationsPerRun)
           : DEFAULT_CONFIG.maxActivationsPerRun,
       }, {
-        onProgress: (p) => { _status.progress = p; },
+        onProgress: (p) => {
+          _status.progress = p;
+          logar("info", textoDoProgresso(p), { dedup: true });
+        },
       });
 
       const resumo = await persistRun(result);
@@ -248,6 +296,8 @@ function runOnce(overrides = {}) {
       _status.lastDuration = Date.now() - t0;
       _status.lastResult = { ...resumo, totalNoML: result.totalNoML, categoriasDoML: result.categoriasDoML };
       _status.lastError = resumo.avisos.length ? resumo.avisos.join(" ") : null;
+      logar("ok", `terminou em ${Math.round((Date.now() - t0) / 1000)}s: ${resumo.cupons} cupons (${resumo.novos} novos), ${resumo.ativados} ativados, ${resumo.vinculos} vínculos, ${resumo.catalogoCarimbado} produtos do catálogo carimbados`);
+      for (const aviso of resumo.avisos) logar("aviso", aviso);
       persistStatus();
       console.log(`[ml-cupons] rodada: ${resumo.cupons} cupons (${resumo.novos} novos), ${resumo.ativados} ativados, ${resumo.vinculos} vínculos, ${resumo.catalogoCarimbado} produtos carimbados, ${resumo.cuponsDeLojaIgnorados} de loja ignorados`);
       return _status.lastResult;
@@ -255,6 +305,7 @@ function runOnce(overrides = {}) {
       _status.lastRun = new Date().toISOString();
       _status.lastDuration = Date.now() - t0;
       _status.lastError = err.message;
+      logar("erro", `a rodada parou: ${err.message}`);
       persistStatus();
       console.error("[ml-cupons] rodada falhou:", err.message);
       throw err;
@@ -270,6 +321,9 @@ function runOnce(overrides = {}) {
 
 function cancel() {
   mlCupons.cancel();
+  // O cancelamento é cooperativo: a rodada só para no próximo ponto de checagem.
+  // Sem esta linha o log fica mudo entre o clique e a parada, e parece travamento.
+  logar("aviso", "cancelamento pedido — parando no próximo cupom");
   return { canceling: true };
 }
 
@@ -614,6 +668,7 @@ module.exports = {
   importStatus,
   checkWord,
   loadPersistedStatus,
+  textoDoProgresso,
   CONFIG_KEY,
   STATUS_KEY,
   DEFAULT_CONFIG,

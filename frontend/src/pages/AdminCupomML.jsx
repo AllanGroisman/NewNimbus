@@ -11,7 +11,7 @@
 //      ou automáticos), mas o ML aceita uma palavra digitada e responde a que
 //      campanha ela pertence. Não dá para listar as palavras — só testar.
 import { Fragment, useState, useEffect, useCallback, useRef } from "react";
-import { PRIMARY, PRIMARY_DARK } from "../data/constants";
+import { PRIMARY_DARK } from "../data/constants";
 import {
   adminMlCupons, adminMlCuponsStatus, adminMlCuponsRun, adminMlCuponsCancel,
   adminMlCuponsSaveConfig, adminMlCuponsProducts, adminMlCuponsSyncProducts,
@@ -20,6 +20,13 @@ import {
 } from "../data/api";
 import { coletorPronto, raparVitrine } from "../data/coletor";
 import Modal from "../components/ui/Modal";
+import ColheitaLog from "../components/admin/ColheitaLog";
+import ExtensaoAusente from "../components/admin/ExtensaoAusente";
+import Numero from "../components/admin/Numero";
+import {
+  segundos, cardStyle, inputStyle, labelStyle, th, td,
+  botaoPrimario, botaoSecundario, botaoPerigo, botaoLink,
+} from "../components/admin/cupomEstilos";
 
 // Entre uma vitrine e a próxima, no lote. Dez listagens seguidas sem respiro é o
 // padrão que faz o ML pedir verificação — e a sessão aqui é a do próprio admin.
@@ -43,6 +50,26 @@ const VERDICT = {
   indeterminado: { label: "❓ o ML não respondeu", color: "var(--warn-text)" },
 };
 
+// O balanço da última rodada do servidor, no mesmo formato do lote da extensão.
+// Antes isto era uma frase corrida de 300 caracteres, que ninguém lia.
+function resumoDaRodada(status) {
+  const r = status.lastResult;
+  return {
+    titulo: `Última rodada — ${new Date(status.lastRun).toLocaleString("pt-BR")}`,
+    tom: status.lastError ? "aviso" : "ok",
+    nota: status.lastError || null,
+    numeros: [
+      { label: "Cupons", valor: r?.cupons },
+      { label: "Novos", valor: r?.novos },
+      { label: "Ativados", valor: r?.ativados },
+      { label: "Vínculos cupom↔produto", valor: r?.vinculos },
+      { label: "Catálogo carimbado", valor: r?.catalogoCarimbado },
+      { label: "De loja ignorados", valor: r?.cuponsDeLojaIgnorados },
+      { label: "Duração", valor: segundos(status.lastDuration) },
+    ],
+  };
+}
+
 export default function CuponsDoML() {
   const [status, setStatus] = useState(null);
   const [lista, setLista] = useState({ items: [], total: 0, page: 1, pageSize: 50 });
@@ -58,7 +85,11 @@ export default function CuponsDoML() {
   // `ref` e não `state`: o laço do lote precisa ler o valor ATUAL a cada volta, e
   // um state ficaria congelado na closure em que o laço começou.
   const pararRef = useRef(false);
-  const [progresso, setProgresso] = useState(null);  // texto do andamento
+  const [progresso, setProgresso] = useState(null);  // a linha curta do "agora"
+  // O passo a passo do lote e o balanço dele. `eventos` é append-only durante a
+  // colheita; `resumoColheita` só existe depois que ela termina.
+  const [eventos, setEventos] = useState([]);
+  const [resumoColheita, setResumoColheita] = useState(null);
   const [produtos, setProdutos] = useState({});      // campaignId → { items, total }
   const [sincronizando, setSincronizando] = useState(null);
   const [confirmarLimpeza, setConfirmarLimpeza] = useState(false);
@@ -96,9 +127,11 @@ export default function CuponsDoML() {
 
   // Enquanto a rodada corre, o status é a única forma de saber onde ela está.
   // O mesmo tick recarrega a lista, que só depois de terminar tem o que mostrar.
+  // 2s, não 5: o passo a passo da rodada só parece ao vivo assim. Fora da rodada
+  // não há poll nenhum, como antes.
   useEffect(() => {
     if (!status?.running) return undefined;
-    const id = setInterval(recarregar, 5000);
+    const id = setInterval(recarregar, 2000);
     return () => clearInterval(id);
   }, [status?.running, recarregar]);
 
@@ -136,9 +169,15 @@ export default function CuponsDoML() {
   // Colhe UM cupom. Devolve o que aconteceu em vez de mexer no `erro` da tela,
   // porque quem chama em lote precisa decidir se para ou segue — e um `setErro`
   // por cupom apagaria o anterior.
+  // Uma linha no log do lote. `useCallback` não faz falta aqui: quem chama é o
+  // laço da colheita, não um efeito.
+  const logar = (tipo, texto) => setEventos(ev => [...ev, { at: new Date().toISOString(), tipo, texto }]);
+
   const colherUm = async (c, prefixo = "") => {
     setColhendo(c.campaignId);
     setProgresso(`${prefixo}abrindo a vitrine numa aba…`);
+    const nome = c.title || c.campaignId;
+    logar("info", `${prefixo}abrindo a vitrine de “${nome}”`);
     // Muro visto durante ESTE cupom. A extensão traz a aba para a frente e espera
     // o humano, então o cupom ainda pode dar certo — mas a sessão já foi
     // questionada, e é isso que o lote precisa saber.
@@ -147,19 +186,27 @@ export default function CuponsDoML() {
       const r = await raparVitrine(c.containerUrl, {
         onProgresso: (p) => {
           if (p.tipo === "muro") viuMuro = true;
-          setProgresso(prefixo + (p.tipo === "muro"
+          const texto = p.tipo === "muro"
             // O único momento em que a aba vem para a frente: a decisão é do humano.
             ? "o Mercado Livre pediu verificação — resolva na aba que abriu"
-            : `página ${p.pagina} · ${p.produtos} produto(s)`));
+            : `página ${p.pagina} · ${p.produtos} produto(s)`;
+          setProgresso(prefixo + texto);
+          logar(p.tipo === "muro" ? "aviso" : "info", `${prefixo}${texto}`);
         },
       });
-      if (!r.produtos.length) return { ok: false, muro: viuMuro, vazia: true, motivo: r.motivo || null };
+      if (!r.produtos.length) {
+        logar("aviso", `${prefixo}“${nome}”: a vitrine não devolveu produto nenhum${r.motivo ? ` (${r.motivo})` : ""}`);
+        return { ok: false, muro: viuMuro, vazia: true, motivo: r.motivo || null };
+      }
       setProgresso(`${prefixo}gravando…`);
       const salvo = await adminMlCuponsImportVitrine(c.campaignId, { products: r.produtos, parcial: r.parcial });
       setProdutos(p => ({ ...p, [c.campaignId]: undefined }));
+      logar("ok", `${prefixo}“${nome}”: ${salvo.produtos} produto(s) gravado(s)${r.parcial ? " — parcial, a vitrine não veio inteira" : ""}`);
       return { ok: true, muro: viuMuro, produtos: salvo.produtos, parcial: r.parcial };
     } catch (err) {
-      return { ok: false, muro: viuMuro, motivo: errText(err, "Não deu pra colher a vitrine desse cupom.") };
+      const motivo = errText(err, "Não deu pra colher a vitrine desse cupom.");
+      logar("erro", `${prefixo}“${nome}”: ${motivo}`);
+      return { ok: false, muro: viuMuro, motivo };
     } finally {
       setColhendo(null);
     }
@@ -167,17 +214,34 @@ export default function CuponsDoML() {
 
   const colher = async (c) => {
     setErro(null);
+    setEventos([]);
+    setResumoColheita(null);
+    const t0 = Date.now();
     const r = await colherUm(c);
+    setProgresso(null);
     if (!r.ok) {
       setErro(r.vazia
         ? `A vitrine não devolveu produto nenhum${r.motivo ? ` (${r.motivo})` : ""}.`
         : r.motivo);
-      setProgresso(null);
+      setResumoColheita({
+        titulo: `Não deu pra colher “${c.title || c.campaignId}”`,
+        tom: "erro",
+        nota: r.vazia ? `A vitrine abriu, mas veio vazia${r.motivo ? `: ${r.motivo}` : "."}` : r.motivo,
+        numeros: [{ label: "Duração", valor: segundos(Date.now() - t0) }],
+      });
       return;
     }
     setAberto(null);
     recarregar();
-    setProgresso(`✅ ${r.produtos} produto(s)${r.parcial ? " — parcial, a vitrine não veio inteira" : ""}`);
+    setResumoColheita({
+      titulo: `Vitrine de “${c.title || c.campaignId}” colhida`,
+      tom: r.parcial ? "aviso" : "ok",
+      nota: r.parcial ? "Veio parcial — a vitrine não abriu inteira, então estes produtos entram como prévia, não como lista fechada." : null,
+      numeros: [
+        { label: "Produtos gravados", valor: r.produtos },
+        { label: "Duração", valor: segundos(Date.now() - t0) },
+      ],
+    });
   };
 
   // Todas as vitrines, uma atrás da outra, nas abas deste Chrome.
@@ -191,12 +255,19 @@ export default function CuponsDoML() {
     pararRef.current = false;
     setColhendoTodas(true);
     setErro(null);
-    let ok = 0, falhas = 0, parado = null;
+    setEventos([]);
+    setResumoColheita(null);
+    const t0 = Date.now();
+    logar("info", `começando: ${alvos.length} vitrine(s) desta página, uma aba por vez`);
+    // O detalhe cupom a cupom. O resumo conta a partir daqui em vez de manter
+    // contadores soltos — assim a tabela e os números nunca discordam.
+    const feitos = [];
+    let parado = null;
     for (let i = 0; i < alvos.length; i++) {
       if (pararRef.current) { parado = "Interrompido por você"; break; }
       const c = alvos[i];
       const r = await colherUm(c, `${i + 1}/${alvos.length} · `);
-      if (r.ok) ok++; else falhas++;
+      feitos.push({ titulo: c.title || c.campaignId, ...r });
       // Muro é estado da SESSÃO, não deste cupom: seguir para o próximo é pedir
       // para o ML olhar com mais atenção ainda. Para-se depois de terminar este,
       // porque o humano pode já ter resolvido a verificação no meio dele.
@@ -204,9 +275,44 @@ export default function CuponsDoML() {
       if (i < alvos.length - 1) await new Promise(res => setTimeout(res, PAUSA_ENTRE_VITRINES_MS));
     }
     setColhendoTodas(false);
+    setProgresso(null);
     setAberto(null);
     recarregar();
-    setProgresso(`${parado ? `⏸ ${parado}. ` : "✅ "}${ok} vitrine(s) colhida(s)${falhas ? `, ${falhas} sem produto` : ""}.`);
+
+    const ok = feitos.filter(f => f.ok);
+    const vazios = feitos.filter(f => !f.ok && f.vazia).length;
+    const falhas = feitos.filter(f => !f.ok && !f.vazia).length;
+    const produtosTotal = ok.reduce((n, f) => n + (f.produtos || 0), 0);
+    const parciais = ok.filter(f => f.parcial).length;
+    logar(parado ? "aviso" : "ok",
+      `${parado ? `${parado}. ` : ""}${ok.length} de ${alvos.length} vitrine(s) colhida(s), ${produtosTotal} produto(s)`);
+    setResumoColheita({
+      titulo: parado ? "Colheita interrompida" : "Colheita terminada",
+      tom: parado ? "aviso" : falhas ? "aviso" : "ok",
+      nota: parado
+        ? `${parado}. Os cupons que ficaram de fora continuam sem vitrine — é só rodar de novo.`
+        : parciais
+          ? `${parciais} vitrine(s) vieram parciais: entram como prévia, não como lista fechada.`
+          : null,
+      numeros: [
+        { label: "Vitrines na página", valor: alvos.length },
+        { label: "Tentadas", valor: feitos.length },
+        { label: "Colhidas", valor: ok.length },
+        { label: "Produtos gravados", valor: produtosTotal },
+        { label: "…destas, parciais", valor: parciais },
+        { label: "Vitrine vazia", valor: vazios },
+        { label: "Falharam", valor: falhas },
+        { label: "Duração", valor: segundos(Date.now() - t0) },
+      ],
+      colunas: ["Cupom", "Produtos", "Desfecho"],
+      linhas: feitos.map(f => [
+        f.titulo,
+        f.ok ? f.produtos : "—",
+        f.ok
+          ? (f.parcial ? "colhida (parcial)" : "colhida")
+          : (f.vazia ? `vitrine vazia${f.motivo ? ` — ${f.motivo}` : ""}` : f.motivo),
+      ]),
+    });
   };
 
   const sincronizar = async (campaignId) => {
@@ -321,14 +427,15 @@ export default function CuponsDoML() {
           )}
         </div>
 
-        {status?.lastRun && !rodando && (
-          <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 10 }}>
-            Última rodada: {new Date(status.lastRun).toLocaleString("pt-BR")}
-            {typeof status.lastDuration === "number" && ` · ${(status.lastDuration / 1000).toFixed(0)}s`}
-            {status.lastResult && ` · ${status.lastResult.cupons} cupons (${status.lastResult.novos} novos)${status.lastResult.ativados ? `, ${status.lastResult.ativados} ativados` : ""}, ${status.lastResult.vinculos} vínculos, ${status.lastResult.catalogoCarimbado} produtos do catálogo carimbados`}
-            {status.lastResult?.cuponsDeLojaIgnorados ? ` · ${status.lastResult.cuponsDeLojaIgnorados} de loja ignorados` : ""}
-          </div>
-        )}
+        {/* O passo a passo da rodada do servidor. O log vive na memória do processo
+            da API (backend/coupons/sync.js) e some se ele reiniciar — o RESUMO
+            abaixo é o que fica guardado. */}
+        <ColheitaLog
+          eventos={status?.log}
+          rodando={rodando}
+          titulo={rodando ? "O que a rodada está fazendo" : "O que a rodada fez"}
+          resumo={!rodando && status?.lastRun ? resumoDaRodada(status) : null}
+        />
         {status?.lastError && (
           <div style={{ marginTop: 8, background: "var(--warn-bg)", color: "var(--warn-text)", padding: "8px 10px", borderRadius: 8, fontSize: 12 }}>
             {status.lastError}
@@ -367,24 +474,26 @@ export default function CuponsDoML() {
           </div>
         </div>
 
-        {progresso && (
-          <div style={{ marginBottom: 10, fontSize: 12, color: "var(--color-text-secondary)" }}>
-            {colhendo ? "⟳ " : ""}{progresso}
+        {(progresso || eventos.length > 0 || resumoColheita) && (
+          <div style={{ marginBottom: 10 }}>
+            {progresso && (
+              <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                {colhendo ? "⟳ " : ""}{progresso}
+              </div>
+            )}
+            <ColheitaLog
+              eventos={eventos}
+              resumo={resumoColheita}
+              rodando={colhendoTodas || !!colhendo}
+              titulo={colhendoTodas || colhendo ? "O que a colheita está fazendo" : "O que a colheita fez"}
+            />
           </div>
         )}
 
         {/* Sem a extensão o botão "no meu Chrome" some — e sumir sem explicação é
             pior do que não existir. Esta linha diz onde ele foi parar. */}
         {temColetor === false && (
-          <div style={{ marginBottom: 10, fontSize: 11, color: "var(--color-text-secondary)" }}>
-            O “raspar” abre o navegador no servidor, e o Mercado Livre barra ele com CAPTCHA. Para colher a
-            vitrine numa aba <b>deste</b> Chrome, instale a extensão da pasta <code>extension/</code> do
-            projeto (chrome://extensions › modo do desenvolvedor › “Carregar sem compactação”) e recarregue
-            esta página. Se já instalou e o botão não veio, o endereço desta página —{" "}
-            <code>{typeof window !== "undefined" ? window.location.origin : ""}</code> — precisa estar em{" "}
-            <code>content_scripts.matches</code> do <code>extension/manifest.json</code>; depois de mexer,
-            recarregue a extensão (↻) e esta página.
-          </div>
+          <div style={{ marginBottom: 10 }}><ExtensaoAusente /></div>
         )}
 
         {lista.items.length === 0 ? (
@@ -567,7 +676,7 @@ function Produtos({ dados }) {
 
 // Os tetos da rodada. Ficam à vista porque são eles que seguram o tempo (e o
 // atrito com o ML): a conta enxerga milhares de cupons, e cada um é uma página.
-function Config({ config, onSaved }) {
+export function Config({ config, onSaved }) {
   // O que está sendo editado, se alguém mexeu; senão, o que o servidor mandou.
   // Estado derivado em vez de efeito copiando prop pra estado — que é o que
   // desfaria a edição sozinho a cada volta do poll de status.
@@ -913,36 +1022,5 @@ function TestarPalavra({ onDone }) {
   );
 }
 
-function Numero({ label, valor }) {
-  return (
-    <div>
-      <div style={{ fontSize: 18, fontWeight: 600 }}>{valor ?? "—"}</div>
-      <div style={{ color: "var(--color-text-secondary)" }}>{label}</div>
-    </div>
-  );
-}
-
-const cardStyle = { background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16, marginBottom: 18 };
-const inputStyle = { padding: "7px 10px", borderRadius: 7, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" };
-const labelStyle = { fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 6 };
-const th = { padding: "6px 8px", fontWeight: 500, whiteSpace: "nowrap" };
-const td = { padding: "8px", verticalAlign: "top" };
-const botaoPrimario = (off) => ({
-  padding: "9px 18px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 500,
-  background: PRIMARY, color: "#fff", cursor: off ? "not-allowed" : "pointer", opacity: off ? 0.6 : 1,
-});
-const botaoSecundario = {
-  padding: "7px 14px", borderRadius: 8, fontSize: 12, cursor: "pointer",
-  border: "1px solid var(--color-border-tertiary)", background: "transparent", color: "var(--color-text-primary)",
-};
-// O gatilho da ação destrutiva: outline suave, como no "Apagar todos" do catálogo.
-// O vermelho sólido fica só no botão de confirmar, dentro do modal.
-const botaoPerigo = (off) => ({
-  padding: "7px 14px", borderRadius: 8, fontSize: 12,
-  border: "1px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)",
-  cursor: off ? "not-allowed" : "pointer", opacity: off ? 0.5 : 1,
-});
-const botaoLink = {
-  padding: "3px 8px", borderRadius: 6, fontSize: 11, cursor: "pointer",
-  border: "1px solid var(--color-border-tertiary)", background: "transparent", color: "var(--color-text-primary)",
-};
+// Os estilos e o `Numero` desta tela vivem em `components/admin/cupomUI` — o
+// ColheitaLog usa os mesmos, e ele é importado AQUI.

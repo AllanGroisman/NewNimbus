@@ -569,6 +569,13 @@ export async function adminMlCuponsSyncProducts(campaignId) {
 export async function adminMlCuponsImportVitrine(campaignId, { products, parcial = false } = {}) {
   return http("POST", `/api/admin/ml-cupons/${encodeURIComponent(campaignId)}/vitrine-local`, { products, parcial }, { timeoutMs: SLOW_TIMEOUT_MS });
 }
+// O passo final do diagnóstico da aba Config Test: pede ao servidor um link de
+// afiliado do sistema pra uma URL de produto. É o que prova cookie E tag valendo
+// contra o ML — os dois aparecem "salvos" na tela sem nenhum dos dois funcionar.
+export async function adminMlCuponsDiagnosticoLink(url) {
+  return http("POST", "/api/admin/ml-cupons/diagnostico/link", { url }, { timeoutMs: SLOW_TIMEOUT_MS });
+}
+
 export async function adminMlCuponsProducts(campaignId, { page = 1, pageSize = 50 } = {}) {
   return http("GET", `/api/admin/ml-cupons/${encodeURIComponent(campaignId)}/produtos?page=${page}&pageSize=${pageSize}`);
 }

@@ -17,35 +17,46 @@ const TENTATIVAS_PRONTO = 5;
 const INTERVALO_PING_MS = 300;
 const TIMEOUT_MS = 5 * 60 * 1000;   // a coleta pode parar no meio esperando o humano
 
-let instalada = null;   // null = ainda não perguntamos
+let info = null;   // null = ainda não perguntamos; { instalada, versao } depois
 
 // A extensão se anuncia sozinha ao carregar. Quem monta depois (React) pergunta
 // com um "ping" e espera um instante — sem resposta, ela não está instalada.
-export function coletorPronto({ tentativas = TENTATIVAS_PRONTO } = {}) {
-  if (instalada !== null) return Promise.resolve(instalada);
+//
+// Devolve `{ instalada, versao }`: a versão vem no próprio anúncio da ponte
+// (`extension/ponte.js`) e a aba de diagnóstico precisa dela pra dizer QUAL
+// extensão respondeu — "instalada" sozinho não distingue uma cópia velha.
+export function coletorInfo({ tentativas = TENTATIVAS_PRONTO } = {}) {
+  if (info !== null) return Promise.resolve(info);
   return new Promise((resolve) => {
     let timer = null;
     let restam = tentativas;
     const fim = (v) => {
       window.removeEventListener("message", ouvir);
       clearTimeout(timer);
-      instalada = v;
+      info = v;
       resolve(v);
     };
     const ouvir = (ev) => {
-      if (ev.source === window && ev.data?.de === DE && ev.data.tipo === "pronto") fim(true);
+      if (ev.source === window && ev.data?.de === DE && ev.data.tipo === "pronto") {
+        fim({ instalada: true, versao: ev.data.versao || null });
+      }
     };
     window.addEventListener("message", ouvir);
     // Uma pergunta só perde a corrida: o content script entra em `document_idle` e
     // o React pode montar antes dele. Perguntar de novo é o que evita "não está
     // instalada" quando ela está.
     const perguntar = () => {
-      if (restam-- <= 0) return fim(false);
+      if (restam-- <= 0) return fim({ instalada: false, versao: null });
       window.postMessage({ de: PARA, tipo: "ping" }, window.location.origin);
       timer = setTimeout(perguntar, INTERVALO_PING_MS);
     };
     perguntar();
   });
+}
+
+// O mesmo, reduzido a sim/não — é o que a maior parte da tela precisa.
+export function coletorPronto(opts) {
+  return coletorInfo(opts).then(i => i.instalada);
 }
 
 // Pede a coleta de UMA vitrine. Devolve { produtos, parcial, motivo, paginas }.
@@ -76,4 +87,4 @@ export function raparVitrine(containerUrl, { paginas, onProgresso, timeoutMs = T
 }
 
 // Só para os testes: zera o que já foi descoberto sobre a extensão.
-export function _resetColetor() { instalada = null; }
+export function _resetColetor() { info = null; }

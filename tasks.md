@@ -47,3 +47,15 @@ Vale no preenchimento automático da fila. Os cupons vêm de Admin › Cupom ›
 17. [x] Nos USUARIOS de ADMIN, mostrar sempre, antes de expandir, os numeros dos whats conectados.
 
 18. [x] Nos USUARIOS de ADMIN, adicionar um filtro de cancelados além de pagando, nao verificados, suspensos, etc...
+
+19. [x] Melhora a parte do cupom: 
+    Uma aba Config Test do lado de testar cupom e cupons do ML, onde verifica se tem a extensao ativa e tag/cookie de afiliado necessarios para fazer tudo, dessa forma consigo testar e editar/adicioanr o que falta ali mesmo.
+
+20. [x] Melhora a parte do cupom:
+    Quero que apareça o que ta acontecendo quando clico para buscar a colheita das vitrines. No final da busca quero tb um resumo do que foi buscado.
+
+21. [] Melhora a parte do cupom: Os cupons são separados por Categoria, certo? Quero que ali onde consigo visualizar eles, apareça assim aqui também.
+
+22. [] Melhora a parte do cupom: Separa a parte de Descobrir uma palavra para outra aba ao lado de Testar Cupom e Cupons do ML.
+
+23. [] Melhora a parte do cupom: Cria mais uma aba ao lado de Testar cupom e cupons do ML com o nome "Repasse", nela quero que apareça todos os cupons capturados pelo repasse e o teste se eles são de alguma campanha ou não. Se um cupom é caputado no repasse, ele deve ser testado e integrado no sistema.

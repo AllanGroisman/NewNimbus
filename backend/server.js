@@ -2485,6 +2485,29 @@ app.get("/api/admin/ml-cupons/:campaignId/produtos", auth.requireAuth, auth.requ
   }
 });
 
+// O último passo do diagnóstico da aba Config Test: gerar um link de afiliado do
+// SISTEMA para uma URL de produto qualquer.
+//
+// É o único jeito de provar cookie E tag juntos contra o ML de verdade. Os dois
+// aparecem "configurados" na tela sem que nenhum funcione, e é exatamente esse par
+// que a landing de afiliado usa pra ler a vitrine de um cupom
+// (scraping/ml-vitrine-landing.js) — sem ele a rodada cai no caminho caro, o
+// navegador, que o ML barra com CAPTCHA.
+//
+// Não grava nada: `kind` sai como veio, porque cada valor de ML_LINK_KIND já é um
+// diagnóstico diferente (falta config, cookie venceu, URL recusada, erro).
+app.post("/api/admin/ml-cupons/diagnostico/link", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  const url = String(req.body?.url || "").trim();
+  if (!url) return res.status(400).json({ error: "Informe a URL de um produto do Mercado Livre." });
+  try {
+    const r = await affiliate.criarLinkAfiliadoMLSistema(url);
+    res.json({ ok: !!r.shortUrl, shortUrl: r.shortUrl || null, kind: r.kind, reason: r.reason || null });
+  } catch (err) {
+    console.error("[ml-cupons.diagnostico-link]", err.message);
+    res.status(502).json({ error: err.message });
+  }
+});
+
 app.post("/api/admin/ml-cupons/:campaignId/sync-produtos", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
     res.json(await mlCupons.syncOneCoupon(String(req.params.campaignId)));

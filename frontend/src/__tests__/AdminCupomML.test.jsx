@@ -317,6 +317,42 @@ describe("engasgo do ML (indeterminado)", () => {
 // entrar como lista fechada, o sistema passa a responder "esse cupom não vale
 // aqui" para produto que o cupom cobre — que é o prejuízo que a ferramenta existe
 // pra evitar.
+// ── A rodada do servidor ────────────────────────────────────────────────────
+// O log dela é montado no backend (coupons/sync.js) e chega pelo status. Aqui só
+// se testa que a tela mostra o que chegou — e que, parada a rodada, o resumo
+// aparece em vez da frase corrida de antes.
+describe("o passo a passo da rodada do servidor", () => {
+  it("mostra as linhas do log enquanto a rodada corre", async () => {
+    adminMlCuponsStatus.mockResolvedValue({
+      config: {}, running: true,
+      log: [
+        { at: "2026-08-31T12:00:00.000Z", tipo: "info", texto: "lendo a lista geral — página 1/3, 40 cupons" },
+        { at: "2026-08-31T12:01:00.000Z", tipo: "aviso", texto: "o ML pediu verificação" },
+      ],
+    });
+    await abrirTela();
+
+    expect(await screen.findByText(/lendo a lista geral — página 1\/3/)).toBeInTheDocument();
+    expect(screen.getByText("o ML pediu verificação")).toBeInTheDocument();
+  });
+
+  it("terminada a rodada, o balanço vira números em vez de uma frase corrida", async () => {
+    adminMlCuponsStatus.mockResolvedValue({
+      config: {}, running: false,
+      lastRun: "2026-08-31T12:00:00.000Z",
+      lastDuration: 92000,
+      lastResult: { cupons: 120, novos: 7, ativados: 3, vinculos: 4100, catalogoCarimbado: 88, cuponsDeLojaIgnorados: 12 },
+      log: [],
+    });
+    await abrirTela();
+
+    expect(await screen.findByText(/Última rodada —/)).toBeInTheDocument();
+    expect(screen.getByText("Cupons").previousSibling).toHaveTextContent("120");
+    expect(screen.getByText("Novos").previousSibling).toHaveTextContent("7");
+    expect(screen.getByText("Duração").previousSibling).toHaveTextContent("92s");
+  });
+});
+
 describe("colher a vitrine no Chrome do admin", () => {
   const COM_VITRINE = {
     items: [{
@@ -348,7 +384,11 @@ describe("colher a vitrine no Chrome do admin", () => {
     await waitFor(() => expect(adminMlCuponsImportVitrine).toHaveBeenCalledWith(
       "13471229", { products: [produto], parcial: false },
     ));
-    expect(await screen.findByText(/✅ 1 produto/)).toBeInTheDocument();
+    // O desfecho vira resumo, não uma linha que some: o número gravado aparece
+    // no balanço, e o passo a passo fica no log acima dele.
+    expect(await screen.findByText(/Vitrine de .* colhida/)).toBeInTheDocument();
+    expect(screen.getByText("Produtos gravados")).toBeInTheDocument();
+    expect(await screen.findByText(/1 produto\(s\) gravado\(s\)/)).toBeInTheDocument();
   });
 
   it("o que parou no meio vai marcado como parcial — e a tela avisa", async () => {
@@ -363,7 +403,9 @@ describe("colher a vitrine no Chrome do admin", () => {
     await waitFor(() => expect(adminMlCuponsImportVitrine).toHaveBeenCalledWith(
       "13471229", { products: [produto], parcial: true },
     ));
-    expect(await screen.findByText(/parcial, a vitrine não veio inteira/)).toBeInTheDocument();
+    // Aparece duas vezes de propósito — na linha do log e na nota do resumo — e
+    // é por isso que a asserção é `findAllBy`.
+    expect((await screen.findAllByText(/parcial/)).length).toBeGreaterThan(0);
   });
 
   // ── O lote ────────────────────────────────────────────────────────────────
@@ -416,7 +458,9 @@ describe("colher a vitrine no Chrome do admin", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /Colher todas as vitrines/i }));
 
-    expect(await screen.findByText(/pediu verificação — parei aqui de propósito/)).toBeInTheDocument();
+    // Duas vezes: a linha do log e a nota do resumo.
+    expect((await screen.findAllByText(/pediu verificação — parei aqui de propósito/)).length).toBe(2);
+    expect(await screen.findByText("Colheita interrompida")).toBeInTheDocument();
     // O primeiro foi gravado (os produtos dele são reais); o segundo nem começou.
     expect(raparVitrine).toHaveBeenCalledTimes(1);
     expect(adminMlCuponsImportVitrine).toHaveBeenCalledTimes(1);
@@ -434,6 +478,53 @@ describe("colher a vitrine no Chrome do admin", () => {
     expect(await screen.findByRole("button", { name: /Colher todas as vitrines \(1\)/i })).toBeInTheDocument();
   });
 
+  // ── O resumo ──────────────────────────────────────────────────────────────
+  // O lote demorava minutos e terminava numa frase que sumia. O que se testa aqui
+  // é o balanço: quantas vitrines, quantos produtos, e o que deu errado em cada
+  // cupom — sem isso, "colhi tudo" e "colhi metade" são a mesma tela.
+
+  it("o lote termina com um resumo do que foi buscado, cupom a cupom", async () => {
+    coletorPronto.mockResolvedValue(true);
+    adminMlCupons.mockResolvedValue(TRES);
+    // O do meio volta vazio: o resumo tem que contar os três desfechos diferentes.
+    raparVitrine.mockImplementation(async (url) => (
+      url.includes("_Container_2")
+        ? { produtos: [], parcial: false, motivo: "vitrine fora do ar", paginas: 1 }
+        : { produtos: [produto], parcial: false, motivo: null, paginas: 1 }
+    ));
+    adminMlCuponsImportVitrine.mockResolvedValue({ ok: true, produtos: 4, parcial: false });
+    await abrirTela();
+
+    fireEvent.click(await screen.findByRole("button", { name: /Colher todas as vitrines \(3\)/i }));
+
+    expect(await screen.findByText("Colheita terminada", {}, { timeout: 20000 })).toBeInTheDocument();
+    // 2 colhidas de 3 tentadas, 4 produtos cada.
+    expect(screen.getByText("Colhidas").previousSibling).toHaveTextContent("2");
+    expect(screen.getByText("Produtos gravados").previousSibling).toHaveTextContent("8");
+    expect(screen.getByText("Vitrine vazia").previousSibling).toHaveTextContent("1");
+    // A tabela nomeia quem falhou, em vez de só contar.
+    expect(screen.getByText(/vitrine vazia — vitrine fora do ar/)).toBeInTheDocument();
+  }, 25000);
+
+  it("o resumo conta o que ficou de fora quando o lote é interrompido", async () => {
+    coletorPronto.mockResolvedValue(true);
+    adminMlCupons.mockResolvedValue(TRES);
+    raparVitrine.mockImplementation(async (_url, { onProgresso }) => {
+      onProgresso({ tipo: "muro" });
+      return { produtos: [produto], parcial: true, motivo: null, paginas: 1 };
+    });
+    adminMlCuponsImportVitrine.mockResolvedValue({ ok: true, produtos: 1, parcial: true });
+    await abrirTela();
+
+    fireEvent.click(await screen.findByRole("button", { name: /Colher todas as vitrines/i }));
+
+    expect(await screen.findByText("Colheita interrompida")).toBeInTheDocument();
+    // Prometer 3 e entregar 1 é exatamente o que o resumo existe para mostrar.
+    expect(screen.getByText("Vitrines na página").previousSibling).toHaveTextContent("3");
+    expect(screen.getByText("Tentadas").previousSibling).toHaveTextContent("1");
+    expect(screen.getByText("Colhidas").previousSibling).toHaveTextContent("1");
+  });
+
   it("vitrine vazia não vira gravação — não se apaga o que já existe por nada", async () => {
     coletorPronto.mockResolvedValue(true);
     adminMlCupons.mockResolvedValue(COM_VITRINE);
@@ -442,7 +533,9 @@ describe("colher a vitrine no Chrome do admin", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /no meu Chrome/i }));
 
-    expect(await screen.findByText(/não devolveu produto nenhum/)).toBeInTheDocument();
+    // O erro no topo e a nota do resumo dizem a mesma coisa — é o mesmo desfecho
+    // visto de dois lugares.
+    expect((await screen.findAllByText(/não devolveu produto nenhum/)).length).toBeGreaterThan(0);
     expect(adminMlCuponsImportVitrine).not.toHaveBeenCalled();
   });
 });
