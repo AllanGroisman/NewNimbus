@@ -310,6 +310,102 @@ describe("Billing — webhook handler", () => {
   });
 });
 
+describe("Billing — estorno cancela a conta", () => {
+  function refundEvent({ id, customer, amount = 6990, refunded = 6990, livemode }) {
+    return {
+      id,
+      type: "charge.refunded",
+      livemode,
+      data: { object: { id: `ch_${id}`, customer, currency: "brl", amount, amount_refunded: refunded } },
+    };
+  }
+
+  async function assinante(sufixo, extra = {}) {
+    const { user } = await createTestUser();
+    await billing.update(user.id, {
+      stripeCustomerId: `cus_${sufixo}`, stripeSubscriptionId: `sub_${sufixo}`,
+      planId: "basic", status: "active", ...extra,
+    });
+    return user;
+  }
+
+  it("estorno integral cancela a assinatura no Stripe", async () => {
+    await assinante("ref");
+
+    const res = await postEvent(refundEvent({ id: "evt_ref_1", customer: "cus_ref" }));
+
+    expect(res.status).toBe(200);
+    expect(stripeCalls.cancelSubscription).toEqual([{ subscriptionId: "sub_ref" }]);
+  });
+
+  it("estorno parcial também cancela", async () => {
+    await assinante("par");
+
+    await postEvent(refundEvent({ id: "evt_par_1", customer: "cus_par", refunded: 1000 }));
+
+    expect(stripeCalls.cancelSubscription).toEqual([{ subscriptionId: "sub_par" }]);
+  });
+
+  it("o downgrade em si vem do subscription.deleted, não do refund", async () => {
+    const user = await assinante("del");
+
+    await postEvent(refundEvent({ id: "evt_del_1", customer: "cus_del" }));
+    // Enquanto o deleted não chega, o banco segue como estava — é o Stripe que
+    // manda o evento logo depois do cancel.
+    expect((await billing.getByUserId(user.id)).status).toBe("active");
+
+    await postEvent({
+      id: "evt_del_2",
+      type: "customer.subscription.deleted",
+      data: { object: { id: "sub_del", customer: "cus_del", status: "canceled" } },
+    });
+
+    const sub = await billing.getByUserId(user.id);
+    expect(sub.planId).toBe("free");
+    expect(sub.status).toBe("canceled");
+    expect(sub.stripeSubscriptionId).toBeNull();
+  });
+
+  it("cancelamento falhando no Stripe derruba o plano localmente", async () => {
+    const user = await assinante("err");
+    setStripeMock({ cancelSubscriptionError: true });
+
+    const res = await postEvent(refundEvent({ id: "evt_err_1", customer: "cus_err" }));
+
+    expect(res.status).toBe(200);
+    const sub = await billing.getByUserId(user.id);
+    expect(sub.planId).toBe("free");
+    expect(sub.status).toBe("canceled");
+  });
+
+  it("sem assinatura no Stripe, derruba o plano localmente", async () => {
+    const user = await assinante("sem", { stripeSubscriptionId: null });
+
+    await postEvent(refundEvent({ id: "evt_sem_1", customer: "cus_sem" }));
+
+    expect(stripeCalls.cancelSubscription).toHaveLength(0);
+    expect((await billing.getByUserId(user.id)).status).toBe("canceled");
+  });
+
+  it("estorno de R$ 0 e customer desconhecido não cancelam nada", async () => {
+    await assinante("zer");
+
+    await postEvent(refundEvent({ id: "evt_zer_r", customer: "cus_zer", refunded: 0 }));
+    await postEvent(refundEvent({ id: "evt_nin_r", customer: "cus_inexistente" }));
+
+    expect(stripeCalls.cancelSubscription).toHaveLength(0);
+  });
+
+  it("estorno de outro modo Stripe (live com sistema em test) é ignorado", async () => {
+    const user = await assinante("mod");
+
+    await postEvent(refundEvent({ id: "evt_mod_1", customer: "cus_mod", livemode: true }));
+
+    expect(stripeCalls.cancelSubscription).toHaveLength(0);
+    expect((await billing.getByUserId(user.id)).status).toBe("active");
+  });
+});
+
 describe("Billing — sync (reconciliação ativa)", () => {
   it("corrige o plano local a partir da assinatura ao vivo no Stripe", async () => {
     const { user, auth } = await createTestUser();

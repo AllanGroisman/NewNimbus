@@ -402,18 +402,66 @@ async function getUpcomingInvoice(customerId) {
   }
 }
 
+// Quanto de cada fatura já voltou pro cliente. O Stripe NUNCA muda o
+// `invoice.status` depois de um estorno — a fatura reembolsada segue "paid"
+// pra sempre —, então o valor devolvido tem que vir das cobranças.
+//
+// A ligação fatura↔cobrança é por payment_intent: `invoice.charge` não existe
+// mais nesta versão da API (vem undefined), e `charge.invoice` também não. O
+// que sobra é `invoice.payments[].payment.payment_intent` de um lado e
+// `charge.payment_intent` do outro.
+function refundsFromCharges(invoices, charges) {
+  const porPI = new Map();
+  for (const ch of charges || []) {
+    if (ch.payment_intent) porPI.set(ch.payment_intent, Number(ch.amount_refunded) || 0);
+  }
+  const out = new Map();
+  for (const inv of invoices) {
+    let devolvido = 0;
+    for (const p of inv.payments?.data || []) {
+      const pi = p?.payment?.payment_intent;
+      if (pi && porPI.has(pi)) devolvido += porPI.get(pi);
+    }
+    out.set(inv.id, devolvido);
+  }
+  return out;
+}
+
 // Últimas faturas do customer pro histórico na página (máx. 10).
 async function listInvoices(customerId, limit = 10) {
   if (!customerId) return [];
-  const res = await client().invoices.list({ customer: customerId, limit });
-  return (res.data || []).map((inv) => ({
-    id: inv.id,
-    date: new Date(inv.created * 1000),
-    amountBRL: (inv.total ?? 0) / 100,
-    status: inv.status, // draft | open | paid | void | uncollectible
-    hostedUrl: inv.hosted_invoice_url || null,
-    pdfUrl: inv.invoice_pdf || null,
-  }));
+  const res = await client().invoices.list({
+    customer: customerId,
+    limit,
+    expand: ["data.payments"],
+  });
+  const invoices = res.data || [];
+
+  // Estorno é enfeite: se a listagem de charges falhar, o histórico ainda vale.
+  let refunds = new Map();
+  try {
+    const charges = await client().charges.list({ customer: customerId, limit: 100 });
+    refunds = refundsFromCharges(invoices, charges.data || []);
+  } catch (err) {
+    logger.warn({ err: err.message, customerId }, "[stripe] estornos das faturas indisponíveis");
+  }
+
+  return invoices.map((inv) => {
+    const total = inv.total ?? 0;
+    const devolvido = refunds.get(inv.id) || 0;
+    return {
+      id: inv.id,
+      date: new Date(inv.created * 1000),
+      amountBRL: total / 100,
+      status: inv.status, // draft | open | paid | void | uncollectible
+      // Separado do `status` de propósito — quem lê status espera o vocabulário
+      // do Stripe, e o resto do sistema depende dele.
+      refundedBRL: devolvido / 100,
+      refundStatus: devolvido <= 0 ? "none" : devolvido >= total ? "full" : "partial",
+      hostedUrl: inv.hosted_invoice_url || null,
+      pdfUrl: inv.invoice_pdf || null,
+    };
+  });
 }
 
 // Cartão que será cobrado: default da assinatura, senão default do customer.
@@ -473,6 +521,14 @@ async function fetchPlanPrices() {
   return out;
 }
 
+// Cancela a assinatura AGORA (não no fim do período). O Stripe responde com o
+// objeto já `canceled` e dispara customer.subscription.deleted — é ESSE evento
+// que derruba o plano pra free do nosso lado; aqui não mexemos no banco.
+async function cancelSubscription(subscriptionId) {
+  const canceled = await client().subscriptions.cancel(subscriptionId);
+  return normalizeSubscription(canceled);
+}
+
 // Desfaz cancelamento agendado (cancel_at_period_end=true → false).
 async function reactivateSubscription(subscriptionId) {
   const updated = await client().subscriptions.update(subscriptionId, {
@@ -496,12 +552,14 @@ module.exports = {
   createCheckoutSession,
   getCheckoutSession,
   changeSubscriptionPlan,
+  cancelSubscription,
   createPortalSession,
   constructEvent,
   normalizeSubscription,
   getActiveSubscriptionForCustomer,
   getUpcomingInvoice,
   listInvoices,
+  refundsFromCharges, // exportada pro teste unitário do mapeamento fatura↔estorno
   getDefaultPaymentMethod,
   fetchPlanPrices,
   reactivateSubscription,

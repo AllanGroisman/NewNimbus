@@ -321,6 +321,23 @@ describe("Subscription — seu plano em uso + detalhes", () => {
     expect(screen.getByRole("link", { name: /Abrir/i })).toHaveAttribute("href", "https://x/1");
   });
 
+  it("fatura reembolsada não aparece como 'Paga'", async () => {
+    setBillingMe(activeMe);
+    setBillingDetails({
+      stripeEnabled: true, hasStripeCustomer: true,
+      upcomingInvoice: null, paymentMethod: null,
+      invoices: [
+        { id: "in_full", date: "2026-07-10T00:00:00.000Z", amountBRL: 69.9, status: "paid", refundedBRL: 69.9, refundStatus: "full" },
+        { id: "in_part", date: "2026-06-10T00:00:00.000Z", amountBRL: 69.9, status: "paid", refundedBRL: 10, refundStatus: "partial" },
+      ],
+    });
+    render(<PageSubscription />);
+    await waitFor(() => expect(screen.getByText(/Histórico de faturas/i)).toBeInTheDocument());
+    expect(screen.getByText("Reembolsada")).toBeInTheDocument();
+    expect(screen.getByText("Reembolsada em parte")).toBeInTheDocument();
+    expect(screen.queryByText("Paga")).not.toBeInTheDocument();
+  });
+
   it("não mostra 'Scraping' em lugar nenhum e usa 'Categorias de produtos'", async () => {
     setBillingMe(activeMe);
     render(<PageSubscription />);

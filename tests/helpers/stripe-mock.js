@@ -36,6 +36,7 @@ const calls = {
   getDefaultPaymentMethod: [],
   fetchPlanPrices: [],
   reactivateSubscription: [],
+  cancelSubscription: [],
   setMode: [],
 };
 
@@ -59,6 +60,8 @@ let state = {
     business: { priceBRL: 149.90, name: "Business", priceId: "price_test_business" },
   },
   shouldFailFetchPrices: false,
+  // Força erro em cancelSubscription (assinatura já cancelada no Stripe).
+  cancelSubscriptionError: false,
   // Checkout Session devolvida por getCheckoutSession — é o que o resgate do
   // checkout público (/api/public/claim) lê pra provisionar a conta.
   checkoutSession: null,
@@ -98,6 +101,7 @@ function reset() {
       business: { priceBRL: 149.90, name: "Business", priceId: "price_test_business" },
     },
     shouldFailFetchPrices: false,
+    cancelSubscriptionError: false,
     checkoutSession: null,
     checkoutSessionError: false,
     customerByEmail: null,
@@ -257,6 +261,19 @@ const mock = {
     calls.fetchPlanPrices.push({});
     if (state.shouldFailFetchPrices) throw new Error("stripe indisponível (mock)");
     return { ...state.planPrices };
+  },
+
+  // Cancelamento imediato (hoje: estorno). No Stripe real isso dispara
+  // customer.subscription.deleted — aqui o teste posta esse evento se quiser
+  // verificar o efeito no banco.
+  async cancelSubscription(subscriptionId) {
+    calls.cancelSubscription.push({ subscriptionId });
+    if (state.cancelSubscriptionError) throw new Error("no such subscription (mock)");
+    if (state.activeSubscription) {
+      state.activeSubscription.status = "canceled";
+      return this.normalizeSubscription(state.activeSubscription);
+    }
+    return { stripeSubscriptionId: subscriptionId, status: "canceled", cancelAtPeriodEnd: false, trialEnd: null };
   },
 
   // Desfaz cancelamento agendado na assinatura do state (se houver).

@@ -64,8 +64,14 @@ function cardBrandLabel(brand) {
   return CARD_BRANDS[brand] || (brand ? brand.charAt(0).toUpperCase() + brand.slice(1) : "Cartão");
 }
 
-// Badge de status de fatura do Stripe (paid/open/void/uncollectible/draft).
-function invoiceBadge(status) {
+// Badge de status de fatura. Estorno vem antes do status do Stripe: uma fatura
+// reembolsada continua "paid" pra sempre lá, e mostrar "Paga" pra quem recebeu
+// o dinheiro de volta é mentira. Cinza neutro — não é erro, só não vale mais.
+function invoiceBadge(inv) {
+  const neutro = { color: "var(--color-text-secondary)", bg: "var(--color-background-secondary)", border: "var(--color-border-tertiary)" };
+  if (inv?.refundStatus === "full") return { label: "Reembolsada", ...neutro };
+  if (inv?.refundStatus === "partial") return { label: "Reembolsada em parte", ...neutro };
+  const status = inv?.status;
   if (status === "paid") return { label: "Paga", color: "#3B6D11", bg: "#EAF3DE", border: "#C5DBA7" };
   if (status === "open") return { label: "Em aberto", color: "var(--warn-text)", bg: "var(--warn-bg)", border: "var(--warn-border)" };
   if (status === "void") return { label: "Anulada", color: "var(--color-text-secondary)", bg: "var(--color-background-secondary)", border: "var(--color-border-tertiary)" };
@@ -574,11 +580,18 @@ export default function PageSubscription() {
                 </thead>
                 <tbody>
                   {details.invoices.map(inv => {
-                    const b = invoiceBadge(inv.status);
+                    const b = invoiceBadge(inv);
                     return (
                       <tr key={inv.id} style={{ borderTop: "0.5px solid var(--color-border-tertiary)" }}>
                         <td style={{ padding: "9px 8px 9px 0" }}>{fmtDate(inv.date)}</td>
-                        <td style={{ padding: "9px 8px 9px 0", fontWeight: 500 }}>{fmtPrice(inv.amountBRL)}</td>
+                        <td style={{ padding: "9px 8px 9px 0", fontWeight: 500 }}>
+                          {fmtPrice(inv.amountBRL)}
+                          {inv.refundStatus === "partial" && (
+                            <span style={{ fontWeight: 400, color: "var(--color-text-secondary)", fontSize: 11, marginLeft: 6 }}>
+                              −{fmtPrice(inv.refundedBRL)}
+                            </span>
+                          )}
+                        </td>
                         <td style={{ padding: "9px 8px 9px 0" }}>
                           <span style={{ background: b.bg, color: b.color, border: `0.5px solid ${b.border}`, fontSize: 11, padding: "2px 8px", borderRadius: 6, fontWeight: 500 }}>{b.label}</span>
                         </td>

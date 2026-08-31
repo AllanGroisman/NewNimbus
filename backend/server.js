@@ -264,13 +264,63 @@ async function handleStripeEvent(event) {
       }
       return;
     case "charge.refunded":
-      // Estorno total ou parcial. Nada muda na assinatura (quem cancela é o
-      // subscription.deleted) — é só o aviso de que o dinheiro voltou.
+      // Estorno total ou parcial, normalmente feito à mão no dashboard. O aviso
+      // sai primeiro pra que o cliente saiba do dinheiro mesmo se o
+      // cancelamento abaixo falhar.
       await billing.notify.onChargeRefunded({ charge: obj, livemode: event.livemode });
+      await cancelarPorEstorno({ charge: obj, livemode: event.livemode });
       return;
     default:
       // Ignora silenciosamente — Stripe manda muitos tipos.
       return;
+  }
+}
+
+// Devolver dinheiro encerra a conta. O Stripe não faz isso sozinho — refund
+// numa cobrança só devolve o valor, a assinatura segue ativa e cobra de novo no
+// próximo ciclo. Vale pro estorno parcial também (decisão de produto).
+//
+// O caminho normal é cancelar no Stripe e deixar o customer.subscription.deleted
+// fazer o downgrade — assim existe um jeito só de derrubar plano. O downgrade
+// local é rede de segurança pra quando não há assinatura no Stripe pra cancelar.
+async function cancelarPorEstorno({ charge, livemode }) {
+  try {
+    // Mesmo critério do notify: evento de um modo Stripe que não é o ativo não
+    // pode ser cancelado com o cliente do modo errado.
+    if (livemode !== undefined && livemode !== null && livemode !== (stripeMod.mode() === "live")) return;
+    if (!(Number(charge?.amount_refunded) > 0)) return;
+
+    const customerId = typeof charge?.customer === "string" ? charge.customer : charge?.customer?.id;
+    const sub = customerId ? await billing.getByCustomerId(customerId) : null;
+    if (!sub) {
+      logger.warn({ charge: charge?.id, customerId }, "[billing] estorno de customer desconhecido");
+      return;
+    }
+    if (sub.status === "canceled" && sub.planId === "free") return;
+
+    if (sub.stripeSubscriptionId) {
+      try {
+        await stripeMod.cancelSubscription(sub.stripeSubscriptionId);
+        logger.info({ userId: sub.userId, subId: sub.stripeSubscriptionId }, "[billing] assinatura cancelada por estorno");
+        return; // subscription.deleted chega em seguida e faz o downgrade
+      } catch (err) {
+        logger.warn({ err: err.message, subId: sub.stripeSubscriptionId }, "[billing] cancelamento no Stripe falhou — derrubando plano localmente");
+      }
+    }
+
+    await billing.update(sub.userId, {
+      planId: "free",
+      status: "canceled",
+      cancelAtPeriodEnd: false,
+      stripeSubscriptionId: null,
+    });
+    await applyPlanLimits(sub.userId);
+    logger.info({ userId: sub.userId }, "[billing] plano derrubado localmente por estorno");
+  } catch (err) {
+    // Nunca derruba o webhook: o evento já foi marcado como processado, então
+    // um 500 aqui só perderia o evento sem reentrega.
+    logger.error({ err: err.message, charge: charge?.id }, "[billing] cancelamento por estorno falhou");
+    sentry.captureException(err, { tags: { stripeEvent: "charge.refunded" } });
   }
 }
 

@@ -5,7 +5,18 @@
 
 3. [] Verificar brechas de segurança pelos endpoints do site.
 
-4. [] Revisar login com google.
+4. [x] Revisar login com google. Segue o que aparece: Acesso bloqueado: erro de autorização
+
+allangroisman@gmail.com
+
+Não é possível fazer login no app porque ele não obedece à política do OAuth 2.0 do Google.
+
+Se você é o desenvolvedor do app, registre a origem JavaScript no Console do Google Cloud.
+Saiba mais sobre o erro
+Se você é um desenvolvedor desse app, consulte os detalhes do erro.
+Erro 400: origin_mismatch
+
+
 
 5. [x] Como ele detecta os cupons no repasse? Por texto? Se sim, quero poder editar essa lista de textos.
 
@@ -21,6 +32,6 @@
 
 11. [] Teste de cupom não está funcionando, me parece que é por causa do captcha do ML ou pq a pagina ali mudou. Revisa a forma como se faz e as paginas do ML.
 
-12. [] A parte superior esquerda da página, onde tem a marca, escrito Nimbus e painel admistrativo. Quero que tire o escrito "painel admistrativo" e quero que a junção da marca com o escrito seja clicável para ir para a Home do Sistema (a home pode ser o menu de campanhas)
+12. [x] A parte superior esquerda da página, onde tem a marca, escrito Nimbus e painel admistrativo. Quero que tire o escrito "painel admistrativo" e quero que a junção da marca com o escrito seja clicável para ir para a Home do Sistema (a home pode ser o menu de campanhas)
 
 13. [] Quero arrumar o scrap dos produtos de um cupom no ML.

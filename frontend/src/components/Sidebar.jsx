@@ -7,7 +7,7 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
   const isAdmin = user?.role === "admin";
   // Rótulo do plano vem do billing. Enquanto não carrega (null), não mostra nada —
   // antes era o texto fixo "Plano Pro", que mentia pra quem estava em outro plano.
-  const subtitle = isAdmin ? "Painel administrativo" : planLabel(billing?.effectivePlan, billing?.plans);
+  const subtitle = isAdmin ? null : planLabel(billing?.effectivePlan, billing?.plans);
 
   const visibleItems = sidebarItems.filter(it => !it.adminOnly);
   const adminItems = sidebarItems.filter(it => it.adminOnly);
@@ -83,10 +83,15 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
       <div style={{ padding: "0 16px 16px", borderBottom: "0.5px solid var(--color-border-tertiary)", marginBottom: 8 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 16, fontWeight: 500, color: "var(--color-brand)" }}>
+            <button
+              onClick={() => nav("dashboard")}
+              title="Ir para o início"
+              aria-label="Nimbus — ir para Campanhas"
+              style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 16, fontWeight: 500, color: "var(--color-brand)", background: "transparent", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}
+            >
               <Logo size={22} />
               <span>Nimbus {isAdmin && <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "var(--color-brand)", color: "var(--color-brand-contrast)", marginLeft: 4, verticalAlign: "middle" }}>ADMIN</span>}</span>
-            </div>
+            </button>
             {subtitle && <div style={{ fontSize: 11, color: "var(--color-text-primary)", fontWeight: 500, opacity: 0.75 }}>{subtitle}</div>}
           </div>
           <button className="mobile-only" aria-label="Fechar menu" onClick={() => onToggleMobile(false)} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 20, color: "var(--color-text-secondary)", padding: "4px" }}>✕</button>
@@ -146,10 +151,15 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
         padding: "10px 16px", borderBottom: "0.5px solid var(--color-border-tertiary)",
         background: "var(--color-background-primary)", position: "sticky", top: 0, zIndex: 90,
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 16, fontWeight: 500, color: "var(--color-brand)" }}>
+        <button
+          onClick={() => nav("dashboard")}
+          title="Ir para o início"
+          aria-label="Nimbus — ir para Campanhas"
+          style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 16, fontWeight: 500, color: "var(--color-brand)", background: "transparent", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}
+        >
           <Logo size={20} />
           <span>Nimbus</span>
-        </div>
+        </button>
         <button onClick={() => onToggleMobile(true)} aria-label="Abrir menu" style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 22, color: "var(--color-text-primary)", padding: "4px 8px", lineHeight: 1 }}>☰</button>
       </div>
 
