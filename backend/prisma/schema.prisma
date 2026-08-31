@@ -190,6 +190,11 @@ model RepasseCaptureLog {
   @@index([userId, createdAt(sort: Desc)])
   @@index([errorKind, createdAt(sort: Desc)])
   @@index([createdAt(sort: Desc)])
+  // Falta aqui, de propósito, o índice por (coupon, createdAt) que a aba
+  // Admin › Cupom › Repasse usa: ele é PARCIAL (WHERE coupon IS NOT NULL), e o
+  // Prisma não sabe declarar índice parcial. Ele mora só na migration
+  // 20260831120000_repasse_log_coupon_index — declarar um @@index aqui criaria um
+  // segundo índice, cheio, sobre a mesma tabela.
   @@map("repasse_capture_log")
 }
 

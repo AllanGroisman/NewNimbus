@@ -41,7 +41,7 @@ O caminho é filtro posicional do vitest, então qualquer pedaço do nome serve.
 
 | Mexi em… | Rodo |
 |---|---|
-| `backend/repasse/**` | `npm run test:repasse` |
+| `backend/repasse/**` (captura e a aba de cupons do repasse) | `npm run test:repasse` |
 | `backend/scraping/**` (ML, Amazon, Shopee, cupons) | `npm run test:scraper` |
 | `backend/scheduler.js`, campanhas, fila, envio | `npm run test:scheduler` |
 | `backend/billing/**`, Stripe, planos, checkout | `npm run test:billing` |
@@ -91,7 +91,7 @@ Se um destes não tem nada a ver com a tua mudança, não precisa rodar.
 | `integration/whatsapp.test.js` | 29 | 7,0 s |
 | `integration/manual-ops.test.js` | 23 | 6,9 s |
 | `journey/full-journey.test.js` | 11 | 6,4 s |
-| os outros 18 arquivos | — | < 5,5 s cada |
+| os outros 19 arquivos | — | < 5,5 s cada |
 
 ### Unitários (14 s no total)
 

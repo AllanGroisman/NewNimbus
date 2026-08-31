@@ -547,8 +547,11 @@ export async function adminMlCuponsCancel()          { return http("POST", "/api
 // palavras já testadas ficam. Varre o catálogo inteiro, daí o SLOW.
 export async function adminMlCuponsClearAll() { return http("DELETE", "/api/admin/ml-cupons", undefined, { timeoutMs: SLOW_TIMEOUT_MS }); }
 export async function adminMlCuponsCodes(limit = 50) { return http("GET",  `/api/admin/ml-cupons/codes?limit=${limit}`); }
-export async function adminMlCuponsTestWord(word, force = false) {
-  return http("POST", "/api/admin/ml-cupons/code", { word, force }, { timeoutMs: SLOW_TIMEOUT_MS });
+// `source` marca de onde veio a palavra (`ml_coupon_codes.source`): "admin" quando
+// alguém digitou, "repasse" quando a aba Repasse mandou testar um código pescado
+// de grupo líder.
+export async function adminMlCuponsTestWord(word, force = false, source = "admin") {
+  return http("POST", "/api/admin/ml-cupons/code", { word, force, source }, { timeoutMs: SLOW_TIMEOUT_MS });
 }
 // Dispara a busca da campanha que uma palavra apontou. Responde na hora (202) — a
 // varredura da lista do ML passa dos 90s do nginx, então ela roda solta e o
@@ -605,7 +608,7 @@ export async function adminCatalog({ page = 1, pageSize = 50, category, source, 
 export async function adminClearCatalog() { return http("DELETE", "/api/admin/catalog"); }
 
 // ─── Admin / Repasse (log de captura) ──────────────────────────────────
-export async function adminRepasseLogs({ page = 1, pageSize = 50, userId, groupId, store, outcome, errorKind, stage } = {}) {
+export async function adminRepasseLogs({ page = 1, pageSize = 50, userId, groupId, store, outcome, errorKind, stage, coupon } = {}) {
   const params = new URLSearchParams();
   params.set("page", page);
   params.set("pageSize", pageSize);
@@ -615,7 +618,38 @@ export async function adminRepasseLogs({ page = 1, pageSize = 50, userId, groupI
   if (outcome) params.set("outcome", outcome);
   if (errorKind) params.set("errorKind", errorKind);
   if (stage) params.set("stage", stage);
+  // As capturas de UM cupom — o que a aba Admin › Cupom › Repasse abre ao
+  // expandir uma linha.
+  if (coupon) params.set("coupon", coupon);
   return http("GET", `/api/admin/repasse/logs?${params}`);
+}
+
+// Os cupons capturados pelo repasse, um por linha (Admin › Cupom › Repasse).
+// `days` aceita "tudo"; `status` é um dos de repasse/coupons.js STATUS.
+export async function adminRepasseCoupons({ page = 1, pageSize = 50, days = 90, status = "todos", q = "" } = {}) {
+  const params = new URLSearchParams();
+  params.set("page", page);
+  params.set("pageSize", pageSize);
+  params.set("days", days);
+  if (status) params.set("status", status);
+  if (q) params.set("q", q);
+  return http("GET", `/api/admin/repasse/coupons?${params}`);
+}
+
+// Esquecer um cupom capturado: a coluna `coupon` das capturas dele vai a null.
+// As capturas ficam no log de Admin › Repasse e a palavra testada continua no
+// dicionário — some só o código, da lista desta aba.
+export async function adminRepasseCouponForget(code) {
+  return http("DELETE", `/api/admin/repasse/coupons/${encodeURIComponent(code)}`);
+}
+
+// O mesmo, para todos os cupons que o filtro atual mostra.
+export async function adminRepasseCouponsClear({ days = 90, status = "todos", q = "" } = {}) {
+  const params = new URLSearchParams();
+  params.set("days", days);
+  if (status) params.set("status", status);
+  if (q) params.set("q", q);
+  return http("DELETE", `/api/admin/repasse/coupons?${params}`);
 }
 
 // Resumo da janela (1h/24h/7d): totais por resultado, por motivo e taxa por loja.

@@ -2572,7 +2572,11 @@ app.get("/api/admin/ml-cupons/importar/status", auth.requireAuth, auth.requireAd
 // lista as palavras em lugar nenhum.
 app.post("/api/admin/ml-cupons/code", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
-    res.json({ result: await mlCupons.checkWord(req.body?.word, { source: "admin", force: !!req.body?.force }) });
+    // Lista fechada: a origem vem do cliente e vira coluna (`ml_coupon_codes.source`).
+    // A aba Repasse manda "repasse" — é o que separa a palavra que veio de um grupo
+    // líder da que o admin digitou à mão.
+    const source = req.body?.source === "repasse" ? "repasse" : "admin";
+    res.json({ result: await mlCupons.checkWord(req.body?.word, { source, force: !!req.body?.force }) });
   } catch (err) {
     console.error("[ml-cupons.code]", err.message);
     res.status(400).json({ error: err.message });
@@ -2915,6 +2919,58 @@ app.post("/api/admin/repasse/coupon-config/test", auth.requireAuth, auth.require
   }
 });
 
+// Os cupons que o repasse pescou, um por linha (Admin › Cupom › Repasse).
+// Agrega o log de captura por código e cruza com o dicionário palavra → campanha
+// da aba "Descobrir palavra", pra dizer de cada um se já foi testado, de que
+// campanha é e se os produtos dela estão no sistema.
+app.get("/api/admin/repasse/coupons", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const repasseCoupons = require("./repasse/coupons");
+    res.json(await repasseCoupons.listCapturedCoupons({
+      page: req.query.page,
+      pageSize: req.query.pageSize,
+      days: req.query.days,
+      status: req.query.status || "todos",
+      q: req.query.q || "",
+    }));
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/repasse/coupons" });
+  }
+});
+
+// Faxina da aba: "excluir" é ESQUECER o código, não apagar a captura. A coluna
+// `coupon` vai a null e o resto da linha (grupo, link, produto, desfecho) fica
+// no log de Admin › Repasse — o extractCoupon é heurística sobre texto humano e
+// a lista junta lixo ("AQUI", "PROMO"), que enterrava os cupons de verdade.
+//
+// A rota sem :code limpa o que o FILTRO mostra (mesmos days/status/q do GET),
+// pra dar pra varrer só uma situação de cada vez.
+app.delete("/api/admin/repasse/coupons", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const repasseCoupons = require("./repasse/coupons");
+    res.json({
+      ok: true,
+      ...await repasseCoupons.forgetFiltered({
+        days: req.query.days,
+        status: req.query.status || "todos",
+        q: req.query.q || "",
+      }),
+    });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "DELETE /api/admin/repasse/coupons" });
+  }
+});
+
+app.delete("/api/admin/repasse/coupons/:code", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const repasseCoupons = require("./repasse/coupons");
+    const code = String(req.params.code || "").trim().toUpperCase();
+    res.json({ ok: true, code, ...await repasseCoupons.forgetCoupons([code]) });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "DELETE /api/admin/repasse/coupons/:code" });
+  }
+});
+
 // Resumo do log de repasse: total por resultado, por motivo, e taxa de sucesso
 // por loja numa janela de tempo. É o que faz um bloqueio sistêmico aparecer — na
 // lista item a item, 10 falhas do mesmo tipo eram só 10 linhas parecidas.
@@ -2945,6 +3001,9 @@ app.get("/api/admin/repasse/logs", auth.requireAuth, auth.requireAdmin, async (r
     if (req.query.groupId) where.groupId = BigInt(req.query.groupId);
     if (req.query.store) where.store = String(req.query.store);
     if (req.query.outcome) where.outcome = String(req.query.outcome);
+    // Um cupom só. É o que a aba Admin › Cupom › Repasse pede ao expandir uma
+    // linha — as capturas individuais daquele código, sem rota nova.
+    if (req.query.coupon) where.coupon = String(req.query.coupon).trim().toUpperCase();
     // "none" isola os descartes que NÃO são erro (a fonte não habilitada na
     // campanha) — sem isso não haveria como separá-los dos que precisam de ação.
     if (req.query.errorKind === "none") where.errorKind = null;

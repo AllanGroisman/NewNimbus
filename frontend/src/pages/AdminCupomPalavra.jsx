@@ -10,21 +10,13 @@
 // Morava dentro da aba "Cupons do ML"; saiu de lá porque é outra pergunta, e ficava
 // espremida entre a rodada e a tabela.
 import { useState, useEffect, useCallback } from "react";
-import { PRIMARY_DARK } from "../data/constants";
 import {
   adminMlCuponsTestWord, adminMlCuponsCodes,
   adminMlCuponsImportCampaign, adminMlCuponsImportStatus, errText,
 } from "../data/api";
 import Modal from "../components/ui/Modal";
+import { VERDICT } from "../data/cupomRotulos";
 import { cardStyle, inputStyle, botaoPrimario, botaoSecundario, botaoLink } from "../components/admin/cupomEstilos";
-
-const VERDICT = {
-  valid: { label: "✅ palavra existe", color: PRIMARY_DARK },
-  invalid: { label: "❌ o ML não reconheceu", color: "var(--danger-text)" },
-  // Não é veredito sobre a palavra: é o ML que não respondeu ("Tivemos um problema").
-  // Dizer "não reconheceu" aqui era mostrar o oposto da verdade.
-  indeterminado: { label: "❓ o ML não respondeu", color: "var(--warn-text)" },
-};
 
 // Onde a busca de uma campanha está agora. As etapas vêm do `crawlFilter` e do
 // `findCampaign` — a mesma redação da barra da rodada, lá em cima.
@@ -45,7 +37,7 @@ function textoProgresso(p) {
 // A busca roda SOLTA no servidor (varrer a lista do ML passa dos 90s do nginx), então
 // o botão só dispara e este modal acompanha pelo status — mesmo desenho do "Puxar
 // cupons agora" lá em cima.
-function ImportarCampanhaModal({ campaignId, word, onClose, onDone }) {
+export function ImportarCampanhaModal({ campaignId, word, onClose, onDone }) {
   const [comProdutos, setComProdutos] = useState(true);
   const [enviando, setEnviando] = useState(false);
   const [rodando, setRodando] = useState(false);

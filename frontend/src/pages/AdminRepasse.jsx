@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
-import { PRIMARY_DARK } from "../data/constants";
 import { adminRepasseLogs, adminRepasseSummary, errText} from "../data/api";
 import Pagination from "../components/ui/Pagination";
 import Badge from "../components/ui/Badge";
 import RepasseSummary from "../components/admin/RepasseSummary";
 import CouponDetection from "../components/admin/CouponDetection";
+import { OUTCOME_LABEL } from "../data/cupomRotulos";
 
 const POLL_MS = 5000;
 
@@ -14,15 +14,6 @@ const selectStyle = {
   border: "0.5px solid var(--color-border-tertiary)",
   background: "var(--color-background-secondary)",
   fontSize: 13,
-};
-
-const OUTCOME_LABEL = {
-  queued: { label: "→ fila", color: "#1B7A43" },
-  pending: { label: "→ pendente", color: PRIMARY_DARK },
-  discarded: { label: "descartado", color: "var(--warn-text)" },
-  duplicate: { label: "duplicata", color: "var(--color-text-secondary)" },
-  cooldown: { label: "cooldown", color: "var(--color-text-secondary)" },
-  error: { label: "erro", color: "var(--danger-text)" },
 };
 
 // Ordem das etapas do caminho de um link. Espelha STAGE_ORDER de
