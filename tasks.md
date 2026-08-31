@@ -35,3 +35,7 @@ Erro 400: origin_mismatch
 12. [x] A parte superior esquerda da página, onde tem a marca, escrito Nimbus e painel admistrativo. Quero que tire o escrito "painel admistrativo" e quero que a junção da marca com o escrito seja clicável para ir para a Home do Sistema (a home pode ser o menu de campanhas)
 
 13. [] Quero arrumar o scrap dos produtos de um cupom no ML.
+
+14. [] Nos cupons, quero que exclua os antigos que já não funcionam mais.
+
+15. [] Nos cupons, quero que todos os cupons que são detectados no repasse sejam adicionados na lista e que se não estiverem, seja feito o scraping de seus produtos.
