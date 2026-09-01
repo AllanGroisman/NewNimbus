@@ -1,3 +1,14 @@
+// OBSOLETO desde a task 28 — mantido só como registro do que aconteceu.
+//
+// As duas chaves que este script conserta (`groupings` e `limitPerGrouping`) não
+// existem mais na config: a etapa 1 agora varre a lista GERAL e as verticais só
+// carimbam a categoria (`categorias`, `carimbarCategorias`). E o `readConfig`
+// passou a descartar na LEITURA qualquer chave que o DEFAULT_CONFIG não conheça —
+// que é a correção de raiz do problema abaixo, e o motivo de este script não ter
+// mais o que fazer. Rodá-lo hoje grava chaves que ninguém lê.
+//
+// ── o que ele consertava ────────────────────────────────────────────────
+//
 // One-shot: destrava a rodada de cupons que ficou presa numa categoria só.
 //
 // Contexto (task 26): a config da rodada mora em `app_config['ml-cupons-config']`

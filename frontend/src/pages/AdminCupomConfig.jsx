@@ -102,10 +102,10 @@ export default function ConfigTest() {
       <MLSourcesSection />
 
       <div style={cardStyle}>
-        <div style={{ fontWeight: 500, marginBottom: 4 }}>Limites da rodada</div>
+        <div style={{ fontWeight: 500, marginBottom: 4 }}>Limites das duas etapas</div>
         <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 4, lineHeight: 1.5 }}>
-          Os mesmos da aba “Cupons do ML” — quantos cupons por categoria, quantos produtos por cupom,
-          e se a rodada pode clicar em “Eu quero”.
+          Os mesmos da aba “Cupons do ML” — quantas páginas da lista, quantos produtos por cupom,
+          e se a busca de produtos pode clicar em “Eu quero”.
         </div>
         <Config config={status?.config} labels={status?.groupingLabels} onSaved={recarregar} />
       </div>

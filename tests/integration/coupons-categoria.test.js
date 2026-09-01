@@ -96,10 +96,12 @@ describe("dicionário de nomes das categorias", () => {
   });
 });
 
-// "Puxar de tudo" (task 26): a rodada varre CADA vertical, uma de cada vez, em vez
-// de dar uma passada só na lista geral. O motivo é que o ML não diz a vertical do
-// cupom na lista — a categoria gravada é o filtro que a rodada pediu na URL —,
-// então a passada geral traz tudo sem categoria nenhuma.
+// "Puxar de tudo" (task 28): a COLETA é a lista geral, sempre, e é ela que traz
+// todos os cupons da conta. As verticais vêm DEPOIS e servem só para carimbar a
+// categoria — o ML não diz a vertical do cupom na lista, a categoria gravada é o
+// filtro que a varredura pediu na URL. Sem a geral antes, cupom que não está em
+// vertical nenhuma nunca entrava; sem as verticais depois, a coluna Categoria
+// fica vazia.
 describe("categoriasDaRodada — o que 'todas as categorias' quer dizer", () => {
   const sync = require(path.join(backendDir, "coupons", "sync"));
 
@@ -113,34 +115,42 @@ describe("categoriasDaRodada — o que 'todas as categorias' quer dizer", () => 
     recommended: "Recomendados",
   };
 
-  it("sem categoria escolhida, varre todas as verticais", () => {
-    expect(sync.categoriasDaRodada({ groupings: [] }, { labels: LABELS }))
-      .toEqual(["ce_vertical", "fa_vertical", "tb_vertical"]);
+  it("a lista geral vem primeiro, e as verticais depois, para carimbar", () => {
+    expect(sync.categoriasDaRodada({ categorias: [] }, { labels: LABELS }))
+      .toEqual([null, "ce_vertical", "fa_vertical", "tb_vertical"]);
+  });
+
+  it("sem o carimbo ligado, é só a lista geral", () => {
+    expect(sync.categoriasDaRodada({ categorias: [], carimbarCategorias: false }, { labels: LABELS }))
+      .toEqual([null]);
   });
 
   it("filtro não é categoria: price, percentage e recommended ficam de fora", () => {
     // Varrer por eles traria cupom repetido e carimbaria "Mais de 10%" na coluna
     // Categoria da tabela — uma categoria que não existe.
-    const r = sync.categoriasDaRodada({ groupings: [] }, { labels: LABELS });
+    const r = sync.categoriasDaRodada({ categorias: [] }, { labels: LABELS });
     for (const filtro of ["price", "percentage", "recommended"]) expect(r).not.toContain(filtro);
   });
 
-  it("categoria escolhida na tela manda, na ordem em que veio", () => {
-    expect(sync.categoriasDaRodada({ groupings: ["fa_vertical", "ce_vertical"] }, { labels: LABELS }))
-      .toEqual(["fa_vertical", "ce_vertical"]);
+  it("categoria escolhida na tela manda o CARIMBO, na ordem em que veio", () => {
+    // A coleta continua sendo a lista geral: escolher categoria estreita o
+    // carimbo, não a colheita. Foi o contrário disso que segurou a rodada em
+    // Brinquedos por meses (task 26).
+    expect(sync.categoriasDaRodada({ categorias: ["fa_vertical", "ce_vertical"] }, { labels: LABELS }))
+      .toEqual([null, "fa_vertical", "ce_vertical"]);
   });
 
   it("sem dicionário nenhum, cai na lista geral em vez de não varrer nada", () => {
     // Instalação nova: o nome das categorias só chega depois da primeira leitura
     // da aba do ML. Sem este caso, a primeira rodada da vida não abriria página
     // nenhuma.
-    expect(sync.categoriasDaRodada({ groupings: [] }, { labels: {} })).toEqual([null]);
+    expect(sync.categoriasDaRodada({ categorias: [] }, { labels: {} })).toEqual([null]);
   });
 
   it("buscar UMA campanha é a lista geral, não dez varreduras", () => {
     // A lista geral já contém a campanha procurada; varrer vertical por vertical
     // custaria dez vezes mais navegação com a conta do sistema pelo mesmo cupom.
-    expect(sync.categoriasDaRodada({ groupings: ["tb_vertical"] }, { procurar: "14193848", labels: LABELS }))
+    expect(sync.categoriasDaRodada({ categorias: ["tb_vertical"] }, { procurar: "14193848", labels: LABELS }))
       .toEqual([null]);
   });
 });

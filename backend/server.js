@@ -2439,28 +2439,18 @@ app.put("/api/admin/ml-cupons/config", auth.requireAuth, auth.requireAdmin, asyn
   }
 });
 
-app.post("/api/admin/ml-cupons/run", auth.requireAuth, auth.requireAdmin, (req, res) => {
-  const st = mlCupons.status();
-  if (st.running) {
-    return res.status(409).json({ error: "Já tem uma rodada de cupons rodando." });
-  }
-  // A busca de UMA campanha usa a mesma conta do ML: começar a rodada por cima dela
-  // é o segundo Chrome na conta, que é o caminho curto pro CAPTCHA.
-  if (st.importing) {
-    return res.status(409).json({ error: "Estou buscando uma campanha agora — espere ela terminar." });
-  }
+// A fila da ETAPA 2: quem ainda não tem vitrine raspada. Separa quem só precisa
+// ser lido de quem precisa do "Eu quero" antes — a tela mostra os dois números
+// antes de o admin apertar o botão, porque o segundo grupo custa ESCRITA na conta.
+app.get("/api/admin/ml-cupons/alvos-produtos", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
-    // Dispara e devolve: a rodada abre um Chrome e visita uma página por cupom.
-    // O erro dela não se perde — vai parar no status, que é o que a tela lê.
-    mlCupons.runOnce(req.body || {}).catch(() => {});
-    res.status(202).json({ started: true, ...mlCupons.status() });
+    res.json(await mlCupons.alvosDeProdutos({
+      limit: Number(req.query.limit) || 500,
+      campaignIds: req.query.campaignId ? [String(req.query.campaignId)] : null,
+    }));
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/ml-cupons/alvos-produtos" });
   }
-});
-
-app.post("/api/admin/ml-cupons/run/cancel", auth.requireAuth, auth.requireAdmin, (req, res) => {
-  res.json(mlCupons.cancel());
 });
 
 // ── A mesma rodada, tocada pelo Chrome do admin (a extensão) ──────────────
@@ -2532,6 +2522,19 @@ app.delete("/api/admin/ml-cupons", auth.requireAuth, auth.requireAdmin, async (r
     res.json({ ok: true, ...await couponsStore.clearAll() });
   } catch (err) {
     httpErrors.serverError(res, err, { req, ctx: "DELETE /api/admin/ml-cupons" });
+  }
+});
+
+// Apaga UM cupom (o 🗑 da linha da tabela). Mesma recusa do "apagar todos": mexer
+// na lista no meio de uma varredura é apagar o que ela está gravando.
+app.delete("/api/admin/ml-cupons/:campaignId", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  if (mlCupons.status().running) {
+    return res.status(409).json({ error: "Tem uma rodada de cupons rodando — espere ela terminar." });
+  }
+  try {
+    res.json({ ok: true, ...await couponsStore.deleteCoupon(String(req.params.campaignId)) });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "DELETE /api/admin/ml-cupons/:campaignId" });
   }
 });
 

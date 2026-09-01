@@ -100,19 +100,68 @@ describe("gravarVitrineLocal", () => {
 // conta é a MESMA do Hub de Afiliados, então verificação ali derruba os dois.
 describe("config da ativação automática", () => {
   it("prende o teto na faixa e trunca decimal", async () => {
-    expect((await sync.writeConfig({ maxActivationsPerRun: 999 })).maxActivationsPerRun).toBe(100);
+    expect((await sync.writeConfig({ maxActivationsPerRun: 999 })).maxActivationsPerRun).toBe(500);
     expect((await sync.writeConfig({ maxActivationsPerRun: -5 })).maxActivationsPerRun).toBe(0);
     expect((await sync.writeConfig({ maxActivationsPerRun: 7.9 })).maxActivationsPerRun).toBe(7);
   });
 
-  it("zero é valor legítimo: ligado, mas nenhum nesta rodada", async () => {
-    expect((await sync.writeConfig({ maxActivationsPerRun: 0 })).maxActivationsPerRun).toBe(0);
+  // A troca de semântica do "buscar TUDO": `0` era "ligado, mas nenhum" e virou
+  // "sem teto". Os dois knobs passaram a ser ortogonais — `activateCoupons` liga e
+  // desliga, este limita —, e é justamente por serem opostos que os dois casos
+  // ficam testados lado a lado: um 0 lido como "nenhum" deixaria a fila inteira
+  // sem vitrine, e lido como "sem teto" quando devia ser "nenhum" dispararia
+  // centenas de cliques na conta do Hub.
+  it("zero é SEM TETO: ativa todos os alvos da rodada", async () => {
+    await sync.writeConfig({ activateCoupons: true, maxActivationsPerRun: 0 });
+    const r = sync.startLocalRun({ ativarApenas: ["1", "2", "3"] });
+    try {
+      expect(r.ativa).toBe(true);
+      // `Infinity` não sobrevive ao JSON, então quem sai daqui é `null` — a tela
+      // lê "null = sem teto" em vez de mostrar "restam null".
+      expect(sync.ativacoesLocais({ props: null }).restantes).toBe(null);
+    } finally {
+      sync.fimLocalRun({ cancelada: true });
+    }
+  });
+
+  it("quem desliga a ativação é o activateCoupons, e ele continua desligando", async () => {
+    await sync.writeConfig({ activateCoupons: false, maxActivationsPerRun: 0 });
+    const r = sync.startLocalRun({ ativarApenas: ["1", "2", "3"] });
+    try {
+      expect(r.ativa).toBe(false);
+      expect(sync.ativacoesLocais({ props: null })).toEqual({ labels: [], restantes: 0 });
+    } finally {
+      sync.fimLocalRun({ cancelada: true });
+    }
   });
 
   it("lixo no campo cai no padrão em vez de virar NaN", async () => {
     // `Number(undefined)` é NaN, e NaN não é pego por `??` — sem a rede explícita
-    // isso viraria "ativar nenhum" em silêncio.
-    expect((await sync.writeConfig({ maxActivationsPerRun: "abc" })).maxActivationsPerRun).toBe(20);
+    // isso viraria um teto que ninguém pediu.
+    expect((await sync.writeConfig({ maxActivationsPerRun: "abc" })).maxActivationsPerRun)
+      .toBe(0);
+  });
+
+  // O botão 3 solta o teto de páginas da lista geral. O flag é do SERVIDOR: a tela
+  // manda `tudo: true`, não um número — `startLocalRun` espalha os overrides por
+  // cima da config sem passar pelos clamps do `writeConfig`.
+  it("tudo: true solta o teto de páginas da lista geral", async () => {
+    await sync.writeConfig({ maxPaginasLista: 3 });
+    const normal = sync.startLocalRun({});
+    expect(normal.config.maxPaginasLista).toBe(3);
+    sync.fimLocalRun({ cancelada: true });
+
+    const tudo = sync.startLocalRun({ tudo: true });
+    expect(tudo.config.maxPaginasLista).toBe(200);
+    sync.fimLocalRun({ cancelada: true });
+
+    // E não fica gravado: é override de UMA rodada, não uma mudança de config.
+    expect(sync.readConfig().maxPaginasLista).toBe(3);
+  });
+
+  it("os ciclos do buscar TUDO têm freio próprio", async () => {
+    expect((await sync.writeConfig({ pausaEntreCiclosMs: 1 })).pausaEntreCiclosMs).toBe(5000);
+    expect((await sync.writeConfig({ maxCiclos: 9999 })).maxCiclos).toBe(200);
   });
 
   it('"false" em texto desliga a ativação — o erro clássico do body cru', async () => {

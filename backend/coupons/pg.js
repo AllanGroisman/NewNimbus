@@ -70,6 +70,21 @@ async function upsertCoupons(coupons, { origin = "page" } = {}) {
       update: { ...row, ...comGrupos, ...comIds },
     });
     if (r.firstSeenAt.getTime() === r.lastSeenAt.getTime()) novos++; else atualizados++;
+
+    // A palavra que veio no TÍTULO ("10% OFF com QUEROPROMO"). Vai num update
+    // separado, e não no `row`, porque a regra é condicional sobre a linha que já
+    // existe — `code: null` —, e o upsert do Prisma não sabe fazer isso.
+    //
+    // Por que só onde está nulo: a palavra TESTADA no ML (recordCodeCheck, mais
+    // abaixo) custou uma aba do Chrome com a conta do sistema e é resposta do
+    // próprio ML; a do título é leitura de texto. Se as duas discordarem, quem
+    // manda é a testada — sobrescrever aqui trocaria prova por palpite.
+    if (c.codeFromTitle) {
+      await prisma().mlCoupon.updateMany({
+        where: { campaignId: c.campaignId, code: null },
+        data: { code: c.codeFromTitle },
+      });
+    }
   }
   return { novos, atualizados };
 }
@@ -521,9 +536,15 @@ async function restampCodesFromChecks() {
 
 // O caminho de volta do `restampCodesFromChecks`: devolve à palavra a campanha que
 // só sobrou carimbada no cupom. Existe porque um engasgo do ML já zerou linhas boas
-// antes desta correção — e a coluna `ml_coupons.code` é escrita exclusivamente a
-// partir de um teste `valid` (aqui e no `recordCodeCheck`), então ela é fonte
-// confiável para reconstruir o que se perdeu.
+// antes desta correção.
+//
+// O `codeFromTitle` no filtro é o que mantém isso honesto. A coluna
+// `ml_coupons.code` era escrita exclusivamente a partir de um teste `valid`, e é
+// nisso que este UPDATE se apoia para carimbar `verdict = 'valid'`. Desde que a
+// varredura passou a ler a palavra do TÍTULO (upsertCoupons), a coluna tem uma
+// segunda origem — que nunca foi ao ML. Deixar essas entrarem aqui inventaria um
+// teste que não houve, e o cache de 12h do `findCodeCheck` passaria a devolver
+// "válido" por uma palavra que ninguém digitou.
 async function recoverCodesFromCoupons() {
   const n = await prisma().$executeRaw`
     UPDATE "ml_coupon_codes" k
@@ -531,13 +552,78 @@ async function recoverCodesFromCoupons() {
            "message" = NULL, "response_code" = NULL
       FROM "ml_coupons" c
      WHERE c."code" = k."code"
-       AND k."campaign_id" IS NULL`;
+       AND k."campaign_id" IS NULL
+       AND (c."raw" -> 'codeFromTitle') IS DISTINCT FROM 'true'::jsonb`;
   return { recuperados: Number(n || 0) };
+}
+
+// Os cupons que ainda NÃO têm vitrine raspada, separados pelo que falta em cada um.
+//
+// A separação é o ponto: `containerUrl` só existe depois do "Eu quero", então os
+// dois grupos custam coisas diferentes. `prontos` é só abrir a vitrine e ler —
+// leitura pura. `precisamAtivar` exige um clique em "Aplicar" na lista do ML, que
+// é ESCRITA irreversível na conta do sistema (a mesma do Hub) — por isso ele vem
+// separado, contado, e quem decide se vai é a config (`activateCoupons`).
+//
+// `productsSyncedAt` é o carimbo de "a vitrine foi raspada" (replaceCouponProducts
+// só o escreve para `origem: "vitrine"`), e é ele que faz o botão "buscar os que
+// faltam" não repetir o trabalho da rodada anterior.
+async function couponsSemVitrine({ limit = 500, campaignIds = null } = {}) {
+  const teto = Math.min(2000, Math.max(1, Number(limit) || 500));
+  const alvo = Array.isArray(campaignIds) && campaignIds.length
+    ? { campaignId: { in: campaignIds.map(String) } }
+    : {};
+  // Cupom vencido não tem vitrine que valha uma aba aberta com a conta do sistema.
+  const base = {
+    ...alvo,
+    productsSyncedAt: null,
+    OR: [{ expiresAt: null }, { expiresAt: { gt: nowish() } }],
+  };
+
+  const [prontos, precisamAtivar, total] = await Promise.all([
+    prisma().mlCoupon.findMany({
+      where: { ...base, containerUrl: { not: null } },
+      select: { campaignId: true, title: true, containerUrl: true },
+      orderBy: { lastSeenAt: "desc" },
+      take: teto,
+    }),
+    // Cupom de LOJA fica de fora: ele é AUTOMATIC, ou seja, já chega ativado. Um de
+    // loja sem `containerUrl` é cupom que o ML não deu vitrine nenhuma, e clicar
+    // não muda isso.
+    prisma().mlCoupon.findMany({
+      where: { ...base, containerUrl: null, scope: "campaign", activated: false },
+      select: { campaignId: true, title: true },
+      orderBy: { lastSeenAt: "desc" },
+      take: teto,
+    }),
+    prisma().mlCoupon.count({ where: base }),
+  ]);
+
+  return { prontos, precisamAtivar, total };
+}
+
+// Apaga UM cupom. Mesma ordem do `clearAll`, e pelo mesmo motivo: o carimbo do
+// catálogo é coluna solta, sem FK, então ninguém o limpa por cascata — apagar o
+// cupom antes deixaria `couponCampaignId` apontando pro nada. Os vínculos caem
+// junto (a FK deles é ON DELETE CASCADE), mas vão explícitos para poder contar.
+//
+// A palavra em `ml_coupon_codes` fica, pelo mesmo motivo do `clearAll`.
+async function deleteCoupon(campaignId) {
+  const id = String(campaignId || "");
+  if (!id) throw new Error("Sem campanha para apagar.");
+  const [catalogo, vinculos] = await prisma().$transaction([
+    prisma().catalogProduct.updateMany({ where: { couponCampaignId: id }, data: { couponCampaignId: null } }),
+    prisma().mlCouponProduct.deleteMany({ where: { campaignId: id } }),
+    prisma().mlCoupon.deleteMany({ where: { campaignId: id } }),
+  ]);
+  return { vinculos: vinculos.count, catalogoLimpo: catalogo.count };
 }
 
 module.exports = {
   upsertCoupons,
   clearAll,
+  deleteCoupon,
+  couponsSemVitrine,
   restampCodesFromChecks,
   findCouponByCode,
   recoverCodesFromCoupons,

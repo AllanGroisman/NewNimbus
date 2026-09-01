@@ -158,6 +158,57 @@ describe("detectScope — os sinais isolados", () => {
   });
 });
 
+// A PALAVRA escondida no título ("10% OFF com QUEROPROMO").
+//
+// Vale ouro porque é o único jeito de descobrir uma palavra sem TESTAR no ML — e
+// testar custa uma aba do Chrome com a conta do sistema, uma palavra por vez.
+// Por isso mesmo a regra é apertada: um falso positivo carimba a palavra ERRADA
+// num cupom, e daí em diante o teste de cupom mente.
+describe("palavraDoTitulo", () => {
+  it("pega o token em maiúscula depois do 'com'", () => {
+    expect(ml.palavraDoTitulo("10% OFF com QUEROPROMO")).toBe("QUEROPROMO");
+    expect(ml.palavraDoTitulo("R$ 50 OFF com PROMO2026")).toBe("PROMO2026");
+    // O ML às vezes começa a frase com "Com".
+    expect(ml.palavraDoTitulo("Com BRINQUEDOS você ganha 15%")).toBe("BRINQUEDOS");
+  });
+
+  it("'com' seguido de palavra normal não é palavra de cupom", () => {
+    expect(ml.palavraDoTitulo("15% OFF com desconto extra")).toBe(null);
+    expect(ml.palavraDoTitulo("Casa com Estilo")).toBe(null);
+    expect(ml.palavraDoTitulo("Cupom com frete grátis")).toBe(null);
+  });
+
+  it("as maiúsculas que fazem parte do desconto ficam de fora", () => {
+    // "com OFF" e "com FRETE" apareceriam como palavra e carimbariam dezenas de
+    // campanhas com a mesma palavra inventada.
+    expect(ml.palavraDoTitulo("20% com OFF")).toBe(null);
+    expect(ml.palavraDoTitulo("Compre com FRETE grátis")).toBe(null);
+    expect(ml.palavraDoTitulo("Pague com PIX")).toBe(null);
+  });
+
+  it("token curto demais não conta", () => {
+    // "com R$ 10", "com 2 itens": números e siglas de duas letras não são palavra.
+    expect(ml.palavraDoTitulo("Desconto com R$ 10 de volta")).toBe(null);
+    expect(ml.palavraDoTitulo("com AB")).toBe(null);
+  });
+
+  it("sem título, sem palavra — e sem explodir", () => {
+    expect(ml.palavraDoTitulo(null)).toBe(null);
+    expect(ml.palavraDoTitulo("")).toBe(null);
+    expect(ml.palavraDoTitulo(undefined)).toBe(null);
+  });
+
+  it("o parseCoupon devolve a palavra e diz de onde ela veio", () => {
+    const c = ml.parseCoupon({ campaign_id: "1", title: { text: "10% OFF com QUEROPROMO" } });
+    expect(c.codeFromTitle).toBe("QUEROPROMO");
+    expect(c.raw.codeFromTitle).toBe(true);
+
+    const sem = ml.parseCoupon({ campaign_id: "2", title: { text: "10% OFF em tudo" } });
+    expect(sem.codeFromTitle).toBe(null);
+    expect(sem.raw.codeFromTitle).toBe(false);
+  });
+});
+
 describe("loja × campanha nas fixtures reais", () => {
   // Os mesmos cupons chegam por dois caminhos: a aba (snake_case, `rawCoupons`) e
   // a /cupons/filter (camelCase, via camelToRaw) — e é a segunda que traz o grosso

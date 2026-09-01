@@ -104,8 +104,8 @@ export function pedirAoColetor(tipo, payload = {}, { onProgresso, timeoutMs = TI
 }
 
 // Pede a coleta de UMA vitrine. Devolve { produtos, parcial, motivo, paginas }.
-export function raparVitrine(containerUrl, { paginas, onProgresso, timeoutMs } = {}) {
-  return pedirAoColetor("raspar", { containerUrl, paginas }, { onProgresso, timeoutMs })
+export function raparVitrine(containerUrl, { paginas, maxProdutos, onProgresso, timeoutMs } = {}) {
+  return pedirAoColetor("raspar", { containerUrl, paginas, maxProdutos }, { onProgresso, timeoutMs })
     .then(r => ({ produtos: r.produtos || [], parcial: !!r.parcial, motivo: r.motivo || null, paginas: r.paginas || 0 }));
 }
 

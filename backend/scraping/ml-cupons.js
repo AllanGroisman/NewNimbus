@@ -157,6 +157,32 @@ function detectScope(raw, containerUrl, subtitulo) {
   return { scope: daLoja ? "store" : "campaign", sellerName: daLoja ? sellerName : null };
 }
 
+// A PALAVRA de ativação escondida no próprio título: "10% OFF com QUEROPROMO".
+//
+// Vale ouro porque é o único jeito de descobrir uma palavra sem TESTAR — e testar
+// custa uma aba do Chrome com a conta do sistema, uma palavra por vez (é o que a
+// aba "Descobrir palavra" faz). Aqui ela chega de graça, no mesmo modelo que a
+// varredura já baixa.
+//
+// A regra é apertada de propósito, porque um falso positivo carimba a palavra
+// ERRADA num cupom e o teste de cupom passa a mentir:
+//   - o token tem de vir TODO EM MAIÚSCULA (as palavras do ML são assim) e ter 4+
+//     caracteres — "com R$ 10" e "com 2 itens" ficam de fora sozinhos;
+//   - e não pode ser uma das palavras que aparecem em maiúscula por serem parte do
+//     desconto ("com FRETE GRÁTIS", "com DESCONTO").
+// "Casa com Estilo" não casa porque "Estilo" não é maiúscula inteira.
+const PALAVRA_NO_TITULO_RE = /\b[Cc]om\s+([A-Z][A-Z0-9]{3,29})\b/;
+const NAO_E_PALAVRA = new Set([
+  "OFF", "FRETE", "GRATIS", "GRÁTIS", "CUPOM", "CUPONS", "DESCONTO", "DESCONTOS",
+  "MERCADO", "LIVRE", "PONTOS", "NIVEL", "NÍVEL", "MELI", "FULL", "PIX", "BOLETO",
+]);
+
+function palavraDoTitulo(titulo) {
+  const achado = String(titulo || "").match(PALAVRA_NO_TITULO_RE)?.[1];
+  if (!achado || NAO_E_PALAVRA.has(achado)) return null;
+  return achado;
+}
+
 // Os MLBs das 4 miniaturas que o card do cupom mostra — a AMOSTRA da vitrine.
 //
 // Achado em 26/08: eles não estão no card. O card traz só `items[].image_url` e
@@ -237,6 +263,9 @@ function parseCoupon(raw, groupings = [], sampleItemIds = []) {
     // O token de ativação, quando o cupom ainda não foi aceito. NÃO é uma palavra
     // digitável — guardado só pra diagnóstico, nunca mostrado como "o código".
     activationToken: raw.code || null,
+    // A palavra DIGITÁVEL, quando o título entrega ("… com QUEROPROMO"). Essa sim
+    // é a que o usuário escreve no checkout. Ver palavraDoTitulo.
+    codeFromTitle: palavraDoTitulo(titulo),
     startsAt: isoOrNull(raw.future_coupon_info?.start_date),
     expiresAt: isoOrNull(raw.future_coupon_info?.expiration_date),
     expiresText: raw.expiration_date?.text || null,
@@ -250,7 +279,13 @@ function parseCoupon(raw, groupings = [], sampleItemIds = []) {
     // O que o ML disse sobre o card. É o que sustenta o `scope` acima, e responde
     // "por que esse virou loja?" meses depois — a coluna `ml_coupons.raw` existe
     // desde sempre e vinha gravando `{}`.
-    raw: { icon: raw.icon ?? null, isNewFollowerCoupon: raw.is_new_follower_coupon ?? null },
+    raw: {
+      icon: raw.icon ?? null,
+      isNewFollowerCoupon: raw.is_new_follower_coupon ?? null,
+      // De onde saiu a palavra deste cupom. "Do título" e "testada no ML" têm peso
+      // diferente, e meses depois ninguém lembra qual foi.
+      codeFromTitle: !!palavraDoTitulo(titulo),
+    },
     source: "ml-cupons",
   };
 }
@@ -982,7 +1017,7 @@ async function checkCouponWord(cookie, word) {
 // Não mexe no `_running` da rodada, mesmo padrão do `syncOneCoupon`: abre o próprio
 // Chrome e fecha no fim. Quem chama é que decide não fazer isso no meio de uma rodada.
 //
-// `onProgress(parcial)` é o mesmo do `runPull`: a varredura pode levar minutos e é
+// `onProgress(parcial)` existe porque a varredura pode levar minutos e é
 // por ele que a tela mostra onde ela está.
 async function findCampaign(cookie, campaignId, { withProducts = true, maxProducts = 100, onProgress = null, activate = false } = {}) {
   const alvo = String(campaignId || "").trim();
@@ -1054,180 +1089,6 @@ async function findCampaign(cookie, campaignId, { withProducts = true, maxProduc
     return { coupon: cupom, products, parcial, reasonVitrine, ativado };
   } finally {
     await r.browser.close().catch(() => {});
-  }
-}
-
-// ────────────────────────────────────────────────────────────────────────
-// A rodada
-// ────────────────────────────────────────────────────────────────────────
-
-// Um Chrome por vez na conta do sistema. Duas rodadas simultâneas dobram a chance
-// de CAPTCHA — e o CAPTCHA vale pra CONTA, ou seja, derruba o Hub junto.
-let _running = null;
-let _cancel = false;
-
-function isRunning() { return !!_running; }
-function cancel() { _cancel = true; }
-
-// Puxa os cupons e, se pedido, a vitrine de cada um.
-//
-// `groupings` são as chaves de categoria do ML (ce_vertical, tb_vertical…); lista
-// vazia = todos os cupons da conta. `limit` é por categoria — é o teto que segura
-// a rodada, porque a conta tem milhares de cupons e cada vitrine é uma página a
-// mais aberta com a mesma sessão do Hub.
-//
-// `skipStore` descarta o cupom de UMA loja já na leitura da lista, antes de ele
-// virar página aberta no Chrome: ele não serve pra fila do repasse (vale só pros
-// produtos daquele vendedor) e é o mais caro da rodada, porque é AUTOMATIC — ou
-// seja, sempre ativado e sempre com vitrine pra raspar. Com ele ligado o `limit`
-// passa a contar só cupom de campanha.
-//
-// `onProgress(parcial)` é chamado a cada etapa — é por onde a tela do admin
-// acompanha uma rodada que dura minutos.
-async function runPull({ groupings = [], limit = 60, withProducts = true, maxProductsPerCoupon = 100, skipStore = true, activateCoupons = false, maxActivations = 20 } = {}, { onProgress = null } = {}) {
-  if (_running) throw new Error("Já tem uma rodada de cupons rodando — espere ela terminar.");
-
-  const affiliate = require("./affiliate");   // lazy: evita ciclo no boot
-  const session = affiliate.getScraperMLSession();
-  if (!session) throw new Error("Sem sessão do Mercado Livre do sistema — cole o cookie em Admin › Mercado Livre.");
-
-  _cancel = false;
-  _running = (async () => {
-    const t0 = Date.now();
-    const alvos = groupings.length ? groupings : [null];
-    const porId = new Map();
-    const avisos = [];
-    let totalNoML = null;
-    let categoriasDoML = [];
-
-    const state = { coupon: [], all: [] };
-    const r = await withCuponsPage(session.cookie, (page) => collectCouponResponses(page, state));
-    const vitrines = [];
-    let produtosVinculados = 0;
-    let cuponsComVitrine = 0;
-    let ignoradosLoja = 0;
-    let ativados = 0;
-    // O teto de ativações é UM para a rodada inteira, não por categoria: o que se
-    // está limitando é quantas escritas a conta do ML recebe de uma vez.
-    const restantes = { n: activateCoupons ? Math.max(0, maxActivations) : 0 };
-
-    try {
-      // A primeira parada é a aba em si: é ela que diz se a sessão vale, quantos
-      // cupons a conta enxerga e quais categorias o ML oferece hoje.
-      const landing = await readLanding(r.page);
-      const snap = await snapshotPage(r.page);
-      const daAba = parseLanding(landing);
-      const veredito = verdictFor({
-        finalUrl: r.page.url(), title: snap.title, bodyText: snap.bodyText,
-        modelFound: !!landing, couponCount: daAba.coupons.length, blocked: r.blocked,
-      });
-      if (!veredito.ok) {
-        affiliate.recordMLHubCheck({ ok: false, reason: veredito.reason, kind: veredito.kind });
-        throw new Error(veredito.reason);
-      }
-      totalNoML = daAba.total;
-      categoriasDoML = daAba.groupings;
-      // Os ~40 cupons que a aba mostra de cara NÃO entram na coleta: a lista
-      // paginada (`all=true`) já traz todos eles, e somar os dois faria o limite
-      // da rodada mentir — e o limite é justamente o que segura quantas vitrines
-      // serão abertas com a conta do sistema.
-
-      for (const g of alvos) {
-        if (_cancel) { avisos.push("Rodada cancelada."); break; }
-        const chave = g?.key ?? g ?? null;
-        const lista = await crawlFilter(r.page, {
-          grouping: chave, limit, skipStore, onProgress,
-          ativar: restantes.n > 0 ? { restantes, onAtivou: null } : null,
-        });
-        ignoradosLoja += lista.ignoradosLoja || 0;
-        ativados += lista.ativados || 0;
-        // "Tentei clicar e não achei o botão" é diferente de "não tinha o que
-        // ativar", e só quem vê a rodada pode decidir o que fazer com isso.
-        if (lista.semBotao) {
-          avisos.push(`Não achei o botão "Aplicar" de ${lista.semBotao} cupom(ns) — o ML pode ter mudado a página.`);
-        }
-        // Muro durante a ativação derruba a rodada inteira: ele vale para a CONTA,
-        // e seguir para as vitrines só o confirmaria mais rápido.
-        if (lista.blocked) {
-          affiliate.recordMLHubCheck({ ok: false, reason: lista.blocked.reason, kind: lista.blocked.kind });
-          avisos.push(`Parei ao ativar cupons: ${lista.blocked.reason}`);
-          break;
-        }
-        if (!lista.coupons.length) {
-          avisos.push(lista.ignoradosLoja
-            ? `A lista de "${chave || "todos"}" só trouxe cupom de loja (${lista.ignoradosLoja} ignorados).`
-            : `A lista de "${chave || "todos"}" não devolveu cupom nenhum — pode ser categoria vazia ou a página ter mudado.`);
-        }
-        for (const c of lista.coupons) {
-          const anterior = porId.get(c.campaignId);
-          if (anterior) {
-            for (const k of c.groupings) if (!anterior.groupings.includes(k)) anterior.groupings.push(k);
-            if (!anterior.containerUrl && c.containerUrl) Object.assign(anterior, c, { groupings: anterior.groupings });
-            continue;
-          }
-          porId.set(c.campaignId, c);
-        }
-      }
-
-      const cupons = [...porId.values()];
-
-      if (withProducts) {
-        for (const cupom of cupons) {
-          if (_cancel) { avisos.push("Rodada cancelada antes de terminar as vitrines."); break; }
-          const res = await scrapeCouponProducts(r.browser, cupom, { maxProducts: maxProductsPerCoupon });
-          // Bloqueio é estado da SESSÃO: seguir para o próximo cupom só queima a
-          // conta mais rápido, e a conta é a mesma do Hub.
-          if (res.blocked) {
-            affiliate.recordMLHubCheck({ ok: false, reason: res.reason, kind: res.blocked?.kind });
-            avisos.push(`Parei nas vitrines: ${res.reason}`);
-            break;
-          }
-          // `parcial` viaja até a gravação: é ele que decide se estes produtos
-          // entram como vitrine (lista fechada) ou como prévia da landing.
-          vitrines.push({ campaignId: cupom.campaignId, url: res.url, ok: res.ok, reason: res.reason, products: res.products, parcial: !!res.parcial });
-          if (res.ok) {
-            if (!res.parcial) cuponsComVitrine++;
-            produtosVinculados += res.products.length;
-          }
-          // `title`/`ok`/`reason` viajam junto pra tela conseguir dizer QUAL vitrine
-          // acabou de abrir, e não só quantas. Os contadores continuam como eram.
-          if (onProgress) await onProgress({
-            etapa: "vitrines", cupons: cupons.length, vitrines: vitrines.length, produtos: produtosVinculados,
-            campaignId: cupom.campaignId, title: cupom.title, ok: !!res.ok, reason: res.reason || null,
-          });
-          // A pausa longa existe pra não parecer robô navegando. O caminho da
-          // landing não navega em nada — são duas chamadas HTTP —, então esperar
-          // 2s por cupom ali só faria a rodada demorar horas à toa.
-          await sleep(res.parcial ? LANDING_PAUSE_MS : COUPON_PAUSE_MS + Math.floor(Math.random() * 800));
-        }
-      }
-
-      affiliate.recordMLHubCheck({ ok: true, reason: `Última rodada de cupons: ${cupons.length} cupons, ${produtosVinculados} produtos.` });
-
-      return {
-        at: new Date().toISOString(),
-        durationMs: Date.now() - t0,
-        totalNoML,
-        categoriasDoML,
-        cupons,
-        vitrines,
-        ativados,
-        cuponsComVitrine,
-        ignoradosLoja,
-        produtosVinculados,
-        avisos,
-        cancelada: _cancel,
-      };
-    } finally {
-      await r.browser.close().catch(() => {});
-    }
-  })();
-
-  try {
-    return await _running;
-  } finally {
-    _running = null;
-    _cancel = false;
   }
 }
 
@@ -1335,18 +1196,16 @@ async function dumpCupons(cookie, outDir, { grouping = null, limit = 60, contain
 }
 
 module.exports = {
-  runPull,
   withCuponsPage,
   scrapeCouponProducts,
   checkCouponWord,
   findCampaign,
   dumpCupons,
-  isRunning,
-  cancel,
   CUPONS_URL,
   // puros — expostos pros testes
   parseAmount,
   detectScope,
+  palavraDoTitulo,
   camelToRaw,
   sampleIdsFromTracking,
   parseCoupon,

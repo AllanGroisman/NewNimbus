@@ -16,8 +16,15 @@ export function rotuloCategoria(chave, labels) {
 }
 
 // As categorias de um cupom em uma linha só: "Eletrônicos · Moda".
+//
+// Cupom de LOJA ("Em produtos de Agrotrator") tem categoria própria e ela vem na
+// frente: ele vale só para os produtos daquele vendedor, e essa é a informação
+// que decide se ele serve pra alguma coisa. A vertical dele, quando existe, é
+// secundária — e na maioria das vezes nem existe, porque a passada de carimbo
+// pega poucas páginas de cada categoria.
 export function categoriasDoCupom(c, labels) {
   const chaves = Array.isArray(c?.groupings) ? c.groupings : [];
   const nomes = chaves.map(k => rotuloCategoria(k, labels)).filter(Boolean);
+  if (c?.scope === "store") return `Loja${c.sellerName ? ` · ${c.sellerName}` : ""}`;
   return nomes.length ? nomes.join(" · ") : "—";
 }

@@ -19,6 +19,10 @@ import {
 // uma aba nova logo em seguida. Quem chama fecha (`fecharAbaDoColetor`).
 export async function percorrerLista({
   procurar = null,
+  ativarApenas = null,
+  // "Buscar TUDO": manda o servidor soltar o teto de páginas da lista geral. É um
+  // flag e não um número porque quem decide o teto é o servidor — ver `startLocalRun`.
+  tudo = false,
   parou = () => false,
   log = () => {},
   onProgresso = () => {},
@@ -33,17 +37,22 @@ export async function percorrerLista({
   // sozinho, parece defeito.
   let paginas = 0;
 
-  const inicio = await adminMlCuponsLocalStart(procurar ? { procurar } : {});
+  const inicio = await adminMlCuponsLocalStart(
+    procurar ? { procurar } : (ativarApenas?.length ? { ativarApenas } : (tudo ? { tudo: true } : {})),
+  );
   // As categorias vêm resolvidas do servidor (`categorias`), não da config: "todas
   // as categorias" sem dizer QUAIS foi o que escondeu uma config presa em
   // Brinquedos. `null` na lista é a lista geral, sem filtro.
   const categorias = inicio.categorias || [];
-  const nomeDasCategorias = (!categorias.length || (categorias.length === 1 && !categorias[0]))
-    ? "a lista geral (sem categoria)"
-    : `${categorias.length} categorias (${categorias.join(", ")})`;
+  const verticais = categorias.filter(Boolean);
+  const nomeDasCategorias = verticais.length
+    ? `a lista geral + carimbo de ${verticais.length} categorias (${verticais.join(", ")})`
+    : "a lista geral (sem carimbo de categoria)";
   log("info", procurar
     ? `procurando a campanha ${procurar} numa aba deste Chrome`
-    : `começando: ${nomeDasCategorias}, até ${inicio.config?.limitPerGrouping} cupons por categoria`);
+    : ativarApenas?.length
+      ? `ativando ${ativarApenas.length} cupom(ns) numa aba deste Chrome`
+      : `começando: ${nomeDasCategorias}`);
 
   let proxima = inicio.proxima;
   while (proxima) {
@@ -75,11 +84,14 @@ export async function percorrerLista({
       ativados: r.clicados || 0,
       semBotao: (r.semBotao || []).length,
     });
-    log("info", `página ${proxima.pagina}${p.de ? `/${p.de}` : ""}${proxima.grouping ? ` de ${proxima.grouping}` : ""} · ${p.cupons} cupom(ns)${p.ignoradosLoja ? `, ${p.ignoradosLoja} de loja ignorados` : ""}`);
+    log("info", `página ${proxima.pagina}${p.de ? `/${p.de}` : ""}${proxima.grouping ? ` de ${proxima.grouping}` : " da lista geral"} · ${p.cupons} cupom(ns)${p.ignoradosLoja ? `, ${p.ignoradosLoja} de loja ignorados` : ""}`);
     proxima = p.proxima;
     achou = !!p.achou;
     if (Number.isFinite(p.paginasLidas)) paginas = p.paginasLidas;
-    if (p.alvos) { alvos = p.alvos; resumo = p.resumo; }
+    // `resumo` chega na última página, junto com a gravação. `alvos` só vem numa
+    // BUSCA — na varredura normal os produtos são a etapa 2, num botão separado.
+    if (p.resumo) resumo = p.resumo;
+    if (p.alvos) alvos = p.alvos;
   }
 
   return { tabId, alvos, resumo, achou, parado, paginas };

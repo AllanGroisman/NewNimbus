@@ -9,7 +9,9 @@
 //
 //   - o parse continua sendo o `parseFilterProps` (o mesmo da rodada do servidor);
 //   - quem escolhe cupom para ATIVAR continua sendo o `aAtivar`, aqui — ativar é
-//     escrita irreversível na conta do ML, e a extensão não pode palpitar;
+//     escrita irreversível na conta do ML, e a extensão não pode palpitar. Desde a
+//     task 28 a etapa 1 não ativa NINGUÉM: só uma busca (`procurar`) ou a etapa 2
+//     dos produtos (`ativarApenas`) trazem alvos;
 //   - onde a varredura para continua sendo decidido aqui, não no laço da tela;
 //   - a gravação continua sendo o `persistRun`.
 //
@@ -47,7 +49,7 @@ function comORelogioDaFixture() {
 
 describe("startLocalRun", () => {
   it("diz qual é a primeira página a abrir — a extensão não monta URL nenhuma", () => {
-    const r = sync.startLocalRun({ groupings: [], limitPerGrouping: 5, activateCoupons: false });
+    const r = sync.startLocalRun({ categorias: [], limiteCupons: 5 });
     expect(r.proxima.url).toContain("mercadolivre.com.br/cupons/filter");
     expect(r.proxima.url).toContain("all=true");
     expect(r.proxima.pagina).toBe(1);
@@ -55,86 +57,123 @@ describe("startLocalRun", () => {
     expect(sync.status().local).toBe(true);
   });
 
+  it("a etapa 1 é leitura pura: sem alvo, ela não ativa ninguém", () => {
+    // É a separação em dois botões (task 28). Ativar é a única escrita que o
+    // sistema faz na conta do ML, e ela foi toda para a etapa dos produtos —
+    // é o que torna a varredura da lista segura de repetir.
+    const r = sync.startLocalRun({ categorias: [], activateCoupons: true, maxActivationsPerRun: 20 });
+    expect(r.ativa).toBe(false);
+    expect(sync.ativacoesLocais({ props: PROPS }).labels).toEqual([]);
+  });
+
   it("recusa a segunda rodada: as duas mexem na mesma conta do ML", () => {
-    sync.startLocalRun({ limitPerGrouping: 5 });
+    sync.startLocalRun({ limiteCupons: 5 });
     expect(() => sync.startLocalRun({})).toThrow(/rodada de cupons rodando/i);
   });
 });
 
-describe("ativacoesLocais", () => {
+// A ETAPA 2 pedindo a ativação de uma lista de alvos. Os botões "Aplicar" só
+// existem na lista do ML, então a etapa dos produtos passa por esta mesma
+// varredura — só que clicando exclusivamente em quem ela nomeou.
+describe("ativacoesLocais (a etapa 2 ativando os alvos)", () => {
   comORelogioDaFixture();
 
-  it("devolve só os rótulos que o aAtivar aprovou", () => {
-    sync.startLocalRun({ limitPerGrouping: 5, activateCoupons: true, maxActivationsPerRun: 20 });
+  // Os três não ativados de campanha da fixture.
+  const TRES = ["13491809", "13999830", "13373945"];
+
+  it("devolve só os rótulos que o aAtivar aprovou, e só dos alvos", () => {
+    sync.startLocalRun({ ativarApenas: TRES, activateCoupons: true, maxActivationsPerRun: 20 });
     const { labels } = sync.ativacoesLocais({ grouping: null, props: PROPS });
-    // Os três não ativados da página. Os já ativados e os de loja ficam de fora —
-    // clicar neles é escrita à toa na conta.
-    expect(labels).toHaveLength(3);
-    for (const l of labels) expect(l).toMatch(/^Aplicar cupom /);
+    // Dos três, só um sai: 13999830 e 13373945 dividem o MESMO rótulo "Aplicar"
+    // nesta página, e o aAtivar recusa os dois — não dá pra saber qual botão é de
+    // qual, e um chute aqui é escrita irreversível na campanha errada.
+    expect(labels).toEqual(["Aplicar cupom 10 por cento OFF Saúde Em produtos selecionados"]);
+  });
+
+  it("cupom fora da lista de alvos não é clicado", () => {
+    // O vizinho na mesma página não pode gastar o teto: é escrita irreversível na
+    // conta, e quem pediu a etapa 2 nomeou quem queria.
+    sync.startLocalRun({ ativarApenas: [TRES[0]], activateCoupons: true, maxActivationsPerRun: 20 });
+    expect(sync.ativacoesLocais({ props: PROPS }).labels).toHaveLength(1);
   });
 
   it("o teto de ativações da rodada é respeitado", () => {
-    sync.startLocalRun({ limitPerGrouping: 5, activateCoupons: true, maxActivationsPerRun: 1 });
+    sync.startLocalRun({ ativarApenas: TRES, activateCoupons: true, maxActivationsPerRun: 1 });
     expect(sync.ativacoesLocais({ props: PROPS }).labels).toHaveLength(1);
   });
 
   it("com a ativação desligada, ninguém é clicado", () => {
-    sync.startLocalRun({ limitPerGrouping: 5, activateCoupons: false });
+    sync.startLocalRun({ ativarApenas: TRES, activateCoupons: false });
     expect(sync.ativacoesLocais({ props: PROPS }).labels).toEqual([]);
   });
 
   it("gasto o teto, não sobra ativação para a página seguinte", async () => {
-    sync.startLocalRun({ limitPerGrouping: 200, activateCoupons: true, maxActivationsPerRun: 2 });
-    expect(sync.ativacoesLocais({ props: PROPS }).labels).toHaveLength(2);
-    await sync.paginaLocal({ props: PROPS, ativados: 2 });
+    sync.startLocalRun({ ativarApenas: TRES, activateCoupons: true, maxActivationsPerRun: 1 });
+    expect(sync.ativacoesLocais({ props: PROPS }).labels).toHaveLength(1);
+    await sync.paginaLocal({ props: PROPS, ativados: 1 });
     expect(sync.ativacoesLocais({ props: PROPS }).labels).toEqual([]);
   });
 });
 
 describe("paginaLocal", () => {
-  it("pede a próxima página enquanto a lista rende e o limite não chegou", async () => {
-    sync.startLocalRun({ limitPerGrouping: 200, activateCoupons: false });
+  it("pede a próxima página enquanto a lista rende e o teto não chegou", async () => {
+    sync.startLocalRun({ limiteCupons: 200, carimbarCategorias: false });
     const r = await sync.paginaLocal({ grouping: null, props: PROPS });
-    // 8 cupons na fixture, 3 de loja descartados antes de entrar.
-    expect(r.cupons).toBe(5);
-    expect(r.ignoradosLoja).toBe(3);
+    // Os 8 da fixture, os 3 de loja INCLUSOS: desde a task 28 eles entram e são
+    // separados na tela, em vez de descartados.
+    expect(r.cupons).toBe(8);
+    expect(r.ignoradosLoja).toBe(0);
     expect(r.de).toBe(13);
     expect(r.proxima.pagina).toBe(2);
+    // Os produtos são a etapa 2, num botão separado: a varredura da lista não
+    // devolve mais vitrine para a tela sair colhendo.
     expect(r.alvos).toBeNull();
   });
 
-  it("cupom de loja não conta para o limite da categoria", async () => {
-    sync.startLocalRun({ limitPerGrouping: 200, activateCoupons: false, skipStoreCoupons: false });
+  it("com o descarte ligado, o cupom de loja sai antes de entrar", async () => {
+    sync.startLocalRun({ limiteCupons: 200, carimbarCategorias: false, skipStoreCoupons: true });
     const r = await sync.paginaLocal({ props: PROPS });
-    expect(r.cupons).toBe(8);
-    expect(r.ignoradosLoja).toBe(0);
+    expect(r.cupons).toBe(5);
+    expect(r.ignoradosLoja).toBe(3);
   });
 
-  it("batido o limite da categoria, a varredura acaba e os cupons são gravados", async () => {
-    sync.startLocalRun({ limitPerGrouping: 3, activateCoupons: false });
+  it("batido o teto de cupons, a varredura acaba e os cupons são gravados", async () => {
+    sync.startLocalRun({ limiteCupons: 3, carimbarCategorias: false });
     const r = await sync.paginaLocal({ grouping: null, props: PROPS });
     expect(r.proxima).toBeNull();
     expect(r.resumo.cupons).toBe(3);
-    // Gravou de verdade: é isto que o `gravarVitrineLocal` da colheita seguinte
-    // exige, e é o que sobra se o Chrome fechar no meio das vitrines.
-    const guardado = await coupons.getCoupon(r.alvos[0]?.campaignId || "");
-    expect(guardado).toBeTruthy();
+    // Gravou de verdade: é isto que o `gravarVitrineLocal` da etapa 2 exige, e é o
+    // que sobra se o Chrome fechar no meio.
+    expect(await coupons.getCoupon("13491809")).toBeTruthy();
   });
 
-  it("só entram em `alvos` os cupons que têm vitrine para abrir", async () => {
-    sync.startLocalRun({ limitPerGrouping: 200, activateCoupons: false });
-    // A mesma página, repetida: o ML começou a devolver o que já veio. A rodada
-    // desiste depois de MAX_PAGINAS_SEM_NOVIDADE — o mesmo freio do crawlFilter,
-    // que existe porque a lista do ML às vezes pagina em círculo.
+  it("teto zero quer dizer 'todos', e não 'nenhum'", async () => {
+    sync.startLocalRun({ limiteCupons: 0, carimbarCategorias: false });
+    const r = await sync.paginaLocal({ props: PROPS });
+    expect(r.cupons).toBe(8);
+    expect(r.proxima.pagina).toBe(2);
+  });
+
+  it("o teto de páginas da lista geral encerra a varredura", async () => {
+    sync.startLocalRun({ limiteCupons: 0, maxPaginasLista: 1, carimbarCategorias: false });
+    const r = await sync.paginaLocal({ props: PROPS });
+    expect(r.proxima).toBeNull();
+    expect(r.resumo.avisos.join(" ")).toMatch(/teto de 1 páginas/i);
+  });
+
+  it("a lista que pagina em círculo não vira varredura infinita", async () => {
+    sync.startLocalRun({ limiteCupons: 200, carimbarCategorias: false });
+    // A mesma página, repetida: o ML começou a devolver o que já veio. A varredura
+    // desiste depois de MAX_PAGINAS_SEM_NOVIDADE — a lista do ML às vezes pagina
+    // em círculo.
     let r = null;
     for (let i = 0; i < 10 && (!r || r.proxima); i++) r = await sync.paginaLocal({ props: PROPS });
     expect(r.proxima).toBeNull();
-    for (const a of r.alvos) expect(a.containerUrl).toBeTruthy();
-    expect(r.alvos.length).toBeLessThanOrEqual(r.resumo.cupons);
+    expect(r.resumo.cupons).toBe(8);
   });
 
   it("página sem cupom nenhum encerra em vez de insistir", async () => {
-    sync.startLocalRun({ limitPerGrouping: 200, activateCoupons: false });
+    sync.startLocalRun({ limiteCupons: 200, carimbarCategorias: false });
     const r = await sync.paginaLocal({ props: { filteredCouponsData: { coupons: [], pagination: { page: 1, total: 5 } } } });
     expect(r.proxima).toBeNull();
     expect(r.resumo.avisos.join(" ")).toMatch(/não devolveu cupom nenhum/i);
@@ -147,7 +186,7 @@ describe("paginaLocal", () => {
 
 describe("fimLocalRun", () => {
   it("libera a rodada e guarda o balanço", async () => {
-    sync.startLocalRun({ limitPerGrouping: 3, activateCoupons: false });
+    sync.startLocalRun({ limiteCupons: 3, carimbarCategorias: false });
     await sync.paginaLocal({ props: PROPS });
     const { resumo } = sync.fimLocalRun({ vitrines: 2, produtos: 40 });
     expect(resumo.cupons).toBe(3);
@@ -160,7 +199,7 @@ describe("fimLocalRun", () => {
   });
 
   it("a rodada abandonada no meio expira sozinha em vez de travar a próxima", () => {
-    sync.startLocalRun({ limitPerGrouping: 3 });
+    sync.startLocalRun({ limiteCupons: 3 });
     // O admin fechou a aba: ninguém mais chama nada. O relógio da rodada é o que
     // devolve o sistema ao normal.
     const antes = Date.now;
@@ -182,13 +221,12 @@ describe("fimLocalRun", () => {
 // pertence e o sistema não tem esse cupom. Buscar é percorrer a mesma lista — só
 // que parando na página em que ela aparecer, porque cada página é uma navegação
 // com a conta do sistema.
-// Task 26: "ta puxando só de brinquedos e hobbies, quero que puxe de tudo".
-//
-// "Todas as categorias" passou a querer dizer uma passada POR VERTICAL, e não uma
-// passada só na lista geral. O motivo é que o ML não diz a vertical do cupom na
-// lista: a categoria que o sistema grava é o filtro que a rodada pediu na URL, então
-// a passada geral trazia tudo sem categoria nenhuma.
-describe("startLocalRun sem categoria escolhida", () => {
+// Task 28: a COLETA é a lista geral, e as verticais vêm depois só para CARIMBAR a
+// categoria. É o meio-termo entre os dois erros: sem a geral, cupom que não está
+// em vertical nenhuma nunca entra (era a task 26 ao contrário); sem as verticais,
+// tudo entra sem categoria, porque o ML não diz a vertical do cupom na lista — a
+// categoria que o sistema grava é o filtro que a varredura pediu na URL.
+describe("startLocalRun: a lista geral e o carimbo por categoria", () => {
   beforeEach(() => {
     // O dicionário de nomes é o que diz quais categorias existem. Junto das
     // verticais vêm três chaves que NÃO são categoria — são filtros do ML.
@@ -201,30 +239,40 @@ describe("startLocalRun sem categoria escolhida", () => {
     ]);
   });
 
-  it("varre uma categoria de cada vez, começando pela primeira", () => {
-    const r = sync.startLocalRun({ groupings: [], activateCoupons: false });
-    expect(r.categorias).toEqual(["ce_vertical", "fa_vertical", "tb_vertical"]);
-    expect(r.proxima.grouping).toBe("ce_vertical");
-    expect(r.proxima.url).toContain("ce_vertical=true");
+  it("começa pela lista geral e só depois passa nas verticais", () => {
+    const r = sync.startLocalRun({ categorias: [] });
+    expect(r.categorias).toEqual([null, "ce_vertical", "fa_vertical", "tb_vertical"]);
+    expect(r.proxima.grouping).toBeNull();
+    expect(r.proxima.url).toContain("all=true");
+    expect(r.proxima.url).not.toContain("_vertical=true");
   });
 
-  it("esgotada a categoria, a próxima página é da categoria seguinte", async () => {
-    // `limitPerGrouping: 3` esgota já na primeira página (a fixture rende 5 de
-    // campanha), então a rodada vira de categoria em vez de encerrar — que é o que
-    // acontecia quando "todas" era uma passada só.
-    sync.startLocalRun({ groupings: [], limitPerGrouping: 3, activateCoupons: false });
-    const r = await sync.paginaLocal({ grouping: "ce_vertical", props: PROPS });
+  it("acabada a lista geral, a próxima página é a da primeira vertical", async () => {
+    // `maxPaginasLista: 1` encerra a coleta na primeira página, então a varredura
+    // vira para o carimbo em vez de terminar.
+    sync.startLocalRun({ categorias: [], maxPaginasLista: 1 });
+    const r = await sync.paginaLocal({ grouping: null, props: PROPS });
     expect(r.proxima).not.toBeNull();
-    expect(r.proxima.grouping).toBe("fa_vertical");
+    expect(r.proxima.grouping).toBe("ce_vertical");
     expect(r.proxima.pagina).toBe(1);
   });
 
-  it("o cupom entra carimbado com a categoria da passada — é isso que a passada geral não dava", async () => {
-    sync.startLocalRun({ groupings: [], limitPerGrouping: 3, activateCoupons: false });
-    // A mesma fixture nas três categorias: o cupom aparece em todas, e a rodada
-    // tem de guardar a UNIÃO delas, não a última.
+  it("o teto de cupons não corta a passada de carimbo", async () => {
+    // O carimbo não é colheita: cortar ele pelo teto deixaria metade dos cupons
+    // sem categoria justamente na rodada em que o teto foi apertado.
+    sync.startLocalRun({ categorias: [], limiteCupons: 3, maxPaginasPorCategoria: 1 });
+    const geral = await sync.paginaLocal({ grouping: null, props: PROPS });
+    expect(geral.proxima.grouping).toBe("ce_vertical");
+    const carimbo = await sync.paginaLocal({ grouping: "ce_vertical", props: PROPS });
+    expect(carimbo.cupons).toBe(8);
+  });
+
+  it("o cupom entra carimbado com a UNIÃO das verticais em que apareceu", async () => {
+    sync.startLocalRun({ categorias: [], maxPaginasLista: 1, maxPaginasPorCategoria: 1 });
+    // A mesma fixture na geral e nas três verticais: o cupom aparece em todas, e a
+    // varredura tem de guardar a união delas, não a última.
     let r = null;
-    while (!r || r.proxima) r = await sync.paginaLocal({ grouping: r ? r.proxima.grouping : "ce_vertical", props: PROPS });
+    while (!r || r.proxima) r = await sync.paginaLocal({ grouping: r ? r.proxima.grouping : null, props: PROPS });
     const guardado = await coupons.getCoupon("13491809");
     expect(guardado.groupings.sort()).toEqual(["ce_vertical", "fa_vertical", "tb_vertical"]);
   });
@@ -256,11 +304,11 @@ describe("startLocalRun com uma campanha alvo", () => {
     expect(r.proxima.pagina).toBe(2);
   });
 
-  it("o limite por categoria não interrompe uma busca antes da hora", () => {
-    // Sem isto, `limitPerGrouping: 60` faria a busca desistir na página 2 — e a
+  it("o teto de cupons não interrompe uma busca antes da hora", () => {
+    // Sem isto, `limiteCupons: 5` faria a busca desistir na página 1 — e a
     // campanha procurada pode estar na 12.
-    const r = sync.startLocalRun({ procurar: NA_FIXTURE, limitPerGrouping: 5 });
-    expect(r.config.limitPerGrouping).toBeGreaterThan(1000);
+    const r = sync.startLocalRun({ procurar: NA_FIXTURE, limiteCupons: 5 });
+    expect(r.config.limiteCupons).toBe(0);
     expect(r.procurar).toBe(NA_FIXTURE);
   });
 
@@ -268,10 +316,9 @@ describe("startLocalRun com uma campanha alvo", () => {
   // que vale a pena COLHER, a busca diz onde a campanha PODE estar — e responder a
   // segunda com a primeira faz a busca dizer "não achei" para um cupom que estava
   // na lista. É a task 27: "como acha a campanha, mas não consegue puxar ela?".
-  it("varre todas as categorias, mesmo com a config estreitada", () => {
-    const r = sync.startLocalRun({ procurar: NA_FIXTURE, groupings: ["tb_vertical"] });
-    expect(r.config.groupings).toEqual([]);
-    // Uma categoria só, a "todas" — é o `grouping: null` do findCampaign do servidor.
+  it("é a lista geral, mesmo com a config estreitada numa vertical", () => {
+    const r = sync.startLocalRun({ procurar: NA_FIXTURE, categorias: ["tb_vertical"] });
+    expect(r.categorias).toEqual([null]);
     expect(r.proxima.grouping).toBeNull();
     expect(r.proxima.url).not.toContain("tb_vertical");
   });

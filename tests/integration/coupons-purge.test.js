@@ -126,13 +126,14 @@ describe("startImport — a guarda contra dois Chromes na mesma conta", () => {
   const mlCupons = require(path.join(backendDir, "coupons", "sync.js"));
   const scraping = require(path.join(backendDir, "scraping", "ml-cupons.js"));
 
-  it("recusa quando uma rodada de cupons está em andamento", async () => {
-    const original = scraping.isRunning;
-    scraping.isRunning = () => true;
+  it("recusa quando uma varredura de cupons está em andamento", async () => {
+    // A varredura vive no Chrome do admin (startLocalRun): é ela, e não mais um
+    // Puppeteer do servidor, que disputa a conta do ML com a busca de campanha.
+    mlCupons.startLocalRun({});
     try {
       await expect(mlCupons.startImport("9900003")).rejects.toThrow(/rodada de cupons rodando/i);
     } finally {
-      scraping.isRunning = original;
+      mlCupons.fimLocalRun({ cancelada: true });
     }
   });
 

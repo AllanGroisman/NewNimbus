@@ -107,3 +107,25 @@ Como que acha a campanha, mas não consegue puxar ela?
     vizinhos em vez de dar o "Eu quero" no alvo (sem o qual o ML não revela a vitrine).
     A mensagem de "não achei" agora diz quantas páginas foram varridas e explica o
     motivo de fundo.
+
+28. [x] Nos cupons:
+
+    Reformula o Cupons do ML para:
+
+    Lá quero um botão para que a extensão acesse essa pagina https://www.mercadolivre.com.br/cupons/filter?all=true&page=1 onde tem TODOS os cupons e que faça o scraping de TODOS os cupons que estão ali em um primeiro momento com seus nomes e suas condições.
+
+    Se no nome do cupom tem "com X" como "com QUEROPROMO" por exemplo,  QUEROPROMO é a palavra de ativação deste cupom, já deixa vinculado.
+
+    Se tem "Em produtos de X" como "Em produtos de Agrotrator", é um cupom especifico de uma loja, então deve ser separado nesta categoria.
+
+    Depois quero outro botão que busque os produtos de cada cupom, tanto no proprio cupom para buscar individualmente, quanto um botão geral para buscar todos os produtos de todos os cupons que ainda não foram buscados.
+
+    Quero configurações para modificar todos os parâmetros e limites de quantidade de cupons/produtos por cupom.
+
+    Quero que continue o botão de apagar todos os cupons e que tenha botão individual de apagar também.
+
+29. [] Na busca dos cupons quero ver o progresso da raspagem dos cupons.
+
+30. [] Como funciona o vinculo dos produtos dos cupons com os produtos que ja fiz scraping, o sistema percebe quando sao o mesmo produto e ja vincula? Os cupons ficam vinculados?
+
+31. [] Quando coloco a palavra para descobrir palavra dos cupoms diz que reconheceu e que é da campanha de numero 14193894 por exemplo. Queria que as campanhas quando forem buscadas, tivessem esse numero associado para que seja facil vincular campanha a palavra. Por exemplo, no link do cupom https://lista.mercadolivre.com.br/_CustId_2903552873?coupon_campaign_id=13495993 tem ali o ID, não seria este mesmo?

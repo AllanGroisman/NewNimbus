@@ -542,15 +542,18 @@ export async function adminCouponLocalStart(body)  { return http("POST", "/api/a
 export async function adminCouponLocalResult(body) { return http("POST", "/api/admin/ml-coupon/local/result", body, { timeoutMs: SLOW_TIMEOUT_MS }); }
 
 // Cupons que o ML oferece para a conta do sistema (Admin › Cupom › Cupons do ML).
-// A rodada demora minutos e roda solta no servidor: o /run responde na hora e a
-// tela acompanha pelo /status. Só o teste de PALAVRA abre Chrome na hora (SLOW).
 export async function adminMlCuponsStatus()          { return http("GET",  "/api/admin/ml-cupons/status"); }
 export async function adminMlCuponsSaveConfig(cfg)   { return http("PUT",  "/api/admin/ml-cupons/config", cfg); }
-export async function adminMlCuponsRun(body)         { return http("POST", "/api/admin/ml-cupons/run", body || {}); }
-export async function adminMlCuponsCancel()          { return http("POST", "/api/admin/ml-cupons/run/cancel"); }
-// A mesma rodada, tocada pelo Chrome do admin: a tela abre cada página pela
-// extensão e manda o modelo cru pra cá. O servidor continua sendo quem decide onde
-// parar, quem ativar e o que gravar — estas rotas só levam e trazem.
+// A fila da etapa 2: os cupons que ainda não têm vitrine, separados entre os que
+// só precisam ser lidos e os que precisam do "Eu quero" antes.
+export async function adminMlCuponsAlvosProdutos({ limit = 500, campaignId = null } = {}) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (campaignId) params.set("campaignId", campaignId);
+  return http("GET", `/api/admin/ml-cupons/alvos-produtos?${params}`);
+}
+// A varredura, tocada pelo Chrome do admin: a tela abre cada página pela extensão
+// e manda o modelo cru pra cá. O servidor continua sendo quem decide onde parar,
+// quem ativar e o que gravar — estas rotas só levam e trazem.
 export async function adminMlCuponsLocalStart(body)  { return http("POST", "/api/admin/ml-cupons/local/start", body || {}); }
 export async function adminMlCuponsLocalAtivar(body) { return http("POST", "/api/admin/ml-cupons/local/ativar", body); }
 // Uma página da lista traz dezenas de cupons com o `raw` de cada um: é corpo
@@ -563,6 +566,10 @@ export async function adminMlCuponsLocalPalavra(body) { return http("POST", "/ap
 // Apaga tudo que a aba guardou: cupons, vínculos e o carimbo no catálogo. As
 // palavras já testadas ficam. Varre o catálogo inteiro, daí o SLOW.
 export async function adminMlCuponsClearAll() { return http("DELETE", "/api/admin/ml-cupons", undefined, { timeoutMs: SLOW_TIMEOUT_MS }); }
+// Apaga UM cupom: os vínculos dele e o carimbo que ele deixou no catálogo.
+export async function adminMlCuponsDelete(campaignId) {
+  return http("DELETE", `/api/admin/ml-cupons/${encodeURIComponent(campaignId)}`, undefined, { timeoutMs: SLOW_TIMEOUT_MS });
+}
 export async function adminMlCuponsCodes(limit = 50) { return http("GET",  `/api/admin/ml-cupons/codes?limit=${limit}`); }
 // `source` marca de onde veio a palavra (`ml_coupon_codes.source`): "admin" quando
 // alguém digitou, "repasse" quando a aba Repasse mandou testar um código pescado
