@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Nimbus — coletor de vitrine",
-  "version": "1.0.0",
-  "description": "Colhe os produtos da vitrine de um cupom do Mercado Livre, a pedido da tela de admin do Nimbus.",
+  "name": "Nimbus — cupons no meu Chrome",
+  "version": "2.0.0",
+  "description": "Faz as etapas de cupom do Mercado Livre (vitrine, lista, palavra) numa aba do seu Chrome, a pedido da tela de admin do Nimbus.",
   "permissions": [
     "tabs",
     "scripting"
@@ -11,7 +11,8 @@
     "https://*.mercadolivre.com.br/*"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "type": "module"
   },
   "content_scripts": [
     {

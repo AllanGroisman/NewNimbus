@@ -1158,6 +1158,174 @@ function buildChecks(flow, { mode, code }) {
   return checks;
 }
 
+// A entrada do teste, validada. Vale para os dois caminhos (o Chrome do servidor
+// e o do admin): a URL passa pelo urlGuard, o código é normalizado e o modo é uma
+// lista fechada. Sem isto, o caminho local teria a própria validação — e a porta
+// de fora ficaria mais frouxa que a de dentro.
+async function validarPedido({ url, code = null, mode = "leitura" } = {}) {
+  const { url: cleanUrl, store } = await urlGuard.assertStoreUrl(url);
+  if (store !== "Mercado Livre") {
+    throw new Error("Por enquanto só testo cupom de produto do Mercado Livre.");
+  }
+  const cleanCode = normalizeCode(code);
+  const cleanMode = ["checkout", "rapido", "leitura"].includes(mode) ? mode : "leitura";
+  if (cleanMode !== "leitura" && !cleanCode) {
+    throw new Error("Escreva o código do cupom pra testar (ou use o modo só leitura).");
+  }
+  return { url: cleanUrl, store, code: cleanCode, mode: cleanMode };
+}
+
+// O resultado como a tela do admin espera. Comum aos dois caminhos: o veredito, os
+// `checks` e os totais saem das mesmas funções, então um teste feito no Chrome do
+// admin e um feito no servidor se leem igual.
+function montarResultado({ flow, verdict, url, code, mode, store, t0, quick = null, shots = null, fonte = null }) {
+  return {
+    at: new Date().toISOString(),
+    durationMs: Date.now() - t0,
+    url,
+    code,
+    mode,
+    store,
+    status: verdict.status,
+    reason: verdict.reason,
+    discount: verdict.discount,
+    clipped: flow.clipped,
+    totalBefore: flow.totalBefore,
+    totalAfter: flow.totalAfter,
+    checkout: flow.checkout,
+    finalUrl: flow.finalUrl,
+    fonte: fonte || (mode === "leitura" ? "leitura" : "checkout"),
+    // O que o caminho rápido apurou antes de passar a bola. Sem isso a tela
+    // esquece que o ML já disse que o cupom existe e está valendo.
+    quick,
+    checks: buildChecks(flow, { mode, code }),
+    shots,
+  };
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// O mesmo teste, no Chrome do admin (a extensão)
+// ────────────────────────────────────────────────────────────────────────
+//
+// Desde 25/08/2026 o ML barra o navegador automatizado com CAPTCHA já na página do
+// produto — o caminho de cima quase nunca chega ao checkout. Numa aba do Chrome do
+// admin, com a sessão dele, o checkout é só o checkout.
+//
+// A divisão é a de sempre: a extensão CAMINHA (clica em "Continuar", digita o
+// código, lê a tela) e devolve material cru; a leitura do que aquilo significa —
+// `classifyCouponResult`, `extractCheckoutTotal`, `parseProductCoupons` — continua
+// aqui, nas mesmas funções puras do caminho antigo.
+
+// Passo 1: o caminho rápido, que responde sem abrir nada. Devolve
+// `{ conclui: true, result }` quando já dá pra responder, ou o pedido validado
+// para a extensão executar.
+async function prepararTesteLocal({ url, code = null, mode = "checkout" } = {}) {
+  const pedido = await validarPedido({ url, code, mode });
+  const t0 = Date.now();
+
+  if (pedido.mode !== "leitura") {
+    // O caminho rápido pode precisar do Chrome do SERVIDOR (para descobrir a
+    // palavra na aba /cupons) e falhar por falta de cookie. Isso não pode matar o
+    // teste inteiro: quem vai caminhar pelo checkout é a aba do admin, que não
+    // depende do cookie do servidor pra nada. No modo "rapido" a falha é o
+    // resultado — não há para onde seguir.
+    let quick = null;
+    let quickErro = null;
+    try {
+      quick = await require("../coupons/quick-check").quickCheck({ url: pedido.url, code: pedido.code });
+    } catch (err) {
+      if (pedido.mode === "rapido") throw err;
+      quickErro = err.message;
+    }
+    if (quick && (quick.conclui || pedido.mode === "rapido")) {
+      const result = {
+        at: new Date().toISOString(), durationMs: Date.now() - t0,
+        url: pedido.url, code: pedido.code, mode: pedido.mode, store: pedido.store,
+        status: quick.status, reason: quick.reason, discount: quick.discount,
+        fonte: "rapido", quick, clipped: [],
+        totalBefore: quick.priceBefore ?? null, totalAfter: quick.priceAfter ?? null,
+        checkout: null, finalUrl: pedido.url, checks: buildQuickChecks(quick), shots: null,
+      };
+      pushHistory({ at: result.at, durationMs: result.durationMs, url: result.url, code: result.code,
+        mode: result.mode, status: result.status, reason: result.reason, discount: result.discount, fonte: result.fonte });
+      return { conclui: true, result };
+    }
+    return { conclui: false, ...pedido, quick, quickErro };
+  }
+  return { conclui: false, ...pedido, quick: null };
+}
+
+// Passo 2: o material que a extensão trouxe vira resultado.
+//
+// `material` é o que `extension/checkout.js` devolve — nada interpretado: URLs,
+// textos de tela, os corpos JSON que o checkout buscou e a trilha do que foi
+// clicado. Os totais saem do `extractCheckoutTotal` daqui, sobre o texto das telas
+// certas: o "antes" e o "depois" TÊM que ser da mesma tela, senão a queda é de
+// frete e não de cupom — e isso viraria "cupom válido" sem cupom nenhum.
+async function resultadoTesteLocal({ url, code = null, mode = "checkout", material = {}, quick = null } = {}) {
+  const pedido = await validarPedido({ url, code, mode });
+  const t0 = Number(material.t0) || Date.now();
+  const checkout = material.checkout || {};
+
+  const flow = {
+    finalUrl: material.finalUrl || pedido.url,
+    title: material.title || null,
+    pdpBlocked: material.muro ? { blocked: true, kind: material.muro, reason: material.motivo || null } : null,
+    clipped: parseProductCoupons(material.clippedTexts || []),
+    checkout: {
+      attempted: !!checkout.attempted, reached: !!checkout.reached, via: checkout.via || null,
+      url: checkout.url || null, blockedReason: checkout.blockedReason || null,
+      variacao: checkout.variacao || null,
+      stepReached: !!checkout.stepReached, steps: checkout.steps ?? 0, trail: checkout.trail || [],
+      couponOpen: checkout.couponOpen || null, botaoCupom: checkout.botao || null,
+      fieldFound: !!checkout.fieldFound, applied: !!checkout.applied,
+      cartUsed: checkout.via === "carrinho", cartCleaned: checkout.cartCleaned ?? null,
+      totalAtEntry: extractCheckoutTotal(material.bodyTextAoEntrar || ""),
+    },
+    totalBefore: extractCheckoutTotal(material.bodyTextAntes || ""),
+    totalAfter: extractCheckoutTotal(material.bodyTextDepois || ""),
+  };
+
+  let verdict;
+  if (material.muro) {
+    verdict = classifyCouponResult({ finalUrl: flow.finalUrl, bodyText: material.bodyTextDepois || material.bodyTextAntes || "" });
+  } else if (material.notProductPage) {
+    verdict = { ok: false, status: "indeterminado", discount: null,
+      reason: `Esse link não abriu a página de um produto — a aba parou em ${flow.finalUrl}. Link de perfil de afiliado ("source=affiliate-profile", "/social/…") leva pra vitrine do afiliado, não pro produto: abra o produto no ML e cole o link direto dele.` };
+  } else if (pedido.mode !== "checkout" || !pedido.code) {
+    verdict = { ok: true, status: "leitura", discount: null,
+      reason: flow.clipped.length
+        ? `A página oferece ${flow.clipped.length} cupom(ns). Nenhum código foi testado no checkout.`
+        : "A página não oferece nenhum cupom, e nenhum código foi testado no checkout." };
+  } else if (!checkout.reached) {
+    verdict = { ok: false, status: "indeterminado", discount: null,
+      reason: checkout.blockedReason
+        ? (checkout.variacao
+            ? `O produto não pode ser comprado direto nem depois de eu escolher "${checkout.variacao}": "${checkout.blockedReason}". Escolha a variação na página do ML e cole aqui o link já com ela.`
+            : `O produto não pode ser comprado direto: "${checkout.blockedReason}". Escolha a variação na página do ML e cole aqui o link já com ela.`)
+        : `Não deu pra chegar no checkout a partir da página do produto (parou em ${checkout.url}). A tela de compra pode ter mudado.` };
+  } else if (!checkout.fieldFound) {
+    verdict = { ok: false, status: "indeterminado", discount: null,
+      reason: checkout.stepReached ? describeCouponOpen(checkout.couponOpen) : describeStall(checkout) };
+  } else {
+    verdict = classifyCouponResult({
+      finalUrl: flow.finalUrl,
+      bodyText: material.bodyTextDepois || "",
+      apiJson: (material.respostas || []).map((corpo) => { try { return JSON.parse(corpo); } catch { return null; } }).filter(Boolean),
+      totalBefore: flow.totalBefore,
+      totalAfter: flow.totalAfter,
+    });
+  }
+
+  const out = montarResultado({
+    flow, verdict, url: pedido.url, code: pedido.code, mode: pedido.mode, store: pedido.store, t0,
+    quick, fonte: pedido.mode === "leitura" ? "leitura" : "checkout-extensao",
+  });
+  pushHistory({ at: out.at, durationMs: out.durationMs, url: out.url, code: out.code,
+    mode: out.mode, status: out.status, reason: out.reason, discount: out.discount, fonte: out.fonte });
+  return out;
+}
+
 // Testa UM cupom, na hora. Não grava nada na fila e não envia nada — é o irmão do
 // tester.testLink, no mesmo formato de retorno.
 async function testCoupon({ url, code = null, mode = "leitura" } = {}) {
@@ -1197,15 +1365,7 @@ async function executarTeste({ url, code = null, mode = "leitura" } = {}) {
     throw new Error("Sem sessão do Mercado Livre do sistema — cole o cookie em Admin › Mercado Livre.");
   }
 
-  const { url: cleanUrl, store } = await urlGuard.assertStoreUrl(url);
-  if (store !== "Mercado Livre") {
-    throw new Error("Por enquanto só testo cupom de produto do Mercado Livre.");
-  }
-  const cleanCode = normalizeCode(code);
-  const cleanMode = ["checkout", "rapido", "leitura"].includes(mode) ? mode : "leitura";
-  if (cleanMode !== "leitura" && !cleanCode) {
-    throw new Error("Escreva o código do cupom pra testar (ou use o modo só leitura).");
-  }
+  const { url: cleanUrl, store, code: cleanCode, mode: cleanMode } = await validarPedido({ url, code, mode });
 
   // O caminho rápido primeiro: ele responde pelo que o sistema já sabe, em
   // segundos e sem levar o produto ao checkout. O checkout só continua existindo
@@ -1253,28 +1413,11 @@ async function executarTeste({ url, code = null, mode = "leitura" } = {}) {
       : "A página não oferece nenhum cupom, e nenhum código foi testado no checkout.",
   };
 
-  return {
-    at: new Date().toISOString(),
-    durationMs: Date.now() - t0,
-    url: cleanUrl,
-    code: cleanCode,
-    mode: cleanMode,
-    store,
-    status: verdict.status,
-    reason: verdict.reason,
-    discount: verdict.discount,
-    clipped: flow.clipped,
-    totalBefore: flow.totalBefore,
-    totalAfter: flow.totalAfter,
-    checkout: flow.checkout,
-    finalUrl: flow.finalUrl,
-    fonte: cleanMode === "leitura" ? "leitura" : "checkout",
-    // O que o caminho rápido apurou antes de passar a bola. Sem isso a tela
-    // esquece que o ML já disse que o cupom existe e está valendo.
+  return montarResultado({
+    flow, verdict, url: cleanUrl, code: cleanCode, mode: cleanMode, store, t0,
     quick: _quickPendente,
-    checks: buildChecks(flow, { mode: cleanMode, code: cleanCode }),
     shots: { dir: shots.outDir, files: shots.salvos },
-  };
+  });
 }
 
 function isRunning() {
@@ -1322,6 +1465,9 @@ async function dumpCoupon(cookie, { url, code = null, mode = "checkout" } = {}, 
 }
 
 module.exports = {
+  prepararTesteLocal,
+  resultadoTesteLocal,
+  validarPedido,
   testCoupon,
   dumpCoupon,
   readHistory,

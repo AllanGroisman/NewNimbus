@@ -47,7 +47,6 @@ async function upsertCoupons(coupons, { origin = "page" } = {}) {
       expiresAt: c.expiresAt ? new Date(c.expiresAt) : null,
       expiresText: c.expiresText ?? null,
       iconUrl: c.iconUrl ?? null,
-      groupings: c.groupings || [],
       sampleItems: c.sampleItems || [],
       raw: c.raw || {},
       lastSeenAt: agora,
@@ -58,10 +57,17 @@ async function upsertCoupons(coupons, { origin = "page" } = {}) {
     // Lista vazia aqui é "não sei", não "não tem" — a mesma disciplina do
     // sem-vitrine ≠ fora-da-vitrine, um nível abaixo.
     const comIds = (c.sampleItemIds || []).length ? { sampleItemIds: c.sampleItemIds } : {};
+    // A categoria segue a mesma disciplina, e pelo mesmo motivo. O ML não diz a
+    // vertical do cupom na lista: a categoria que chega aqui é o filtro que a
+    // rodada pediu na URL (ver parseFilterProps, scraping/ml-cupons.js). Uma
+    // passada na lista GERAL não pede filtro nenhum e traz `[]` para todo mundo —
+    // e gravar isso por cima apagava a categoria que uma rodada por vertical já
+    // tinha aprendido. Lista vazia aqui é "não sei", não "não tem".
+    const comGrupos = (c.groupings || []).length ? { groupings: c.groupings } : {};
     const r = await prisma().mlCoupon.upsert({
       where: { campaignId: c.campaignId },
-      create: { campaignId: c.campaignId, origin, firstSeenAt: agora, ...row, sampleItemIds: c.sampleItemIds || [] },
-      update: { ...row, ...comIds },
+      create: { campaignId: c.campaignId, origin, firstSeenAt: agora, ...row, groupings: c.groupings || [], sampleItemIds: c.sampleItemIds || [] },
+      update: { ...row, ...comGrupos, ...comIds },
     });
     if (r.firstSeenAt.getTime() === r.lastSeenAt.getTime()) novos++; else atualizados++;
   }

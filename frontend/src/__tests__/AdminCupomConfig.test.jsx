@@ -57,21 +57,21 @@ beforeEach(() => {
   adminScraperMLSources.mockResolvedValue({ sources: { vitrine: true, hub: true, priority: "hub" }, hubAvailable: true });
   adminMlCuponsStatus.mockResolvedValue({ config: {}, running: false });
   adminMlCupons.mockResolvedValue({ items: [CUPOM], total: 1, page: 1, pageSize: 20 });
-  coletorInfo.mockResolvedValue({ instalada: true, versao: "1.2.0" });
+  coletorInfo.mockResolvedValue({ instalada: true, versao: "2.0.0", comandos: ["lista", "raspar", "palavra", "checkout", "props"] });
 });
 
 describe("os semáforos", () => {
   it("extensão ausente vira ❌ com as instruções de instalar", async () => {
-    coletorInfo.mockResolvedValue({ instalada: false, versao: null });
+    coletorInfo.mockResolvedValue({ instalada: false, versao: null, comandos: [] });
     await abrirTela();
 
-    expect(await screen.findByText(/não respondeu\. Sem ela a vitrine/)).toBeInTheDocument();
+    expect(await screen.findByText(/não respondeu\. Sem ela os cupons/)).toBeInTheDocument();
     expect(screen.getByText(/Carregar sem compactação/)).toBeInTheDocument();
   });
 
   it("extensão presente diz a versão — 'instalada' sozinho não distingue cópia velha", async () => {
     await abrirTela();
-    expect(await screen.findByText(/respondeu — versão 1\.2\.0/)).toBeInTheDocument();
+    expect(await screen.findByText(/respondeu — versão 2\.0\.0/)).toBeInTheDocument();
   });
 
   it("tag vazia é ❌ e diz o que quebra por causa disso", async () => {
@@ -175,5 +175,20 @@ describe("o diagnóstico ponta a ponta", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Rodar diagnóstico completo/i }));
 
     expect((await screen.findAllByText(/não gerou o link de afiliado \(afiliado-ausente\)/)).length).toBe(2);
+  });
+});
+
+// Uma cópia antiga da extensão responde ao ping e não conhece os comandos novos.
+// Sem esta conferência, os botões da tela ficam cinza sem explicação e o
+// diagnóstico diz "tudo certo" — que é o pior desfecho possível para ele.
+describe("extensão instalada, mas velha", () => {
+  it("o semáforo fica amarelo e nomeia o que aquela cópia não faz", async () => {
+    coletorInfo.mockResolvedValue({ instalada: true, versao: "1.0.0", comandos: ["raspar"] });
+    await abrirTela();
+
+    expect(await screen.findByText(/cópia antiga/)).toBeInTheDocument();
+    expect(screen.getByText(/puxar a lista de cupons/)).toBeInTheDocument();
+    // …e não some com o botão: o que falta continua rodando pelo servidor.
+    expect(screen.getByText(/continua rodando pelo servidor/)).toBeInTheDocument();
   });
 });

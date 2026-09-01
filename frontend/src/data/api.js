@@ -535,6 +535,11 @@ export async function adminScrapTesterLink(url)      { return http("POST", "/api
 // checkout, então demora tanto quanto o teste de acesso ao Hub — daí o SLOW.
 export async function adminCouponTest(body)          { return http("POST", "/api/admin/ml-coupon/test", body, { timeoutMs: SLOW_TIMEOUT_MS }); }
 export async function adminCouponHistory()           { return http("GET",  "/api/admin/ml-coupon/history"); }
+// O mesmo teste, no Chrome do admin. O /start roda o caminho rápido (rápido de
+// verdade: sem abrir nada); o /result recebe o material que a aba trouxe. Nenhum
+// dos dois espera pelo ML, então nenhum precisa do SLOW.
+export async function adminCouponLocalStart(body)  { return http("POST", "/api/admin/ml-coupon/local/start", body); }
+export async function adminCouponLocalResult(body) { return http("POST", "/api/admin/ml-coupon/local/result", body, { timeoutMs: SLOW_TIMEOUT_MS }); }
 
 // Cupons que o ML oferece para a conta do sistema (Admin › Cupom › Cupons do ML).
 // A rodada demora minutos e roda solta no servidor: o /run responde na hora e a
@@ -543,6 +548,18 @@ export async function adminMlCuponsStatus()          { return http("GET",  "/api
 export async function adminMlCuponsSaveConfig(cfg)   { return http("PUT",  "/api/admin/ml-cupons/config", cfg); }
 export async function adminMlCuponsRun(body)         { return http("POST", "/api/admin/ml-cupons/run", body || {}); }
 export async function adminMlCuponsCancel()          { return http("POST", "/api/admin/ml-cupons/run/cancel"); }
+// A mesma rodada, tocada pelo Chrome do admin: a tela abre cada página pela
+// extensão e manda o modelo cru pra cá. O servidor continua sendo quem decide onde
+// parar, quem ativar e o que gravar — estas rotas só levam e trazem.
+export async function adminMlCuponsLocalStart(body)  { return http("POST", "/api/admin/ml-cupons/local/start", body || {}); }
+export async function adminMlCuponsLocalAtivar(body) { return http("POST", "/api/admin/ml-cupons/local/ativar", body); }
+// Uma página da lista traz dezenas de cupons com o `raw` de cada um: é corpo
+// grande e a gravação da última página roda o persistRun inteiro, daí o SLOW.
+export async function adminMlCuponsLocalPagina(body) { return http("POST", "/api/admin/ml-cupons/local/pagina", body, { timeoutMs: SLOW_TIMEOUT_MS }); }
+export async function adminMlCuponsLocalFim(body)    { return http("POST", "/api/admin/ml-cupons/local/fim", body || {}); }
+// A palavra testada pela extensão: vai o material cru que a página do ML respondeu,
+// volta o mesmo veredito de sempre. Rápido — quem esperou pelo ML foi o navegador.
+export async function adminMlCuponsLocalPalavra(body) { return http("POST", "/api/admin/ml-cupons/local/palavra", body); }
 // Apaga tudo que a aba guardou: cupons, vínculos e o carimbo no catálogo. As
 // palavras já testadas ficam. Varre o catálogo inteiro, daí o SLOW.
 export async function adminMlCuponsClearAll() { return http("DELETE", "/api/admin/ml-cupons", undefined, { timeoutMs: SLOW_TIMEOUT_MS }); }

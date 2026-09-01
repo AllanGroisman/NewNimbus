@@ -61,3 +61,49 @@ Vale no preenchimento automático da fila. Os cupons vêm de Admin › Cupom ›
 23. [x] Melhora a parte do cupom: Cria mais uma aba ao lado de Testar cupom e cupons do ML com o nome "Repasse", nela quero que apareça todos os cupons capturados pelo repasse e o teste se eles são de alguma campanha ou não. Se um cupom é caputado no repasse, ele deve ser testado e integrado no sistema.
 
 24. [x] Na aba Repasse do Cupom, quero um botão de excluir o cupom que esta ali individualmente e um botão para limpar todos os cupons dali.
+
+25. [x] Quero usar a extensao do chrome para fazer tudo nos cupons, assim não pega o captcha.
+
+26. [x] Ta puxando só de brinquedos e hobbies, quero que puxe de tudo.
+
+    **Causa:** a config salva no banco (`app_config['ml-cupons-config']`) estava com
+    `groupings: ["tb_vertical"]` — "Brinquedos, Hobbies e Bebês". O default do código
+    é "todas", mas o valor salvo sempre vence, e **não existia tela nenhuma que
+    escrevesse `groupings`**: o painel de limites re-gravava o valor escondido a cada
+    "salvar". Junto disso, "todas as categorias" era uma passada só na lista geral —
+    e nessa passada o ML não diz a categoria de cada cupom, então 1.211 dos 1.231
+    cupons do banco tinham entrado sem categoria nenhuma (e o upsert ainda apagava a
+    categoria que uma rodada por vertical tivesse aprendido).
+
+    **Agora:** sem categoria escolhida, a rodada varre **cada vertical, uma de cada
+    vez** (`categoriasDaRodada`, em `backend/coupons/sync.js`), então cada cupom entra
+    carimbado; o teto passou a ser 100 por categoria; o painel de limites ganhou o
+    seletor de categorias com um "varrer todas"; e `backend/scripts/cupons-todas-categorias.js`
+    destrava a config já salva (rodar com `--apply` na VPS).
+
+27. [x] Aparece o seguinte:
+
+"O ML reconheceu a palavra SITETODO0109 e disse que ela é da campanha 14193848 — mas esse cupom nunca foi raspado, então não sabemos o título dele, o desconto nem quais produtos ele cobre. Dá pra ir buscar essa campanha agora, sem rodar a coleta inteira.
+
+Trazer também os produtos da vitrine
+Sem isto a campanha entra sem lista de produtos — dá pra puxar depois no “Sincronizar produtos” da linha dela na tabela.
+O ML não devolveu essa campanha na lista da conta."
+
+Como que acha a campanha, mas não consegue puxar ela?
+
+    **Resposta:** são duas superfícies diferentes do ML, e só uma delas é uma lista.
+    Quem responde à PALAVRA é o validador de cupom do checkout: ele conhece qualquer
+    campanha que exista e devolve só o `campaign_id` dela — sem título, sem desconto,
+    sem vitrine. Quem responde à CAMPANHA é a lista de ofertas *desta conta*
+    (`/cupons/filter`), que é segmentada, e que a busca tem de paginar até topar com o
+    id. Não existe endpoint "campanha por id" em lugar nenhum — nem no ML, nem aqui.
+    Então uma campanha real pode estar fora da lista por segmentação, por ter vencido
+    ou por já ter sido usada.
+
+    Só que, além disso, a busca pela extensão tinha três defeitos que a faziam perder
+    a campanha mesmo quando ela ESTAVA na lista (corrigidos em `backend/coupons/sync.js`):
+    ela herdava as categorias da config da rodada (só brinquedos/hobbies — é a task 26),
+    descartava cupom de loja antes de comparar o id, e gastava o teto de ativações nos
+    vizinhos em vez de dar o "Eu quero" no alvo (sem o qual o ML não revela a vitrine).
+    A mensagem de "não achei" agora diz quantas páginas foram varridas e explica o
+    motivo de fundo.

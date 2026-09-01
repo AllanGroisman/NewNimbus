@@ -22,7 +22,15 @@ vi.mock("../data/api", () => ({
   adminRepasseCouponsClear: vi.fn(),
 }));
 
+// A extensão do Chrome (extension/ na raiz). O teste de palavra prefere ela quando
+// está instalada; aqui o padrão é NÃO estar, que é o caminho do servidor.
+vi.mock("../data/coletor", () => ({
+  coletorEntende: vi.fn(),
+  testarPalavraNoChrome: vi.fn(),
+}));
+
 import CuponsDoRepasse from "../pages/AdminCupomRepasse.jsx";
+import { coletorEntende, testarPalavraNoChrome } from "../data/coletor";
 import {
   adminRepasseCoupons, adminRepasseLogs, adminMlCuponsTestWord,
   adminMlCuponsSyncProducts, adminMlCuponsImportCampaign, adminMlCuponsImportStatus,
@@ -54,6 +62,8 @@ function linhaDe(code) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Sem extensão é o padrão: o teste de palavra cai no caminho do servidor.
+  coletorEntende.mockResolvedValue(false);
   adminRepasseLogs.mockResolvedValue({ items: [] });
 });
 

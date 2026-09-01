@@ -14,15 +14,36 @@ vi.mock("../data/api", () => ({
   // errText é helper puro (não faz rede) — usa a implementação de verdade.
   errText: (err, fallback) => err?.message || fallback,
   adminMlCuponsTestWord: vi.fn(),
+  adminMlCuponsLocalPalavra: vi.fn(),
+  adminMlCuponsImportVitrine: vi.fn(),
+  adminMlCuponsLocalFim: vi.fn(),
   adminMlCuponsCodes: vi.fn(),
   adminMlCuponsImportCampaign: vi.fn(),
   adminMlCuponsImportStatus: vi.fn(),
 }));
 
+// A extensão do Chrome (extension/ na raiz). O teste de palavra prefere ela quando
+// está instalada; aqui o padrão é NÃO estar, que é o caminho do servidor.
+vi.mock("../data/coletor", () => ({
+  coletorEntende: vi.fn(),
+  testarPalavraNoChrome: vi.fn(),
+  raparVitrine: vi.fn(),
+  fecharAbaDoColetor: vi.fn(),
+}));
+
+// O laço da lista de cupons no Chrome do admin (data/rodadaNoChrome.js). O modal
+// de "trazer campanha" usa o mesmo laço da rodada, com uma campanha alvo.
+vi.mock("../data/rodadaNoChrome", () => ({ percorrerLista: vi.fn() }));
+
 import DescobrirPalavra from "../pages/AdminCupomPalavra.jsx";
+import { coletorEntende, testarPalavraNoChrome, raparVitrine, fecharAbaDoColetor } from "../data/coletor";
+import { percorrerLista } from "../data/rodadaNoChrome";
 import {
   adminMlCuponsCodes,
   adminMlCuponsTestWord,
+  adminMlCuponsLocalPalavra,
+  adminMlCuponsImportVitrine,
+  adminMlCuponsLocalFim,
   adminMlCuponsImportCampaign,
   adminMlCuponsImportStatus,
 } from "../data/api";
@@ -48,6 +69,8 @@ async function testarPalavra() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Sem extensão é o padrão: o teste de palavra cai no caminho do servidor.
+  coletorEntende.mockResolvedValue(false);
   adminMlCuponsCodes.mockResolvedValue({ codes: [] });
   // A busca roda solta: o POST só dispara, o desfecho vem pelo status.
   adminMlCuponsImportCampaign.mockResolvedValue({ started: true, running: true });
@@ -62,7 +85,7 @@ describe("popup de campanha que falta", () => {
 
     expect(await screen.findByText("Essa campanha não está no sistema")).toBeInTheDocument();
     // A palavra vai maiúscula pro backend, como o campo mostra.
-    expect(adminMlCuponsTestWord).toHaveBeenCalledWith("BRINQUEDOS", false);
+    expect(adminMlCuponsTestWord).toHaveBeenCalledWith("BRINQUEDOS", false, "admin");
   });
 
   it("NÃO abre quando a campanha já está aqui", async () => {
@@ -256,10 +279,10 @@ describe("engasgo do ML (indeterminado)", () => {
     await testarPalavra();
 
     // O teste normal NÃO manda force: senão todo teste queimaria um Chrome à toa.
-    expect(adminMlCuponsTestWord).toHaveBeenCalledWith("BRINQUEDOS", false);
+    expect(adminMlCuponsTestWord).toHaveBeenCalledWith("BRINQUEDOS", false, "admin");
 
     fireEvent.click(await screen.findByRole("button", { name: /testar de novo/i }));
-    await waitFor(() => expect(adminMlCuponsTestWord).toHaveBeenCalledWith("BRINQUEDOS", true));
+    await waitFor(() => expect(adminMlCuponsTestWord).toHaveBeenCalledWith("BRINQUEDOS", true, "admin"));
   });
 
   it("mostra a campanha que o sistema já sabe, e não oferece importar ela", async () => {
@@ -275,5 +298,132 @@ describe("engasgo do ML (indeterminado)", () => {
     expect(screen.getByText(/já está carimbada nela/)).toBeTruthy();
     // O popup é só pra campanha que FALTA: essa está aqui.
     expect(screen.queryByRole("button", { name: /buscar e adicionar/i })).toBe(null);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Com a extensão instalada, a palavra é testada no Chrome do admin
+// ─────────────────────────────────────────────────────────────────────────
+//
+// O ML responde CAPTCHA para navegador automatizado — o caminho do servidor abre
+// o próprio Chrome e é justamente ele que apanha. Com a extensão, quem digita a
+// palavra é uma aba do Chrome do admin, com a sessão dele.
+//
+// O que estes testes protegem é a divisão: a extensão devolve os corpos CRUS que a
+// página do ML respondeu, e quem lê é o servidor — a mesma função pura dos dois
+// caminhos. Se a extensão passasse a interpretar, a mesma palavra teria dois
+// vereditos dependendo de quem abriu a página.
+describe("a palavra testada pela extensão", () => {
+  it("manda o material cru para o servidor e não chama o caminho antigo", async () => {
+    coletorEntende.mockResolvedValue(true);
+    testarPalavraNoChrome.mockResolvedValue({
+      respostas: ['{"coupon":{"campaignId":"13907402"}}'], bodyText: "…", muro: null, motivo: null,
+    });
+    adminMlCuponsLocalPalavra.mockResolvedValue({ result: { word: "BRINQUEDOS", verdict: "valid", campaignId: "13907402", coupon: { campaignId: "13907402", title: "20% OFF" } } });
+    await abrirTela();
+
+    fireEvent.change(screen.getByPlaceholderText(/BRINQUEDOS/i), { target: { value: "brinquedos" } });
+    fireEvent.click(screen.getByRole("button", { name: /Testar palavra/i }));
+
+    await waitFor(() => expect(adminMlCuponsLocalPalavra).toHaveBeenCalledWith(expect.objectContaining({
+      word: "BRINQUEDOS",
+      respostas: ['{"coupon":{"campaignId":"13907402"}}'],
+      source: "admin",
+    })));
+    expect(adminMlCuponsTestWord).not.toHaveBeenCalled();
+  });
+
+  it("o muro na aba do admin não vira nova tentativa pelo servidor", async () => {
+    coletorEntende.mockResolvedValue(true);
+    testarPalavraNoChrome.mockResolvedValue({
+      respostas: [], muro: "captcha", motivo: "o Mercado Livre pediu verificação e ela não foi resolvida",
+    });
+    await abrirTela();
+
+    fireEvent.change(screen.getByPlaceholderText(/BRINQUEDOS/i), { target: { value: "brinquedos" } });
+    fireEvent.click(screen.getByRole("button", { name: /Testar palavra/i }));
+
+    // Insistir pelo servidor seria a MESMA conta por um caminho que apanha mais.
+    await waitFor(() => expect(screen.getByText(/pediu verificação/)).toBeTruthy());
+    expect(adminMlCuponsTestWord).not.toHaveBeenCalled();
+    expect(adminMlCuponsLocalPalavra).not.toHaveBeenCalled();
+  });
+
+  it("página do ML mudou de forma: aí sim vale tentar pelo servidor", async () => {
+    coletorEntende.mockResolvedValue(true);
+    testarPalavraNoChrome.mockResolvedValue({ respostas: [], muro: null, motivo: 'Não achei o "Inserir código do cupom" na página.' });
+    adminMlCuponsTestWord.mockResolvedValue(resposta());
+    await abrirTela();
+
+    fireEvent.change(screen.getByPlaceholderText(/BRINQUEDOS/i), { target: { value: "brinquedos" } });
+    fireEvent.click(screen.getByRole("button", { name: /Testar palavra/i }));
+
+    await waitFor(() => expect(adminMlCuponsTestWord).toHaveBeenCalledWith("BRINQUEDOS", false, "admin"));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Trazer a campanha pela extensão
+// ─────────────────────────────────────────────────────────────────────────
+//
+// A busca do servidor abre um Chrome próprio e é ela que o ML barra. Com a
+// extensão, a mesma varredura acontece numa aba do admin — e é literalmente a
+// mesma: `percorrerLista` com uma campanha alvo, que para na página em que ela
+// aparecer.
+describe("trazer a campanha pelo Chrome do admin", () => {
+  const ALVO = { campaignId: "13907402", title: "20% OFF", containerUrl: "https://lista.mercadolivre.com.br/_Container_x?coupon_campaign_id=13907402" };
+
+  const abrirModal = async () => {
+    coletorEntende.mockResolvedValue(true);
+    testarPalavraNoChrome.mockResolvedValue({ respostas: ['{"x":1}'], muro: null });
+    adminMlCuponsLocalPalavra.mockResolvedValue({ result: { word: "BRINQUEDOS", verdict: "valid", campaignId: "13907402", coupon: null } });
+    fecharAbaDoColetor.mockResolvedValue({ fechada: true });
+    adminMlCuponsLocalFim.mockResolvedValue({ ok: true });
+    await abrirTela();
+    fireEvent.change(screen.getByPlaceholderText(/BRINQUEDOS/i), { target: { value: "brinquedos" } });
+    fireEvent.click(screen.getByRole("button", { name: /Testar palavra/i }));
+    await screen.findByText(/não está no sistema/i);
+  };
+
+  it("procura pela extensão e traz a vitrine — sem passar pelo servidor", async () => {
+    percorrerLista.mockResolvedValue({ tabId: 3, alvos: [ALVO], resumo: { cupons: 1 }, achou: true, parado: null });
+    raparVitrine.mockResolvedValue({ produtos: [{ name: "Boneco", link: "https://www.mercadolivre.com.br/x/p/MLB1", price: 10 }], parcial: false });
+    adminMlCuponsImportVitrine.mockResolvedValue({ ok: true, produtos: 1 });
+    await abrirModal();
+
+    fireEvent.click(screen.getByRole("button", { name: /Buscar/i }));
+
+    await waitFor(() => expect(percorrerLista).toHaveBeenCalledWith(expect.objectContaining({ procurar: "13907402" })));
+    await waitFor(() => expect(adminMlCuponsImportVitrine).toHaveBeenCalledWith("13907402", { products: expect.any(Array), parcial: false }));
+    expect(adminMlCuponsImportCampaign).not.toHaveBeenCalled();
+    // Sem o fim, a rodada ficaria "rodando" no servidor e recusaria a próxima.
+    await waitFor(() => expect(adminMlCuponsLocalFim).toHaveBeenCalled());
+    expect(fecharAbaDoColetor).toHaveBeenCalledWith(3);
+  });
+
+  it("campanha que a lista não tem vira erro, não campanha vazia gravada", async () => {
+    percorrerLista.mockResolvedValue({ tabId: 3, alvos: [], resumo: null, achou: false, parado: null, paginas: 13 });
+    await abrirModal();
+
+    fireEvent.click(screen.getByRole("button", { name: /Buscar/i }));
+
+    // A mensagem diz o que foi feito antes de dizer que não achou: sem o número de
+    // páginas, "não achei" parece defeito em vez de resposta. E explica o motivo
+    // de fundo — o ML valida qualquer palavra, mas só LISTA o que é segmentado
+    // para esta conta (é a task 27).
+    expect(await screen.findByText(/Varri 13 páginas/i)).toBeTruthy();
+    expect(screen.getByText(/só oferece na lista os cupons segmentados/i)).toBeTruthy();
+    await waitFor(() => expect(adminMlCuponsLocalFim).toHaveBeenCalled());
+  });
+
+  it("sem a extensão, continua o caminho do servidor", async () => {
+    await abrirModal();
+    coletorEntende.mockResolvedValue(false);
+    adminMlCuponsImportCampaign.mockResolvedValue({ started: true });
+
+    fireEvent.click(screen.getByRole("button", { name: /Buscar/i }));
+
+    await waitFor(() => expect(adminMlCuponsImportCampaign).toHaveBeenCalledWith("13907402", true));
+    expect(percorrerLista).not.toHaveBeenCalled();
   });
 });

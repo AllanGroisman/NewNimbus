@@ -107,7 +107,7 @@ export default function ConfigTest() {
           Os mesmos da aba “Cupons do ML” — quantos cupons por categoria, quantos produtos por cupom,
           e se a rodada pode clicar em “Eu quero”.
         </div>
-        <Config config={status?.config} onSaved={recarregar} />
+        <Config config={status?.config} labels={status?.groupingLabels} onSaved={recarregar} />
       </div>
 
       <Diagnostico sessao={sessao} extensao={extensao} onRever={perguntarExtensao} />
@@ -133,21 +133,41 @@ function Card({ tom, titulo, veredito, children, acoes }) {
   );
 }
 
+// Os comandos que a versão de hoje da extensão precisa entender. Uma cópia antiga
+// responde ao ping e não conhece os novos — e aí o botão da tela fica cinza sem
+// explicação. Listar aqui é o que transforma isso em diagnóstico.
+const COMANDOS_ESPERADOS = [
+  ["lista", "puxar a lista de cupons"],
+  ["raspar", "colher a vitrine de um cupom"],
+  ["palavra", "testar uma palavra"],
+  ["checkout", "testar um cupom no checkout"],
+];
+
 function CardExtensao({ info, onRever }) {
-  const tom = info === null ? "neutro" : info.instalada ? "ok" : "erro";
+  const comandos = info?.comandos || [];
+  const faltando = info?.instalada ? COMANDOS_ESPERADOS.filter(([c]) => !comandos.includes(c)) : [];
+  const tom = info === null ? "neutro" : !info.instalada ? "erro" : faltando.length ? "aviso" : "ok";
   return (
     <Card
       tom={tom}
-      titulo="Extensão do coletor de vitrine"
+      titulo="Extensão — cupons no meu Chrome"
       veredito={
         info === null ? "perguntando…"
-          : info.instalada
-            ? `respondeu${info.versao ? ` — versão ${info.versao}` : ""}. É ela que abre a vitrine numa aba deste Chrome.`
-            : "não respondeu. Sem ela a vitrine só abre pelo navegador do servidor, que o ML barra com CAPTCHA."
+          : !info.instalada
+            ? "não respondeu. Sem ela os cupons só rodam pelo navegador do servidor, que o ML barra com CAPTCHA."
+            : faltando.length
+              ? `respondeu${info.versao ? ` — versão ${info.versao}` : ""}, mas é uma cópia antiga: ela não faz ${faltando.map(([, o]) => o).join(", ")}.`
+              : `respondeu${info.versao ? ` — versão ${info.versao}` : ""}. É ela que abre as páginas do ML numa aba deste Chrome.`
       }
       acoes={<button onClick={onRever} style={botaoSecundario}>Perguntar de novo</button>}
     >
       {info && !info.instalada && <ExtensaoAusente compacto />}
+      {!!faltando.length && (
+        <div style={{ fontSize: 11, color: "var(--color-text-secondary)", lineHeight: 1.6 }}>
+          Recarregue a extensão da pasta <code>extension/</code> em <code>chrome://extensions</code> (↻)
+          e dê F5 nesta página. Enquanto isso, o que falta continua rodando pelo servidor.
+        </div>
+      )}
     </Card>
   );
 }
@@ -370,8 +390,10 @@ function Diagnostico({ sessao, extensao, onRever }) {
       _resetColetor();
       const ext = await coletorInfo();
       onRever();
-      if (!ext.instalada) return parar("A extensão do coletor não respondeu. Instale-a e recarregue esta página.");
-      push("ok", `1/6 · extensão respondeu${ext.versao ? ` (versão ${ext.versao})` : ""}`);
+      if (!ext.instalada) return parar("A extensão não respondeu. Instale-a e recarregue esta página.");
+      const faltando = COMANDOS_ESPERADOS.filter(([c]) => !(ext.comandos || []).includes(c));
+      push(faltando.length ? "aviso" : "ok",
+        `1/6 · extensão respondeu${ext.versao ? ` (versão ${ext.versao})` : ""}${faltando.length ? ` — cópia antiga: falta ${faltando.map(([c]) => c).join(", ")}` : ` — entende ${(ext.comandos || []).length} comando(s)`}`);
 
       // 2. cookie, contra o ML de verdade
       if (!sessao?.configured) return parar("Não há cookie da conta do sistema salvo.");

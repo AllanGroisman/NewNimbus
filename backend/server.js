@@ -2376,6 +2376,38 @@ app.post("/api/admin/ml-coupon/test", auth.requireAuth, auth.requireAdmin, async
   }
 });
 
+// O mesmo teste, no Chrome do admin (a extensão). Em dois tempos:
+//
+//   /local/start   — valida a entrada e roda o caminho RÁPIDO, que responde pelo
+//                    que o sistema já sabe, sem abrir nada. Só quando ele não
+//                    conclui é que a extensão precisa caminhar pelo checkout.
+//   /local/result  — o material cru que a aba trouxe vira veredito, com as mesmas
+//                    funções puras do caminho antigo (classifyCouponResult,
+//                    extractCheckoutTotal, parseProductCoupons).
+app.post("/api/admin/ml-coupon/local/start", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    // A conta do ML é a mesma da rodada de cupons. Duas coisas nela ao mesmo tempo
+    // dobram a chance de CAPTCHA — e o CAPTCHA vale pra conta, não pra aba.
+    if (mlCupons.status().running) {
+      return res.status(409).json({ error: "Tem uma rodada de cupons rodando — espere ela terminar para testar um cupom." });
+    }
+    res.json(await mlCoupon.prepararTesteLocal({ url: req.body?.url, code: req.body?.code, mode: req.body?.mode }));
+  } catch (err) {
+    console.error("[ml-coupon.local-start]", err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/ml-coupon/local/result", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const b = req.body || {};
+    res.json({ result: await mlCoupon.resultadoTesteLocal({ url: b.url, code: b.code, mode: b.mode, material: b.material, quick: b.quick || null }) });
+  } catch (err) {
+    console.error("[ml-coupon.local-result]", err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.get("/api/admin/ml-coupon/history", auth.requireAuth, auth.requireAdmin, (req, res) => {
   res.json({ history: mlCoupon.readHistory(), running: mlCoupon.isRunning() });
 });
@@ -2429,6 +2461,61 @@ app.post("/api/admin/ml-cupons/run", auth.requireAuth, auth.requireAdmin, (req, 
 
 app.post("/api/admin/ml-cupons/run/cancel", auth.requireAuth, auth.requireAdmin, (req, res) => {
   res.json(mlCupons.cancel());
+});
+
+// ── A mesma rodada, tocada pelo Chrome do admin (a extensão) ──────────────
+//
+// O laço vive na TELA: ela abre a página que estas rotas mandam, a extensão lê o
+// modelo cru e devolve por aqui. Do lado do servidor não muda nada do que importa —
+// o parse é o mesmo `parseFilterProps`, a escolha de quem ativar é o mesmo
+// `aAtivar`, a gravação é o mesmo `persistRun`. O que sai do caminho é o Puppeteer,
+// que é justamente o que o ML barra com CAPTCHA.
+
+app.post("/api/admin/ml-cupons/local/start", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  try {
+    res.json(mlCupons.startLocalRun(req.body || {}));
+  } catch (err) {
+    res.status(409).json({ error: err.message });
+  }
+});
+
+// Quem ativar na página que a extensão acabou de ler. Devolve só os rótulos que o
+// `aAtivar` aprovou — a extensão não escolhe nada, ela clica no que vier.
+app.post("/api/admin/ml-cupons/local/ativar", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  try {
+    res.json(mlCupons.ativacoesLocais(req.body || {}));
+  } catch (err) {
+    res.status(409).json({ error: err.message });
+  }
+});
+
+// Uma página lida. Devolve a próxima URL a abrir — ou, quando a lista acabou, os
+// cupons já gravados e as vitrines que valem a pena colher.
+app.post("/api/admin/ml-cupons/local/pagina", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    res.json(await mlCupons.paginaLocal(req.body || {}));
+  } catch (err) {
+    console.error("[ml-cupons.local-pagina]", err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/ml-cupons/local/fim", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json(mlCupons.fimLocalRun(req.body || {}));
+});
+
+// A palavra testada na aba do próprio admin. Chega o material cru — os corpos das
+// respostas que a página do ML buscou depois do "Aplicar" — e a leitura é a MESMA
+// do caminho do servidor (`lerRespostaDeCodigo`), senão a mesma palavra teria dois
+// vereditos dependendo de quem abriu a página.
+app.post("/api/admin/ml-cupons/local/palavra", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const source = req.body?.source === "repasse" ? "repasse" : "admin";
+    res.json({ result: await mlCupons.checkWordLocal({ ...(req.body || {}), source }) });
+  } catch (err) {
+    console.error("[ml-cupons.local-palavra]", err.message);
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // Apaga TODOS os cupons guardados (botão "Apagar todos" da aba): a lista, os

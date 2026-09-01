@@ -9,7 +9,8 @@
 // Nada é gravado na fila e nada é enviado: é diagnóstico.
 import { useState, useEffect, useCallback } from "react";
 import { PRIMARY, PRIMARY_DARK } from "../data/constants";
-import { adminCouponTest, adminCouponHistory, adminMlCuponsSyncProducts, errText } from "../data/api";
+import { adminCouponHistory, adminMlCuponsSyncProducts, errText } from "../data/api";
+import { testarCupom } from "../data/cupomTeste";
 import CuponsDoML from "./AdminCupomML";
 import ConfigTest from "./AdminCupomConfig";
 import DescobrirPalavra from "./AdminCupomPalavra";
@@ -111,6 +112,18 @@ export default function PageAdminCupom() {
   );
 }
 
+// O progresso que a extensão manda durante o teste, em uma frase. O "muro" é o
+// único que precisa gritar: a aba veio para a frente e está esperando o humano.
+function descreverPasso(p) {
+  if (!p) return null;
+  if (p.tipo === "muro") return "o Mercado Livre pediu verificação — resolva na aba que abriu";
+  if (p.tipo === "pdp") return `página do produto lida · ${p.cupons} cupom(ns) na própria página`;
+  if (p.tipo === "checkout") return `indo ao checkout (${p.via})…`;
+  if (p.tipo === "passo") return `checkout · passo ${p.passo}${p.titulo ? `: ${p.titulo}` : ""}`;
+  if (p.tipo === "aplicado") return "código aplicado — lendo o que o ML respondeu…";
+  return null;
+}
+
 function TestarNoCheckout() {
   const [url, setUrl] = useState("");
   const [code, setCode] = useState("");
@@ -119,6 +132,9 @@ function TestarNoCheckout() {
   // que o ML barra com CAPTCHA desde 25/08.
   const [mode, setMode] = useState("rapido");
   const [running, setRunning] = useState(false);
+  // Onde o checkout está, quando ele roda na aba do próprio admin. Só a extensão
+  // conta isso: o caminho do servidor é uma caixa preta de ~1 minuto.
+  const [passo, setPasso] = useState(null);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [history, setHistory] = useState([]);
@@ -140,13 +156,19 @@ function TestarNoCheckout() {
     setError(null);
     setResult(null);
     try {
-      const r = await adminCouponTest({ url: url.trim(), code: code.trim() || null, mode });
-      setResult(r.result);
+      const r = await testarCupom({
+        url, code, mode,
+        // O passo a passo do checkout na aba do admin. Sem isto a tela fica
+        // parada por até dois minutos parecendo travada.
+        onProgresso: (p) => setPasso(descreverPasso(p)),
+      });
+      setResult(r);
       refreshHistory();
     } catch (err) {
       setError(errText(err, "Não foi possível testar o cupom agora."));
     } finally {
       setRunning(false);
+      setPasso(null);
     }
   };
 
@@ -235,6 +257,12 @@ function TestarNoCheckout() {
             </button>
           </div>
         </div>
+
+        {running && passo && (
+          <div style={{ marginTop: 12, fontSize: 12, color: "var(--color-text-secondary)" }}>
+            {passo}
+          </div>
+        )}
 
         {error && (
           <div style={{ marginTop: 12, background: "var(--danger-bg)", color: "var(--danger-text)", padding: "8px 10px", borderRadius: 8, fontSize: 12 }}>

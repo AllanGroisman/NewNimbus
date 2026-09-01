@@ -1,16 +1,17 @@
-// O que dizer quando a extensão do coletor não respondeu.
+// O que dizer quando a extensão não respondeu.
 //
-// Sem ela o botão "colher no meu Chrome" simplesmente sumia, e sumir sem explicação
-// é pior do que não existir. Vive fora das páginas porque duas dizem a mesma coisa:
-// a aba "Cupons do ML" (onde o botão falta) e a "Config Test" (onde é um diagnóstico).
+// Sem ela os botões "no meu Chrome" simplesmente sumiam, e sumir sem explicação é
+// pior do que não existir. Vive fora das páginas porque várias dizem a mesma coisa:
+// "Cupons do ML" (onde os botões faltam) e "Config Test" (onde é um diagnóstico).
 export default function ExtensaoAusente({ compacto = false }) {
   const origem = typeof window !== "undefined" ? window.location.origin : "";
   return (
     <div style={{ fontSize: 11, color: "var(--color-text-secondary)", lineHeight: 1.6 }}>
       {!compacto && (
         <>
-          O “raspar” abre o navegador no servidor, e o Mercado Livre barra ele com CAPTCHA. Para colher a
-          vitrine numa aba <b>deste</b> Chrome,{" "}
+          Os caminhos “pelo servidor” abrem o navegador lá, e o Mercado Livre barra ele com CAPTCHA.
+          Para puxar cupons, colher vitrine, testar palavra e testar cupom numa aba <b>deste</b>{" "}
+          Chrome,{" "}
         </>
       )}
       {compacto ? "Para instalar: " : ""}instale a extensão da pasta <code>extension/</code> do

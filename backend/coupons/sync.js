@@ -24,10 +24,15 @@ const STATUS_KEY = "ml-cupons-status";
 const GROUPINGS_KEY = "ml-cupons-groupings";
 
 const DEFAULT_CONFIG = {
-  // Chaves de categoria do ML (ce_vertical, tb_vertical…). Vazio = todos os cupons
-  // da conta, que é muita coisa — por isso o limite abaixo existe.
+  // Chaves de categoria do ML (ce_vertical, tb_vertical…). Vazio = TODAS as
+  // categorias, uma de cada vez (ver categoriasDaRodada) — e não uma passada só na
+  // lista geral, que é o que era antes: a lista geral traz cupom de tudo, mas o ML
+  // não diz a vertical de cada um, então tudo entrava sem categoria nenhuma.
   groupings: [],
-  limitPerGrouping: 60,
+  // Por CATEGORIA. Com ~10 verticais isso é ~1.000 cupons e ~40 páginas abertas na
+  // conta do ML por rodada — a conta é a mesma do Hub, e é ela que paga o preço de
+  // uma varredura grande demais.
+  limitPerGrouping: 100,
   withProducts: true,
   maxProductsPerCoupon: 100,
   // Cupom de UMA loja é descartado já na leitura da lista: ele vale só pros
@@ -132,6 +137,55 @@ function mergeGroupingLabels(grupos) {
   return mapa;
 }
 
+// As chaves do dicionário que são CATEGORIA de verdade.
+//
+// O ML mistura filtro com categoria na mesma lista de `groupings`: junto de
+// `ce_vertical` e `fa_vertical` vêm `price` ("Mais de R$100"), `percentage`
+// ("Mais de 10%") e `recommended` ("Recomendados"). Varrer por esses três traria
+// cupom repetido e carimbaria neles uma "categoria" que não existe — a coluna
+// Categoria da tabela passaria a mostrar "Mais de 10%". O sufixo `_vertical` é o
+// que o próprio ML usa para separar os dois tipos.
+function verticaisConhecidas(labels = null) {
+  return Object.keys(labels || readGroupingLabels()).filter(k => /_vertical$/.test(k)).sort();
+}
+
+// As categorias que ESTA rodada vai varrer, em ordem. `null` na lista quer dizer
+// "a lista geral, sem filtro de categoria".
+//
+// Pura sobre a config e o dicionário — é aqui que mora a resposta para "puxe de
+// tudo", e é por isso que ela é testável sem banco e sem Chrome.
+//
+// Uma passada POR VERTICAL em vez de uma passada geral porque a lista do ML não
+// diz a que vertical cada cupom pertence: a categoria que o sistema grava é o
+// filtro que a gente pediu na URL (ver parseFilterProps, scraping/ml-cupons.js).
+// Sem isso "puxar de tudo" traz tudo sem categoria nenhuma, e a visão por
+// categoria da tabela fica mostrando "—" para o cupom inteiro.
+function categoriasDaRodada(cfg = {}, { procurar = null, labels = null } = {}) {
+  // Buscar UMA campanha é outra pergunta: a lista geral já contém tudo, e varrer
+  // dez verticais atrás dela seria dez vezes mais navegação com a conta do sistema
+  // para achar o mesmo cupom. Ver o `procurar` do startLocalRun.
+  if (procurar) return [null];
+
+  const escolhidas = (cfg.groupings || []).map(g => g?.key ?? g).filter(Boolean);
+  if (escolhidas.length) return escolhidas;
+
+  const todas = verticaisConhecidas(labels);
+  // Instalação que nunca leu a aba do ML não tem dicionário nenhum — e sem esse
+  // fallback a primeira rodada da vida não varreria categoria alguma.
+  return todas.length ? todas : [null];
+}
+
+// Como a rodada anuncia o que vai varrer. As duas rodadas (servidor e Chrome) já
+// escreviam essa linha, cada uma do seu jeito e as duas dizendo "todas as
+// categorias" sem dizer QUAIS — que era exatamente a informação que faltava para
+// perceber que a config estava presa numa vertical só.
+function textoDasCategorias(categorias, labels = null) {
+  const mapa = labels || readGroupingLabels();
+  if (!categorias.length || (categorias.length === 1 && !categorias[0])) return "a lista geral (sem categoria)";
+  const nomes = categorias.map(k => mapa[k] || k);
+  return `${categorias.length} categoria${categorias.length === 1 ? "" : "s"} (${nomes.join(", ")})`;
+}
+
 function readConfig() {
   const raw = appConfig.get(CONFIG_KEY);
   return raw && typeof raw === "object" ? { ...DEFAULT_CONFIG, ...raw } : { ...DEFAULT_CONFIG };
@@ -194,6 +248,7 @@ function logar(tipo, texto, { dedup = false } = {}) {
 }
 
 function status() {
+  expirarLocalSeSumiu();
   return {
     config: readConfig(),
     groupingLabels: readGroupingLabels(),
@@ -202,6 +257,9 @@ function status() {
     // A rodada não pode começar com uma busca de campanha em andamento: é a mesma
     // conta do ML, e é a rota /run que lê isto pra recusar.
     importing: _import.running,
+    // Quem está tocando a rodada: o servidor (Puppeteer) ou o Chrome do admin.
+    // A tela precisa saber para não oferecer "cancelar" de um laço que é dela.
+    local: !!_local,
   };
 }
 
@@ -300,12 +358,16 @@ function runOnce(overrides = {}) {
   _status.progress = null;
   _status.lastError = null;
   _status.log = [];
-  logar("info", `começando: ${cfg.groupings?.length ? `categorias ${cfg.groupings.join(", ")}` : "todas as categorias"}, até ${cfg.limitPerGrouping} cupons por categoria${cfg.withProducts ? ", com as vitrines" : ", sem abrir vitrine"}`);
+  // A lista de categorias é resolvida AQUI e passada pronta: o `runPull` já sabe
+  // varrer uma lista, e deixar a regra num lugar só é o que mantém a rodada do
+  // servidor e a do Chrome varrendo exatamente as mesmas categorias.
+  const categorias = categoriasDaRodada(cfg);
+  logar("info", `começando: ${textoDasCategorias(categorias)}, até ${cfg.limitPerGrouping} cupons por categoria${cfg.withProducts ? ", com as vitrines" : ", sem abrir vitrine"}`);
 
   _promise = (async () => {
     try {
       const result = await mlCupons.runPull({
-        groupings: cfg.groupings,
+        groupings: categorias.filter(Boolean),
         limit: cfg.limitPerGrouping,
         withProducts: cfg.withProducts,
         maxProductsPerCoupon: cfg.maxProductsPerCoupon,
@@ -354,10 +416,294 @@ function runOnce(overrides = {}) {
 
 function cancel() {
   mlCupons.cancel();
+  // A rodada pela extensão não tem laço deste lado: quem percorre é a tela. Marcar
+  // `encerrada` faz a `proximaPagina` devolver null, e ela para na próxima página.
+  if (_local) { _local.encerrada = true; logar("aviso", "cancelamento pedido — a rodada no seu Chrome para na próxima página"); }
   // O cancelamento é cooperativo: a rodada só para no próximo ponto de checagem.
   // Sem esta linha o log fica mudo entre o clique e a parada, e parece travamento.
   logar("aviso", "cancelamento pedido — parando no próximo cupom");
   return { canceling: true };
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// A mesma rodada, no Chrome do admin (a extensão)
+// ────────────────────────────────────────────────────────────────────────
+//
+// Por que existe: o ML responde CAPTCHA para navegador automatizado, e a sonda de
+// 27/08 mostrou que não é o IP da VPS — é o Puppeteer subindo Chrome. Numa aba do
+// Chrome do admin, com a sessão dele, a lista de cupons é só uma página.
+//
+// A divisão é a mesma do `gravarVitrineLocal`, que já existia: a extensão COLHE o
+// modelo cru da página e manda pra cá; quem interpreta é o `parseFilterProps` — o
+// mesmo que a rodada do servidor usa. E quem decide QUEM ativar é o `aAtivar`,
+// aqui, nunca na extensão: o rótulo "Aplicar" repetido entre dois cupons diferentes
+// é o erro que custa uma escrita irreversível na conta errada, e essa regra não
+// pode viver em dois lugares.
+//
+// A regra de PARADA da varredura também mora aqui (limite, teto de páginas, páginas
+// sem novidade): a extensão só abre a URL que este arquivo mandar e pede a próxima.
+// É o que evita uma segunda varredura, com outros tetos, dentro da extensão.
+
+let _local = null;
+
+function localAtivo() { return !!_local; }
+
+// Quanto tempo a rodada pela extensão pode ficar sem dar notícia antes de ser
+// considerada perdida. Quem percorre as páginas é a TELA — se o admin fechar a aba
+// no meio, ninguém chama o `fimLocalRun` e a rodada ficaria "rodando" para sempre,
+// travando o /run e o "Apagar todos" até o processo reiniciar.
+const LOCAL_SEM_NOTICIA_MS = 5 * 60 * 1000;
+
+function tocarLocal() { if (_local) _local.ultimoContato = Date.now(); }
+
+function expirarLocalSeSumiu() {
+  if (!_local) return;
+  if (Date.now() - (_local.ultimoContato || _local.t0) < LOCAL_SEM_NOTICIA_MS) return;
+  logar("aviso", "a rodada no seu Chrome parou de dar notícia — encerrando o que ficou pendurado");
+  fimLocalRun({ cancelada: true });
+}
+
+// A URL da próxima página a abrir, ou null quando a varredura acabou. Puro sobre
+// o estado da rodada — é o coração do laço, e é ele que o teste cobre.
+function proximaPagina() {
+  if (!_local || _local.encerrada) return null;
+  const cat = _local.categorias[_local.iCategoria];
+  if (cat === undefined) return null;
+  return {
+    grouping: cat,
+    pagina: _local.pagina,
+    url: mlCupons.filterUrl({ grouping: cat, page: _local.pagina }),
+  };
+}
+
+// Passa para a próxima categoria (ou encerra). O contador de páginas sem novidade
+// é por categoria, como no crawlFilter.
+function proximaCategoria(motivo) {
+  if (motivo) _local.motivos.push(motivo);
+  _local.iCategoria++;
+  _local.pagina = 1;
+  _local.semNovidade = 0;
+  _local.daCategoria = 0;
+}
+
+// Começa a rodada pela extensão. Recusa junto com a do servidor: as duas mexem na
+// MESMA conta do ML, e duas varreduras simultâneas é o padrão que acorda o
+// anti-robô — o mesmo motivo do 409 do /run.
+// `procurar` transforma a rodada numa BUSCA: ela para na página em que aquela
+// campanha aparecer, em vez de ir até o limite. É o "trazer campanha" do teste de
+// palavra — sem isso, achar um cupom que está na página 2 custaria as 40 páginas
+// do teto, cada uma delas uma navegação com a conta do sistema.
+function startLocalRun(overrides = {}) {
+  expirarLocalSeSumiu();
+  if (_status.running || mlCupons.isRunning()) throw new Error("Já tem uma rodada de cupons rodando — espere ela terminar.");
+  if (_import.running) throw new Error("Tem uma busca de campanha rodando — espere ela terminar.");
+
+  const procurar = overrides.procurar ? String(overrides.procurar).trim() : null;
+  const cfg = { ...readConfig(), ...overrides };
+  // Numa busca o limite por categoria não serve de nada: ele existe para segurar
+  // quantas vitrines a rodada abre, e aqui só uma vai ser aberta. O que segura é
+  // o teto de páginas, que continua valendo.
+  //
+  // E a busca NÃO herda o resto da config da rodada, porque a config da rodada é
+  // sobre o que vale a pena COLHER e a busca é sobre onde a campanha PODE estar —
+  // são perguntas diferentes, e responder a segunda com a primeira faz a busca
+  // dizer "não achei" para um cupom que estava na lista. É o mesmo par de decisões
+  // que o findCampaign do servidor já toma (scraping/ml-cupons.js): grouping null
+  // e skipStore false.
+  if (procurar) {
+    cfg.limitPerGrouping = mlCupons.MAX_FILTER_PAGES * 30;
+    // Categorias estreitadas na config esconderiam a campanha que está em outra
+    // vertical — e quem testou a palavra não faz ideia de qual é a vertical dela.
+    // Quem transforma isso em "a lista geral, uma passada só" é o
+    // `categoriasDaRodada`, que trata `procurar` antes de olhar a config.
+    cfg.groupings = [];
+    // A campanha procurada PODE ser de loja. Descartá-la aqui é descartar o que se
+    // foi buscar.
+    cfg.skipStoreCoupons = false;
+  }
+  const ativa = booleano(cfg.activateCoupons, DEFAULT_CONFIG.activateCoupons);
+
+  _local = {
+    t0: Date.now(),
+    cfg,
+    categorias: categoriasDaRodada(cfg, { procurar }),
+    iCategoria: 0,
+    pagina: 1,
+    // Quantas páginas da lista já foram abertas na rodada inteira (todas as
+    // categorias somadas). O `pagina` acima zera a cada categoria; este não — é
+    // ele que a tela usa pra dizer o que foi varrido quando a busca não acha nada.
+    paginasLidas: 0,
+    semNovidade: 0,
+    daCategoria: 0,          // quantos cupons esta categoria já rendeu (o `limit` é por categoria)
+    porId: new Map(),
+    ignoradosLoja: 0,
+    ativados: 0,
+    semBotao: 0,
+    motivos: [],
+    // Teto de ativações da RODADA inteira, não por categoria: o que se limita é
+    // quantas escritas a conta do ML recebe de uma vez.
+    restantes: { n: ativa ? Math.max(0, Number(cfg.maxActivationsPerRun) || 0) : 0 },
+    encerrada: false,
+    persistido: null,
+    ultimoContato: Date.now(),
+    procurar,
+    achou: false,
+  };
+
+  _status.running = true;
+  _status.startedAt = new Date().toISOString();
+  _status.progress = null;
+  _status.lastError = null;
+  _status.log = [];
+  logar("info", procurar
+    ? `procurando a campanha ${procurar} no seu Chrome`
+    : `começando no seu Chrome: ${textoDasCategorias(_local.categorias)}, até ${cfg.limitPerGrouping} cupons por categoria`);
+
+  // `categorias` vai junto porque a tela precisa DIZER quais são: "todas as
+  // categorias" sem nomeá-las foi o que escondeu por meses uma config presa em
+  // Brinquedos (task 26).
+  return { config: cfg, ativa, procurar, categorias: _local.categorias, proxima: proximaPagina() };
+}
+
+// Quem ativar nesta página. A extensão manda o modelo cru, este lado devolve os
+// rótulos exatos dos botões — e só os que o `aAtivar` aprovou.
+function ativacoesLocais({ grouping = null, props = null } = {}) {
+  if (!_local) throw new Error("Não tem rodada no Chrome em andamento.");
+  tocarLocal();
+  if (_local.restantes.n <= 0) return { labels: [], restantes: 0 };
+  const { coupons } = mlCupons.parseFilterProps(props, grouping);
+  // Numa busca só o alvo pode ser ativado. Ativar é escrita irreversível na conta
+  // do ML, e quem pediu a busca pediu UMA campanha — gastar o teto de ativações
+  // nos vizinhos dela deixaria justamente o alvo sem o "Eu quero", que é o único
+  // jeito de o ML revelar a vitrine dele.
+  const candidatos = _local.procurar
+    ? coupons.filter(c => c.campaignId === _local.procurar)
+    : coupons;
+  // O `aAtivar` continua sendo quem decide: ele recusa cupom vencido, já ativado e
+  // rótulo ambíguo — e só ativa `scope === "campaign"`, então cupom de LOJA entra
+  // no sistema sem vitrine mesmo depois desta mudança. Entrar já é o ganho.
+  const escolhidos = mlCupons.aAtivar(candidatos, { max: _local.restantes.n });
+  return { labels: escolhidos.map(c => c.activationLabel), restantes: _local.restantes.n };
+}
+
+// Uma página lida. Devolve o que a tela mostra e a próxima URL — ou `alvos`, quando
+// a varredura acabou e os cupons já foram gravados.
+async function paginaLocal({ grouping = null, props = null, ativados = 0, semBotao = 0 } = {}) {
+  if (!_local) throw new Error("Não tem rodada no Chrome em andamento.");
+  tocarLocal();
+
+  _local.ativados += Number(ativados) || 0;
+  _local.semBotao += Number(semBotao) || 0;
+  _local.restantes.n = Math.max(0, _local.restantes.n - (Number(ativados) || 0));
+  _local.paginasLidas++;
+
+  const parsed = mlCupons.parseFilterProps(props, grouping);
+  const limite = Number(_local.cfg.limitPerGrouping) || DEFAULT_CONFIG.limitPerGrouping;
+  const pulaLoja = booleano(_local.cfg.skipStoreCoupons, DEFAULT_CONFIG.skipStoreCoupons);
+  const paginas = parsed.pages || 1;
+
+  let novos = 0;
+  for (const c of parsed.coupons) {
+    // A campanha procurada é olhada ANTES de qualquer filtro. Ela é o motivo da
+    // varredura existir: escopo de loja, limite de categoria e "já vi esse" são
+    // regras de COLHEITA, e aplicá-las aqui responderia "não achei" para um cupom
+    // que estava na página. Achar é o fim — as páginas seguintes só custariam
+    // navegação com a conta do sistema.
+    if (_local.procurar && c.campaignId === _local.procurar) {
+      const anterior = _local.porId.get(c.campaignId);
+      // Fica a versão que TEM vitrine: é a única que serve pra raspar produto.
+      if (anterior) {
+        for (const g of c.groupings) if (!anterior.groupings.includes(g)) anterior.groupings.push(g);
+        if (!anterior.containerUrl && c.containerUrl) Object.assign(anterior, c, { groupings: anterior.groupings });
+      } else {
+        _local.porId.set(c.campaignId, c);
+        _local.daCategoria++;
+        novos++;
+      }
+      _local.achou = true;
+      break;
+    }
+    // Cupom de loja fora ANTES de entrar na lista: ele não serve pra fila do
+    // repasse e é o mais caro da rodada. Também não conta pro limite.
+    if (pulaLoja && c.scope === "store") { _local.ignoradosLoja++; continue; }
+    const anterior = _local.porId.get(c.campaignId);
+    if (anterior) {
+      for (const g of c.groupings) if (!anterior.groupings.includes(g)) anterior.groupings.push(g);
+      // Fica a versão que TEM vitrine: é a única que serve pra raspar produto.
+      if (!anterior.containerUrl && c.containerUrl) Object.assign(anterior, c, { groupings: anterior.groupings });
+      continue;
+    }
+    _local.porId.set(c.campaignId, c);
+    _local.daCategoria++;
+    novos++;
+    if (_local.daCategoria >= limite) break;
+  }
+
+  logar("info", `cupons: página ${_local.pagina}/${paginas}${grouping ? ` de ${grouping}` : ""} · ${_local.porId.size} cupons${_local.ignoradosLoja ? `, ${_local.ignoradosLoja} de loja ignorados` : ""}`, { dedup: true });
+  _status.progress = { etapa: "cupons", pagina: _local.pagina, de: paginas, cupons: _local.porId.size, ignoradosLoja: _local.ignoradosLoja, grouping };
+
+  // As paradas, na mesma ordem do crawlFilter.
+  _local.semNovidade = novos ? 0 : _local.semNovidade + 1;
+  if (_local.achou) _local.encerrada = true;
+  else if (!parsed.coupons.length) proximaCategoria(`A lista de "${grouping || "todos"}" não devolveu cupom nenhum — pode ser categoria vazia ou a página ter mudado.`);
+  else if (_local.daCategoria >= limite) proximaCategoria(null);
+  else if (_local.semNovidade >= mlCupons.MAX_PAGINAS_SEM_NOVIDADE) proximaCategoria(null);
+  else if (_local.pagina >= paginas) proximaCategoria(null);
+  else if (_local.pagina >= mlCupons.MAX_FILTER_PAGES) proximaCategoria(`Parei no teto de ${mlCupons.MAX_FILTER_PAGES} páginas em "${grouping || "todos"}".`);
+  else _local.pagina++;
+
+  const proxima = proximaPagina();
+  const base = { cupons: _local.porId.size, novos, ignoradosLoja: _local.ignoradosLoja, de: paginas, paginasLidas: _local.paginasLidas, achou: _local.achou };
+  if (proxima) return { ...base, proxima, alvos: null };
+  return { ...base, proxima: null, ...(await gravarCuponsLocais()) };
+}
+
+// A lista acabou: grava os cupons e diz quais vitrines valem a pena abrir.
+//
+// Grava ANTES das vitrines porque o `gravarVitrineLocal` exige o cupom no banco —
+// e porque cupom guardado sem vitrine já é melhor que nada se o Chrome fechar no
+// meio da colheita.
+async function gravarCuponsLocais() {
+  const cupons = [..._local.porId.values()];
+  // `vitrines: []` de propósito: quem grava produto na rodada local é o
+  // `gravarVitrineLocal`, cupom a cupom, com o que a extensão colheu.
+  const resumo = await persistRun({ cupons, vitrines: [], ativados: _local.ativados, ignoradosLoja: _local.ignoradosLoja, avisos: _local.motivos });
+  _local.persistido = resumo;
+  logar("ok", `lista pronta: ${resumo.cupons} cupons (${resumo.novos} novos), ${_local.ativados} ativados`);
+  // Numa busca, a única vitrine que interessa é a da campanha procurada.
+  const alvos = cupons
+    .filter(c => c.containerUrl && (!_local.procurar || c.campaignId === _local.procurar))
+    .map(c => ({ campaignId: c.campaignId, title: c.title, containerUrl: c.containerUrl }));
+  return { alvos, resumo, achou: _local.achou };
+}
+
+// Fim da rodada. `vitrines` é o que a tela conseguiu colher depois — só contagem,
+// porque os produtos já foram gravados um a um pelo `vitrine-local`.
+function fimLocalRun({ vitrines = [], produtos = 0, cancelada = false } = {}) {
+  if (!_local) return { ok: false, reason: "Não tinha rodada no Chrome em andamento." };
+  const base = _local.persistido || { cupons: _local.porId.size, novos: 0, atualizados: 0, avisos: [] };
+  const resumo = {
+    ...base,
+    ativados: _local.ativados,
+    cuponsComVitrine: Number(vitrines) || 0,
+    vinculos: Number(produtos) || 0,
+    cuponsDeLojaIgnorados: _local.ignoradosLoja,
+    avisos: [...(base.avisos || []), ..._local.motivos].filter(Boolean),
+    cancelada: !!cancelada,
+    origem: "extensao",
+  };
+  _status.lastRun = new Date().toISOString();
+  _status.lastDuration = Date.now() - _local.t0;
+  _status.lastResult = resumo;
+  _status.lastError = resumo.avisos.length ? resumo.avisos.join(" ") : null;
+  logar(cancelada ? "aviso" : "ok", cancelada
+    ? "rodada no seu Chrome interrompida"
+    : `terminou em ${Math.round((Date.now() - _local.t0) / 1000)}s: ${resumo.cupons} cupons (${resumo.novos} novos), ${resumo.ativados} ativados, ${resumo.cuponsComVitrine} vitrines`);
+  persistStatus();
+  _local = null;
+  _status.running = false;
+  _status.progress = null;
+  return { ok: true, resumo };
 }
 
 // A vitrine de UM cupom, sob demanda (o botão "Sincronizar produtos" da linha).
@@ -636,20 +982,27 @@ async function startImport(campaignId, { withProducts = true } = {}) {
 //
 // `maxAgeHours` evita ir ao ML por algo testado há pouco: cada teste abre um
 // Chrome com a conta do sistema, e a mesma palavra chega várias vezes pelo repasse.
-async function checkWord(word, { source = "admin", maxAgeHours = 12, force = false } = {}) {
+// Quanto tempo uma palavra testada continua valendo sem perguntar de novo ao ML.
+// Cada teste é uma escrita na página de cupons da conta do sistema — e a mesma
+// conta é a do Hub de Afiliados.
+const MAX_AGE_PALAVRA_HORAS = 12;
+
+async function respostaDoCache(code, cache) {
+  return {
+    word: code, verdict: cache.verdict, campaignId: cache.campaignId,
+    message: cache.message, responseCode: cache.responseCode,
+    cached: true, checkedAt: cache.checkedAt,
+    coupon: cache.campaignId ? await coupons.getCoupon(cache.campaignId) : null,
+  };
+}
+
+async function checkWord(word, { source = "admin", maxAgeHours = MAX_AGE_PALAVRA_HORAS, force = false } = {}) {
   const code = String(word || "").trim().toUpperCase().slice(0, 40);
   if (!code) throw new Error("Escreva a palavra do cupom.");
 
   if (!force) {
     const cache = await coupons.findCodeCheck(code, { maxAgeHours });
-    if (cache) {
-      return {
-        word: code, verdict: cache.verdict, campaignId: cache.campaignId,
-        message: cache.message, responseCode: cache.responseCode,
-        cached: true, checkedAt: cache.checkedAt,
-        coupon: cache.campaignId ? await coupons.getCoupon(cache.campaignId) : null,
-      };
-    }
+    if (cache) return respostaDoCache(code, cache);
   }
 
   const affiliate = require("../scraping/affiliate");
@@ -657,6 +1010,35 @@ async function checkWord(word, { source = "admin", maxAgeHours = 12, force = fal
   if (!session) throw new Error("Sem sessão do Mercado Livre do sistema — cole o cookie em Admin › Mercado Livre.");
 
   const r = await mlCupons.checkCouponWord(session.cookie, code);
+  return registrarPalavra(code, r, { source });
+}
+
+// A palavra testada na aba do PRÓPRIO admin (a extensão).
+//
+// Chega o mesmo material que o Chrome do servidor juntaria: os corpos crus das
+// respostas que a página buscou depois do "Aplicar". Quem interpreta continua
+// sendo o `lerRespostaDeCodigo` + `vereditoDaPalavra`, que são puros e valem para
+// os dois caminhos — se a leitura divergisse, a mesma palavra teria dois
+// vereditos dependendo de quem abriu a página.
+//
+// O cache de 12h vale aqui também: cada teste, venha de onde vier, é uma escrita
+// na página de cupons da conta do sistema.
+async function checkWordLocal({ word, respostas = [], bodyText = "", source = "admin", maxAgeHours = MAX_AGE_PALAVRA_HORAS, force = false } = {}) {
+  const code = String(word || "").trim().toUpperCase().slice(0, 40);
+  if (!code) throw new Error("Escreva a palavra do cupom.");
+
+  if (!force) {
+    const cache = await coupons.findCodeCheck(code, { maxAgeHours });
+    if (cache) return respostaDoCache(code, cache);
+  }
+
+  const escolhida = mlCupons.lerRespostaDeCodigo((respostas || []).map(r => (typeof r === "string" ? r : r?.body)));
+  const r = mlCupons.vereditoDaPalavra(code, escolhida, { bodyText });
+  return registrarPalavra(code, r, { source });
+}
+
+// Grava o que o ML respondeu e monta a resposta da tela. Comum aos dois caminhos.
+async function registrarPalavra(code, r, { source = "admin" } = {}) {
   const linha = await coupons.recordCodeCheck({
     code, verdict: r.verdict, campaignId: r.campaignId || null,
     message: r.message || r.reason || null, responseCode: r.responseCode || null,
@@ -687,6 +1069,11 @@ async function checkWord(word, { source = "admin", maxAgeHours = 12, force = fal
 module.exports = {
   runOnce,
   cancel,
+  startLocalRun,
+  ativacoesLocais,
+  paginaLocal,
+  fimLocalRun,
+  localAtivo,
   status,
   readConfig,
   writeConfig,
@@ -700,9 +1087,13 @@ module.exports = {
   startImport,
   importStatus,
   checkWord,
+  checkWordLocal,
   loadPersistedStatus,
   readGroupingLabels,
   mergeGroupingLabels,
+  verticaisConhecidas,
+  categoriasDaRodada,
+  textoDasCategorias,
   textoDoProgresso,
   CONFIG_KEY,
   STATUS_KEY,

@@ -14,12 +14,13 @@
 import { useState, useEffect, useCallback } from "react";
 import { PRIMARY_DARK } from "../data/constants";
 import {
-  adminRepasseCoupons, adminRepasseLogs, adminMlCuponsTestWord,
+  adminRepasseCoupons, adminRepasseLogs,
   adminMlCuponsSyncProducts, adminRepasseCouponForget, adminRepasseCouponsClear, errText,
 } from "../data/api";
 import Pagination from "../components/ui/Pagination";
 import Modal from "../components/ui/Modal";
 import { ImportarCampanhaModal } from "./AdminCupomPalavra";
+import { testarPalavra } from "../data/cupomPalavra";
 import { VERDICT, OUTCOME_LABEL } from "../data/cupomRotulos";
 import {
   cardStyle, inputStyle, labelStyle, th, td, botaoLink, botaoPerigo, botaoSecundario,
@@ -331,8 +332,7 @@ function Linha({ cupom, aberto, onToggle, onPatch, onImportar, onExcluir }) {
     try {
       // `force` porque o botão é um pedido explícito de "vai lá agora": sem ele o
       // checkWord devolveria o cache de 12h e o clique não faria nada visível.
-      const r = await adminMlCuponsTestWord(cupom.code, true, "repasse");
-      const res = r.result || {};
+      const res = await testarPalavra(cupom.code, { force: true, source: "repasse" });
       onPatch({
         verdict: res.verdict ?? null,
         campaignId: res.campaignId ?? null,

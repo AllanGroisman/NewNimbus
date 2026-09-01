@@ -95,3 +95,74 @@ describe("dicionário de nomes das categorias", () => {
     expect(sync.readGroupingLabels().ce_vertical).toBe("Eletrônicos");
   });
 });
+
+// "Puxar de tudo" (task 26): a rodada varre CADA vertical, uma de cada vez, em vez
+// de dar uma passada só na lista geral. O motivo é que o ML não diz a vertical do
+// cupom na lista — a categoria gravada é o filtro que a rodada pediu na URL —,
+// então a passada geral traz tudo sem categoria nenhuma.
+describe("categoriasDaRodada — o que 'todas as categorias' quer dizer", () => {
+  const sync = require(path.join(backendDir, "coupons", "sync"));
+
+  // O dicionário real da conta, com as três chaves que NÃO são categoria.
+  const LABELS = {
+    ce_vertical: "Eletrônicos, Áudio e Vídeo",
+    fa_vertical: "Moda e acessórios",
+    tb_vertical: "Brinquedos, Hobbies e Bebês",
+    price: "Mais de R$100",
+    percentage: "Mais de 10%",
+    recommended: "Recomendados",
+  };
+
+  it("sem categoria escolhida, varre todas as verticais", () => {
+    expect(sync.categoriasDaRodada({ groupings: [] }, { labels: LABELS }))
+      .toEqual(["ce_vertical", "fa_vertical", "tb_vertical"]);
+  });
+
+  it("filtro não é categoria: price, percentage e recommended ficam de fora", () => {
+    // Varrer por eles traria cupom repetido e carimbaria "Mais de 10%" na coluna
+    // Categoria da tabela — uma categoria que não existe.
+    const r = sync.categoriasDaRodada({ groupings: [] }, { labels: LABELS });
+    for (const filtro of ["price", "percentage", "recommended"]) expect(r).not.toContain(filtro);
+  });
+
+  it("categoria escolhida na tela manda, na ordem em que veio", () => {
+    expect(sync.categoriasDaRodada({ groupings: ["fa_vertical", "ce_vertical"] }, { labels: LABELS }))
+      .toEqual(["fa_vertical", "ce_vertical"]);
+  });
+
+  it("sem dicionário nenhum, cai na lista geral em vez de não varrer nada", () => {
+    // Instalação nova: o nome das categorias só chega depois da primeira leitura
+    // da aba do ML. Sem este caso, a primeira rodada da vida não abriria página
+    // nenhuma.
+    expect(sync.categoriasDaRodada({ groupings: [] }, { labels: {} })).toEqual([null]);
+  });
+
+  it("buscar UMA campanha é a lista geral, não dez varreduras", () => {
+    // A lista geral já contém a campanha procurada; varrer vertical por vertical
+    // custaria dez vezes mais navegação com a conta do sistema pelo mesmo cupom.
+    expect(sync.categoriasDaRodada({ groupings: ["tb_vertical"] }, { procurar: "14193848", labels: LABELS }))
+      .toEqual([null]);
+  });
+});
+
+// A categoria que a rodada geral NÃO sabe não pode apagar a que uma rodada por
+// vertical já aprendeu. Era o que acontecia: o upsert gravava `groupings: []` por
+// cima, e 1.211 dos 1.231 cupons do banco acabaram sem categoria nenhuma.
+describe("upsertCoupons e a categoria", () => {
+  // Reusa os cupons do `semear` (que roda a cada teste) em vez de criar outros: os
+  // testes de cima contam a tabela INTEIRA, e cupom novo deixado para trás os
+  // quebra na rodada seguinte.
+  beforeEach(semear);
+
+  it("lista vazia é 'não sei', não 'não tem' — a categoria de antes fica", async () => {
+    // É a regressão: a passada na lista geral não pede filtro nenhum e traz `[]`
+    // para todo mundo. Gravar isso por cima apagava a categoria já aprendida.
+    await coupons.upsertCoupons([{ ...base, campaignId: "9910001", title: "Eletro 20%", groupings: [] }]);
+    expect((await coupons.getCoupon("9910001")).groupings).toEqual(["ce_vertical"]);
+  });
+
+  it("categoria nova substitui a antiga — quem veio com filtro sabe do que fala", async () => {
+    await coupons.upsertCoupons([{ ...base, campaignId: "9910001", title: "Eletro 20%", groupings: ["fa_vertical"] }]);
+    expect((await coupons.getCoupon("9910001")).groupings).toEqual(["fa_vertical"]);
+  });
+});

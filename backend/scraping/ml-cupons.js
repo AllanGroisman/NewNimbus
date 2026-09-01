@@ -494,6 +494,52 @@ function classifyCodeCheck(json) {
   return { verdict, campaignId, message, responseCode };
 }
 
+// A resposta que vale, entre as várias que a página buscou depois do clique.
+//
+// Pura, e é por isso que ela existe separada: a palavra pode ser testada pelo
+// Chrome do servidor (`checkCouponWord`) ou pela extensão, na aba do admin — os
+// dois juntam os mesmos corpos JSON e precisam escolher entre eles do mesmo jeito.
+// Duas escolhas diferentes dariam veredito diferente para a mesma palavra.
+//
+// `corpos` é uma lista de strings (o corpo cru de cada resposta). O que não for
+// JSON é ignorado: a página busca imagem, tracking e i18n no mesmo intervalo.
+function lerRespostaDeCodigo(corpos) {
+  for (const corpo of corpos || []) {
+    let json;
+    try { json = JSON.parse(typeof corpo === "string" ? corpo : corpo?.body); } catch { continue; }
+    const c = classifyCodeCheck(json);
+    // "Nem verdict nem mensagem" é resposta que não fala da palavra — a página
+    // busca várias no mesmo intervalo, e parar na primeira delas responderia
+    // "não sei" para uma palavra que o ML reconheceu.
+    if (c.verdict !== "indeterminado" || c.message) return { json, ...c };
+  }
+  return null;
+}
+
+// O veredito montado a partir do que a página respondeu. Também puro, e também
+// compartilhado pelos dois caminhos: é aqui que mora a diferença entre "o ML disse
+// que a palavra não existe" e "o ML engasgou e não avaliou nada".
+function vereditoDaPalavra(word, resposta, { bodyText = "" } = {}) {
+  if (!resposta) {
+    return { ok: true, kind: "ok", word, verdict: "indeterminado", campaignId: null, responseCode: null,
+      message: null, reason: "O ML não respondeu nada reconhecível para essa palavra.", bodyText: String(bodyText).slice(0, 500) };
+  }
+  return {
+    ok: true, kind: "ok", word,
+    verdict: resposta.verdict,
+    campaignId: resposta.campaignId,
+    responseCode: resposta.responseCode,
+    message: resposta.message,
+    raw: resposta.json,
+    // "Não reconheceu" só vale quando o ML de fato avaliou a palavra. No engasgo
+    // (verdict indeterminado) a mensagem dele — "Tivemos um problema" — sozinha
+    // parece veredito sobre a palavra, então vem acompanhada do que ela é.
+    reason: resposta.verdict === "indeterminado"
+      ? `O ML respondeu ${resposta.message ? `"${resposta.message}"` : "com um erro"} — ele não chegou a avaliar a palavra.`
+      : (resposta.message || (resposta.verdict === "valid" ? "O ML reconheceu a palavra." : "O ML não reconheceu a palavra.")),
+  };
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // Parte com navegador
 // ────────────────────────────────────────────────────────────────────────
@@ -913,35 +959,14 @@ async function checkCouponWord(cookie, word) {
     let resposta = null;
     for (let i = 0; i < 12 && !resposta; i++) {
       await sleep(500);
-      for (const e of state.coupon.slice(antes)) {
-        try {
-          const json = JSON.parse(e.body);
-          const c = classifyCodeCheck(json);
-          if (c.verdict !== "indeterminado" || c.message) { resposta = { json, ...c }; break; }
-        } catch { /* corpo não-JSON — ignora */ }
-      }
+      resposta = lerRespostaDeCodigo(state.coupon.slice(antes).map(e => e.body));
     }
 
     if (!resposta) {
       const { bodyText } = await snapshotPage(r.page);
-      return { ok: true, kind: "ok", word, verdict: "indeterminado", campaignId: null, responseCode: null,
-        message: null, reason: "O ML não respondeu nada reconhecível para essa palavra.", bodyText: bodyText?.slice(0, 500) || "" };
+      return vereditoDaPalavra(word, null, { bodyText });
     }
-
-    return {
-      ok: true, kind: "ok", word,
-      verdict: resposta.verdict,
-      campaignId: resposta.campaignId,
-      responseCode: resposta.responseCode,
-      message: resposta.message,
-      raw: resposta.json,
-      // "Não reconheceu" só vale quando o ML de fato avaliou a palavra. No engasgo
-      // (verdict indeterminado) a mensagem dele — "Tivemos um problema" — sozinha
-      // parece veredito sobre a palavra, então vem acompanhada do que ela é.
-      reason: resposta.verdict === "indeterminado"
-        ? `O ML respondeu ${resposta.message ? `"${resposta.message}"` : "com um erro"} — ele não chegou a avaliar a palavra.`
-        : (resposta.message || (resposta.verdict === "valid" ? "O ML reconheceu a palavra." : "O ML não reconheceu a palavra.")),
-    };
+    return vereditoDaPalavra(word, resposta);
   } finally {
     await r.browser.close().catch(() => {});
   }
@@ -1338,5 +1363,12 @@ module.exports = {
   classifyCuponsResult,
   verdictFor,
   classifyCodeCheck,
+  lerRespostaDeCodigo,
+  vereditoDaPalavra,
   productKey,
+  // Os tetos da varredura. Saem daqui porque a rodada pela EXTENSÃO percorre as
+  // mesmas páginas sem passar pelo crawlFilter, e dois tetos diferentes para a
+  // mesma lista seria o começo de duas varreduras diferentes.
+  MAX_FILTER_PAGES,
+  MAX_PAGINAS_SEM_NOVIDADE,
 };

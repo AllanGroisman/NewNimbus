@@ -11,10 +11,13 @@
 // espremida entre a rodada e a tabela.
 import { useState, useEffect, useCallback } from "react";
 import {
-  adminMlCuponsTestWord, adminMlCuponsCodes,
+  adminMlCuponsCodes, adminMlCuponsImportVitrine, adminMlCuponsLocalFim,
   adminMlCuponsImportCampaign, adminMlCuponsImportStatus, errText,
 } from "../data/api";
 import Modal from "../components/ui/Modal";
+import { testarPalavra } from "../data/cupomPalavra";
+import { percorrerLista } from "../data/rodadaNoChrome";
+import { coletorEntende, raparVitrine, fecharAbaDoColetor } from "../data/coletor";
 import { VERDICT } from "../data/cupomRotulos";
 import { cardStyle, inputStyle, botaoPrimario, botaoSecundario, botaoLink } from "../components/admin/cupomEstilos";
 
@@ -27,6 +30,25 @@ function textoProgresso(p) {
   if (p.etapa === "vitrine") return `lendo a vitrine de ${p.title || "cupom"}...`;
   if (p.etapa === "cupons") return `procurando na lista — página ${p.pagina}${p.de ? `/${p.de}` : ""}, ${p.cupons} cupons vistos`;
   return "procurando...";
+}
+
+// A explicação de "achei a palavra e não achei a campanha" — a pergunta que essa
+// tela mais provoca.
+//
+// São duas superfícies diferentes do ML, e só uma delas é uma lista: quem responde
+// à PALAVRA é o validador de cupom, que conhece qualquer campanha que exista e
+// devolve só o id dela; quem responde à CAMPANHA é a lista de ofertas DESTA conta
+// (/cupons/filter), que é segmentada. Não existe "campanha por id" em lugar nenhum
+// — nem no ML, nem aqui —, então uma campanha real pode estar fora da lista por
+// segmentação, por ter vencido ou por já ter sido usada.
+//
+// Dizer quantas páginas foram varridas é o que separa "procurei e não estava lá"
+// de "deu erro": sem o número, o admin não tem como saber qual dos dois foi.
+function naoAchei(paginas) {
+  const varri = paginas > 0
+    ? `Varri ${paginas} página${paginas === 1 ? "" : "s"} da lista de cupons desta conta e essa campanha não apareceu.`
+    : "Essa campanha não apareceu na lista de cupons desta conta.";
+  return `${varri} Isso não quer dizer que o cupom não existe: o ML valida qualquer palavra digitada, mas só oferece na lista os cupons segmentados para esta conta — ela pode ter vencido, ser de outro segmento ou já ter sido usada.`;
 }
 
 // O convite pra trazer a campanha que a palavra apontou.
@@ -50,7 +72,65 @@ export function ImportarCampanhaModal({ campaignId, word, onClose, onDone }) {
     onClose();
   };
 
+  // A busca numa aba do Chrome do admin. É o caminho que não apanha CAPTCHA: o ML
+  // barra navegador automatizado, e a busca do servidor abre um Chrome próprio.
+  //
+  // A varredura é a mesma da rodada de cupons — `percorrerLista` com `procurar`,
+  // que para na página em que a campanha aparecer. Depois dela, a vitrine, pelo
+  // mesmo caminho que a aba "Cupons do ML" já usa.
+  const buscarNoChrome = async () => {
+    setEnviando(true); setErro(null); setProgresso(null);
+    let tabId = null;
+    let produtos = 0;
+    let avisoVitrine = null;
+    try {
+      const r = await percorrerLista({
+        procurar: campaignId,
+        onProgresso: (p) => setProgresso(p.tipo === "muro"
+          ? { etapa: "o Mercado Livre pediu verificação — resolva na aba que abriu" }
+          : { etapa: "cupons", pagina: p.pagina }),
+      });
+      tabId = r.tabId;
+      if (r.parado) throw new Error(r.parado);
+      if (!r.achou) throw new Error(naoAchei(r.paginas));
+
+      const alvo = r.alvos[0];
+      if (comProdutos && alvo) {
+        setProgresso({ etapa: "vitrine" });
+        const v = await raparVitrine(alvo.containerUrl, {
+          onProgresso: (p) => setProgresso(p.tipo === "muro"
+            ? { etapa: "o Mercado Livre pediu verificação — resolva na aba que abriu" }
+            : { etapa: "vitrine", pagina: p.pagina }),
+        });
+        if (v.produtos.length) {
+          const salvo = await adminMlCuponsImportVitrine(campaignId, { products: v.produtos, parcial: v.parcial });
+          produtos = salvo.produtos;
+        } else {
+          avisoVitrine = v.motivo || "a vitrine abriu, mas veio vazia";
+        }
+      } else if (comProdutos) {
+        // Achou a campanha e ela veio sem `containerUrl`. O ML só revela a URL da
+        // vitrine depois do "Eu quero", e a busca JÁ tenta dar esse clique no alvo
+        // (ativacoesLocais, no servidor) — então chegar aqui quer dizer que o clique
+        // não valeu: cupom de loja (que a rodada não ativa), cupom vencido, ou o
+        // botão não estava na página. A campanha entra assim mesmo, sem produtos.
+        avisoVitrine = "o cupom entrou, mas continua sem “Eu quero” dado na conta — sem isso o ML não dá a vitrine dele";
+      }
+      setFeito({ ok: true, campaignId, produtos, avisoVitrine, coupon: r.alvos[0] || null });
+    } catch (err) {
+      setErro(errText(err, "Não deu pra buscar essa campanha no seu Chrome."));
+    } finally {
+      await fecharAbaDoColetor(tabId);
+      // Sempre: sem o fim, o servidor ficaria com a rodada "rodando" e recusaria
+      // a próxima — inclusive a rodada de cupons.
+      await adminMlCuponsLocalFim({ vitrines: produtos ? 1 : 0, produtos }).catch(() => {});
+      setEnviando(false);
+      setProgresso(null);
+    }
+  };
+
   const buscar = async () => {
+    if (await coletorEntende("lista")) return buscarNoChrome();
     setEnviando(true); setErro(null); setProgresso(null);
     try {
       const r = await adminMlCuponsImportCampaign(campaignId, comProdutos);
@@ -189,14 +269,14 @@ export default function DescobrirPalavra() {
     if (!word.trim()) return;
     setRodando(true); setErro(null); setRes(null);
     try {
-      const r = await adminMlCuponsTestWord(word.trim().toUpperCase(), force);
-      setRes(r.result);
+      const res = await testarPalavra(word, { force });
+      setRes(res);
       carregar();
       // A palavra existe, o ML disse de que campanha ela é — e a campanha não está
       // aqui. Vale também pra resposta vinda do cache: ele guarda o veredito da
       // palavra, não diz nada sobre a campanha ter entrado no sistema desde então.
-      if (r.result?.verdict === "valid" && r.result.campaignId && !r.result.coupon) {
-        setImportar({ campaignId: r.result.campaignId, word: r.result.word });
+      if (res?.verdict === "valid" && res.campaignId && !res.coupon) {
+        setImportar({ campaignId: res.campaignId, word: res.word });
       }
     } catch (err) {
       setErro(errText(err, "Não deu pra testar essa palavra."));

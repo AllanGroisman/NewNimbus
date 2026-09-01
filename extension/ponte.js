@@ -8,10 +8,22 @@
 const DE = "nimbus-coletor";
 const PARA = "nimbus-admin";
 
-// Avisa a página que a extensão está instalada — é o que acende o botão. Vai uma
+// Avisa a página que a extensão está instalada — é o que acende os botões. Vai uma
 // vez na carga e outra a cada pedido de quem chegou depois (React montando tarde).
+//
+// A lista de comandos vem do background em vez de estar escrita aqui: a tela
+// precisa saber se a extensão instalada é velha demais para o que vai pedir, e
+// duas listas para manter divergiriam na primeira versão nova.
 function anunciar() {
-  window.postMessage({ de: DE, tipo: "pronto", versao: chrome.runtime.getManifest().version }, window.location.origin);
+  chrome.runtime.sendMessage({ tipo: "quais-comandos" }, (r) => {
+    void chrome.runtime.lastError;   // extensão recarregando — anuncia o que dá
+    window.postMessage({
+      de: DE,
+      tipo: "pronto",
+      versao: chrome.runtime.getManifest().version,
+      comandos: r?.comandos || [],
+    }, window.location.origin);
+  });
 }
 anunciar();
 
@@ -24,18 +36,16 @@ window.addEventListener("message", (ev) => {
 
   if (msg.tipo === "ping") { anunciar(); return; }
 
-  if (msg.tipo === "raspar") {
-    chrome.runtime.sendMessage(
-      { tipo: "raspar", containerUrl: msg.containerUrl, paginas: msg.paginas },
-      (resposta) => {
-        const erro = chrome.runtime.lastError?.message;
-        window.postMessage({
-          de: DE, tipo: "resultado", id: msg.id,
-          ...(erro ? { ok: false, erro } : resposta),
-        }, window.location.origin);
-      },
-    );
-  }
+  // Qualquer outro tipo é comando: quem decide se existe é o background, que tem a
+  // lista. Repetir a lista aqui só criaria um segundo lugar para esquecer de mexer.
+  const { de, ...pedido } = msg;
+  chrome.runtime.sendMessage(pedido, (resposta) => {
+    const erro = chrome.runtime.lastError?.message;
+    window.postMessage({
+      de: DE, tipo: "resultado", id: msg.id,
+      ...(erro ? { ok: false, erro } : (resposta || { ok: false, erro: `A extensão não entendeu "${msg.tipo}".` })),
+    }, window.location.origin);
+  });
 });
 
 // O progresso vem do background por outro caminho (tabs.sendMessage) e é repassado
