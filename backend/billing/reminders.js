@@ -2,7 +2,7 @@
 //
 // O Stripe avisa quando algo ACONTECE. Estes três avisos são sobre algo que
 // está PARA acontecer, e ninguém manda evento disso:
-//   - o teste de 15 dias termina em 3 dias e vira cobrança;
+//   - o teste de 7 dias termina em 2 dias e vira cobrança;
 //   - a carência de 3 dias por cartão recusado acaba amanhã;
 //   - a carência acabou e o acesso foi pausado.
 //
@@ -19,7 +19,7 @@ const logger = require("../infra/logger");
 
 const CHECK_MS = 6 * 60 * 60 * 1000;  // 4x por dia
 const FIRST_CHECK_MS = 3 * 60 * 1000; // 3 min após o boot — fora do pico de subida
-const TRIAL_WARN_MS = 3 * 24 * 60 * 60 * 1000;
+const TRIAL_WARN_MS = 2 * 24 * 60 * 60 * 1000;
 const GRACE_WARN_MS = 24 * 60 * 60 * 1000;
 
 let timers = [];

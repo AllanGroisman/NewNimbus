@@ -94,12 +94,12 @@ export default function Assinar({ onGoToLogin }) {
             {wantsTrial ? "Você escolheu" : "Plano escolhido"}
           </div>
           <div style={{ fontSize: 18, fontWeight: 500, color: "var(--color-text-primary)" }}>
-            {wantsTrial ? `${planLabel} — 15 dias por R$ 1,00` : `Plano ${planLabel}`}
+            {wantsTrial ? `${planLabel} — 7 dias por R$ 1,00` : `Plano ${planLabel}`}
           </div>
           {plan?.priceBRL != null && (
             <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>
               {wantsTrial
-                ? `Depois dos 15 dias, ${brl(plan.priceBRL)} por mês. Cancele quando quiser.`
+                ? `Depois dos 7 dias, ${brl(plan.priceBRL)} por mês. Cancele quando quiser.`
                 : `${brl(plan.priceBRL)} por mês. Cancele quando quiser.`}
             </div>
           )}

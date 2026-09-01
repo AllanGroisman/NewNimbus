@@ -279,7 +279,7 @@ export async function billingMe(fresh) {
   return http("GET", "/api/billing/me" + (fresh ? "?fresh=1" : ""));
 }
 // Cria Checkout Session e devolve { url } — frontend chama window.location.assign(url)
-// opts.trial=true → checkout "15 dias por R$1" (só Básico, 1x por conta)
+// opts.trial=true → checkout "7 dias por R$1" (só Básico, 1x por conta)
 export async function billingCheckout(planId, opts) {
   return http("POST", "/api/billing/checkout", { planId, trial: !!opts?.trial });
 }

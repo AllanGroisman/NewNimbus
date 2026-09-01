@@ -240,7 +240,7 @@ describe("Subscription — trial de R$1", () => {
   it("trialEligible=true mostra CTA 'Testar por R$ 1,00' no Básico", async () => {
     setBillingMe(eligibleMe);
     render(<PageSubscription />);
-    await waitFor(() => expect(screen.getByText(/15 DIAS POR R\$1/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/7 DIAS POR R\$1/)).toBeInTheDocument());
     expect(screen.getByRole("button", { name: /Testar por R\$ 1,00/i })).toBeInTheDocument();
   });
 
@@ -257,7 +257,7 @@ describe("Subscription — trial de R$1", () => {
     setBillingMe({ ...eligibleMe, trialEligible: false });
     render(<PageSubscription />);
     await waitFor(() => screen.getAllByRole("button", { name: /^Assinar$/i }));
-    expect(screen.queryByText(/15 DIAS POR R\$1/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/7 DIAS POR R\$1/)).not.toBeInTheDocument();
   });
 });
 

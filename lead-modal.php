@@ -18,7 +18,7 @@ logo abaixo.
       </button>
 
       <h3 id="assinar-titulo" class="font-display text-2xl font-bold" style="color:var(--color-ink)">
-        <span x-text="trial ? 'Teste 15 dias por R$ 1,00' : 'Assinar ' + nomePlano()"></span>
+        <span x-text="trial ? 'Teste 7 dias por R$ 1,00' : 'Assinar ' + nomePlano()"></span>
       </h3>
       <p class="mt-1 text-sm text-stone-500" x-text="resumo()"></p>
 
@@ -178,7 +178,7 @@ function assinar() {
     resumo() {
       const preco = this.precos[this.plano];
       return this.trial
-        ? `Plano ${this.nomePlano()} — R$ 1,00 hoje e ${preco} por mês depois dos 15 dias. Cancele quando quiser.`
+        ? `Plano ${this.nomePlano()} — R$ 1,00 hoje e ${preco} por mês depois dos 7 dias. Cancele quando quiser.`
         : `Plano ${this.nomePlano()} — ${preco} por mês. Cancele quando quiser.`;
     },
     // Mascara progressiva do CPF, sem atrapalhar quem esta digitando.

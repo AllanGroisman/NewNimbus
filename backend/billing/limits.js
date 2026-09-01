@@ -58,7 +58,7 @@ const PLANS = {
   },
 };
 
-// Quanto custa o teste de 15 dias, em centavos. Quem cobra de verdade é o price
+// Quanto custa o teste de 7 dias, em centavos. Quem cobra de verdade é o price
 // STRIPE_PRICE_TRIAL_FEE do dashboard — esta constante existe só pra escrever
 // "R$ 1,00" no e-mail de confirmação sem ir buscar a fatura no Stripe. Mesmo
 // acordo do priceBRL acima: se mudar no Stripe, mude aqui.

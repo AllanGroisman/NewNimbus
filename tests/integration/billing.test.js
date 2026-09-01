@@ -616,7 +616,7 @@ describe("Billing — PUT /api/billing/active-selection", () => {
   });
 });
 
-describe("Billing — trial de R$1 (15 dias, só Básico, 1x por conta)", () => {
+describe("Billing — trial de R$1 (7 dias, só Básico, 1x por conta)", () => {
   it("checkout com trial no basic passa withTrial=true pro Stripe", async () => {
     const { auth } = await createTestUser();
     const res = await auth("post", "/api/billing/checkout").send({ planId: "basic", trial: true });
@@ -673,8 +673,8 @@ describe("Billing — trial de R$1 (15 dias, só Básico, 1x por conta)", () => 
           id: "sub_trial_1",
           customer: "cus_trial_1",
           status: "trialing",
-          trial_end: Math.floor(Date.now() / 1000) + 15 * 86400,
-          current_period_end: Math.floor(Date.now() / 1000) + 15 * 86400,
+          trial_end: Math.floor(Date.now() / 1000) + 7 * 86400,
+          current_period_end: Math.floor(Date.now() / 1000) + 7 * 86400,
           items: { data: [{ price: { id: "price_test_basic" } }] },
         },
       },

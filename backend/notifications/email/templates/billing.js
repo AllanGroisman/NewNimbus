@@ -46,7 +46,7 @@ function moeda(cents, currency) {
 
 // Confirmação da primeira cobrança. A frase `cobranca` é o miolo: no teste de
 // R$ 1,00 o que a pessoa precisa saber é quando e quanto vai ser cobrado depois
-// — é a informação que evita a surpresa (e o chargeback) 15 dias à frente.
+// — é a informação que evita a surpresa (e o chargeback) 7 dias à frente.
 function subscription_started(p) {
   const fim = data(p.periodEnd);
   const mensal = moeda(p.planAmount, p.currency);

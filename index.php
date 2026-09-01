@@ -1,10 +1,10 @@
 <?php
 // Metadados desta pagina. Todo o resto do <head><meta charset="utf-8"> vem de header.php
 $pageTitle       = 'Nimbus — Ofertas no automático nos seus grupos de WhatsApp';
-$pageDescription = 'A Nimbus seleciona as ofertas, monta a mensagem com a imagem e o seu link e publica nos seus grupos de WhatsApp nos horários que você definir. Teste 15 dias por R$ 1,00.';
+$pageDescription = 'A Nimbus seleciona as ofertas, monta a mensagem com a imagem e o seu link e publica nos seus grupos de WhatsApp nos horários que você definir. Teste 7 dias por R$ 1,00.';
 $pageCanonical   = 'https://nimbuspromocoes.com/software/';
 $pageOgTitle       = 'Seus grupos entregando ofertas o dia inteiro. Sem você postar nada.';
-$pageOgDescription = 'A Nimbus seleciona as ofertas, monta a mensagem e publica nos seus grupos de WhatsApp. Teste 15 dias por R$ 1,00.';
+$pageOgDescription = 'A Nimbus seleciona as ofertas, monta a mensagem e publica nos seus grupos de WhatsApp. Teste 7 dias por R$ 1,00.';
 include __DIR__ . '/header.php';
 ?>
 
@@ -327,7 +327,7 @@ include __DIR__ . '/header.php';
 <body>
 
     <!-- ============== BARRA DE OFERTA ============== -->
-    <a href="#teste" class="topbar">Teste 15 dias por R$ 1,00</a>
+    <a href="#teste" class="topbar">Teste 7 dias por R$ 1,00</a>
     <!-- ============== HERO ============== -->
     <header class="hero-dark hero-grid relative overflow-hidden">
         <div class="relative mx-auto max-w-7xl px-6 py-20 md:py-28 lg:py-32">
@@ -371,7 +371,7 @@ include __DIR__ . '/header.php';
                         </span>
                         <span class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border text-white/70" style="border-color:rgba(37,211,102,0.25); background:rgba(37,211,102,0.05)">
                             <i data-lucide="badge-check" style="width:16px;height:16px;color:#25D366;stroke-width:2"></i>
-                            Teste 15 dias por R$ 1
+                            Teste 7 dias por R$ 1
                         </span>
                         <span class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border text-white/70" style="border-color:rgba(37,211,102,0.25); background:rgba(37,211,102,0.05)">
                             <i data-lucide="badge-check" style="width:16px;height:16px;color:#25D366;stroke-width:2"></i>
@@ -855,18 +855,18 @@ include __DIR__ . '/header.php';
         </div>
     </section>
 
-    <!-- ============== TESTE 15 DIAS POR R$ 1,00 ============== -->
+    <!-- ============== TESTE 7 DIAS POR R$ 1,00 ============== -->
     <section id="teste" class="hero-dark relative overflow-hidden px-6 py-16 md:py-24">
         <div class="mx-auto max-w-4xl text-center relative">
             <h2 class="font-display text-3xl md:text-5xl font-bold leading-[1.12] text-white mb-4">
                 Você não precisa acreditar em nada do que leu até aqui.
             </h2>
             <p class="font-display text-4xl md:text-6xl font-extrabold mb-10" style="color:var(--color-brand)">
-                Teste 15 dias por R$ 1,00.
+                Teste 7 dias por R$ 1,00.
             </p>
 
             <div class="space-y-5 text-lg leading-relaxed text-white/60 max-w-2xl mx-auto">
-                <p>Um real é o suficiente para você conectar o seu WhatsApp, montar a primeira campanha e ver as ofertas saindo nos seus grupos. Em quinze dias você não está testando um painel — está vendo a sua operação rodar sem você.</p>
+                <p>Um real é o suficiente para você conectar o seu WhatsApp, montar a primeira campanha e ver as ofertas saindo nos seus grupos. Em sete dias você não está testando um painel — está vendo a sua operação rodar sem você.</p>
                 <p>Se não for o que você esperava, é só cancelar antes do fim do período. Não tem multa, não tem fidelidade, não tem conversa para segurar você.</p>
             </div>
 
@@ -882,7 +882,7 @@ include __DIR__ . '/header.php';
             </div>
 
             <div class="mt-12">
-                <a href="https://sistema.nimbuspromocoes.com/assinar?plano=basic&teste=1" data-lead-plan="comecar" data-lead-label="teste de 15 dias por R$ 1,00" class="btn-primary inline-flex items-center justify-center gap-2 rounded-2xl px-8 py-4 text-base font-semibold">
+                <a href="https://sistema.nimbuspromocoes.com/assinar?plano=basic&teste=1" data-lead-plan="comecar" data-lead-label="teste de 7 dias por R$ 1,00" class="btn-primary inline-flex items-center justify-center gap-2 rounded-2xl px-8 py-4 text-base font-semibold">
                     <span>Começar por R$ 1,00</span>
                     <i data-lucide="arrow-right"></i>
                 </a>
@@ -900,7 +900,7 @@ include __DIR__ . '/header.php';
                 </h2>
                 <div class="mt-6 inline-flex items-center gap-2 text-sm text-stone-600">
                     <i data-lucide="shield-check" style="color:var(--color-brand)"></i>
-                    <span>Todos os planos começam com <strong>15 dias por R$ 1,00</strong> e <strong>sem fidelidade</strong></span>
+                    <span>Todos os planos começam com <strong>7 dias por R$ 1,00</strong> e <strong>sem fidelidade</strong></span>
                 </div>
             </div>
 
@@ -1045,11 +1045,11 @@ include __DIR__ . '/header.php';
                 </details>
                 <details class="faq-item bg-white border border-stone-200 rounded-2xl overflow-hidden group">
                     <summary class="px-6 py-5 flex justify-between items-center gap-4">
-                        <span class="font-display font-semibold text-base md:text-lg" style="color:var(--color-ink)">O que acontece quando terminam os 15 dias?</span>
+                        <span class="font-display font-semibold text-base md:text-lg" style="color:var(--color-ink)">O que acontece quando terminam os 7 dias?</span>
                         <i data-lucide="chevron-down" class="faq-chevron shrink-0" style="color:var(--color-brand)"></i>
                     </summary>
                     <div class="px-6 pb-6 text-stone-600 leading-relaxed">
-                        O teste vira assinatura do plano Bronze automaticamente, e a cobrança mensal começa a partir daí. Se você não quiser continuar, é só cancelar antes do fim dos 15 dias — sem multa e sem precisar justificar. Você pode também subir de plano a qualquer momento, se precisar de mais grupos ou mais números conectados.
+                        O teste vira assinatura do plano Bronze automaticamente, e a cobrança mensal começa a partir daí. Se você não quiser continuar, é só cancelar antes do fim dos 7 dias — sem multa e sem precisar justificar. Você pode também subir de plano a qualquer momento, se precisar de mais grupos ou mais números conectados.
                     </div>
                 </details>
                 <details class="faq-item bg-white border border-stone-200 rounded-2xl overflow-hidden group">

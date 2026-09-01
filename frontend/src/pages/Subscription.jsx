@@ -497,7 +497,7 @@ export default function PageSubscription() {
               )}
               {trialOffer && !wanted && (
                 <div style={{ position: "absolute", top: -10, left: "50%", transform: "translateX(-50%)", background: "#22C55E", color: "#fff", fontSize: 10, padding: "3px 10px", borderRadius: 6, fontWeight: 600, whiteSpace: "nowrap", letterSpacing: 0.3 }}>
-                  15 DIAS POR R$1
+                  7 DIAS POR R$1
                 </div>
               )}
               <div style={{ fontWeight: 500, fontSize: 15, marginBottom: 2 }}>{name}</div>
@@ -667,8 +667,8 @@ export default function PageSubscription() {
       {/* ─── FAQ ─── */}
       <h3 style={{ fontSize: 14, fontWeight: 500, marginBottom: 12 }}>Perguntas frequentes</h3>
       <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10, padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
-        <FAQ q="Como funciona o teste de 15 dias por R$1?">
-          Disponível no plano Básico, para quem nunca assinou. Você paga R$ 1,00 hoje e usa tudo por 15 dias.
+        <FAQ q="Como funciona o teste de 7 dias por R$1?">
+          Disponível no plano Básico, para quem nunca assinou. Você paga R$ 1,00 hoje e usa tudo por 7 dias.
           No 16º dia começa a cobrança normal de {fmtPrice(me.plans?.find(p => p.id === "basic")?.priceBRL ?? PLAN_META.basic.price)}/mês —
           cancele antes e não paga mais nada. Vale uma vez por conta.
         </FAQ>

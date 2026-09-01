@@ -49,7 +49,7 @@ function buildConf(m) {
     secret: envFor("STRIPE_SECRET_KEY", m),
     webhookSecret: envFor("STRIPE_WEBHOOK_SECRET", m),
     prices,
-    // Price avulso de R$1 cobrado hoje no checkout com trial ("15 dias por R$1").
+    // Price avulso de R$1 cobrado hoje no checkout com trial ("7 dias por R$1").
     trialFeePrice: envFor("STRIPE_PRICE_TRIAL_FEE", m),
     // Mapa reverso pra resolver planId a partir de price.id no webhook.
     priceToPlan: Object.fromEntries(
@@ -60,7 +60,7 @@ function buildConf(m) {
 
 const CONF = Object.fromEntries(MODES.map((m) => [m, buildConf(m)]));
 
-const TRIAL_DAYS = 15;
+const TRIAL_DAYS = 7;
 
 const { stripeSuccessUrl: SUCCESS_URL, stripeCancelUrl: CANCEL_URL } = require("../config/publicUrl");
 
@@ -217,7 +217,7 @@ async function updateCustomerEmail(customerId, email) {
 
 // Cria sessão de Checkout em modo subscription.
 // payment_method_types: cartão sempre; Pix só se planId não for trial-only.
-// withTrial: cobra R$1 hoje (line item avulso) + 15 dias de trial na assinatura.
+// withTrial: cobra R$1 hoje (line item avulso) + 7 dias de trial na assinatura.
 //
 // Dois chamadores:
 //   - app (usuário logado): passa `customer` + `userId`, volta pra SUCCESS_URL.

@@ -623,7 +623,7 @@ app.post("/api/public/checkout", publicCheckoutLimiter, async (req, res) => {
       return res.status(500).json({ error: `Price ID do plano "${planId}" não configurado no servidor` });
     }
     if (withTrial && planId !== "basic") {
-      return res.status(400).json({ error: "O teste de 15 dias está disponível apenas no plano Básico" });
+      return res.status(400).json({ error: "O teste de 7 dias está disponível apenas no plano Básico" });
     }
 
     const d = await billing.provision.decideForSignup({ planId, email, cpf });
@@ -1265,7 +1265,7 @@ app.get("/api/billing/details", auth.requireAuth, async (req, res) => {
 });
 
 // Cria Checkout Session pra um plano. Body: { planId, trial? }.
-// trial=true → "15 dias por R$1" (só plano Básico, 1x por usuário).
+// trial=true → "7 dias por R$1" (só plano Básico, 1x por usuário).
 // Responde { url } — frontend faz window.location.assign(url).
 app.post("/api/billing/checkout", auth.requireAuth, async (req, res) => {
   try {
