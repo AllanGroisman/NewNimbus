@@ -115,11 +115,24 @@ function isoOrNull(v) {
 
 // A vitrine do cupom — a lista de produtos que ele cobre.
 //
-// Só existe para cupom ATIVADO, e a URL tem que vir do próprio modelo
-// (`action.value`): ela usa um SLUG que o ML escolhe, não o id da campanha
-// (`_Container_toys-e-babys?coupon_campaign_id=13471229`), então não dá pra
-// montar na mão. A sonda testou os dois caminhos: com a URL do modelo vieram 52
-// produtos; com `_Container_<campaignId>` montado, zero.
+// Só existe para cupom ATIVADO: a URL vem do próprio modelo (`action.value`), e o
+// caminho dela às vezes é um SLUG que o ML escolhe
+// (`_Container_toys-e-babys?coupon_campaign_id=13471229`) em vez do id da campanha.
+//
+// AVISO sobre o que este comentário dizia até 01/09/2026. Ele afirmava que "a sonda
+// testou os dois caminhos: com a URL do modelo vieram 52 produtos; com
+// `_Container_<campaignId>` montado, zero" — e essa medição NÃO existe. Os artefatos
+// da sonda citada (logs/ml-coupons/2026-08-18T20-*/container-items.json) têm
+// `containerUrl: null` e `finalUrl: null`: o navegador nunca navegou, porque o cupom
+// escolhido não estava ativado e o guard-clause do `scrapeCouponProducts` retornou
+// antes. O zero era de "não tentei". Nas fixtures, aliás, 7 de 7 URLs de campanha
+// usam o id numérico no caminho, e nenhuma usa slug.
+//
+// Isso importa porque foi essa frase que fechou a porta da busca barata por id — a
+// `findCampaign` varre a lista de cupons inteira justamente por acreditar nela. Quem
+// mede de verdade é `scripts/ml-vitrine-landing-probe.js --montar`; enquanto o
+// veredito dela não estiver aqui, trate "não dá pra montar" como NÃO SABIDO, não
+// como testado.
 //
 // Cupom NÃO ativado, portanto, não tem produto pra raspar — o ML só mostra a
 // vitrine depois do "Eu quero", e clicar nisso ATIVA o cupom na conta do sistema

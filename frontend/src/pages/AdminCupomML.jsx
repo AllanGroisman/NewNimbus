@@ -27,24 +27,20 @@ import { percorrerLista } from "../data/rodadaNoChrome";
 import { buscarProdutos, buscarTudo } from "../data/produtosNoChrome";
 import { coletorInfo, fecharAbaDoColetor } from "../data/coletor";
 import { rotuloCategoria, categoriasDoCupom } from "../data/cupomCategorias";
+import { campanhaDoTexto } from "../data/cupomId";
+// O mesmo modal da aba "Descobrir palavra" — lá ele traz a campanha que uma palavra
+// apontou, aqui a que alguém digitou. É a importação que a aba "Repasse" já faz
+// (AdminCupomRepasse.jsx), e não fecha ciclo: AdminCupomPalavra não importa página
+// nenhuma.
+import { ImportarCampanhaModal } from "./AdminCupomPalavra";
 import Modal from "../components/ui/Modal";
 import ColheitaLog from "../components/admin/ColheitaLog";
 import ExtensaoAusente from "../components/admin/ExtensaoAusente";
 import Numero from "../components/admin/Numero";
 import {
-  segundos, cardStyle, inputStyle, labelStyle, th, td,
+  segundos, brl, dia, desconto, cardStyle, inputStyle, labelStyle, th, td,
   botaoPrimario, botaoSecundario, botaoPerigo, botaoLink,
 } from "../components/admin/cupomEstilos";
-
-const brl = (v) => (typeof v === "number" ? `R$ ${v.toFixed(2).replace(".", ",")}` : "—");
-const dia = (v) => (v ? new Date(v).toLocaleDateString("pt-BR") : "—");
-
-// O desconto do cupom em uma linha: "20%" ou "R$ 90".
-function desconto(c) {
-  if (c.kind === "percent" && c.value != null) return `${c.value}%`;
-  if (c.value != null) return brl(c.value);
-  return "—";
-}
 
 // O balanço da última varredura, guardado no servidor — é o que sobrevive a um
 // F5 e ao restart do backend. Antes isto era uma frase corrida de 300 caracteres,
@@ -67,10 +63,65 @@ function resumoDaRodada(status) {
   };
 }
 
-export default function CuponsDoML() {
+// O número da campanha — o `campaign_id` do ML.
+//
+// É o mesmo número em três lugares que antes não se conversavam na tela: a chave do
+// cupom aqui, o `coupon_campaign_id` do link da vitrine, e a resposta que o ML dá na
+// aba "Descobrir palavra" ("essa palavra é da campanha 14193894"). Mostrá-lo é o que
+// permite ligar os três a olho — antes ele só aparecia quando o cupom não tinha
+// subtítulo, que é justamente quando ninguém está procurando por ele.
+function NumeroDaCampanha({ id }) {
+  const [copiado, setCopiado] = useState(false);
+
+  const copiar = async () => {
+    // `clipboard` não existe fora de https (e nem em todo navegador de teste). Falhar
+    // aqui não pode derrubar a linha: o número está escrito na tela do mesmo jeito.
+    try {
+      await navigator.clipboard.writeText(String(id));
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 1200);
+    } catch { /* dá pra selecionar com o mouse */ }
+  };
+
+  return (
+    <button
+      onClick={copiar}
+      title={`Campanha ${id} — é o mesmo número do coupon_campaign_id no link da vitrine e o que o ML responde no teste de palavra. Clique para copiar.`}
+      style={{
+        marginTop: 2, padding: 0, border: "none", background: "none", cursor: "pointer",
+        fontFamily: "monospace", fontSize: 11, color: "var(--color-text-secondary)",
+      }}
+    >
+      #{id}{copiado ? " ✓ copiado" : ""}
+    </button>
+  );
+}
+
+// De onde saiu a palavra do cupom (`codeSource`, backend/coupons/pg.js:listCoupons).
+// A distinção fica na tela porque as duas não valem o mesmo: a testada é resposta do
+// próprio ML, a do título é leitura de texto — e apostar uma palavra errada num
+// repasse é o custo de confundi-las.
+const FONTE_PALAVRA = {
+  testada: "testada no ML",
+  titulo: "lida do título",
+};
+
+// `buscaInicial` é um número de campanha vindo da aba "Descobrir palavra": ela
+// descobre a campanha de uma palavra e manda ver o cupom aqui (AdminCupom.jsx).
+export default function CuponsDoML({ buscaInicial = null }) {
   const [status, setStatus] = useState(null);
   const [lista, setLista] = useState({ items: [], total: 0, page: 1, pageSize: 50 });
-  const [filtros, setFiltros] = useState({ q: "", scope: "", grouping: "", onlyValid: true, page: 1 });
+  // A campanha que a outra aba mandou ver já entra como filtro no primeiro render —
+  // esta aba é montada do zero quando se troca de aba (AdminCupom.jsx), então semear
+  // aqui é o suficiente e não custa uma lista carregada à toa antes do filtro.
+  //
+  // `onlyValid: false` junto não é detalhe: a campanha que uma palavra aponta quase
+  // sempre já venceu (é por isso que a palavra sobrou circulando), e o padrão a
+  // esconderia — a tela responderia "nenhum cupom" para um cupom guardado bem aqui.
+  const [filtros, setFiltros] = useState(() => ({
+    q: buscaInicial ? String(buscaInicial) : "",
+    scope: "", grouping: "", onlyValid: !buscaInicial, page: 1,
+  }));
   const [erro, setErro] = useState(null);
   const [aberto, setAberto] = useState(null);        // campaignId com os produtos à mostra
   // A extensão que colhe a vitrine no Chrome do próprio admin (extension/ na raiz).
@@ -103,6 +154,12 @@ export default function CuponsDoML() {
   const [confirmarLimpeza, setConfirmarLimpeza] = useState(false);
   const [limpando, setLimpando] = useState(false);
   const [confirmarExclusao, setConfirmarExclusao] = useState(null);  // o cupom a apagar
+  // A caixa "Trazer campanha por ID": o que foi colado, o recado da última tentativa
+  // e a campanha que o modal está buscando.
+  const [idColado, setIdColado] = useState("");
+  const [recadoId, setRecadoId] = useState(null);
+  const [procurandoId, setProcurandoId] = useState(false);
+  const [trazendo, setTrazendo] = useState(null);
 
   // `tick` é o gatilho de recarga: mexer nele refaz as duas leituras. Cada uma
   // roda dentro de um IIFE async e confere `vivo` antes de gravar — a rodada
@@ -143,6 +200,40 @@ export default function CuponsDoML() {
     const id = setInterval(recarregar, 2000);
     return () => clearInterval(id);
   }, [status?.running, recarregar]);
+
+  // "Consigo buscar um cupom pelo ID dele?" (task 32). Aceita o número solto ou o
+  // link do cupom — o `campanhaDoTexto` é quem sabe que o `_CustId_` da URL é o
+  // vendedor, não a campanha.
+  //
+  // Olha PRIMEIRO no que já está guardado, e só vai ao ML quando não achar: trazer
+  // uma campanha abre um Chrome com a conta do sistema e varre a lista de cupons
+  // dela. É o mesmo cuidado que o `startImport` já tem no servidor (o `already`) —
+  // aqui ele evita até a viagem até lá.
+  const trazerPorId = async () => {
+    const id = campanhaDoTexto(idColado);
+    if (!id) {
+      setRecadoId({ tom: "erro", texto: "Não achei um número de campanha aí. Cole o número (13495993) ou o link do cupom." });
+      return;
+    }
+    setProcurandoId(true); setRecadoId(null);
+    try {
+      // `onlyValid: false` porque campanha procurada pelo ID costuma ser justamente
+      // a vencida; e a comparação é EXATA porque o `q` do backend casa por pedaço
+      // (buildCouponWhere), e um pedaço traria a campanha vizinha.
+      const r = await adminMlCupons({ q: id, onlyValid: false, pageSize: 5 });
+      const achado = (r.items || []).find(c => String(c.campaignId) === id);
+      if (achado) {
+        setFiltros(f => ({ ...f, q: id, onlyValid: false, page: 1 }));
+        setRecadoId({ tom: "ok", texto: `A campanha ${id} já está guardada: “${achado.title}”. Filtrei a lista nela.` });
+      } else {
+        setTrazendo(id);
+      }
+    } catch (err) {
+      setRecadoId({ tom: "erro", texto: errText(err, "Não deu pra procurar essa campanha.") });
+    } finally {
+      setProcurandoId(false);
+    }
+  };
 
   const verProdutos = async (campaignId) => {
     if (aberto === campaignId) { setAberto(null); return; }
@@ -581,6 +672,38 @@ export default function CuponsDoML() {
           </div>
         )}
 
+        {/* Trazer UMA campanha pelo número dela (task 32). Fica junto dos botões das
+            etapas porque é a quarta forma de um cupom entrar aqui — e a única que
+            não depende de varrer a lista inteira nem de ter testado uma palavra. */}
+        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "0.5px solid var(--color-border-tertiary)" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <input
+              placeholder="13495993 ou o link do cupom"
+              value={idColado}
+              onChange={e => { setIdColado(e.target.value); setRecadoId(null); }}
+              onKeyDown={e => { if (e.key === "Enter" && !procurandoId) trazerPorId(); }}
+              style={{ ...inputStyle, width: 280 }}
+            />
+            <button
+              onClick={trazerPorId}
+              disabled={procurandoId || !idColado.trim()}
+              style={botaoSecundario}
+              title="Procura essa campanha no que já está guardado e, se ela não estiver aqui, oferece buscá-la no ML."
+            >
+              {procurandoId ? "procurando..." : "Trazer campanha por ID"}
+            </button>
+          </div>
+          <div style={{ marginTop: 6, fontSize: 11, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+            O número da campanha é o <code>coupon_campaign_id</code> do link do cupom — o mesmo{" "}
+            <code>#</code> que aparece em cada linha da tabela.
+          </div>
+          {recadoId && (
+            <div style={{ marginTop: 6, fontSize: 12, color: recadoId.tom === "erro" ? "var(--danger-text)" : "var(--color-text-secondary)" }}>
+              {recadoId.texto}
+            </div>
+          )}
+        </div>
+
         {/* O balanço da última varredura. O log vive na memória do processo da API
             (backend/coupons/sync.js) e some se ele reiniciar — o RESUMO é o que
             fica guardado, e é ele que responde "quando foi a última vez?". */}
@@ -606,7 +729,7 @@ export default function CuponsDoML() {
           <div style={{ fontWeight: 500 }}>Cupons guardados <span style={{ color: "var(--color-text-secondary)", fontWeight: 400 }}>({lista.total})</span></div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <input
-              placeholder="buscar por título, loja ou campanha"
+              placeholder="buscar por título, loja, palavra ou nº da campanha"
               value={filtros.q}
               onChange={e => setFiltros(f => ({ ...f, q: e.target.value, page: 1 }))}
               style={{ ...inputStyle, width: 240 }}
@@ -684,7 +807,8 @@ export default function CuponsDoML() {
                     <tr style={{ borderTop: "0.5px solid var(--color-border-tertiary)" }}>
                       <td style={td}>
                         <div style={{ fontWeight: 500 }}>{c.title}</div>
-                        <div style={{ color: "var(--color-text-secondary)" }}>{c.subtitle || `campanha ${c.campaignId}`}</div>
+                        {c.subtitle && <div style={{ color: "var(--color-text-secondary)" }}>{c.subtitle}</div>}
+                        <NumeroDaCampanha id={c.campaignId} />
                       </td>
                       <td style={{ ...td, color: "var(--color-text-secondary)" }}>{categoriasDoCupom(c, labelsCategoria)}</td>
                       <td style={td}>{desconto(c)}</td>
@@ -693,7 +817,14 @@ export default function CuponsDoML() {
                       <td style={td}>{dia(c.expiresAt)}</td>
                       <td style={td}>{c.products || 0}</td>
                       <td style={td}>{c.inCatalog || 0}</td>
-                      <td style={{ ...td, fontFamily: "monospace" }}>{c.code || "—"}</td>
+                      <td style={td}>
+                        <div style={{ fontFamily: "monospace" }}>{c.code || "—"}</div>
+                        {c.code && FONTE_PALAVRA[c.codeSource] && (
+                          <div style={{ color: "var(--color-text-secondary)", fontSize: 11 }}>
+                            {FONTE_PALAVRA[c.codeSource]}{c.codeCheckedAt ? ` · ${dia(c.codeCheckedAt)}` : ""}
+                          </div>
+                        )}
+                      </td>
                       <td style={td}>
                         <div style={{ display: "flex", gap: 6 }}>
                           <button onClick={() => verProdutos(c.campaignId)} style={botaoLink}>
@@ -768,6 +899,23 @@ export default function CuponsDoML() {
           </div>
         )}
       </div>
+
+      {/* A campanha digitada que não estava aqui. O modal é o mesmo da aba
+          "Descobrir palavra" — sem `word`, porque desta vez ninguém testou palavra
+          nenhuma: veio um número. */}
+      {trazendo && (
+        <ImportarCampanhaModal
+          campaignId={trazendo}
+          onClose={() => setTrazendo(null)}
+          onDone={(feito) => {
+            // Filtra a lista na campanha que acabou de entrar, senão ela cai no meio
+            // de 50 linhas e parece que nada aconteceu.
+            setFiltros(f => ({ ...f, q: trazendo, onlyValid: false, page: 1 }));
+            setRecadoId({ tom: "ok", texto: `${feito?.coupon?.title || `Campanha ${trazendo}`} entrou no sistema.` });
+            recarregar();
+          }}
+        />
+      )}
 
       {confirmarExclusao && (
         <Modal title="Apagar este cupom?" onClose={() => setConfirmarExclusao(null)} danger>

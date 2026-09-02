@@ -151,6 +151,15 @@ describe("startImport — a guarda contra dois Chromes na mesma conta", () => {
     await expect(mlCupons.startImport("  ")).rejects.toThrow(/Sem campanha/i);
   });
 
+  // A caixa "Trazer campanha por ID" da aba "Cupons do ML" deixa digitar o número à
+  // mão, e um typo aqui não erra rápido: sem a guarda, o `findCampaign` varre as 40
+  // páginas da lista navegando com a conta do sistema para não achar nada.
+  it("id que não é número recusa na hora, sem abrir navegador", async () => {
+    await expect(mlCupons.startImport("13495993x")).rejects.toThrow(/só tem dígitos/i);
+    await expect(mlCupons.startImport("BRINQUEDOS")).rejects.toThrow(/só tem dígitos/i);
+    expect(mlCupons.importStatus().running).toBe(false);
+  });
+
   it("o status começa limpo e é o que a tela lê", () => {
     const s = mlCupons.importStatus();
     expect(s).toHaveProperty("running");
@@ -228,5 +237,59 @@ describe("o dicionário de palavras sobrevive a um engasgo do ML", () => {
     await coupons.recordCodeCheck({ code: PALAVRA_BOA, verdict: "valid", campaignId: CAMPANHA, source: "admin" });
     expect((await coupons.findCouponByCode(PALAVRA_BOA)).campaignId).toBe(CAMPANHA);
     expect(await coupons.findCouponByCode("PALAVRA_QUE_NINGUEM_TESTOU")).toBe(null);
+  });
+});
+
+// De onde veio a palavra que está carimbada no cupom. A lista do admin mostra as
+// duas do mesmo jeito hoje, e elas não valem o mesmo: a testada é resposta do ML, a
+// do título é leitura de texto. Quem olha a tabela precisa saber em qual das duas
+// pode apostar um repasse.
+describe("listCoupons — a procedência da palavra de cada cupom", () => {
+  const DO_TITULO = "9900003";
+  const SEM_PALAVRA = "9900004";
+  const PALAVRA_TITULO = `TIT${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+
+  const acharCupom = async (id) =>
+    (await coupons.listCoupons({ pageSize: 200, onlyValid: false })).items.find(c => c.campaignId === id);
+
+  beforeEach(async () => {
+    await semear();
+    await coupons.upsertCoupons([
+      { campaignId: DO_TITULO, title: `10% OFF com ${PALAVRA_TITULO}`, kind: "percent", value: 10, scope: "campaign", codeFromTitle: PALAVRA_TITULO },
+      { campaignId: SEM_PALAVRA, title: "15% OFF sem palavra", kind: "percent", value: 15, scope: "campaign" },
+    ]);
+  });
+
+  it("palavra testada no ML vem como 'testada', com a data do teste", async () => {
+    await coupons.recordCodeCheck({ code: PALAVRA, verdict: "valid", campaignId: CAMPANHA, source: "admin" });
+
+    const c = await acharCupom(CAMPANHA);
+    expect(c.code).toBe(PALAVRA);
+    expect(c.codeSource).toBe("testada");
+    expect(c.codeCheckedAt).toBeTruthy();
+  });
+
+  it("palavra lida do título vem como 'titulo', sem data", async () => {
+    const c = await acharCupom(DO_TITULO);
+    expect(c.code).toBe(PALAVRA_TITULO);
+    expect(c.codeSource).toBe("titulo");
+    expect(c.codeCheckedAt).toBe(null);
+  });
+
+  it("cupom sem palavra não ganha procedência nenhuma", async () => {
+    const c = await acharCupom(SEM_PALAVRA);
+    expect(c.code).toBe(null);
+    expect(c.codeSource).toBe(null);
+  });
+
+  // O caso que faz a comparação por `code` valer a pena: a campanha tem uma palavra
+  // testada antiga e o cupom carrega outra. Dizer "testada" na segunda seria carimbar
+  // como prova do ML uma palavra que ele nunca viu.
+  it("palavra testada de OUTRA palavra não carimba a do título como testada", async () => {
+    await coupons.recordCodeCheck({ code: `${PALAVRA_TITULO}X`, verdict: "valid", campaignId: DO_TITULO, source: "admin" });
+
+    const c = await acharCupom(DO_TITULO);
+    expect(c.code).toBe(PALAVRA_TITULO);
+    expect(c.codeSource).toBe("titulo");
   });
 });

@@ -128,4 +128,8 @@ Como que acha a campanha, mas não consegue puxar ela?
 
 30. [] Como funciona o vinculo dos produtos dos cupons com os produtos que ja fiz scraping, o sistema percebe quando sao o mesmo produto e ja vincula? Os cupons ficam vinculados?
 
-31. [] Quando coloco a palavra para descobrir palavra dos cupoms diz que reconheceu e que é da campanha de numero 14193894 por exemplo. Queria que as campanhas quando forem buscadas, tivessem esse numero associado para que seja facil vincular campanha a palavra. Por exemplo, no link do cupom https://lista.mercadolivre.com.br/_CustId_2903552873?coupon_campaign_id=13495993 tem ali o ID, não seria este mesmo?
+31. [] Quando coloco a palavra para descobrir palavra dos cupoms diz que reconheceu e que é da campanha de numero 14193894 por exemplo. Queria que as campanhas quando forem buscadas, tivessem esse numero associado para que seja facil vincular campanha a palavra. Por exemplo, no link do cupom https://lista.mercadolivre.com.br/_CustId_2903552873?coupon_campaign_id=13495993 tem ali o ID, não seria este mesmo? NAO PRECISA FAZER TODOS OS TESTES DO SISTEMA NOVAMENTE, SÓ ESPECIFICOS PARA O QUE FOI ALTERADO.
+
+32. [] Consigo buscar um cupom pelo ID dele?
+
+33. [] Consigo entrar no PC da VPS que tem linux, instalar o chrome com a extensão e fazer o captcha manualmente quando necessario? Para automatizar a busca por cupom ou as coisas que precisam de captcha

@@ -990,6 +990,13 @@ function importStatus() {
 async function startImport(campaignId, { withProducts = true } = {}) {
   const id = String(campaignId || "").trim();
   if (!id) throw new Error("Sem campanha para buscar.");
+  // O id da campanha é sempre numérico. A guarda passou a valer a pena quando a aba
+  // "Cupons do ML" ganhou a caixa de digitar o número: um typo aqui não erra rápido —
+  // ele faz o `findCampaign` varrer as 40 páginas da lista de cupons navegando com a
+  // conta do sistema, para não achar nada. Custa minutos e uma chance de CAPTCHA.
+  if (!/^\d+$/.test(id)) {
+    throw new Error(`"${id}" não é um número de campanha — o id do cupom só tem dígitos.`);
+  }
 
   // As recusas ficam aqui, ANTES de disparar: elas viram 400 com mensagem na tela.
   // Depois que a promessa larga não há mais para quem responder.

@@ -69,6 +69,12 @@ const COBERTURA_ORIGEM = {
 // o que a colheita de vitrines precisa pra rodar (AdminCupomConfig.jsx).
 export default function PageAdminCupom() {
   const [aba, setAba] = useState("teste");
+  // A campanha que a aba "Descobrir palavra" mandou ver na aba "Cupons do ML". O
+  // vaivém precisa passar por aqui porque a aba é estado desta página — e sem ele o
+  // usuário sai daqui com um número de campanha na mão e tem de colá-lo na busca da
+  // outra aba, que é exatamente o trabalho manual que o vínculo palavra↔campanha
+  // existe para poupar.
+  const [verCupom, setVerCupom] = useState(null);
 
   return (
     <div>
@@ -104,9 +110,11 @@ export default function PageAdminCupom() {
       </div>
 
       {aba === "teste" && <TestarNoCheckout />}
-      {aba === "ml" && <CuponsDoML />}
+      {aba === "ml" && <CuponsDoML buscaInicial={verCupom} />}
       {aba === "repasse" && <CuponsDoRepasse />}
-      {aba === "palavra" && <DescobrirPalavra />}
+      {aba === "palavra" && (
+        <DescobrirPalavra onVerCupom={(id) => { setVerCupom(String(id)); setAba("ml"); }} />
+      )}
       {aba === "config" && <ConfigTest />}
     </div>
   );

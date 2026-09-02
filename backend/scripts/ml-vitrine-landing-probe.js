@@ -17,7 +17,24 @@
 // Uso:
 //   node scripts/ml-vitrine-landing-probe.js --url "<containerUrl>" --tag <TAG>
 //   node scripts/ml-vitrine-landing-probe.js --campaign 13471229 --tag <TAG>
+//   node scripts/ml-vitrine-landing-probe.js --campaign 13471229 --montar --tag <TAG>
 //   node scripts/ml-vitrine-landing-probe.js --url ... --tag ... --cookie-env MINHA_VAR
+//
+// ── `--montar`: dá pra chegar na vitrine só com o ID da campanha? ────────────
+//
+// A pergunta vale porque a busca de UMA campanha hoje varre a lista de cupons da
+// conta página por página (scraping/ml-cupons.js:findCampaign) — é o caminho caro,
+// e ele existe porque se acreditava que a URL da vitrine não era montável.
+//
+// Essa crença NÃO tinha medição por trás. O comentário que a registra
+// (ml-cupons.js:containerUrlFor) cita uma sonda de 18/08 que teria trazido "zero
+// produtos com `_Container_<campaignId>` montado", mas os artefatos daquela rodada
+// (logs/ml-coupons/2026-08-18T20-*/container-items.json) têm `containerUrl: null` e
+// `finalUrl: null`: o navegador nunca navegou. O zero é de "não tentei".
+//
+// Com `--montar` a sonda monta `_Container_<id>?coupon_campaign_id=<id>` e passa
+// pelo MESMO pipeline. Rodar as duas formas na mesma campanha — com e sem a flag —
+// é a comparação cabeça a cabeça que decide se o caminho barato existe.
 //
 // A TAG vem por parâmetro DE PROPÓSITO: a sessão do sistema
 // (affiliate.getScraperMLSession) guarda só o cookie, sem tag, e inventar um
@@ -59,22 +76,33 @@ async function main() {
 
   const tag = flag("--tag");
   const campaign = flag("--campaign");
+  const montar = args.includes("--montar");
   let url = flag("--url");
-  if (!url && campaign) {
-    // Atalho: pega a containerUrl que já está guardada no banco. Ela NÃO é
-    // montável na mão (o ML usa um slug, não o id da campanha), então esse é o
-    // único jeito de chegar nela sem reabrir a aba de cupons.
+  let urlDoModelo = null;
+
+  if (campaign) {
+    // A containerUrl guardada, que é a que o ML deu no modelo da lista. Serve de
+    // GABARITO mesmo no modo `--montar`: é contra ela que se compara o resultado.
     const coupons = require("../coupons");
-    const c = await coupons.getCoupon(campaign);
-    url = c?.containerUrl || null;
+    urlDoModelo = (await coupons.getCoupon(campaign))?.containerUrl || null;
+  }
+
+  if (!url && campaign && montar) {
+    url = `https://lista.mercadolivre.com.br/_Container_${campaign}?coupon_campaign_id=${campaign}`;
+    console.log(`[sonda] URL MONTADA a partir do id: ${url}`);
+    console.log(`[sonda] gabarito (a do modelo):     ${urlDoModelo || "— (não está no banco)"}`);
+  } else if (!url && campaign) {
+    url = urlDoModelo;
     if (!url) {
       console.error(`[sonda] a campanha ${campaign} não tem containerUrl guardada — ou não está no banco, ou é cupom não ativado (esse não tem vitrine).`);
+      console.error("        (com --montar dá pra sondar mesmo assim: a URL sai do próprio id.)");
       process.exit(1);
     }
   }
   if (!url || !tag) {
     console.error("uso: node scripts/ml-vitrine-landing-probe.js --url <containerUrl> --tag <TAG_DE_AFILIADO>");
     console.error("     (ou --campaign <id> no lugar do --url)");
+    console.error("     (--montar monta a URL a partir do id, em vez de ler a do modelo)");
     process.exit(1);
   }
 
@@ -164,8 +192,36 @@ async function main() {
   console.log(`[sonda] carousel-featured: ${daVitrine.length} produto(s) · seeMoreLink: ${info?.seeMoreLink || "—"}`);
   console.log(`[sonda] (MLBs no HTML inteiro: ${outros} — o resto é recomendação do perfil, NÃO é o cupom)`);
 
-  // O bloco só vale se ele for mesmo o da URL pedida.
-  const confere = info?.seeMoreLink ? info.seeMoreLink.split("#")[0] === url.split("#")[0] : false;
+  // O bloco só vale se ele for mesmo o da URL pedida — e há DUAS formas de
+  // perguntar isso, que no modo `--montar` divergem de propósito:
+  //
+  //   `igualCru`  — a string bate inteira. É o que esta sonda comparava, e com URL
+  //                 montada ele daria "não bate" mesmo quando o ML devolveu a
+  //                 vitrine certa, porque o `seeMoreLink` volta na forma canônica
+  //                 (com o slug). Usar só isto responderia "não funciona" para um
+  //                 caminho que funciona — o falso negativo que fecharia a porta de novo.
+  //   `mesmaCampanha` — compara pelo `coupon_campaign_id`, que é a assinatura que a
+  //                 PRODUÇÃO já usa (scraping/ml-vitrine-landing.js:assinaturaDaVitrine).
+  //                 É esta que responde a pergunta da sonda.
+  const { assinaturaDaVitrine } = require("../scraping/ml-vitrine-landing");
+  const igualCru = info?.seeMoreLink ? info.seeMoreLink.split("#")[0] === url.split("#")[0] : false;
+  const assinaturaPedida = assinaturaDaVitrine(url);
+  const assinaturaVinda = info?.seeMoreLink ? assinaturaDaVitrine(info.seeMoreLink) : null;
+  const mesmaCampanha = !!assinaturaPedida && assinaturaPedida === assinaturaVinda;
+  const confere = mesmaCampanha;
+
+  if (info?.seeMoreLink) {
+    console.log(`[sonda] assinatura pedida: ${assinaturaPedida} · veio: ${assinaturaVinda} · mesma campanha: ${mesmaCampanha ? "SIM" : "não"}${igualCru ? " (string idêntica)" : ""}`);
+  }
+
+  // A vitrine responde "quais produtos", nunca "que cupom é este": título,
+  // desconto, mínimo e validade só existem no modelo da lista de cupons. Se algum
+  // deles aparecer aqui, o caminho barato serve para MAIS do que os produtos — e é
+  // isso que decide se ele substitui a varredura ou só a adianta. Procura-se no
+  // modelo embutido, não no HTML: o HTML tem "R$" e "%" em todo card.
+  const camposDeCupom = ["coupon", "campaign", "discount_info", "coupon_info"];
+  const marcasDeCupom = camposDeCupom.filter(k => cru && cru.includes(`"${k}"`));
+  console.log(`[sonda] dados do CUPOM no modelo: ${marcasDeCupom.length ? marcasDeCupom.join(", ") : "nenhum — só produtos"}`);
 
   let veredito;
   if (muro) {
@@ -175,13 +231,21 @@ async function main() {
       console.log("        É o teste de JavaScript, não o CAPTCHA visual: o fetch recebe 200 e página vazia.");
     }
   } else if (daVitrine.length && confere) {
-    veredito = "ok-parcial";
+    veredito = montar ? "ok-parcial-montada" : "ok-parcial";
     console.log(`[sonda] VEREDITO: FUNCIONA, PARCIAL — ${daVitrine.length} produtos da vitrine, sem navegador.`);
     console.log(`        O ML manda só uma prévia (totalElements=${info.totalElements}); "ver mais" devolve pra página murada.`);
     console.log("        Serve como prova POSITIVA de cobertura, nunca como lista completa.");
+    if (montar) {
+      console.log(`        *** E a URL foi MONTADA a partir do id ${campaign} — dá pra chegar na vitrine sem varrer a lista. ***`);
+      console.log(`        Quem seleciona a campanha é o coupon_campaign_id; o caminho (_Container_…) é slug de SEO.`);
+      if (!marcasDeCupom.length) {
+        console.log("        Ainda assim: vieram PRODUTOS, não os dados do cupom (título, desconto, validade).");
+      }
+    }
   } else if (daVitrine.length) {
     veredito = "bloco-de-outra-url";
-    console.log("[sonda] VEREDITO: veio carrossel, mas o seeMoreLink NÃO é a URL pedida — não dá pra dizer que é a vitrine deste cupom.");
+    console.log("[sonda] VEREDITO: veio carrossel, mas ele é de OUTRA campanha — não dá pra dizer que é a vitrine deste cupom.");
+    if (montar) console.log(`        A URL montada caiu na vitrine ${assinaturaVinda} em vez de ${assinaturaPedida}: o caminho montado não seleciona a campanha.`);
   } else {
     veredito = "sem-produtos";
     console.log("[sonda] VEREDITO: a landing abriu, mas sem produto da vitrine.");
@@ -190,6 +254,15 @@ async function main() {
 
   finaliza(out, {
     etapa: "landing", veredito, url, shortUrl: short, finalUrl, muro,
+    // O que a comparação com o modo normal precisa para valer alguma coisa.
+    montada: montar,
+    campanha: campaign || null,
+    urlDoModelo,
+    igualCru,
+    mesmaCampanha,
+    assinaturaPedida,
+    assinaturaVinda,
+    marcasDeCupomNoModelo: marcasDeCupom,
     produtosDaVitrine: daVitrine.length,
     totalElements: info?.totalElements ?? null,
     seeMoreLink: info?.seeMoreLink || null,

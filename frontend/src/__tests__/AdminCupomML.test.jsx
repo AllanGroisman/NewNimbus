@@ -34,12 +34,17 @@ vi.mock("../data/api", () => ({
   adminMlCuponsLocalAtivar: vi.fn(),
   adminMlCuponsLocalPagina: vi.fn(),
   adminMlCuponsLocalFim: vi.fn(),
+  // O ImportarCampanhaModal, que a caixa "Trazer campanha por ID" abre.
+  adminMlCuponsImportCampaign: vi.fn(),
+  adminMlCuponsImportStatus: vi.fn(),
 }));
 
 // A extensão que colhe no Chrome do admin (extension/ na raiz). Aqui ela é
 // fingida: o que se testa é a tela reagindo ao que ela devolve.
 vi.mock("../data/coletor", () => ({
   coletorInfo: vi.fn(),
+  // O modal de trazer campanha escolhe entre o Chrome do admin e o servidor.
+  coletorEntende: vi.fn(),
   raparVitrine: vi.fn(),
   paginaDeCupons: vi.fn(),
   fecharAbaDoColetor: vi.fn(),
@@ -58,7 +63,8 @@ import {
   adminMlCuponsLocalPagina,
   adminMlCuponsLocalFim,
 } from "../data/api";
-import { coletorInfo, raparVitrine, paginaDeCupons, fecharAbaDoColetor } from "../data/coletor";
+import { adminMlCuponsImportCampaign, adminMlCuponsImportStatus } from "../data/api";
+import { coletorInfo, coletorEntende, raparVitrine, paginaDeCupons, fecharAbaDoColetor } from "../data/coletor";
 
 // A extensão instalada, e quais comandos aquela cópia entende. A tela pergunta os
 // dois: uma cópia da versão 1.0 responde ao ping e não conhece "lista".
@@ -98,6 +104,8 @@ beforeEach(() => {
   fecharAbaDoColetor.mockResolvedValue({ fechada: true });
   // Sem extensão é o estado padrão: a maioria dos testes desta tela não fala dela.
   coletorInfo.mockResolvedValue({ instalada: false, versao: null, comandos: [] });
+  coletorEntende.mockResolvedValue(false);
+  adminMlCuponsImportStatus.mockResolvedValue({ running: false, result: null, error: null });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -778,5 +786,84 @@ describe("etapa 3 — buscar TUDO (até acabar)", () => {
     fireEvent.click(await screen.findByRole("button", { name: BOTAO_TUDO }));
 
     expect(await screen.findByText(/Parei no teto de 40 páginas da lista geral/i)).toBeInTheDocument();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Trazer uma campanha pelo ID (task 32)
+// ─────────────────────────────────────────────────────────────────────────
+//
+// A quarta forma de um cupom entrar aqui — e a única que parte de um número que veio
+// de fora (um link, um print). O que estes testes protegem é a ORDEM: olhar primeiro
+// no que já está guardado, e só então oferecer o ML. Trazer uma campanha abre um
+// Chrome com a conta do sistema e varre a lista de cupons dela; fazer isso por uma
+// campanha que já estava na tabela é o desperdício que a caixa existe para evitar.
+describe("trazer campanha por ID", () => {
+  const CAIXA = /13495993 ou o link do cupom/i;
+  const BOTAO = /trazer campanha por id/i;
+
+  const cupom = (campaignId, title) => ({
+    campaignId, title, subtitle: null, kind: "percent", value: 20, scope: "campaign",
+    activated: true, groupings: [], products: 0, inCatalog: 0, code: null, codeSource: null,
+  });
+
+  async function digitar(texto) {
+    fireEvent.change(await screen.findByPlaceholderText(CAIXA), { target: { value: texto } });
+    fireEvent.click(screen.getByRole("button", { name: BOTAO }));
+  }
+
+  it("campanha que já está guardada filtra a lista — e não vai ao ML", async () => {
+    await abrirTela();
+    adminMlCupons.mockResolvedValue({ ...VAZIO, items: [cupom("13495993", "20% OFF Casa")], total: 1 });
+
+    await digitar("13495993");
+
+    // O recado nomeia o cupom: o título aparece duas vezes na tela (aqui e na linha
+    // da tabela), então a asserção casa a frase inteira, não só o nome.
+    expect(await screen.findByText(/já está guardada: “20% OFF Casa”/)).toBeInTheDocument();
+    // O modal é o que abriria um Chrome: ele não pode aparecer neste caminho.
+    expect(screen.queryByText("Essa campanha não está no sistema")).toBeNull();
+    expect(adminMlCuponsImportCampaign).not.toHaveBeenCalled();
+    // E a lista passou a ser pedida por aquele id, com os vencidos incluídos.
+    await waitFor(() => expect(adminMlCupons).toHaveBeenCalledWith(
+      expect.objectContaining({ q: "13495993", onlyValid: false }),
+    ));
+  });
+
+  it("campanha desconhecida abre o convite de buscar no ML, com aquele número", async () => {
+    await abrirTela();
+    // A busca por id não acha nada: a lista volta vazia.
+    adminMlCupons.mockResolvedValue(VAZIO);
+
+    await digitar("13495993");
+
+    expect(await screen.findByText("Essa campanha não está no sistema")).toBeInTheDocument();
+    // Sem palavra nenhuma testada: a frase é a do número digitado.
+    expect(screen.getByText(/não está guardada aqui/i)).toBeInTheDocument();
+  });
+
+  it("o link do cupom vira o id da campanha — não o do vendedor", async () => {
+    await abrirTela();
+    adminMlCupons.mockResolvedValue(VAZIO);
+
+    // `2903552873` é o `_CustId_`, o VENDEDOR. A campanha é a do parâmetro.
+    await digitar("https://lista.mercadolivre.com.br/_CustId_2903552873?coupon_campaign_id=13495993");
+
+    await screen.findByText("Essa campanha não está no sistema");
+    await waitFor(() => expect(adminMlCupons).toHaveBeenCalledWith(
+      expect.objectContaining({ q: "13495993" }),
+    ));
+    expect(adminMlCupons).not.toHaveBeenCalledWith(expect.objectContaining({ q: "2903552873" }));
+  });
+
+  it("texto que não tem id nenhum nem chega no servidor", async () => {
+    await abrirTela();
+    adminMlCupons.mockClear();
+
+    await digitar("BRINQUEDOS");
+
+    expect(await screen.findByText(/Não achei um número de campanha/i)).toBeInTheDocument();
+    expect(adminMlCupons).not.toHaveBeenCalled();
+    expect(screen.queryByText("Essa campanha não está no sistema")).toBeNull();
   });
 });

@@ -19,7 +19,7 @@ import { testarPalavra } from "../data/cupomPalavra";
 import { percorrerLista } from "../data/rodadaNoChrome";
 import { coletorEntende, raparVitrine, fecharAbaDoColetor } from "../data/coletor";
 import { VERDICT } from "../data/cupomRotulos";
-import { cardStyle, inputStyle, botaoPrimario, botaoSecundario, botaoLink } from "../components/admin/cupomEstilos";
+import { cardStyle, inputStyle, dia, desconto, botaoPrimario, botaoSecundario, botaoLink } from "../components/admin/cupomEstilos";
 
 // Onde a busca de uma campanha está agora. As etapas vêm do `crawlFilter` e do
 // `findCampaign` — a mesma redação da barra da rodada, lá em cima.
@@ -169,11 +169,24 @@ export function ImportarCampanhaModal({ campaignId, word, onClose, onDone }) {
 
   return (
     <Modal title="Essa campanha não está no sistema" onClose={fechar}>
+      {/* Duas redações, porque são duas perguntas diferentes chegando no mesmo modal:
+          o número que uma PALAVRA testada apontou, e o número que alguém digitou na
+          aba "Cupons do ML". Com `word` nulo a frase da palavra ficava sem sujeito
+          ("O ML reconheceu disse que ela é da campanha..."). */}
       <div style={{ fontSize: 13, lineHeight: 1.6, marginBottom: 14 }}>
-        O ML reconheceu {word ? <>a palavra <code>{word}</code> e </> : null}disse que ela é da campanha{" "}
-        <code>{campaignId}</code> — mas esse cupom nunca foi raspado, então não sabemos o título dele,
-        o desconto nem quais produtos ele cobre. Dá pra ir buscar essa campanha agora, sem rodar a
-        coleta inteira.
+        {word ? (
+          <>
+            O ML reconheceu a palavra <code>{word}</code> e disse que ela é da campanha{" "}
+            <code>{campaignId}</code> — mas esse cupom nunca foi raspado, então não sabemos o título
+            dele, o desconto nem quais produtos ele cobre.
+          </>
+        ) : (
+          <>
+            A campanha <code>{campaignId}</code> não está guardada aqui, então não sabemos o título
+            dela, o desconto nem quais produtos ela cobre.
+          </>
+        )}
+        {" "}Dá pra ir buscar essa campanha no ML agora, sem rodar a coleta inteira.
       </div>
 
       {!feito && (
@@ -240,7 +253,10 @@ export function ImportarCampanhaModal({ campaignId, word, onClose, onDone }) {
 
 // O testador de palavra. É o que responde "esse CUPOM10 que veio no grupo líder
 // existe? de qual campanha ele é?".
-export default function DescobrirPalavra() {
+// `onVerCupom` recebe o número da campanha e leva para a aba "Cupons do ML" já
+// filtrada por ele (AdminCupom.jsx). É opcional: sem ela os botões não aparecem, e o
+// componente continua montável sozinho.
+export default function DescobrirPalavra({ onVerCupom = null }) {
   const [word, setWord] = useState("");
   const [rodando, setRodando] = useState(false);
   const [res, setRes] = useState(null);
@@ -320,9 +336,23 @@ export default function DescobrirPalavra() {
       {res && (
         <div style={{ marginTop: 12, fontSize: 13 }}>
           <b style={{ color: (VERDICT[res.verdict] || {}).color }}>{(VERDICT[res.verdict] || {}).label || res.verdict}</b>
-          {res.campaignId && <> · campanha <code>{res.campaignId}</code>{res.coupon?.title ? ` (${res.coupon.title})` : ""}</>}
+          {res.campaignId && <> · campanha <code>{res.campaignId}</code></>}
           {res.cached && <span style={{ color: "var(--color-text-secondary)" }}> · resposta guardada de {new Date(res.checkedAt).toLocaleString("pt-BR")}</span>}
           <div style={{ color: "var(--color-text-secondary)", fontSize: 12, marginTop: 4 }}>{res.message || res.reason}</div>
+          {/* O cupom que esse número é, quando ele já está guardado. Só o id não diz
+              nada a quem está decidindo se vale repassar a palavra: o que responde é
+              o desconto e até quando ele vale. */}
+          {res.coupon && (
+            <div style={{ marginTop: 6, display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", fontSize: 12 }}>
+              <b>{res.coupon.title}</b>
+              <span style={{ color: "var(--color-text-secondary)" }}>
+                {`${desconto(res.coupon)} · vence ${dia(res.coupon.expiresAt)}`}
+              </span>
+              {onVerCupom && (
+                <button onClick={() => onVerCupom(res.campaignId)} style={botaoLink}>ver cupom →</button>
+              )}
+            </div>
+          )}
           {res.knownLocally && (
             <div style={{ color: "var(--color-text-secondary)", fontSize: 12, marginTop: 4 }}>
               Quem sabe dessa campanha é o sistema, não o ML: a palavra já está carimbada nela por um teste anterior.
@@ -353,6 +383,9 @@ export default function DescobrirPalavra() {
                   <button onClick={() => setImportar({ campaignId: h.campaignId, word: h.code })} style={botaoLink}>
                     ＋ adicionar
                   </button>
+                )}
+                {h.campaignId && h.inSystem && onVerCupom && (
+                  <button onClick={() => onVerCupom(h.campaignId)} style={botaoLink}>ver cupom →</button>
                 )}
                 <span style={{ color: "var(--color-text-secondary)", flex: "1 1 200px", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {h.message || "—"}

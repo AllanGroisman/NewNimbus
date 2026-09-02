@@ -57,8 +57,8 @@ const resposta = (extra = {}) => ({
   },
 });
 
-async function abrirTela() {
-  render(<DescobrirPalavra />);
+async function abrirTela(props = {}) {
+  render(<DescobrirPalavra {...props} />);
   await waitFor(() => expect(adminMlCuponsCodes).toHaveBeenCalled());
 }
 
@@ -425,5 +425,63 @@ describe("trazer a campanha pelo Chrome do admin", () => {
 
     await waitFor(() => expect(adminMlCuponsImportCampaign).toHaveBeenCalledWith("13907402", true));
     expect(percorrerLista).not.toHaveBeenCalled();
+  });
+});
+
+// O vaivém com a aba "Cupons do ML". O ML responde um NÚMERO de campanha, e até aqui
+// esse número morria na tela: para ver o cupom dele era preciso trocar de aba e colar
+// o número na busca à mão — o trabalho manual que o vínculo palavra↔campanha existe
+// para poupar. `onVerCupom` é quem leva (AdminCupom.jsx troca a aba e semeia o filtro).
+describe("ver o cupom da campanha que a palavra apontou", () => {
+  const comCupom = resposta({
+    coupon: { campaignId: "13907402", title: "20% OFF Brinquedos", kind: "percent", value: 20, expiresAt: "2026-09-30T12:00:00.000Z" },
+  });
+
+  it("campanha já no sistema: mostra o cupom e leva para ele", async () => {
+    adminMlCuponsTestWord.mockResolvedValue(comCupom);
+    const onVerCupom = vi.fn();
+    await abrirTela({ onVerCupom });
+    await testarPalavra();
+
+    expect(await screen.findByText("20% OFF Brinquedos")).toBeInTheDocument();
+    // O desconto e a validade são o que decide se vale repassar a palavra; só o id
+    // não responde nada a quem está olhando.
+    expect(screen.getByText(/20% · vence 30\/09\/2026/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /ver cupom/i }));
+    expect(onVerCupom).toHaveBeenCalledWith("13907402");
+  });
+
+  it("sem cupom no sistema não há para onde ir — quem aparece é o popup de adicionar", async () => {
+    adminMlCuponsTestWord.mockResolvedValue(resposta());
+    await abrirTela({ onVerCupom: vi.fn() });
+    await testarPalavra();
+
+    await screen.findByText("Essa campanha não está no sistema");
+    expect(screen.queryByRole("button", { name: /ver cupom/i })).toBeNull();
+  });
+
+  it("no histórico, quem já está no sistema ganha 'ver cupom' no lugar do 'adicionar'", async () => {
+    adminMlCuponsCodes.mockResolvedValue({ codes: [
+      { code: "REPASSE10", verdict: "valid", campaignId: "13907402", inSystem: false, checkedAt: new Date().toISOString(), message: null },
+      { code: "GAMER", verdict: "valid", campaignId: "14030498", inSystem: true, couponTitle: "15% OFF", checkedAt: new Date().toISOString(), message: null },
+    ] });
+    const onVerCupom = vi.fn();
+    await abrirTela({ onVerCupom });
+
+    await screen.findByText("Palavras já testadas");
+    expect(screen.getAllByRole("button", { name: /adicionar/i })).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /ver cupom/i }));
+    expect(onVerCupom).toHaveBeenCalledWith("14030498");
+  });
+
+  it("sem onVerCupom o botão não aparece — a aba continua montável sozinha", async () => {
+    adminMlCuponsTestWord.mockResolvedValue(comCupom);
+    await abrirTela();
+    await testarPalavra();
+
+    expect(await screen.findByText("20% OFF Brinquedos")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /ver cupom/i })).toBeNull();
   });
 });

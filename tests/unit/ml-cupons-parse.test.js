@@ -291,9 +291,13 @@ describe("crawlFilter — o corte de cupom de loja na coleta", () => {
 });
 
 describe("vitrine do cupom", () => {
-  it("só existe a URL que o próprio ML deu — não se monta na mão", () => {
-    // O caminho usa um slug do ML (_Container_toys-e-babys), não o id da
-    // campanha: montar `_Container_<campaignId>` devolve lista vazia.
+  it("containerUrlFor devolve a URL guardada e não inventa nenhuma", () => {
+    // O que este teste prova é o GUARD, não uma resposta do ML: sem `containerUrl`
+    // no modelo, a rodada não sai montando URL para gastar uma aba do Chrome.
+    // Se montar `_Container_<campaignId>` funciona ou não é pergunta em ABERTO —
+    // ver o comentário do `containerUrlFor` e `scripts/ml-vitrine-landing-probe.js
+    // --montar`. A frase que estava aqui ("devolve lista vazia") citava uma medição
+    // que não existe.
     const url = "https://lista.mercadolivre.com.br/_Container_toys-e-babys?coupon_campaign_id=13471229";
     expect(ml.containerUrlFor({ containerUrl: url })).toBe(url);
     expect(ml.containerUrlFor({ containerUrl: null, scope: "campaign", campaignId: "13471229" })).toBe(null);

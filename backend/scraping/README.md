@@ -346,9 +346,12 @@ cupons de campanha custam 3-4 páginas com o filtro ligado, contra 2 sem ele.
 | ativado | `ACTIVE` | `link` + URL | `""` | **sim** |
 | não ativado | `INACTIVE` | `button` "Aplicar" | token base64 | **não** |
 
-A URL da vitrine tem que vir do modelo: ela usa um **slug** do ML
-(`_Container_toys-e-babys?coupon_campaign_id=13471229`), não o id da campanha —
-montar `_Container_<campaignId>` devolve lista vazia (testado). Por isso
+A URL da vitrine vem do modelo, e o caminho dela às vezes é um **slug** do ML
+(`_Container_toys-e-babys?coupon_campaign_id=13471229`) em vez do id da campanha.
+Atenção: este parágrafo já afirmou que "montar `_Container_<campaignId>` devolve
+lista vazia (testado)" — **essa medição não existe** (ver o comentário do
+`containerUrlFor` em `ml-cupons.js`); quem mede é
+`scripts/ml-vitrine-landing-probe.js --montar`. Por isso
 `containerUrlFor()` devolve `null` quando o cupom não veio com URL, e o cupom não
 ativado simplesmente **não tem produto pra raspar**: pra ver a vitrine dele seria
 preciso clicar "Eu quero", e isso **ativa o cupom na conta do sistema** — escrita,

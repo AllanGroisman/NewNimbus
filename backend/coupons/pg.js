@@ -304,16 +304,39 @@ async function listCoupons({ page = 1, pageSize = 50, sortBy = "lastSeen_desc", 
      GROUP BY 1` : [];
   const mapaCatalogo = new Map(noCatalogo.map(r => [r.campaignId, r.n]));
 
+  // De onde saiu a PALAVRA de cada cupom. `ml_coupons.code` guarda a palavra, mas
+  // não guarda a procedência dela — e as duas não valem o mesmo: a testada é
+  // resposta do próprio ML (custou uma aba do Chrome com a conta do sistema), a do
+  // título é leitura de texto, com a regra apertada do `palavraDoTitulo`. É a mesma
+  // hierarquia que o `upsertCoupons` já respeita ao não sobrescrever uma pela outra;
+  // aqui ela só chega até a tela, para ninguém tomar palpite por prova.
+  const testadas = ids.length
+    ? await prisma().mlCouponCode.findMany({
+        where: { campaignId: { in: ids }, verdict: "valid" },
+        select: { campaignId: true, code: true, checkedAt: true },
+      })
+    : [];
+  const mapaTestadas = new Map(testadas.map(t => [t.campaignId, t]));
+
   return {
     page: Math.max(1, Number(page) || 1),
     pageSize: take,
     total,
-    items: rows.map(r => ({
-      ...r,
-      products: r._count.products,
-      inCatalog: mapaCatalogo.get(r.campaignId) || 0,
-      _count: undefined,
-    })),
+    items: rows.map(r => {
+      // A linha só conta como "testada" quando a palavra é a MESMA: a campanha pode
+      // ter uma palavra testada antiga e outra lida do título depois, e carimbar
+      // "testada" na segunda diria que o ML confirmou algo que ele nunca viu.
+      const t = mapaTestadas.get(r.campaignId);
+      const testada = !!(r.code && t && t.code === r.code);
+      return {
+        ...r,
+        products: r._count.products,
+        inCatalog: mapaCatalogo.get(r.campaignId) || 0,
+        codeSource: r.code ? (testada ? "testada" : "titulo") : null,
+        codeCheckedAt: testada ? t.checkedAt : null,
+        _count: undefined,
+      };
+    }),
   };
 }
 

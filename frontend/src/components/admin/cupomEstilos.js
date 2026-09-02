@@ -33,3 +33,18 @@ export const botaoLink = {
 
 // Milissegundos viram "12s". Mora aqui porque os dois resumos de colheita usam.
 export const segundos = (ms) => (typeof ms === "number" ? `${Math.round(ms / 1000)}s` : null);
+
+// O formato de um cupom, em três linhas. Sobem para cá — junto com o `segundos` —
+// porque a aba "Descobrir palavra" passou a mostrar o cupom que a palavra apontou,
+// e ele precisa aparecer ali com a mesma cara que tem na tabela de "Cupons do ML".
+// Duas cópias do `desconto` era o começo de duas telas discordando sobre o mesmo
+// cupom.
+export const brl = (v) => (typeof v === "number" ? `R$ ${v.toFixed(2).replace(".", ",")}` : "—");
+export const dia = (v) => (v ? new Date(v).toLocaleDateString("pt-BR") : "—");
+
+// O desconto do cupom em uma linha: "20%" ou "R$ 90".
+export const desconto = (c) => {
+  if (c?.kind === "percent" && c.value != null) return `${c.value}%`;
+  if (c?.value != null) return brl(c.value);
+  return "—";
+};
