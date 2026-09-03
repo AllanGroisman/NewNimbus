@@ -53,7 +53,7 @@ export const TOURS = {
       },
       { anchor: "nav-subscription", title: "Plano e cobrança", text: "Aqui você assina, troca de plano, vê até quando está pago e cancela. Sem plano ativo o sistema não envia." },
       { anchor: "nav-tutorials", title: "Tutoriais e guias", text: "Passo a passo escrito e os tours — dá pra refazer qualquer um deles quando quiser." },
-      { anchor: "help-button", title: "Ajuda a qualquer hora", text: "Este botão está sempre no canto: ele oferece o tour da tela em que você está e leva pros tutoriais." },
+      { anchor: "support-button", title: "Suporte a qualquer hora", text: "Este botão está sempre no canto: ele abre uma conversa no WhatsApp com a gente." },
     ],
   },
 

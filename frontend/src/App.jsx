@@ -55,7 +55,7 @@ import PageBemVindo from "./pages/BemVindo";
 import ConfirmarCpf from "./pages/ConfirmarCpf";
 import ConfirmarNovoEmail from "./pages/ConfirmarNovoEmail";
 import TourOverlay from "./components/onboarding/TourOverlay";
-import HelpButton from "./components/onboarding/HelpButton";
+import SupportButton from "./components/onboarding/SupportButton";
 
 const SAVE_DEBOUNCE_MS = 800;
 // Onde guardamos a navegação atual (página ou campanha aberta). A URL é a fonte
@@ -1107,12 +1107,7 @@ export default function App() {
           onFinish={finishTour}
         />
       )}
-      <HelpButton
-        page={page}
-        hasGroupOpen={!!selectedGroup}
-        onStartTour={startTour}
-        onOpenTutorials={() => requestNavigation(() => { setSelectedGroup(null); setPage("tutorials"); })}
-      />
+      <SupportButton />
       {planSwap && (
         <PlanSwapModal
           kind={planSwap.kind === "groups" ? "campanha" : "número"}

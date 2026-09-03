@@ -133,3 +133,5 @@ Como que acha a campanha, mas não consegue puxar ela?
 32. [] Consigo buscar um cupom pelo ID dele?
 
 33. [] Consigo entrar no PC da VPS que tem linux, instalar o chrome com a extensão e fazer o captcha manualmente quando necessario? Para automatizar a busca por cupom ou as coisas que precisam de captcha
+
+34. [x] Quero trocar o ? que tem embaixo das telas por um simbolo do whatsapp para contatar o suporte que encaminhe para https://wa.me/55997140686
