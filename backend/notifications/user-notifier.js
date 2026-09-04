@@ -139,6 +139,16 @@ async function labelOfNumber(userId, numberId) {
 // Só avisa quando um número que JÁ esteve conectado cai (evita alarme falso
 // durante o fluxo inicial de QR de um número que nunca subiu).
 const connectedOnce = new Set();
+
+// Semeado pelo restoreSessions no boot do worker. O Set é POR PROCESSO: sem isto,
+// uma sessão que NÃO volta depois de um restart nunca dispararia o aviso, porque
+// ela não chegou a "connected" neste processo — justo o caso em que o usuário
+// mais precisa ser avisado. Ter credenciais registradas já prova que conectou.
+function markConnectedOnce(userId, numberId) {
+  if (String(userId) === whatsnimbus.WHATSNIMBUS_USER_ID) return;
+  connectedOnce.add(`${userId}:wa:${numberId}`);
+}
+
 async function onSessionStatus(userId, numberId, status) {
   try {
     // WhatsNimbus não é usuário: ignora a própria sessão do remetente.
@@ -219,6 +229,7 @@ async function onQueueEmpty(userId, groupId, groupName, isEmpty) {
 
 module.exports = {
   readUserConfig,
+  markConnectedOnce,
   onSessionStatus,
   onCampaignDeactivated,
   onCampaignReactivated,

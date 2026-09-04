@@ -90,6 +90,58 @@ describe("classifyClose", () => {
     expect(r.reconnect).toBe(true);
     expect(r.cleanup).toBeUndefined();
   });
+
+  it("401 em sessão NUNCA registrada não é logout — não há device pra deslogar", () => {
+    const r = classifyClose(boom(DisconnectReason.loggedOut, { message: "Connection Failure" }), { registered: false });
+    expect(r.status).toBe("disconnected");
+    expect(r.reconnect).toBe(false);
+    expect(r.cleanup).toBe(true);
+  });
+});
+
+// Log real de produção: um close com tag=conflict é seguido, 3s depois, de um 401
+// "Connection Failure" SECO. Sem a janela abaixo, esse eco virava "logout real" —
+// e, como logout agora apaga as credenciais, o usuário perderia o pareamento por
+// causa de dois sockets brigando.
+describe("classifyClose — eco de conflito não é logout", () => {
+  const NOW = 1_000_000;
+  const bare401 = boom(DisconnectReason.loggedOut, { message: "Connection Failure" });
+
+  it("conflito sinaliza `conflict` pro handler abrir a janela", () => {
+    const r = classifyClose(boom(DisconnectReason.loggedOut, { tag: "conflict" }));
+    expect(r.conflict).toBe(true);
+    expect(r.reconnect).toBe(true);
+  });
+
+  it("401 seco logo depois de um conflito → connecting (reconecta), marcado como eco", () => {
+    const r = classifyClose(bare401, { now: NOW, lastConflictAt: NOW - 3000, conflictRetries: 0 });
+    expect(r.status).toBe("connecting");
+    expect(r.reconnect).toBe(true);
+    expect(r.conflictEcho).toBe(true);
+  });
+
+  it("401 seco FORA da janela de conflito → logout real", () => {
+    const r = classifyClose(bare401, { now: NOW, lastConflictAt: NOW - 120_000, conflictRetries: 0 });
+    expect(r.status).toBe("logged_out");
+    expect(r.terminal).toBe(true);
+  });
+
+  it("teto de tentativas estourado → logout real (não fica em loop eterno)", () => {
+    const r = classifyClose(bare401, { now: NOW, lastConflictAt: NOW - 1000, conflictRetries: 3 });
+    expect(r.status).toBe("logged_out");
+    expect(r.reconnect).toBe(false);
+  });
+
+  it("sem conflito anterior, 401 é logout na primeira", () => {
+    const r = classifyClose(bare401, { now: NOW, lastConflictAt: null });
+    expect(r.status).toBe("logged_out");
+  });
+
+  it("shutdown vence tudo: nem conflito nem 401 escapam do 'disconnected'", () => {
+    expect(classifyClose(bare401, { shuttingDown: true }).status).toBe("disconnected");
+    expect(classifyClose(boom(DisconnectReason.loggedOut, { tag: "conflict" }), { shuttingDown: true }).status)
+      .toBe("disconnected");
+  });
 });
 
 describe("isStuckReconnecting", () => {

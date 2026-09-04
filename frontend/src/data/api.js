@@ -437,6 +437,22 @@ export async function fetchStatus() {
 export async function startWASession(id) { return http("POST", `/api/whatsapp/sessions/${id}`); }
 export async function getWASession(id)   { return http("GET",  `/api/whatsapp/sessions/${id}`); }
 export async function deleteWASession(id){ return http("DELETE", `/api/whatsapp/sessions/${id}`); }
+// Versão pro unload da página: `keepalive` deixa o browser terminar a requisição
+// depois que a aba já fechou. Sem isso, fechar a aba no meio do QR deixava uma
+// sessão provisória viva no servidor, sob um id que não existe em `numbers` —
+// invisível e irremovível pela tela. `sendBeacon` não serve: só faz POST e não
+// carrega o header Authorization. Best-effort: erro aqui é ignorado (o backend
+// tem a própria varredura de sessões órfãs).
+export function deleteWASessionKeepalive(id) {
+  try {
+    const token = getToken();
+    return fetch(`${API_BASE}/api/whatsapp/sessions/${id}`, {
+      method: "DELETE",
+      keepalive: true,
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }).catch(() => {});
+  } catch { return Promise.resolve(); }
+}
 export async function listWASessions()   { return http("GET",  `/api/whatsapp/sessions`); }
 
 // ─── WhatsApp / grupos ─────────────────────────────────────────────────

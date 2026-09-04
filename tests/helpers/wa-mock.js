@@ -65,10 +65,14 @@ const mock = {
     return fakeSessions.get(`${userId}::${numberId}`) || null;
   },
   async listSessions(userId) {
-    // Espelha o contrato real (backend/whatsapp/local.js:229): { numberId, status, info, lastError }.
+    // Espelha o contrato real (backend/whatsapp/local.js:snapshotOf):
+    // { numberId, status, info, lastError, stuck, stale }.
     return [...fakeSessions.entries()]
       .filter(([k]) => k.startsWith(`${userId}::`))
-      .map(([, s]) => ({ numberId: s.numberId, status: s.status, info: s.info || null, lastError: s.lastError || null }));
+      .map(([, s]) => ({
+        numberId: s.numberId, status: s.status, info: s.info || null,
+        lastError: s.lastError || null, stuck: s.stuck || false, stale: false,
+      }));
   },
   // Espelha backend/whatsapp/local.js:listAllSessions — tudo agrupado por
   // usuário, que é como a aba de usuários do admin lê o status da lista inteira.
@@ -78,7 +82,7 @@ const mock = {
       const userId = k.split("::")[0];
       (out[userId] ||= []).push({
         numberId: s.numberId, status: s.status, info: s.info || null,
-        lastError: s.lastError || null, stuck: s.stuck || false,
+        lastError: s.lastError || null, stuck: s.stuck || false, stale: false,
       });
     }
     return out;

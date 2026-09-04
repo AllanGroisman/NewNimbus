@@ -138,6 +138,13 @@ function setControlHandler(fn) {
     _controlWorker = new Worker(CONTROL_QUEUE, async (job) => fn(job), {
       connection: makeConnection(),
       concurrency: 4,
+      // O default (30s) é MENOR que ops legítimas (listGroups/createGroup usam
+      // timeout de 60s no proxy). Com ele, uma op lenta era declarada "stalled" e
+      // REPROCESSADA — no caso do startSession isso abria um segundo socket pro
+      // mesmo número, que o WhatsApp trata como conflito e derruba o device.
+      lockDuration: 60_000,
+      stalledInterval: 60_000,
+      maxStalledCount: 1,
     });
     _controlWorker.on("error", (err) => log.error({ err, queue: "control" }, "worker error"));
     _controlWorker.on("failed", (job, err) => {
@@ -162,6 +169,19 @@ async function enqueueSend(jobData) {
   });
 }
 
+// Margem sobre o timeout do chamador, pra tolerar latência e clock skew.
+const CONTROL_JOB_GRACE_MS = 5000;
+
+// Puro/testável (sem Redis): o job já passou da validade? Com o worker fora, o
+// server segue enfileirando (cada POST de QR, cada envio) e TUDO executava de uma
+// vez quando ele voltava — startSession de sessão que ninguém olha mais e sendText
+// cujo HTTP expirou há minutos. Job sem carimbo (enfileirado por uma versão
+// anterior) nunca é descartado.
+function isControlJobExpired(enqueuedAt, now, timeoutMs = 30000, graceMs = CONTROL_JOB_GRACE_MS) {
+  if (!enqueuedAt) return false;
+  return (now - enqueuedAt) > (timeoutMs + graceMs);
+}
+
 // RPC: enfileira uma op de controle e AGUARDA o resultado do worker.
 // Lança erro se: queue não inicializada, timeout, ou handler retornou erro.
 // Em memory mode: lança — chame o módulo local diretamente.
@@ -170,7 +190,7 @@ async function callControl(op, args, { timeoutMs = 30000 } = {}) {
     throw new Error("[queue] callControl só em redis mode (use whatsapp-local direto em memory)");
   }
   if (!_controlQueue || !_controlEvents) throw new Error("[queue] producer não inicializado");
-  const job = await _controlQueue.add(op, { op, args }, {
+  const job = await _controlQueue.add(op, { op, args, enqueuedAt: Date.now(), timeoutMs }, {
     attempts: 1,
     removeOnComplete: { count: 50 },
     removeOnFail: { count: 100 },
@@ -261,7 +281,7 @@ async function close() {
 module.exports = {
   init, isRedis, backendName,
   setSendHandler, setControlHandler,
-  enqueueSend, callControl,
+  enqueueSend, callControl, isControlJobExpired,
   listFailed, retryFailed, removeFailed,
   status, close,
 };

@@ -45,8 +45,19 @@ process.on("uncaughtException", (err) => {
 
 // Despacha job da control queue pra função local correspondente em wa.
 async function handleControlJob(job) {
-  const { op, args = [] } = job.data || {};
+  const { op, args = [], enqueuedAt = null, timeoutMs = 30000 } = job.data || {};
   if (typeof op !== "string") throw new Error(`control op inválida: ${op}`);
+
+  // Quem pediu já desistiu faz tempo (o HTTP expirou antes do worker voltar):
+  // executar agora só cria sessão que ninguém está olhando e erro no log.
+  // `return` em vez de `throw`: não é falha, é descarte — não queremos ruído de
+  // DLQ/Sentry por um job que ninguém espera mais.
+  if (queue.isControlJobExpired(enqueuedAt, Date.now(), timeoutMs)) {
+    logger.warn({ op, jobId: job?.id, ageMs: Date.now() - enqueuedAt },
+      "[worker] control job expirado — descartado");
+    return { ok: false, skipped: "expired" };
+  }
+
   const fn = wa[op];
   if (typeof fn !== "function") throw new Error(`whatsapp.${op} não existe`);
 

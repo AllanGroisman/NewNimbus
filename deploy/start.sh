@@ -78,6 +78,8 @@ else
     echo "  Opções:"
     echo "    s = restaurar do Backblaze (sobrescreve banco local)"
     echo "    n = manter banco local como está"
+    echo "  (o restore pergunta à parte se traz as sessões do WhatsApp; o padrão é NÃO —"
+    echo "   duas máquinas com a mesma auth derrubam o device dos usuários.)"
     read -rp "  Restaurar banco do Backblaze? [s/N] " _restore_resp
     case "${_restore_resp,,}" in
       s|sim|y|yes)

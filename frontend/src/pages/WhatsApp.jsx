@@ -5,9 +5,7 @@ import UsageBadge from "../components/ui/UsageBadge";
 import Modal from "../components/ui/Modal";
 import Spinner from "../components/ui/Spinner";
 import WhatsappQR from "../components/WhatsappQR";
-import { deleteWASession, listWASessions, errText} from "../data/api";
-
-const STATUS_POLL_MS = 8000;
+import { deleteWASession, deleteWASessionKeepalive, errText} from "../data/api";
 
 // Mapeia o status cru da sessão (Baileys) pra rótulo + cor amigáveis.
 const STATUS_UI = {
@@ -29,6 +27,13 @@ export default function PageWhatsApp({
   limits,
   planPausedIds = [],
   onActivatePlanPaused,
+  // Status ao vivo das sessões — vem do poll único do App.jsx. Antes esta página
+  // mantinha um poll próprio do MESMO endpoint: dois GETs a cada 8s por aba e,
+  // ao contrário do App, sem recuo em 429 (com o QR aberto, que pede status a
+  // cada 1,5s, isso chegava perto do teto de requisições do backend).
+  liveStatus = {},
+  stuckIds = {},
+  liveLoaded = false,
 }) {
   // Números pausados pelo plano (cancelamento/downgrade): a sessão continua de
   // pé — não perde o pareamento — mas nenhum envio sai por eles até o cliente
@@ -45,52 +50,32 @@ export default function PageWhatsApp({
   // destoa do resto do sistema.
   const [actionError, setActionError] = useState(null);
 
-  // Status ao vivo das sessões (numberId -> status real do Baileys), via polling.
-  // O `numbers` do estado tem um status que só muda em ações locais; este reflete
-  // a conexão real no servidor (cai/reconecta em background sem o usuário agir).
-  const [liveStatus, setLiveStatus] = useState({});
-  // Há quanto tempo cada número está "connecting" (numberId -> timestamp). Se a
-  // reconexão em background arrasta além de STUCK_CONNECTING_MS, revelamos um link
-  // "Reconectar" ao lado do spinner (o alerta do WhatsNimbus diz "reconecte no
-  // painel" — o painel precisa oferecer a ação). O poll de 8s re-renderiza, então
-  // o link aparece sozinho ao cruzar o limiar, sem timer dedicado.
-  // Ids "presos" reconectando (numberId -> true). O backend é a fonte da verdade:
-  // marca `stuck` quando a reconexão em background passa da graça (~90s) e publica
-  // junto do status. Assim o botão "Reconectar" aparece mesmo que a página não
-  // estivesse aberta durante a contagem.
-  const [stuckIds, setStuckIds] = useState({});
-  useEffect(() => {
-    let cancelled = false;
-    let timer = null;
-    async function pull() {
-      if (cancelled || (typeof document !== "undefined" && document.hidden)) return;
-      try {
-        const sessions = await listWASessions();
-        if (cancelled) return;
-        const map = {};
-        const stuck = {};
-        for (const s of (sessions || [])) {
-          map[s.numberId] = s.status;
-          if (s.stuck) stuck[s.numberId] = true;
-        }
-        setLiveStatus(map);
-        setStuckIds(stuck);
-      } catch {
-        // silencioso — mantém último status conhecido
-      }
-    }
-    const start = () => { if (!timer) timer = setInterval(pull, STATUS_POLL_MS); };
-    const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
-    const onVisibility = () => { if (document.hidden) stop(); else { pull(); start(); } };
-    pull();
-    start();
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => { cancelled = true; stop(); document.removeEventListener("visibilitychange", onVisibility); };
-  }, []);
+  // Status efetivo de um número: prioriza o status ao vivo do servidor. Depois
+  // que o poll carregou, número AUSENTE da lista significa que não existe sessão
+  // no servidor — antes caía no `n.status` do estado salvo (quase sempre
+  // "connected", escrito otimisticamente no connect) e a tela mentia.
+  const effectiveStatus = (n) =>
+    liveStatus[n.id] ?? (liveLoaded ? "disconnected" : (n.status || "disconnected"));
 
-  // Status efetivo de um número: prioriza o status ao vivo do servidor; se ainda
-  // não chegou, cai pro status guardado no estado local.
-  const effectiveStatus = (n) => liveStatus[n.id] || n.status || "disconnected";
+  // Sessão provisória em aberto (id `Date.now()` do fluxo de QR). Só o cancelQR
+  // limpava: fechar a aba, recarregar ou trocar de página deixava no servidor uma
+  // sessão que não existe em `numbers` — invisível na tela e impossível de
+  // remover por lá, reciclando QR pra ninguém. Best-effort dos dois lados: aqui
+  // avisamos o servidor; lá existe uma varredura de órfãs como rede de segurança.
+  const pendingRef = useRef(null);
+  useEffect(() => {
+    pendingRef.current = (showQR && pendingNumberId) ? pendingNumberId : null;
+  }, [showQR, pendingNumberId]);
+  useEffect(() => {
+    const bail = () => { if (pendingRef.current) deleteWASessionKeepalive(pendingRef.current); };
+    window.addEventListener("beforeunload", bail);
+    window.addEventListener("pagehide", bail);
+    return () => {
+      window.removeEventListener("beforeunload", bail);
+      window.removeEventListener("pagehide", bail);
+      bail(); // desmontou com o QR aberto (troca de página): limpa também
+    };
+  }, []);
 
   // Edição inline do apelido — { id, value } enquanto editando.
   const [editingLabel, setEditingLabel] = useState(null);

@@ -103,6 +103,13 @@ export default function App() {
   // Status ao vivo das sessões WhatsApp por numberId ({ [numberId]: "connected" | ... }).
   // Alimentado por poll; usado pra derivar o status real das campanhas (ver liveWhatsappGroups).
   const [sessionStatus, setSessionStatus] = useState({});
+  // Ids "presos" reconectando, publicados pelo backend junto do status.
+  const [sessionStuck, setSessionStuck] = useState({});
+  // Vira true no primeiro poll bem-sucedido e NUNCA volta a false (uma falha de
+  // rede mantém o último mapa conhecido). A partir daí, número ausente da lista
+  // significa "não existe sessão no servidor" — antes caíamos no status salvo no
+  // estado, quase sempre "connected", e a tela mostrava conectado o que não estava.
+  const [sessionLoaded, setSessionLoaded] = useState(false);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   // Navegação inicial (URL ou última posição guardada), lida uma única vez.
   const initialNavRef = useRef(null);
@@ -581,8 +588,14 @@ export default function App() {
         backoffMult = 1;
         markPollDegraded("session", false);
         const map = {};
-        for (const s of (sessions || [])) map[s.numberId] = s.status;
+        const stuck = {};
+        for (const s of (sessions || [])) {
+          map[s.numberId] = s.status;
+          if (s.stuck) stuck[s.numberId] = true;
+        }
         setSessionStatus(map);
+        setSessionStuck(stuck);
+        setSessionLoaded(true);
       } catch (err) {
         if (err?.status === 429) {
           backoffMult = Math.min(backoffMult * 2, MAX_BACKOFF_MULT);
@@ -608,18 +621,26 @@ export default function App() {
   // Campanhas com status ao vivo: sobrepõe o status guardado pelo status real da
   // sessão do número (quando conhecido). Derivado só pra exibição — NÃO alimenta
   // saveAppState, senão gravaríamos status volátil de volta no estado.
+  // Status real de um número. Depois que o poll carregou, ausência da lista =
+  // sem sessão no servidor = desconectado. Antes do primeiro retorno mantemos o
+  // status salvo, pra tela não piscar vermelho no carregamento.
+  const liveStatusOf = (id, fallback) =>
+    sessionStatus[id] ?? (sessionLoaded ? "disconnected" : (fallback || "disconnected"));
+
   const liveWhatsappGroups = useMemo(
     () => whatsappGroups.map(w => ({
       ...w,
-      status: sessionStatus[w.numberId] ?? w.status,
+      status: liveStatusOf(w.numberId, w.status),
     })),
-    [whatsappGroups, sessionStatus]
+    [whatsappGroups, sessionStatus, sessionLoaded]
   );
 
-  // Números com status ao vivo — usado pelo indicador do menu (amarelo/vermelho).
+  // Números com status ao vivo — usado pelo indicador do menu (amarelo/vermelho),
+  // pela aba WhatsApp e pelo GroupDashboard. Derivado só pra exibição: NÃO
+  // alimenta o saveAppState (senão gravaríamos status volátil de volta no estado).
   const liveNumbers = useMemo(
-    () => numbers.map(n => ({ ...n, status: sessionStatus[n.id] ?? n.status })),
-    [numbers, sessionStatus]
+    () => numbers.map(n => ({ ...n, status: liveStatusOf(n.id, n.status) })),
+    [numbers, sessionStatus, sessionLoaded]
   );
 
   // ─── Tour de primeiros passos (tasks 38-39) ─────────────────────────────
@@ -1050,6 +1071,9 @@ export default function App() {
     whatsapp: <PageWhatsApp
       numbers={numbers}
       setNumbers={setNumbers}
+      liveStatus={sessionStatus}
+      stuckIds={sessionStuck}
+      liveLoaded={sessionLoaded}
       whatsappGroups={whatsappGroups}
       onRemoveNumber={removeNumberAndGroups}
       onRelinkNumber={relinkNumber}
@@ -1057,7 +1081,7 @@ export default function App() {
       planPausedIds={planPaused.numbers}
       onActivatePlanPaused={(id) => activatePlanPaused("numbers", id)}
     />,
-    settings: <PageSettings user={user} setUser={setUser} onLogout={handleLogout} settings={settings} setSettings={setSettings} numbers={numbers} onAffiliateChange={applyAffiliateStatus} />,
+    settings: <PageSettings user={user} setUser={setUser} onLogout={handleLogout} settings={settings} setSettings={setSettings} numbers={liveNumbers} onAffiliateChange={applyAffiliateStatus} />,
     subscription: <PageSubscription />,
     "mercado-livre": lockedStore("ml") || <PageAffiliateML onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
     "amazon": lockedStore("amazon") || <PageAffiliateAmazon onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
@@ -1216,7 +1240,7 @@ export default function App() {
           ? <GroupDashboard
               key={selectedGroup.id}
               group={selectedGroup}
-              numbers={numbers}
+              numbers={liveNumbers}
               whatsappGroups={liveWhatsappGroups}
               affiliateConfigured={affiliateConfigured}
               affiliateStatus={affiliateStatus}

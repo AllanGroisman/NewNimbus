@@ -970,7 +970,12 @@ async function listUsers() {
         activeGroups: active,
         repasseGroups: repasse,
         numbers: numbers.length,
-        connectedNumbers: sessions.filter(s => s.status === "connected").length,
+        // Conta NÚMEROS do painel que estão conectados, não sessões. Uma sessão
+        // provisória órfã (id `Date.now()` de um QR abandonado) tem sessão sem
+        // linha em whatsapp_numbers e inflava o card "Operando" do admin.
+        connectedNumbers: numbers.filter(
+          n => byNumberId.get(String(n.id))?.status === "connected",
+        ).length,
       },
     };
   });

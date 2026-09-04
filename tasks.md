@@ -172,4 +172,76 @@ Como que acha a campanha, mas não consegue puxar ela?
     `counts.connectedNumbers`, e a filtragem desta tela sempre foi no cliente. Os dois
     chips carregam a definição no `title`, como os cards.
 
-39. [] deu alguns problemas com alguns usuarios na conexão dos whats. De uma boa revisada para deixar bem redondo e funcionando certinho, sem criar conexoes fantasma, sem dar erros, é uma parte bem importante do sistema.
+39. [x] deu alguns problemas com alguns usuarios na conexão dos whats. De uma boa revisada para deixar bem redondo e funcionando certinho, sem criar conexoes fantasma, sem dar erros, é uma parte bem importante do sistema.
+
+    **Causa raiz:** o sistema abria MAIS DE UM socket Baileys pro mesmo número.
+    `startSession` só era idempotente pra sessão já `connected`, então uma chamada
+    durante o QR/reconexão criava um segundo socket sem fechar o primeiro — os dois
+    mutavam a mesma sessão e gravavam chaves Signal conflitantes na mesma linha de
+    `baileys_auth` (daí os `Bad MAC` no `worker-error.log`). O WhatsApp trata duas
+    conexões do mesmo número como conflito, remove o device, e aí sim o usuário cai
+    de verdade. Somava-se a isso o timer de reconexão não rastreado: `deleteSession`
+    apagava a sessão e o timer pendente a recriava segundos depois com credenciais
+    novas, emitindo QR pra ninguém — a "conexão fantasma".
+
+    **Feito:**
+    - **Um socket por número.** `startSession` virou single-flight (chamadas
+      concorrentes compartilham a mesma abertura), curto-circuita por *socket vivo*
+      e não mais por status, encerra e desregistra o socket anterior antes de abrir
+      outro, e cada socket carrega uma geração (`isCurrentGen`) que faz o handler de
+      um socket substituído virar no-op. `fetchLatestBaileysVersion` passou a ser
+      cacheada (6h) com timeout — era a chamada de rede que fazia o job da fila
+      passar de 30s, virar "stalled" no BullMQ e ser reexecutado, dobrando o socket.
+    - **Timers de reconexão rastreados**, com jitter, cancelados no `deleteSession`,
+      na canonicalização e no `closeAll`. Sessão apagada não ressuscita mais.
+    - **401 nem sempre é logout.** Depois de um close por conflito, a reconexão volta
+      um 401 seco; `classifyClose` agora só chama de logout o 401 fora de uma janela
+      de 60s do último conflito (com teto de tentativas) e em sessão já registrada.
+      No logout REAL as credenciais mortas são apagadas — antes ficavam e o worker
+      re-tentava a cada boot, enchendo o log de 401 e de erros de decrypt. O snapshot
+      `logged_out` fica 7 dias no Redis só pra tela mostrar "Desconectado (relogar)".
+    - **Status obsoleto parou de contar como conectado.** Se o worker morre sem
+      `closeAll` (OOM, SIGKILL), o snapshot no Redis ficava "connected" por 24h e o
+      painel, o card "Operando" e o `counts.connectedNumbers` mentiam. Agora toda
+      leitura passa por `decaySnapshot` (sem heartbeat de worker vivo, ou snapshot
+      parado além de 180s → `disconnected`), o `local.js` republica de 60 em 60s pra
+      essa idade significar algo, e o `restoreSessions` reconcilia as chaves órfãs no
+      boot. `connectedNumbers` passou a contar números do painel, não sessões.
+    - **Fila `control` não executa job velho.** Com o worker fora, os pedidos se
+      acumulavam e disparavam todos juntos na volta. Agora cada job leva `enqueuedAt`
+      e é descartado se o chamador já desistiu; o worker do BullMQ ganhou
+      `lockDuration`/`stalledInterval` de 60s (o default de 30s era menor que ops
+      legítimas de 60s).
+    - **Frontend.** Número ausente do poll passou a significar "sem sessão no
+      servidor" em vez de cair no status salvo (quase sempre "connected") — a tela
+      mostrava conectado o que não estava. O poll agora é um só, no `App.jsx` (a
+      página repetia o mesmo GET a cada 8s, sem recuo em 429), e `GroupDashboard` e
+      `Configurações` passaram a receber os números com status ao vivo. A sessão
+      provisória do QR é apagada no `beforeunload`/troca de página com `keepalive`,
+      com uma varredura de órfãs no backend como rede de segurança.
+    - **Restore de backup não sequestra mais as sessões de produção.** O
+      `deploy/start.sh` oferece restaurar o dump da nuvem no banco local; junto vinham
+      as credenciais de device dos usuários reais, e subir o worker aqui abria um
+      device duplicado que derrubava o WhatsApp deles. `restore-remote.js` agora
+      pergunta à parte se traz o `baileys_auth` junto: responda S só na máquina DONA
+      das sessões (recuperar a própria produção), N (padrão) quando o banco é cópia.
+      Sem terminal, o padrão é não trazer. Flags: `--keep-sessions` / `--drop-sessions`.
+
+    **Isso NÃO exige reconectar os números.** Um deploy normal (pull + restart) não
+    apaga credencial nenhuma: restart do worker, queda de rede, 515 pós-scan, conflito
+    e timeout continuam preservando a auth. Só apagam credencial o logout REAL
+    (device removido no aparelho — a sessão já estava morta de qualquer jeito), a
+    sessão que nunca chegou a parear, e o `deleteSession` que o próprio usuário pede.
+    O único caminho que derrubaria todo mundo é responder "S" no restore de backup
+    numa máquina que não é a dona das sessões — que é justamente o que a pergunta nova
+    passou a evitar.
+    - **Testes:** `whatsapp-ghost-session` (socket único + timer cancelado, com
+      Baileys stubado — falha em 5 dos 6 casos contra o código antigo),
+      `whatsapp-session-guard`, `whatsapp-status-decay`, `whatsapp-control-expiry`,
+      mais os casos de eco de conflito no `whatsapp-close` e o caso de tela do
+      `WhatsAppStuck`. O filtro do `npm run test:whatsapp` foi alargado de
+      `whatsapp-close` pra `whatsapp`.
+
+    **Fora do escopo (decidido):** trava de dono de sessão entre instâncias no
+    Postgres. Se o problema voltar, o passo barato é uma claim
+    `SET nimbus:worker:heartbeat NX` pro worker recusar boot com outro vivo.

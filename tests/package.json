@@ -23,7 +23,7 @@
     "test:billing": "vitest run -c vitest.config.mjs billing plan-enforce && vitest run -c vitest.integration.config.mjs billing public-checkout",
     "test:scheduler": "vitest run -c vitest.config.mjs scheduler && vitest run -c vitest.integration.config.mjs scheduler manual-ops state",
     "test:auth": "vitest run -c vitest.integration.config.mjs auth email-change emails-security",
-    "test:whatsapp": "vitest run -c vitest.config.mjs whatsapp-close && vitest run -c vitest.integration.config.mjs whatsapp",
+    "test:whatsapp": "vitest run -c vitest.config.mjs whatsapp && vitest run -c vitest.integration.config.mjs whatsapp",
     "test:affiliate": "vitest run -c vitest.integration.config.mjs affiliate",
     "test:admin": "vitest run -c vitest.integration.config.mjs admin store-locks tutoriais"
   },

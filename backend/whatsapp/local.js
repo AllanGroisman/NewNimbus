@@ -29,6 +29,10 @@ function publishStatus(session) {
     info: session.info || null,
     lastError: session.lastError || null,
     stuck: session.stuck || false,
+    // Logout real: o snapshot sobrevive mais tempo no Redis (ver session-status),
+    // pra tela seguir mostrando "Desconectado (relogar)" depois de um restart —
+    // a auth foi apagada, então a sessão não aparece mais em restoreSessions.
+    terminal: session.terminal || false,
   }).catch(err => console.error(`[whatsapp-local] publishStatus falhou: ${err.message}`));
 }
 
@@ -60,11 +64,81 @@ const log = pino({ level: process.env.WA_LOG_LEVEL || "warn" });
 // chave: `${userId}::${numberId}` -> { sock, status, qr, qrDataUrl, info, ... }
 const sessions = new Map();
 
+// Aberturas de sessão em voo, por chave. Sem isto, duas chamadas concorrentes
+// (rota POST + timer de reconexão + re-run de job "stalled" do BullMQ + restore)
+// criavam DOIS makeWASocket sobre a MESMA sessão: os dois handlers mutavam o
+// mesmo objeto, os dois agendavam reconexão, e os dois gravavam chaves Signal
+// conflitantes na mesma linha de baileys_auth — origem dos "Bad MAC" /
+// "Key used already or never filled" no log, e do conflito que faz o WhatsApp
+// remover o device (usuário desconectado de verdade).
+const starting = new Map();
+
+// Época do socket. Cada socket aberto recebe uma geração; o handler de um socket
+// substituído vira no-op. `removeAllListeners` cobre o caso normal, esta guarda
+// cobre o evento que já estava na fila do event loop na hora da troca.
+let _gen = 0;
+
+// Timers de reconexão por chave. Sem rastrear o handle, um deleteSession não
+// cancelava o setTimeout pendente e a sessão "ressuscitava" segundos depois com
+// credenciais novas (initAuthCreds), emitindo um QR que ninguém escaneia — a
+// "conexão fantasma" que o scripts/kill-pending-session.js existia pra matar na mão.
+const reconnectTimers = new Map();
+
 // Setado por closeAll() no shutdown do worker: impede que o handler de "close"
 // agende reconexão enquanto estamos encerrando o processo.
 let shuttingDown = false;
 
 function key(userId, numberId) { return `${userId}::${numberId}`; }
+
+// Puro/testável: o handler pertence ao socket vigente desta sessão?
+function isCurrentGen(session, gen) { return !!session && session.gen === gen; }
+
+function cancelReconnect(k) {
+  const t = reconnectTimers.get(k);
+  if (t) { clearTimeout(t); reconnectTimers.delete(k); }
+}
+
+function scheduleReconnect(userId, numberId, k, delayMs) {
+  cancelReconnect(k);
+  const t = setTimeout(() => {
+    reconnectTimers.delete(k);
+    // Segunda trava: se a sessão saiu do Map (deleteSession/canonicalização) ou
+    // o worker está encerrando, não ressuscita nada.
+    if (!sessions.has(k) || shuttingDown) return;
+    startSession(userId, numberId).catch(err => {
+      console.error(`[whatsapp] erro ao reconectar ${userId}/${numberId}:`, err.message);
+    });
+  }, delayMs);
+  t.unref?.();
+  reconnectTimers.set(k, t);
+}
+
+// fetchLatestBaileysVersion é rede sem timeout. Chamá-la em TODA abertura de
+// sessão (inclusive em cada retry do backoff) deixava o job de controle lento a
+// ponto de o BullMQ declarar "stalled" e reprocessar — gerando socket duplicado.
+const WA_VERSION_TTL_MS = 6 * 60 * 60 * 1000;
+const WA_VERSION_TIMEOUT_MS = 4000;
+let _waVersion = null, _waVersionAt = 0, _waVersionInflight = null;
+
+async function cachedBaileysVersion() {
+  if (_waVersion && (Date.now() - _waVersionAt) < WA_VERSION_TTL_MS) return _waVersion;
+  if (_waVersionInflight) return _waVersionInflight;
+  _waVersionInflight = Promise.race([
+    fetchLatestBaileysVersion().then(r => r?.version).catch(() => null),
+    new Promise(r => setTimeout(() => r(null), WA_VERSION_TIMEOUT_MS)),
+  ]).then(v => {
+    if (v) { _waVersion = v; _waVersionAt = Date.now(); }
+    return _waVersion; // null na 1ª vez → Baileys usa a versão embutida
+  }).finally(() => { _waVersionInflight = null; });
+  return _waVersionInflight;
+}
+
+// Depois de um close por conflito, a reconexão imediata costuma voltar um 401
+// "Connection Failure" SECO (sem tag). Tratar isso como logout derrubava sessão
+// boa de quem só tinha dois sockets brigando — e, como logout agora apaga as
+// credenciais, o custo do engano é o usuário ter que ler o QR de novo.
+const CONFLICT_GRACE_MS = 60_000;
+const CONFLICT_MAX_RETRIES = 3;
 
 // Classifica um `connection: "close"` do Baileys num resultado puro e testável.
 // Regra central da Task 1: só é estado terminal (mostra "Reconectar"/erro na tela)
@@ -76,18 +150,41 @@ function key(userId, numberId) { return `${userId}::${numberId}`; }
 // O WhatsApp manda 401 tanto pra logout real quanto pra "conflict"/device_removed
 // (mesma conta em outro lugar, ou overlap de processos num restart). No conflito as
 // credenciais continuam VÁLIDAS — apagá-las forçava re-scan a cada restart. Então
-// só é logout definitivo o 401 que NÃO seja conflito.
-function classifyClose(err, { shuttingDown = false, registered = true } = {}) {
+// só é logout definitivo o 401 que NÃO seja conflito nem eco de um conflito recente.
+function classifyClose(err, {
+  shuttingDown = false,
+  registered = true,
+  now = Date.now(),
+  lastConflictAt = null,
+  conflictRetries = 0,
+} = {}) {
   const code = err?.output?.statusCode;
   const reasonTag = err?.data?.content?.[0]?.tag;
   const isConflict = reasonTag === "conflict" || /\(conflict\)/i.test(err?.message || "");
-  const loggedOut = code === DisconnectReason.loggedOut && !isConflict;
 
-  if (loggedOut) return { status: "logged_out", lastError: err?.message || null, reconnect: false };
   // Encerrando o worker: sock.end() disparou este close. Não reconecta e rebaixa
   // pra "disconnected" (coerente com closeAll), pra tela não ficar num "connecting"
   // eterno de uma sessão que o worker não tem mais.
   if (shuttingDown) return { status: "disconnected", lastError: err?.message || null, reconnect: false };
+
+  // Conflito explícito: creds seguem válidas, reconecta e marca a janela.
+  if (isConflict) return { status: "connecting", lastError: null, reconnect: true, conflict: true };
+
+  if (code === DisconnectReason.loggedOut) {
+    // Eco do conflito: 401 seco logo depois de um close por conflito. Reconecta
+    // por um número limitado de vezes em vez de declarar logout na hora.
+    const echo = lastConflictAt != null
+      && (now - lastConflictAt) < CONFLICT_GRACE_MS
+      && conflictRetries < CONFLICT_MAX_RETRIES;
+    if (echo) return { status: "connecting", lastError: null, reconnect: true, conflictEcho: true };
+    // Sessão que nunca pareou não tem device pra "deslogar": 401 aqui é falha de
+    // handshake. Reconectar só geraria QR novo em loop, então encerra e limpa a
+    // auth parcial — o usuário reabre o QR quando quiser tentar de novo.
+    if (!registered) {
+      return { status: "disconnected", lastError: "Falha ao parear. Tente ler o QR de novo.", reconnect: false, cleanup: true };
+    }
+    return { status: "logged_out", lastError: err?.message || null, reconnect: false, terminal: true };
+  }
 
   // QR nunca escaneado: a sessão NÃO está registrada (nenhum telefone pareou) e o
   // Baileys encerrou porque esgotou as tentativas de QR (408 "QR refs attempts
@@ -118,22 +215,64 @@ function isStuckReconnecting(reconnectingSince, now, thresholdMs = STUCK_RECONNE
   return (now - reconnectingSince) >= thresholdMs;
 }
 
+// Puro/testável: sessão provisória órfã? Ninguém escaneou (nunca registrada) e ela
+// está parada esperando QR além do limite. Acontece quando o usuário fecha a aba
+// no meio do fluxo: o frontend tenta apagar no unload, mas se falhar sobra uma
+// sessão sob um id `Date.now()` que não existe em whatsapp_numbers — invisível na
+// tela e impossível de remover por lá. O branch do 408 já cobre parte disto, mas
+// só quando o Baileys desiste, o que pode demorar ou nunca acontecer.
+const ORPHAN_QR_MAX_AGE_MS = 10 * 60 * 1000;
+function isOrphanQrSession(session, now, maxAgeMs = ORPHAN_QR_MAX_AGE_MS) {
+  if (!session) return false;
+  if (session.sock?.authState?.creds?.registered) return false;
+  if (session.status !== "awaiting_qr" && session.status !== "connecting") return false;
+  return (now - (session.createdAt || now)) >= maxAgeMs;
+}
+
 function normalizePhone(p) { return String(p).replace(/\D/g, ""); }
 function jidFromPhone(phone) { return `${normalizePhone(phone)}@s.whatsapp.net`; }
 
+// Gate fino: idempotência + single-flight. O trabalho de verdade fica em _openSocket.
 async function startSession(userId, numberId) {
   userId = String(userId);
   numberId = String(numberId);
-
   const k = key(userId, numberId);
+
+  // Curto-circuito idempotente. ANTES valia só pra "connected" — por isso um POST
+  // durante o QR abria um segundo socket. Agora vale pra qualquer sessão com
+  // socket VIVO (connecting/awaiting_qr/connected). Sessão cujo socket já caiu e
+  // só espera o backoff NÃO curto-circuita: a ação explícita do usuário
+  // ("Reconectar") deve tentar na hora.
   const existing = sessions.get(k);
-  if (existing?.sock && existing.status === "connected") return existing;
+  if (existing?.sock && existing.socketAlive) return existing;
+
+  const inflight = starting.get(k);
+  if (inflight) return inflight;
+
+  const p = _openSocket(userId, numberId, k)
+    .finally(() => { if (starting.get(k) === p) starting.delete(k); });
+  starting.set(k, p);
+  return p;
+}
+
+async function _openSocket(userId, numberId, k) {
+  cancelReconnect(k);
+
+  // Encerra o socket anterior ANTES de abrir outro e desliga os listeners: um
+  // socket zumbi continua recebendo eventos e gravando auth por baixo.
+  const prev = sessions.get(k);
+  if (prev?.sock) {
+    prev.socketAlive = false;
+    try { prev.sock.ev.removeAllListeners(); } catch {}
+    try { prev.sock.end(undefined); } catch {}
+    prev.sock = null;
+  }
 
   const { state, saveCreds } = await pgAuth().useDatabaseAuthState(`${userId}::${numberId}`);
-  const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: undefined }));
+  const version = await cachedBaileysVersion();
 
   const sock = makeWASocket({
-    version,
+    version: version || undefined,
     auth: state,
     printQRInTerminal: false,
     browser: ["Nimbus", "Chrome", "1.0"],
@@ -141,20 +280,29 @@ async function startSession(userId, numberId) {
     syncFullHistory: false,
     markOnlineOnConnect: false,
   });
+  const gen = ++_gen;
 
-  const session = sessions.get(k) || { userId, numberId, restartCount: 0 };
+  const session = sessions.get(k) || { userId, numberId, restartCount: 0, createdAt: Date.now() };
   session.sock = sock;
+  session.gen = gen;
+  session.socketAlive = true;
+  session.terminal = false; // um start explícito sempre tira do estado terminal
   session.status = session.status && session.status !== "logged_out" ? session.status : "connecting";
   session.lastError = null;
   sessions.set(k, session);
   publishStatus(session);
 
-  sock.ev.on("creds.update", saveCreds);
+  sock.ev.on("creds.update", () => {
+    if (!isCurrentGen(session, gen)) return;
+    Promise.resolve(saveCreds()).catch(err =>
+      console.error(`[whatsapp] saveCreds ${userId}/${numberId}: ${err.message}`));
+  });
 
   // Captura de links dos grupos líderes (campanhas de repasse). Lazy-require pra não
   // carregar o módulo (nem prisma/scraper) fora do worker. Fire-and-forget: um
   // erro na captura nunca pode derrubar a sessão Baileys.
   sock.ev.on("messages.upsert", (ev) => {
+    if (!isCurrentGen(session, gen)) return;
     if (ev?.type !== "notify") return;
     try {
       require("../repasse/capture").onUpsert(userId, numberId, ev.messages).catch(() => {});
@@ -162,6 +310,7 @@ async function startSession(userId, numberId) {
   });
 
   sock.ev.on("connection.update", async (update) => {
+    if (!isCurrentGen(session, gen)) return; // socket antigo: no-op total
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
@@ -183,6 +332,8 @@ async function startSession(userId, numberId) {
       session.restartCount = 0;
       session.reconnectingSince = null;
       session.stuck = false;
+      session.lastConflictAt = null;
+      session.conflictRetries = 0;
       publishStatus(session);
 
       // O numberId definitivo é o telefone. O id usado pra abrir o QR é provisório
@@ -195,18 +346,29 @@ async function startSession(userId, numberId) {
         setTimeout(() => {
           canonicalizeSession(userId, numberId, canonicalId).catch(e =>
             console.error(`[whatsapp] canonicalize erro ${userId}/${numberId}: ${e.message}`));
-        }, 3000);
+        }, 3000).unref?.();
       }
     }
 
     if (connection === "close") {
+      session.socketAlive = false;
       // Sessão em migração (canonicalizeSession fechou o sock tmp de propósito):
       // não publica nem reconecta — quem cuida do reabrir é a migração.
       if (session.migrating) return;
 
       const err = lastDisconnect?.error;
       const registered = !!sock.authState?.creds?.registered;
-      const { status, lastError, reconnect, cleanup } = classifyClose(err, { shuttingDown, registered });
+      const result = classifyClose(err, {
+        shuttingDown,
+        registered,
+        lastConflictAt: session.lastConflictAt || null,
+        conflictRetries: session.conflictRetries || 0,
+      });
+      const { status, lastError, reconnect, cleanup, terminal } = result;
+
+      // Contabilidade da janela de conflito (ver CONFLICT_GRACE_MS).
+      if (result.conflict) { session.lastConflictAt = Date.now(); session.conflictRetries = 0; }
+      if (result.conflictEcho) { session.conflictRetries = (session.conflictRetries || 0) + 1; }
 
       // Diagnóstico: `classifyClose` rebaixa quase tudo pra "connecting" com
       // lastError null (de propósito, pra UI não piscar erro). Sem este log, uma
@@ -223,20 +385,39 @@ async function startSession(userId, numberId) {
       session.qrDataUrl = null;
 
       // Estado terminal (logout real do usuário, ou worker encerrando): não
-      // reconecta sozinho. No logout NÃO apagamos as credenciais aqui — a remoção
-      // definitiva acontece só pela ação explícita do usuário (deleteSession), pra
-      // nunca derrubar sessão boa sem querer.
+      // reconecta sozinho.
       if (!reconnect) {
+        cancelReconnect(k);
         session.reconnectingSince = null;
         session.stuck = false;
+
+        // Logout REAL confirmado: as credenciais estão mortas (o aparelho
+        // desvinculou o device). Publicamos o estado terminal ANTES de limpar —
+        // o snapshot fica mais tempo no Redis e a tela segue mostrando
+        // "Desconectado (relogar)" com o botão Reconectar. Apagar a auth é o que
+        // impede o restore de re-tentar essa sessão morta a cada boot do worker,
+        // que era o que enchia o log de 401 e de erros de decrypt do libsignal.
+        if (terminal) {
+          session.terminal = true;
+          session.lastError = "Sua conta foi desconectada no aparelho. Leia o QR de novo.";
+          publishStatus(session);
+          sessions.delete(k);
+          starting.delete(k);
+          try { sock.end(undefined); } catch {}
+          pgAuth().deleteSession(`${userId}::${numberId}`).catch(err =>
+            console.error(`[whatsapp] limpeza pós-logout ${userId}/${numberId}: ${err.message}`));
+          return;
+        }
+
         publishStatus(session);
         // QR expirado numa sessão nunca registrada: remove o órfão do worker e
         // apaga a auth parcial (pre-keys/noise, sem creds válidas) pra não deixar
         // resquício. Mantém o status "disconnected" publicado (com lastError) pro
         // frontend mostrar o aviso + "cancele e tente novamente". NÃO faz logout
-        // (não há device pareado). Não vale pro logout real, que preserva as creds.
+        // (não há device pareado).
         if (cleanup) {
           sessions.delete(k);
+          starting.delete(k);
           try { sock.end(undefined); } catch {}
           pgAuth().deleteSession(`${userId}::${numberId}`).catch(() => {});
         }
@@ -252,12 +433,10 @@ async function startSession(userId, numberId) {
       publishStatus(session);
 
       session.restartCount = (session.restartCount || 0) + 1;
-      const delay = Math.min(30000, 1500 * session.restartCount);
-      setTimeout(() => {
-        startSession(userId, numberId).catch(err => {
-          console.error(`[whatsapp] erro ao reconectar ${userId}/${numberId}:`, err.message);
-        });
-      }, delay);
+      // Jitter: sem ele, N sessões que caem juntas (queda de rede, restart do
+      // worker) voltam todas no mesmo instante e brigam por rede/CPU.
+      const delay = Math.min(30000, 1500 * session.restartCount) + Math.floor(Math.random() * 1000);
+      scheduleReconnect(userId, numberId, k, delay);
     }
   });
 
@@ -275,8 +454,11 @@ async function canonicalizeSession(userId, tmpId, canonicalId) {
   // Guarda: pode ter sido cancelada (cancelQR/deleteSession) ou caído nesse meio tempo.
   if (!session || session.status !== "connected" || session.migrating) return;
   session.migrating = true;
+  cancelReconnect(tmpKey);
 
   // 1. Fecha o socket tmp (sem logout) pra parar de gravar auth sob o id tmp.
+  session.socketAlive = false;
+  try { session.sock?.ev.removeAllListeners(); } catch {}
   try { session.sock?.end(undefined); } catch {}
   await new Promise(r => setTimeout(r, 600));
 
@@ -285,13 +467,17 @@ async function canonicalizeSession(userId, tmpId, canonicalId) {
 
   // 3. Limpa a sessão tmp do Map e do Redis.
   sessions.delete(tmpKey);
+  starting.delete(tmpKey);
   if (PUBLISH_STATUS) { try { await sessionStatus().clear(userId, tmpId); } catch {} }
 
   // 4. Descarta qualquer sessão canônica anterior (será substituída pela auth nova).
   const canonKey = key(userId, canonicalId);
+  cancelReconnect(canonKey);
   const prevCanon = sessions.get(canonKey);
   if (prevCanon) {
     prevCanon.migrating = true;
+    prevCanon.socketAlive = false;
+    try { prevCanon.sock?.ev.removeAllListeners(); } catch {}
     try { prevCanon.sock?.end(undefined); } catch {}
     sessions.delete(canonKey);
   }
@@ -305,17 +491,24 @@ function getSession(userId, numberId) {
   return sessions.get(key(userId, numberId));
 }
 
+function snapshotOf(s) {
+  return {
+    numberId: s.numberId,
+    status: s.status,
+    info: s.info || null,
+    lastError: s.lastError || null,
+    stuck: s.stuck || false,
+    // Em memory/worker o dono é este processo, então nunca é obsoleto — mas o
+    // campo existe pra o contrato ser idêntico ao do proxy.
+    stale: false,
+  };
+}
+
 function listSessions(userId) {
   const u = String(userId);
   return Array.from(sessions.values())
     .filter(s => s.userId === u)
-    .map(s => ({
-      numberId: s.numberId,
-      status: s.status,
-      info: s.info || null,
-      lastError: s.lastError || null,
-      stuck: s.stuck || false,
-    }));
+    .map(snapshotOf);
 }
 
 // Todas as sessões agrupadas por usuário — a aba de usuários do admin precisa do
@@ -323,13 +516,7 @@ function listSessions(userId) {
 function listAllSessions() {
   const out = {};
   for (const s of sessions.values()) {
-    (out[s.userId] ||= []).push({
-      numberId: s.numberId,
-      status: s.status,
-      info: s.info || null,
-      lastError: s.lastError || null,
-      stuck: s.stuck || false,
-    });
+    (out[s.userId] ||= []).push(snapshotOf(s));
   }
   return out;
 }
@@ -338,12 +525,20 @@ async function deleteSession(userId, numberId) {
   userId = String(userId);
   numberId = String(numberId);
   const k = key(userId, numberId);
+  // Cancelar ANTES de qualquer await: um timer de backoff disparando no meio da
+  // remoção recriava a sessão logo depois de apagada (a conexão fantasma clássica).
+  cancelReconnect(k);
+  starting.delete(k);
   const s = sessions.get(k);
-  if (s?.sock) {
-    try { await s.sock.logout(); } catch {}
-    try { s.sock.end(); } catch {}
-  }
   sessions.delete(k);
+  if (s) {
+    s.socketAlive = false;
+    if (s.sock) {
+      try { s.sock.ev.removeAllListeners(); } catch {}
+      try { await s.sock.logout(); } catch {}
+      try { s.sock.end(); } catch {}
+    }
+  }
   try { await pgAuth().deleteSession(`${userId}::${numberId}`); } catch {}
   if (PUBLISH_STATUS) {
     try { await sessionStatus().clear(userId, numberId); } catch {}
@@ -433,14 +628,62 @@ async function getGroupMetadata(userId, numberId, jid) {
   return s.sock.groupMetadata(jid);
 }
 
+// ── Manutenção periódica ────────────────────────────────────────────────────
+// Dois timers, iniciados uma vez por processo (por restoreSessions, que roda no
+// boot do worker e do server em memory mode).
+const REPUBLISH_MS = 60_000;
+const ORPHAN_SWEEP_MS = 5 * 60 * 1000;
+let _maintenanceStarted = false;
+
+function startMaintenance() {
+  if (_maintenanceStarted) return;
+  _maintenanceStarted = true;
+
+  // Republish periódico. O worker publica por EVENTO, então uma sessão conectada
+  // pode ficar horas sem escrever no Redis — e aí a idade do snapshot não serve
+  // como sinal de vida. Com este refresh, `updatedAt` velho passa a significar
+  // "nenhum worker vivo é dono desta chave" (ver infra/session-status.js).
+  if (PUBLISH_STATUS) {
+    const t = setInterval(() => {
+      for (const s of sessions.values()) {
+        try { publishStatus(s); } catch {}
+      }
+    }, REPUBLISH_MS);
+    t.unref?.();
+  }
+
+  // Varredura de sessões provisórias órfãs (usuário fechou a aba no meio do QR).
+  const o = setInterval(() => {
+    const now = Date.now();
+    for (const [k, s] of sessions) {
+      if (!isOrphanQrSession(s, now)) continue;
+      console.log(`[whatsapp] limpando sessão provisória órfã ${s.userId}/${s.numberId} (QR nunca escaneado)`);
+      cancelReconnect(k);
+      s.socketAlive = false;
+      s.status = "disconnected";
+      s.lastError = "QR não escaneado a tempo.";
+      publishStatus(s);
+      try { s.sock?.ev.removeAllListeners(); } catch {}
+      try { s.sock?.end(undefined); } catch {}
+      sessions.delete(k);
+      starting.delete(k);
+      pgAuth().deleteSession(`${s.userId}::${s.numberId}`).catch(() => {});
+    }
+  }, ORPHAN_SWEEP_MS);
+  o.unref?.();
+}
+
 // Restaura sessões persistidas (SELECT distinct sessionId em baileys_auth).
 // CRÍTICO: só restaura sessões cujo número AINDA existe em whatsapp_numbers.
 // Auth órfã (de número deletado) precisa ser limpa, senão reconecta um "device
 // fantasma" do mesmo telefone — o WhatsApp trata 2 conexões do mesmo número como
 // conflito (device_removed/401), derruba a sessão e apaga as credenciais, forçando
 // re-scan a cada restart.
+const RESTORE_STAGGER_MS = 1500;
+
 async function restoreSessions() {
   const { prisma } = require("../db");
+  startMaintenance();
 
   let pairs = [];
   try {
@@ -489,11 +732,48 @@ async function restoreSessions() {
     }
   }
 
-  for (const { userId, numberId } of live) {
-    startSession(userId, numberId).catch(err => {
-      console.error(`[whatsapp] falha ao restaurar ${userId}/${numberId}:`, err.message);
-    });
+  // Reconciliação do cache de status: o Redis pode ter snapshots de um worker
+  // anterior que morreu sem passar pelo closeAll (OOM do pm2, SIGKILL, uncaught).
+  // Sem isso a tela e o admin mostram "conectado" por até 24h de uma sessão que
+  // ninguém tem. Rebaixa o que NÃO vamos restaurar e marca como "connecting" o
+  // que vamos, pro updatedAt nascer fresco.
+  if (PUBLISH_STATUS) {
+    const owned = new Set(live.map(p => `${p.userId}::${p.numberId}`));
+    try {
+      const snaps = await sessionStatus().listAllRaw();
+      for (const snap of snaps) {
+        const sk = `${snap.userId}::${snap.numberId}`;
+        if (owned.has(sk) || snap.terminal) continue;
+        await sessionStatus().publish(snap.userId, snap.numberId, {
+          status: "disconnected", info: snap.info || null, lastError: null,
+        }).catch(() => {});
+      }
+    } catch (err) {
+      console.error(`[whatsapp] reconciliação de snapshots falhou: ${err.message}`);
+    }
+    for (const p of live) {
+      await sessionStatus().publish(p.userId, p.numberId, { status: "connecting" }).catch(() => {});
+    }
   }
+
+  // O aviso "seu WhatsApp desconectou" é edge-triggered a partir de um Set POR
+  // PROCESSO: sem semear, uma sessão que não volta depois do restart nunca
+  // dispararia o alerta (ela não chegou a "connected" neste processo).
+  try {
+    const notifier = require("../notifications/user-notifier");
+    for (const p of live) notifier.markConnectedOnce?.(p.userId, p.numberId);
+  } catch { /* ignore */ }
+
+  // Escalonado: N handshakes simultâneos no boot brigam por rede/CPU e viram
+  // timeout, que vira reconexão, que vira mais handshake.
+  live.forEach(({ userId, numberId }, i) => {
+    const t = setTimeout(() => {
+      startSession(userId, numberId).catch(err => {
+        console.error(`[whatsapp] falha ao restaurar ${userId}/${numberId}:`, err.message);
+      });
+    }, i * RESTORE_STAGGER_MS);
+    t.unref?.();
+  });
   if (live.length > 0) console.log(`[whatsapp] restaurando ${live.length} sessão(ões)...`);
 }
 
@@ -503,8 +783,11 @@ async function restoreSessions() {
 // (device_removed/401) por duas conexões simultâneas do mesmo número.
 async function closeAll() {
   shuttingDown = true;
+  for (const k of Array.from(reconnectTimers.keys())) cancelReconnect(k);
+  starting.clear();
   const pubs = [];
   for (const s of sessions.values()) {
+    s.socketAlive = false;
     try { s.sock?.end(undefined); } catch {}
     // Parte C: rebaixa o status pra "disconnected" no Redis ANTES de sair, pra a
     // tela não mostrar "connected" stale de uma sessão que o worker não tem mais.
@@ -555,6 +838,8 @@ module.exports = {
   status,
   classifyClose,
   isStuckReconnecting,
+  isCurrentGen,
+  isOrphanQrSession,
 };
 
 function makeStub() {

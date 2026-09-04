@@ -34,6 +34,9 @@ async function getSession(userId, numberId) {
     info: s.info || null,
     lastError: s.lastError || null,
     stuck: s.stuck || false,
+    // true quando o status veio rebaixado por obsolescência (worker morto ou
+    // snapshot velho) em vez de um evento real do Baileys.
+    stale: s.stale || false,
   };
 }
 
@@ -45,6 +48,7 @@ async function listSessions(userId) {
     info: s.info || null,
     lastError: s.lastError || null,
     stuck: s.stuck || false,
+    stale: s.stale || false,
   }));
 }
 

@@ -6,6 +6,14 @@
 //   node scripts/restore-remote.js --latest     # restaura o mais novo sem perguntar
 //   node scripts/restore-remote.js --list       # só lista, não restaura
 //   node scripts/restore-remote.js --file db-20260522-114802.sql.gz
+//   node scripts/restore-remote.js --latest --keep-sessions   # mantém baileys_auth
+//   node scripts/restore-remote.js --latest --drop-sessions   # zera baileys_auth
+//
+// A tabela `baileys_auth` (sessões do WhatsApp) é tratada à parte: num terminal o
+// script PERGUNTA se deve trazê-la junto. Restaurar um dump de produção em outra
+// máquina e subir o worker abre um device duplicado e derruba o WhatsApp dos
+// usuários reais; mas restaurar a PRÓPRIA produção depois de um desastre precisa
+// das sessões, senão todo mundo relê QR. O default (Enter / sem TTY) é NÃO trazer.
 //
 // Requer as mesmas envs do backup-remote.js (BACKUP_S3_*).
 // O Postgres precisa estar rodando (docker compose up -d).
@@ -42,6 +50,11 @@ const PG_DB     = process.env.POSTGRES_DB         || "nimbus";
 const args = new Set(process.argv.slice(2));
 const LATEST   = args.has("--latest");
 const LIST     = args.has("--list");
+// Por padrão o restore NÃO traz as sessões do WhatsApp junto (ver
+// clearBaileysAuth). --keep-sessions / NIMBUS_KEEP_SESSIONS=1 é o escape hatch
+// pra recuperação de desastre NA PRÓPRIA produção, onde herdar a sessão é o certo.
+const KEEP_SESSIONS = args.has("--keep-sessions") || process.env.NIMBUS_KEEP_SESSIONS === "1";
+const DROP_SESSIONS = args.has("--drop-sessions") || process.env.NIMBUS_KEEP_SESSIONS === "0";
 const FILE_ARG = (() => {
   const arr = process.argv.slice(2);
   const i   = arr.indexOf("--file");
@@ -115,7 +128,7 @@ function docker(cmd) {
   return needSudo ? `sudo docker ${cmd}` : `docker ${cmd}`;
 }
 
-function restoreBackup(filePath) {
+function restoreBackup(filePath, keepSessions) {
   const dockerCmd = spawnSync("docker", ["ps", "--format", "{{.Names}}"], { encoding: "utf8" });
   const prefix = dockerCmd.status !== 0 ? "sudo docker" : "docker";
 
@@ -149,8 +162,38 @@ function restoreBackup(filePath) {
     { stdio: ["pipe", "pipe", "pipe"], shell: true }
   );
 
+  clearBaileysAuth(prefix, keepSessions);
+
   console.log("[restore-remote] banco restaurado com sucesso.");
   console.log("  Reinicie o backend: pm2 restart nimbus-backend nimbus-worker");
+}
+
+// As linhas de `baileys_auth` são as CREDENCIAIS DE DEVICE dos WhatsApps dos
+// usuários. Restaurar um dump de produção em outra máquina e subir o worker faz
+// essa máquina abrir um SEGUNDO device com as mesmas credenciais — o WhatsApp
+// trata como conflito, remove o device e o usuário REAL cai. Foi assim que
+// vários usuários apareceram desconectados. Por padrão o restore descarta as
+// sessões: o banco é uma cópia, a sessão não é copiável.
+function clearBaileysAuth(prefix, keepSessions) {
+  if (keepSessions) {
+    console.log("[restore-remote] ⚠️  --keep-sessions: as sessões do WhatsApp vieram no restore.");
+    console.log("  Só use isto na máquina que é DONA das sessões (recuperação de produção).");
+    console.log("  Duas máquinas com a mesma auth = conflito e usuários desconectados.");
+    return;
+  }
+  try {
+    execSync(
+      `${prefix} exec -i ${CONTAINER} psql -U ${PG_USER} -d ${PG_DB} -c "TRUNCATE TABLE baileys_auth;"`,
+      { stdio: "pipe" }
+    );
+    console.log("[restore-remote] sessões do WhatsApp NÃO foram restauradas (baileys_auth limpa).");
+    console.log("  Este banco é uma cópia: reusar a auth abriria um device duplicado e");
+    console.log("  derrubaria o WhatsApp de quem está em produção. Releia o QR nesta máquina");
+    console.log("  ou rode com --keep-sessions se aqui for a instância dona.");
+  } catch (err) {
+    // Dump antigo pode não ter a tabela — não é motivo pra falhar o restore.
+    console.warn(`[restore-remote] não consegui limpar baileys_auth: ${err.message}`);
+  }
 }
 
 function ask(question) {
@@ -158,6 +201,22 @@ function ask(question) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     rl.question(question, ans => { rl.close(); resolve(ans.trim()); });
   });
+}
+
+// Decide se as sessões do WhatsApp vêm junto. Sem flag e com terminal, pergunta:
+// a resposta certa depende de esta máquina ser ou não a DONA das sessões, e só
+// quem está rodando o comando sabe disso.
+async function decideSessions() {
+  if (KEEP_SESSIONS) return true;
+  if (DROP_SESSIONS) return false;
+  if (!process.stdin.isTTY) return false; // automação: default seguro
+  console.log("\n  Sessões do WhatsApp (baileys_auth):");
+  console.log("    - Responda S só se ESTA máquina for a dona das sessões (ex.: recuperando");
+  console.log("      a própria produção depois de um desastre).");
+  console.log("    - Responda N (padrão) se este banco é uma CÓPIA. Duas máquinas com a");
+  console.log("      mesma auth abrem um device duplicado e derrubam o WhatsApp dos usuários.");
+  const ans = await ask("  Trazer as sessões do WhatsApp junto? [s/N] ");
+  return ["s", "sim", "y", "yes"].includes(ans.toLowerCase());
 }
 
 async function main() {
@@ -219,7 +278,7 @@ async function main() {
   await download(client, chosen.Key, tmpFile);
   console.log(`[restore-remote] download OK (${(fs.statSync(tmpFile).size / 1024 / 1024).toFixed(2)} MB)`);
 
-  restoreBackup(tmpFile);
+  restoreBackup(tmpFile, await decideSessions());
   await fsp.unlink(tmpFile);
 }
 

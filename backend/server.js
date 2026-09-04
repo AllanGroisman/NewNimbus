@@ -3788,6 +3788,7 @@ async function boot() {
     console.log(`  GET  /api/admin/users          (admin)`);
     console.log(`  GET  /api/admin/users/:id/detail (admin)`);
 
+    startWaMetrics();
     if (queueMod.isRedis()) {
       // Redis mode: worker.js owna Baileys + processa filas. Server é proxy.
       console.log(`[server] modo redis: rode 'node worker.js' em paralelo (Baileys + workers)`);
@@ -3812,6 +3813,41 @@ async function boot() {
     }, 5000);
   });
 
+  // Gauge nimbus_whatsapp_sessions: existia declarado em infra/metrics.js e nunca
+  // era .set(), então /metrics reportava sempre zero. Em redis mode as contagens
+  // vêm do cache no Redis JÁ decaído (worker morto não conta como conectado); em
+  // memory mode, do Map local.
+  let _waMetricsTimer = null;
+
+  function startWaMetrics() {
+    if (_waMetricsTimer) return;
+    const tick = async () => {
+      try {
+        let counts;
+        if (queueMod.isRedis()) {
+          counts = await require("./infra/session-status").countsByStatus();
+        } else {
+          counts = {};
+          for (const list of Object.values(wa.listAllSessions() || {})) {
+            for (const sess of list) {
+              const st = sess.status || "unknown";
+              counts[st] = (counts[st] || 0) + 1;
+            }
+          }
+        }
+        metrics.waSessions.reset(); // limpa labels de status que zeraram
+        for (const [status, n] of Object.entries(counts)) metrics.waSessions.set({ status }, n);
+      } catch { /* métrica é acessória */ }
+    };
+    tick();
+    _waMetricsTimer = setInterval(tick, 30_000);
+    _waMetricsTimer.unref?.();
+  }
+
+  function stopWaMetrics() {
+    if (_waMetricsTimer) { clearInterval(_waMetricsTimer); _waMetricsTimer = null; }
+  }
+
   // Shutdown limpo — drena worker (jobs em-vôo terminam) antes de derrubar HTTP
   const shutdown = async (signal) => {
     console.log(`[server] ${signal} recebido, encerrando...`);
@@ -3819,7 +3855,13 @@ async function boot() {
     scrapTester.stop();
     backupMonitor.stop();
     billingReminders.stop();
+    stopWaMetrics();
     appConfig.stopAutoRefresh();
+    // Em memory mode o SERVER é dono dos sockets Baileys. Sair sem encerrá-los
+    // deixa o WhatsApp achando que o device ainda está conectado, e o boot
+    // seguinte cai no conflito 401 que o worker já evita com o mesmo closeAll.
+    // Em redis mode o closeAll do proxy é no-op (quem fecha é o worker).
+    try { await wa.closeAll(); } catch {}
     server.close(() => console.log("[server] HTTP fechado"));
     try { await appConfig.flush(); } catch {}
     try { await queueMod.close(); console.log("[server] queue fechada"); } catch {}

@@ -24,7 +24,29 @@ Em modo `redis`, só **um processo** carrega o Baileys: o `worker`. O `server` s
 
 Cada sessão é a chave `${userId}::${numberId}` num `Map` em memória. Status pode ser: `connecting`, `awaiting_qr`, `connected`, `disconnected`, `logged_out`.
 
-Quando a sessão desconecta sem ser logout, o `local.js` agenda um restart automático com backoff (1.5s × tentativa, máx 30s). Em logout, ele apaga as credenciais (linha do PG) — usuário vai precisar escanear o QR de novo.
+Quando a sessão desconecta sem ser logout, o `local.js` agenda um restart automático com backoff (1.5s × tentativa + jitter, máx 30s). Em logout real, ele apaga as credenciais (linhas do PG) — usuário vai precisar escanear o QR de novo. O snapshot `logged_out` fica mais tempo no Redis (7 dias) só pra tela seguir mostrando "Desconectado (relogar)".
+
+### Um socket por número
+
+`startSession` é **single-flight e idempotente**: chamadas concorrentes (rota POST, timer de backoff, re-run de job "stalled" do BullMQ, restore no boot) compartilham a mesma abertura, e uma sessão com socket vivo é devolvida como está. Antes de abrir um socket novo o anterior é encerrado e tem os listeners removidos, e cada socket carrega uma **geração** (`isCurrentGen`) que faz o handler de um socket substituído virar no-op.
+
+Isso não é preciosismo: dois sockets no mesmo número gravam chaves Signal conflitantes na mesma linha de `baileys_auth` (`Bad MAC` no log) e o WhatsApp trata a dupla conexão como conflito — remove o device e o usuário cai de verdade.
+
+Os timers de reconexão são rastreados e cancelados em `deleteSession`, na canonicalização e no `closeAll`. Sem isso, apagar uma sessão não impedia o timer pendente de recriá-la segundos depois com credenciais novas: a "conexão fantasma".
+
+### 401: logout de verdade ou eco de conflito?
+
+O WhatsApp responde 401 tanto pra logout real quanto pra conflito, e a reconexão logo após um conflito costuma voltar um 401 **seco** (sem tag). `classifyClose` só chama de logout o 401 que estiver fora de uma janela de 60s desde o último conflito (com teto de tentativas) e numa sessão já registrada.
+
+### O status no Redis pode mentir
+
+Se o worker morre sem passar pelo `closeAll` (OOM do `max_memory_restart`, SIGKILL, `uncaughtException`), o snapshot fica com `connected` até o TTL. Por isso `infra/session-status.js` aplica `decaySnapshot` em toda leitura: sem heartbeat de worker vivo, ou com o snapshot parado além de 180s, status vivo é rebaixado pra `disconnected` + `stale`. O `local.js` republica os snapshots a cada 60s justamente pra essa idade significar alguma coisa, e o `restoreSessions` reconcilia as chaves órfãs no boot.
+
+### Sessões provisórias do QR
+
+O frontend abre o QR sob um id provisório (`Date.now()`) antes de saber o telefone. Se o usuário fechar a aba, o frontend avisa o servidor (DELETE com `keepalive`), mas isso é best-effort — a garantia é uma varredura de 5 em 5 minutos no `local.js` (`isOrphanQrSession`) que descarta sessão nunca pareada esperando QR há mais de 10 min.
+
+`scripts/kill-pending-session.js` continua existindo, mas virou ferramenta de emergência: com as travas acima não deveria mais ser rotina.
 
 ## Onde as credenciais ficam
 
