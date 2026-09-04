@@ -48,6 +48,7 @@ const emailRender = require("./notifications/email/render");
 const emailTransport = require("./notifications/email/transport");
 const adminNotifier = require("./notifications/admin-notifier");
 const whatsnimbus = require("./notifications/whatsnimbus");
+const userNotifier = require("./notifications/user-notifier");
 
 // Sentry init (Fase 4) — no-op se SENTRY_DSN não estiver definido
 sentry.init({ context: "server" });
@@ -3674,6 +3675,86 @@ app.delete("/api/whatsapp/sessions/:id/groups/:jid", auth.requireAuth, async (re
     res.json({ ok: true });
   } catch (err) {
     httpErrors.serverError(res, err, { req, ctx: "DELETE /api/whatsapp/sessions/:id/groups/:jid" });
+  }
+});
+
+// Teste de conexão do número (botão "Testar" no card). Duas pernas, porque cada
+// uma prova uma coisa diferente:
+//   1. auto-DM pelo PRÓPRIO número — único jeito de provar que aquela sessão
+//      Baileys está enviando. O status "connected" da tela não prova: o snapshot
+//      do Redis pode estar velho (ver infra/session-status.js:decaySnapshot) ou o
+//      socket ter sido trocado por conflito.
+//   2. DM do WhatsNimbus pro número — prova que o remetente das notificações do
+//      sistema está de pé. WhatsNimbus desconectado NÃO reprova o teste: vira
+//      `skipped`, é informativo.
+// As pernas são independentes: a 2 roda mesmo se a 1 falhou — é justamente o
+// caso em que o usuário quer saber se ao menos a DM do sistema chega.
+const TEST_COOLDOWN_MS = 60 * 1000;
+const testCooldown = new Map(); // `${userId}::${numberId}` -> timestamp do último teste
+
+app.post("/api/whatsapp/sessions/:id/test", auth.requireAuth, requireActiveSubscription, requireUsableNumber, async (req, res) => {
+  try {
+    const numberId = String(req.params.id);
+    const cooldownKey = `${req.user.id}::${numberId}`;
+
+    // Cada clique dispara DUAS mensagens reais de WhatsApp; martelar o botão é
+    // vetor de ban. Map em memória basta: só esta rota lê/escreve e perder o
+    // estado num restart é inofensivo.
+    if (process.env.NODE_ENV !== "test") {
+      const last = testCooldown.get(cooldownKey) || 0;
+      const elapsed = Date.now() - last;
+      if (elapsed < TEST_COOLDOWN_MS) {
+        const retryAfterSeconds = Math.ceil((TEST_COOLDOWN_MS - elapsed) / 1000);
+        return res.status(429).json({
+          error: `Aguarde ${retryAfterSeconds}s antes de testar este número de novo.`,
+          code: "test_cooldown",
+          retryAfterSeconds,
+        });
+      }
+      testCooldown.set(cooldownKey, Date.now());
+    }
+
+    // Telefone resolvido no servidor — nunca do cliente. A sessão viva é a fonte
+    // mais fiel (local.js grava info.phone só dígitos); depois o estado salvo
+    // (vem como "+55…", mas jidFromPhone limpa); por último o próprio numberId,
+    // que APÓS a canonicalização É o telefone.
+    let phone = null;
+    try { phone = (await wa.getSession(req.user.id, numberId))?.info?.phone || null; } catch { /* ignore */ }
+    if (!phone) {
+      try {
+        const state = await storage.loadState(req.user.id);
+        phone = (state.numbers || []).find(n => String(n.id) === numberId)?.phone || null;
+      } catch { /* ignore */ }
+    }
+    if (!phone && /^\d{8,}$/.test(numberId)) phone = numberId;
+    if (!phone) {
+      return res.status(400).json({ error: "Não foi possível descobrir o telefone deste número. Reconecte-o e tente de novo." });
+    }
+
+    const self = { ok: false };
+    try {
+      await wa.sendText(req.user.id, numberId, wa.jidFromPhone(phone), userNotifier.selfTestText());
+      self.ok = true;
+    } catch (err) {
+      self.error = err.message;
+    }
+
+    const whatsNimbusLeg = { ok: false };
+    try {
+      await userNotifier.sendConnectionTest(phone);
+      whatsNimbusLeg.ok = true;
+    } catch (err) {
+      whatsNimbusLeg.error = err.message;
+      // Não conectado é ausência de configuração, não falha do teste.
+      if (/WhatsNimbus não está conectado/.test(err.message)) whatsNimbusLeg.skipped = true;
+    }
+
+    // Resultado parcial ainda é um diagnóstico bem-sucedido: 200 e o veredito vai
+    // nos campos. `ok` segue a perna que prova o número do usuário.
+    res.json({ ok: self.ok, self, whatsnimbus: whatsNimbusLeg });
+  } catch (err) {
+    console.error("[whatsapp] test:", err.message);
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/whatsapp/sessions/:id/test" });
   }
 });
 

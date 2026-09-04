@@ -5,7 +5,7 @@ import UsageBadge from "../components/ui/UsageBadge";
 import Modal from "../components/ui/Modal";
 import Spinner from "../components/ui/Spinner";
 import WhatsappQR from "../components/WhatsappQR";
-import { deleteWASession, deleteWASessionKeepalive, errText} from "../data/api";
+import { deleteWASession, deleteWASessionKeepalive, testWASession, errText} from "../data/api";
 
 // Mapeia o status cru da sessão (Baileys) pra rótulo + cor amigáveis.
 const STATUS_UI = {
@@ -17,6 +17,54 @@ const STATUS_UI = {
 };
 function statusUI(status) {
   return STATUS_UI[status] || STATUS_UI.disconnected;
+}
+
+// Uma linha do resultado do teste. `leg` é { ok, skipped?, error? } vindo do
+// backend. Pulada (WhatsNimbus não conectado) não é falha: fica neutra.
+function TestLine({ label, leg }) {
+  const skipped = !leg.ok && leg.skipped;
+  const icon = leg.ok ? "✓" : skipped ? "—" : "✗";
+  const color = leg.ok ? "#22C55E" : skipped ? "var(--color-text-secondary)" : "var(--danger-text)";
+  return (
+    <div style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
+      <span aria-hidden="true" style={{ color, fontWeight: 600, flexShrink: 0 }}>{icon}</span>
+      <span>{label}: {leg.ok ? "ok" : (leg.error || "falhou")}</span>
+    </div>
+  );
+}
+
+// Bloco de resultado dentro do card. `result` pode ser o veredito das duas
+// pernas ou { error } quando a requisição inteira falhou (rede, 402, cooldown).
+function TestResult({ result, onDismiss }) {
+  const failed = !!result.error || result.ok === false;
+  return (
+    <div
+      role="status"
+      style={{
+        marginTop: 10, padding: "8px 10px", borderRadius: 8, fontSize: 12, lineHeight: 1.6,
+        display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8,
+        background: failed ? "var(--danger-bg)" : "var(--color-background-secondary)",
+        border: `0.5px solid ${failed ? "var(--danger-border)" : "var(--color-border-tertiary)"}`,
+        color: "var(--color-text-secondary)",
+      }}
+    >
+      <div>
+        {result.error ? (
+          <div style={{ color: "var(--danger-text)" }}>{result.error}</div>
+        ) : (
+          <>
+            <TestLine label="Envio pelo próprio número" leg={result.self || {}} />
+            <TestLine label="DM do WhatsNimbus" leg={result.whatsnimbus || {}} />
+          </>
+        )}
+      </div>
+      <button
+        onClick={onDismiss}
+        aria-label="Fechar resultado do teste"
+        style={{ background: "transparent", border: "none", cursor: "pointer", color: "inherit", fontSize: 16, lineHeight: 1, padding: 0 }}
+      >&times;</button>
+    </div>
+  );
 }
 
 export default function PageWhatsApp({
@@ -49,6 +97,11 @@ export default function PageWhatsApp({
   // própria página — antes era um window.alert do navegador, que trava a tela e
   // destoa do resto do sistema.
   const [actionError, setActionError] = useState(null);
+  // Teste de conexão por card: `testing` guarda o id em execução (um por vez) e
+  // `testResult` o veredito das duas pernas por id. Nada de poll — o resultado é
+  // pontual, resposta de um clique.
+  const [testing, setTesting] = useState(null);
+  const [testResult, setTestResult] = useState({});
 
   // Status efetivo de um número: prioriza o status ao vivo do servidor. Depois
   // que o poll carregou, número AUSENTE da lista significa que não existe sessão
@@ -140,6 +193,24 @@ export default function PageWhatsApp({
     setPendingNumberId(newId);
     setPendingLabel(newLabel || "Novo número");
     setShowQR("new");
+  };
+
+  // Testa o número de verdade: o backend manda uma DM do próprio número pra ele
+  // mesmo (prova que a sessão está ENVIANDO — o status "Conectado" da tela não
+  // prova isso) e outra do WhatsNimbus pro número. Cada perna volta com seu
+  // veredito; WhatsNimbus desconectado é informativo, não reprova.
+  const runTest = async (id) => {
+    setTesting(id);
+    setTestResult(r => ({ ...r, [id]: null }));
+    try {
+      const res = await testWASession(id);
+      setTestResult(r => ({ ...r, [id]: res }));
+    } catch (err) {
+      // Mensagem do servidor quando existe (ex.: o aviso de cooldown do 429).
+      setTestResult(r => ({ ...r, [id]: { error: errText(err, "Não foi possível testar agora. Tente novamente.") } }));
+    } finally {
+      setTesting(t => (t === id ? null : t));
+    }
   };
 
   // Callback chamado pelo WhatsappQR quando a conexão é estabelecida
@@ -306,7 +377,17 @@ export default function PageWhatsApp({
                     </button>
                   )}
                   {connected ? (
-                    <button onClick={() => setConfirmDisconnect(n.id)} style={{ padding: "6px 14px", borderRadius: 8, border: "0.5px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", fontSize: 12, cursor: "pointer" }}>Desconectar</button>
+                    <>
+                      <button
+                        onClick={() => runTest(n.id)}
+                        disabled={testing === n.id}
+                        title="Envia uma mensagem de teste pra provar que este número está enviando"
+                        style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 8, border: `0.5px solid ${PRIMARY}`, background: "transparent", color: PRIMARY, fontSize: 12, cursor: testing === n.id ? "default" : "pointer", fontWeight: 500, opacity: testing === n.id ? 0.7 : 1 }}
+                      >
+                        {testing === n.id ? <><Spinner size={12} /> Testando...</> : "Testar"}
+                      </button>
+                      <button onClick={() => setConfirmDisconnect(n.id)} style={{ padding: "6px 14px", borderRadius: 8, border: "0.5px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", fontSize: 12, cursor: "pointer" }}>Desconectar</button>
+                    </>
                   ) : connecting ? (
                     <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--color-text-secondary)" }}>
                       <Spinner size={14} />
@@ -323,6 +404,12 @@ export default function PageWhatsApp({
                   )}
                 </div>
               </div>
+              {testResult[n.id] && (
+                <TestResult
+                  result={testResult[n.id]}
+                  onDismiss={() => setTestResult(r => ({ ...r, [n.id]: null }))}
+                />
+              )}
             </div>
           );
         })}

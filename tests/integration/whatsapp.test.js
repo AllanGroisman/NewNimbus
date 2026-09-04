@@ -2,7 +2,13 @@
 // registra chamadas pra inspeção. Plan-gating de número novo testado aqui.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { request, app, createTestUser, waCalls, resetWa, auth as authMod, billing } from "../helpers/app.js";
+import { request, app, createTestUser, waCalls, resetWa, waFailSend, auth as authMod, billing } from "../helpers/app.js";
+import path from "path";
+import { fileURLToPath } from "url";
+import { createRequire } from "module";
+
+const __require = createRequire(import.meta.url);
+const whatsnimbus = __require(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "backend", "notifications", "whatsnimbus.js"));
 
 // Helper pra forçar plano específico no usuário recém-criado (que nasce sem assinatura = free).
 async function userOnPlan(planId) {
@@ -233,6 +239,83 @@ describe("WhatsApp — envio direto via /send", () => {
     expect(waCalls.sendImage[0]).toMatchObject({
       jid: "x@g.us", imageUrl: "https://img.test/a.jpg", caption: "legenda",
     });
+  });
+});
+
+describe("WhatsApp — teste de conexão (/test)", () => {
+  // A config do WhatsNimbus vive num cache write-through em memória
+  // (backend/config/pg.js), então o TRUNCATE entre testes não a invalida sozinho.
+  beforeEach(() => { whatsnimbus.clearConfig(); });
+
+  it("sem token retorna 401", async () => {
+    const r = await request(app).post("/api/whatsapp/sessions/num-1/test");
+    expect(r.status).toBe(401);
+  });
+
+  it("número fora do estado retorna 402 (herda o requireUsableNumber)", async () => {
+    const { auth } = await userOnPlan("pro");
+    await auth("post", "/api/whatsapp/sessions/num-1");
+    // sem registerNumbers: sessão viva, mas número não cadastrado no estado
+    const r = await auth("post", "/api/whatsapp/sessions/num-1/test");
+    expect(r.status).toBe(402);
+    expect(r.body.code).toBe("number_not_registered");
+    expect(waCalls.sendText).toHaveLength(0);
+  });
+
+  it("as duas pernas passam: auto-DM do próprio número + DM do WhatsNimbus", async () => {
+    const { user, auth } = await userOnPlan("pro");
+    await auth("post", "/api/whatsapp/sessions/num-1");
+    await registerNumbers(auth, ["num-1"]);
+    whatsnimbus.writeConfig({ numberId: "5511888888888", phone: "5511888888888" });
+
+    const r = await auth("post", "/api/whatsapp/sessions/num-1/test");
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ ok: true, self: { ok: true }, whatsnimbus: { ok: true } });
+
+    expect(waCalls.sendText).toHaveLength(2);
+    // Perna 1: o PRÓPRIO número mandando pra ele mesmo (jid = seu telefone).
+    expect(waCalls.sendText[0]).toMatchObject({
+      userId: user.id, numberId: "num-1", jid: "5511999999999@s.whatsapp.net",
+    });
+    // Perna 2: remetente é o userId sintético do WhatsNimbus, destino é o usuário.
+    expect(waCalls.sendText[1]).toMatchObject({
+      userId: whatsnimbus.WHATSNIMBUS_USER_ID,
+      numberId: "5511888888888",
+      jid: "5511999999999@s.whatsapp.net",
+    });
+  });
+
+  it("WhatsNimbus não conectado: perna 2 vira `skipped` e NÃO reprova o teste", async () => {
+    const { auth } = await userOnPlan("pro");
+    await auth("post", "/api/whatsapp/sessions/num-1");
+    await registerNumbers(auth, ["num-1"]);
+
+    const r = await auth("post", "/api/whatsapp/sessions/num-1/test");
+    expect(r.status).toBe(200);
+    expect(r.body.ok).toBe(true);          // o que importa é o número do usuário
+    expect(r.body.self.ok).toBe(true);
+    expect(r.body.whatsnimbus).toMatchObject({ ok: false, skipped: true });
+    expect(r.body.whatsnimbus.error).toMatch(/WhatsNimbus não está conectado/);
+    expect(waCalls.sendText).toHaveLength(1);
+  });
+
+  it("sessão do usuário caída: `ok:false` com a mensagem, mas a perna do WhatsNimbus ainda roda", async () => {
+    const { auth } = await userOnPlan("pro");
+    await auth("post", "/api/whatsapp/sessions/num-1");
+    await registerNumbers(auth, ["num-1"]);
+    whatsnimbus.writeConfig({ numberId: "5511888888888", phone: "5511888888888" });
+    waFailSend("Sessão não está conectada (status: disconnected).");
+
+    const r = await auth("post", "/api/whatsapp/sessions/num-1/test");
+    // 200: resultado parcial é diagnóstico bem-sucedido, não erro de servidor.
+    expect(r.status).toBe(200);
+    expect(r.body.ok).toBe(false);
+    expect(r.body.self.ok).toBe(false);
+    expect(r.body.self.error).toMatch(/não está conectada/);
+    // A perna 2 tentou (e falhou junto, porque o mock derruba todo sendText) —
+    // o que importa é que a falha da perna 1 não abortou a rota.
+    expect(r.body.whatsnimbus.ok).toBe(false);
+    expect(r.body.whatsnimbus.skipped).toBeUndefined();
   });
 });
 

@@ -136,7 +136,22 @@ Como que acha a campanha, mas não consegue puxar ela?
 
 34. [x] Quero trocar o ? que tem embaixo das telas por um simbolo do whatsapp para contatar o suporte que encaminhe para https://wa.me/55997140686
 
-35. [] Adiciona um botão para testar se o Whats esta conectado la no card de cada numero conectado do Whatsapp. Nele dispara uma mensagem teste do WhatsNimbus do sistema que envia para o numero no privado, assim consigo testar se esta conectando e funcionando na pratica.
+35. [x] Adiciona um botão para testar se o Whats esta conectado la no card de cada numero conectado do Whatsapp. Nele dispara uma mensagem teste do WhatsNimbus do sistema que envia para o numero no privado, assim consigo testar se esta conectando e funcionando na pratica. Teste somente os testes necessarios para essa mudanca especifica, não rpecisa rodar tooodos os testes novamente.
+
+    **Feito:** botão "Testar" no card de cada número **conectado** (Página WhatsApp).
+    Dispara `POST /api/whatsapp/sessions/:id/test`, que roda **duas pernas
+    independentes** e devolve o veredito de cada uma:
+    1. **auto-DM** — o próprio número manda uma mensagem pra ele mesmo. É o único
+       jeito de provar que aquela sessão Baileys está *enviando*: o "Conectado" da
+       tela não prova (snapshot velho no Redis, socket trocado por conflito).
+    2. **DM do WhatsNimbus** — o WhatsApp do sistema manda pro número, provando que
+       o remetente das notificações está de pé. WhatsNimbus desconectado vira
+       `skipped` (informativo), **não** reprova o teste.
+    Resultado aparece no próprio card em duas linhas ✓/✗/—. Falha de perna volta
+    200 com o motivo nos campos (resultado parcial é diagnóstico, não erro 500);
+    telefone é resolvido no servidor (sessão viva → estado → numberId canônico),
+    nunca vem do cliente. Cooldown de 60s por número, porque cada clique manda duas
+    mensagens de verdade e martelar o botão é vetor de ban.
 
 36. [] Quero tornar obrigatório registrar um telefone ao se cadastrar no sistema.
 

@@ -227,9 +227,39 @@ async function onQueueEmpty(userId, groupId, groupName, isEmpty) {
     `${TAG} 📭\nA fila da campanha *${groupName}* está *vazia* — não há produtos pra enviar.\nFaça uma busca ou aprove os pendentes.`);
 }
 
+// ── Teste de conexão (botão "Testar" no card do número) ─────────────────────
+// Fora do deliver(): o teste tem que sair mesmo com as notificações desligadas
+// nas preferências do usuário — quem clicou está olhando a tela esperando a
+// mensagem chegar. Espelha o admin-notifier.sendTest().
+function formatDate(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return d.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+// Texto que o PRÓPRIO número manda pra ele mesmo. Prova que a sessão Baileys
+// daquele número está enviando de verdade — o status "connected" da tela não
+// prova isso (snapshot velho no Redis, socket trocado por conflito etc.).
+function selfTestText() {
+  return `${TAG} ✅ Teste de conexão\n\nSe você está lendo isto, este número está conectado e *enviando* normalmente.\n\n📅 ${formatDate(new Date().toISOString())}`;
+}
+
+// DM do WhatsNimbus pro número do usuário. Prova que o remetente das
+// notificações do sistema está de pé e que o telefone cadastrado está certo.
+// Lança quando o WhatsNimbus não está conectado — a rota traduz em "skipped".
+async function sendConnectionTest(phone) {
+  const wn = whatsnimbus.readConfig();
+  if (!wn.numberId) throw new Error("WhatsNimbus não está conectado.");
+  const wa = getWa();
+  const text = `${TAG} ✅ Teste de conexão\n\nEsta mensagem veio do WhatsNimbus, o WhatsApp do sistema. É por aqui que você vai receber os avisos automáticos.\n\n📅 ${formatDate(new Date().toISOString())}`;
+  await wa.sendText(whatsnimbus.WHATSNIMBUS_USER_ID, String(wn.numberId), wa.jidFromPhone(phone), text);
+}
+
 module.exports = {
   readUserConfig,
   markConnectedOnce,
+  sendConnectionTest,
+  selfTestText,
   onSessionStatus,
   onCampaignDeactivated,
   onCampaignReactivated,

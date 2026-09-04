@@ -19,8 +19,13 @@ const calls = {
   createGroup: [],
 };
 
+// Gancho de falha: quando setado, sendText lança com esta mensagem. Serve pros
+// testes que exercitam a perna que falha (ex.: sessão caída no /test).
+let sendError = null;
+
 function reset() {
   for (const k of Object.keys(calls)) calls[k].length = 0;
+  sendError = null;
 }
 
 const fakeSessions = new Map();
@@ -47,6 +52,7 @@ const mock = {
   __sessions: fakeSessions,
 
   async sendText(userId, numberId, jid, text) {
+    if (sendError) throw new Error(sendError);
     calls.sendText.push({ userId, numberId, jid, text });
     return { ok: true };
   },
@@ -88,6 +94,11 @@ const mock = {
     return out;
   },
   __connect: connect,
+  // Setter do gancho de falha (null desliga).
+  __failSend: (msg) => { sendError = msg; },
+  // Espelha backend/whatsapp/local.js:232-233 — o módulo real exporta os dois.
+  normalizePhone(p) { return String(p).replace(/\D/g, ""); },
+  jidFromPhone(phone) { return `${String(phone).replace(/\D/g, "")}@s.whatsapp.net`; },
   async deleteSession(userId, numberId) {
     calls.deleteSession.push({ userId, numberId });
     fakeSessions.delete(`${userId}::${numberId}`);
@@ -122,3 +133,4 @@ function installMock() {
 }
 
 export { installMock, mock, calls, reset, connect };
+export const failSend = (msg) => mock.__failSend(msg);

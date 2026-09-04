@@ -5,7 +5,7 @@
 //   3. backend/server.js entao carrega com o mock no lugar
 
 import "./env.js";
-import { installMock, calls as waCalls, reset as resetWa, connect as waConnect } from "./wa-mock.js";
+import { installMock, calls as waCalls, reset as resetWa, connect as waConnect, failSend as waFailSend } from "./wa-mock.js";
 import { installMock as installStripeMock, calls as stripeCalls, reset as resetStripe, setMock as setStripeMock } from "./stripe-mock.js";
 import { installMock as installMailerMock, calls as mailerCalls, reset as resetMailer } from "./mailer-mock.js";
 import { installMock as installEmailMock, calls as emailCalls, reset as resetEmail, byKind as emailByKind } from "./email-mock.js";
@@ -113,6 +113,7 @@ export {
   waCalls,
   resetWa,
   waConnect,
+  waFailSend,
   stripeMock,
   stripeCalls,
   resetStripe,

@@ -14,6 +14,7 @@ vi.mock("../data/api", () => ({
   errText: (err, fallback) => err?.message || fallback,
   deleteWASession: vi.fn().mockResolvedValue({ ok: true }),
   deleteWASessionKeepalive: vi.fn(),
+  testWASession: vi.fn(),
 }));
 
 import PageWhatsApp from "../pages/WhatsApp.jsx";
