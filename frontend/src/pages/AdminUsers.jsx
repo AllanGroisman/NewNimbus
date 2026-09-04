@@ -383,7 +383,7 @@ export default function PageAdminUsers({ currentUser }) {
   const [loading, setLoading]       = useState(true);
   const [error, setError]           = useState(null);
   const [search, setSearch]         = useState("");
-  const [filter, setFilter]         = useState("all"); // all | paying | canceled | canceling | manual-trial | unverified | suspended | admin
+  const [filter, setFilter]         = useState("all"); // all | paying | operando | idle | canceled | canceling | manual-trial | unverified | suspended | admin
 
   // Bloqueio de cadastro (beta fechado). null = ainda carregando.
   const [regBlocked, setRegBlocked] = useState(null);
@@ -559,9 +559,15 @@ export default function PageAdminUsers({ currentUser }) {
   const isCancelado  = u => u.subscription?.status === "canceled";
   const isCancelando = u => isPagando(u) && !!u.subscription?.cancelAtPeriodEnd;
   const temCortesia  = u => !!u.subscription?.manualTrialActive;
+  // "Parado" = tem acesso ativo e não está usando. A cortesia entra no OU porque
+  // quem só tem cortesia pode não ter status pago no Stripe — e uma cortesia que
+  // ninguém liga é justamente o caso que se quer enxergar.
+  const isParado = u => (isPagando(u) || temCortesia(u)) && !isOperando(u);
 
   const filtered = users.filter(u => {
     if (filter === "paying" && !isPagando(u)) return false;
+    if (filter === "operando" && !isOperando(u)) return false;
+    if (filter === "idle" && !isParado(u)) return false;
     if (filter === "unverified" && u.emailVerified) return false;
     if (filter === "suspended" && !u.suspended) return false;
     if (filter === "admin" && u.role !== "admin") return false;
@@ -581,6 +587,7 @@ export default function PageAdminUsers({ currentUser }) {
   const pagandoCount    = users.filter(isPagando).length;
   const atrasadoCount   = users.filter(isAtrasado).length;
   const operandoCount   = users.filter(isOperando).length;
+  const paradoCount     = users.filter(isParado).length;
   const canceladoCount  = users.filter(isCancelado).length;
   const cancelandoCount = users.filter(isCancelando).length;
   const cortesiaCount   = users.filter(temCortesia).length;
@@ -625,9 +632,12 @@ export default function PageAdminUsers({ currentUser }) {
     }),
   });
 
-  const filterBtn = (value, label, count) => (
+  // `title` é opcional: só "Operando" e "Parados" têm critério que o rótulo não
+  // entrega sozinho — os outros chips seguem chamando com três argumentos.
+  const filterBtn = (value, label, count, title) => (
     <button
       onClick={() => setFilter(value)}
+      title={title}
       style={{
         padding: "5px 12px", borderRadius: 7, fontSize: 12, cursor: "pointer",
         border: filter === value ? `0.5px solid ${PRIMARY}` : "0.5px solid var(--color-border-tertiary)",
@@ -699,6 +709,8 @@ export default function PageAdminUsers({ currentUser }) {
       <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
         {filterBtn("all",        "Todos",           0)}
         {filterBtn("paying",     "Pagando",         pagandoCount)}
+        {filterBtn("operando",   "Operando",        operandoCount, "Campanha ativa (nem o usuário nem o plano pausaram) E pelo menos um número de WhatsApp conectado agora.")}
+        {filterBtn("idle",       "Parados",         paradoCount,   "Pagando ou em cortesia, mas sem campanha ativa ou sem nenhum número conectado — paga e não usa.")}
         {filterBtn("canceled",   "Cancelados",      canceladoCount)}
         {filterBtn("canceling",  "Cancelamento agendado", cancelandoCount)}
         {filterBtn("manual-trial", "Cortesia",   cortesiaCount)}

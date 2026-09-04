@@ -160,6 +160,16 @@ Como que acha a campanha, mas não consegue puxar ela?
     R$1, que deixa de ser oferecido enquanto a cortesia corre. Cortesia acabando
     em menos de 48h cobra normal (piso do Stripe pro `trial_end`).
 
-38. [] na aba de Usuarios de ADMIN, acrescenta mais um filtro ali para os "Operando".
+38. [x] na aba de Usuarios de ADMIN, acrescenta mais um filtro ali para os "Operando".
+
+    **Feito:** dois chips novos na fileira de filtros, logo depois de "Pagando".
+    **Operando** usa o mesmo critério do card que já existia (campanha ativa — nem o
+    usuário nem o plano pausaram — E pelo menos um número de WhatsApp conectado agora),
+    então o número do chip e o do card nunca divergem. **Parados** é o complemento
+    acionável: está pagando ou em cortesia e NÃO está operando — quem paga e não usa.
+    Quem não tem plano nem cortesia não entra em "Parados". Só frontend
+    (`AdminUsers.jsx`): a lista já vinha inteira do backend com `counts.activeGroups` e
+    `counts.connectedNumbers`, e a filtragem desta tela sempre foi no cliente. Os dois
+    chips carregam a definição no `title`, como os cards.
 
 39. [] deu alguns problemas com alguns usuarios na conexão dos whats. De uma boa revisada para deixar bem redondo e funcionando certinho, sem criar conexoes fantasma, sem dar erros, é uma parte bem importante do sistema.

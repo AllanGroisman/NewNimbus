@@ -128,6 +128,45 @@ describe("Admin › Usuários", () => {
       expect(screen.getByText("Operando").parentElement.textContent).toMatch(/1de 3/));
   });
 
+  it("o filtro 'Operando' deixa na lista só quem opera", async () => {
+    // Mesmos três casos do card: opera / campanha sem número / número sem campanha.
+    // O card dizia "1 de 3" e não dizia qual — é isso que o chip resolve.
+    mostrar([
+      user({ id: "a", name: "Opera",       email: "a@ex.com", counts: { groups: 1, activeGroups: 1, repasseGroups: 0, numbers: 1, connectedNumbers: 1 } }),
+      user({ id: "b", name: "SemNumero",   email: "b@ex.com", counts: { groups: 1, activeGroups: 1, repasseGroups: 0, numbers: 1, connectedNumbers: 0 } }),
+      user({ id: "c", name: "SemCampanha", email: "c@ex.com", counts: { groups: 0, activeGroups: 0, repasseGroups: 0, numbers: 1, connectedNumbers: 1 } }),
+    ]);
+    render(<PageAdminUsers currentUser={{ id: "admin" }} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Operando (1)" }));
+    expect(screen.getByText("Opera")).toBeInTheDocument();
+    expect(screen.queryByText("SemNumero")).not.toBeInTheDocument();
+    expect(screen.queryByText("SemCampanha")).not.toBeInTheDocument();
+  });
+
+  it("'Parados' é quem tem acesso ativo e não está operando — quem não paga fica de fora", async () => {
+    const opera  = { groups: 1, activeGroups: 1, repasseGroups: 0, numbers: 1, connectedNumbers: 1 };
+    const parado = { groups: 1, activeGroups: 1, repasseGroups: 0, numbers: 1, connectedNumbers: 0 };
+    mostrar([
+      user({ id: "a", name: "PagaEUsa",       email: "a@ex.com", subscription: sub(), counts: opera }),
+      user({ id: "b", name: "PagaEParado",    email: "b@ex.com", subscription: sub(), counts: parado }),
+      user({ id: "c", name: "CortesiaParada", email: "c@ex.com", counts: parado, subscription: sub({
+        planId: "free", status: "inactive", effectivePlanId: "pro",
+        manualTrialPlanId: "pro", manualTrialActive: true, manualTrialDaysLeft: 12,
+      }) }),
+      // Sem plano e sem cortesia: também não opera, mas não é "paga e não usa" —
+      // é o que separa "Parados" do complemento puro de "Operando".
+      user({ id: "d", name: "SemPlano", email: "d@ex.com", counts: parado }),
+    ]);
+    render(<PageAdminUsers currentUser={{ id: "admin" }} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Parados (2)" }));
+    expect(screen.getByText("PagaEParado")).toBeInTheDocument();
+    expect(screen.getByText("CortesiaParada")).toBeInTheDocument();
+    expect(screen.queryByText("PagaEUsa")).not.toBeInTheDocument();
+    expect(screen.queryByText("SemPlano")).not.toBeInTheDocument();
+  });
+
   it("clicar no usuário busca a ficha uma vez e reaproveita no segundo clique", async () => {
     mostrar([user()]);
     render(<PageAdminUsers currentUser={{ id: "admin" }} />);
