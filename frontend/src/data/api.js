@@ -280,8 +280,15 @@ export async function billingMe(fresh) {
 }
 // Cria Checkout Session e devolve { url } — frontend chama window.location.assign(url)
 // opts.trial=true → checkout "7 dias por R$1" (só Básico, 1x por conta)
+// opts.keepManualTrial=false → quem está em cortesia pediu pra encerrá-la e já
+//   começar a pagar. Omitido = mantém a cortesia (default que nunca cobra por
+//   dias já concedidos).
 export async function billingCheckout(planId, opts) {
-  return http("POST", "/api/billing/checkout", { planId, trial: !!opts?.trial });
+  return http("POST", "/api/billing/checkout", {
+    planId,
+    trial: !!opts?.trial,
+    keepManualTrial: opts?.keepManualTrial !== false,
+  });
 }
 // Detalhes de cobrança: { upcomingInvoice, paymentMethod, invoices } — mount da página
 export async function billingDetails() {
@@ -474,6 +481,13 @@ export async function adminResendUserVerification(id) {
   return http("POST", `/api/admin/users/${id}/resend-verification`);
 }
 export async function adminUserDetail(id)        { return http("GET", `/api/admin/users/${id}/detail`); }
+// Trial manual (cortesia): libera um plano por N dias sem passar pelo Stripe.
+export async function adminGrantManualTrial(id, { planId, days, note }) {
+  return http("POST", `/api/admin/users/${id}/manual-trial`, { planId, days, note });
+}
+export async function adminRevokeManualTrial(id) {
+  return http("DELETE", `/api/admin/users/${id}/manual-trial`);
+}
 export async function adminGetRegistration()        { return http("GET", "/api/admin/registration"); }
 export async function adminSetRegistration(blocked) { return http("PUT", "/api/admin/registration", { blocked }); }
 

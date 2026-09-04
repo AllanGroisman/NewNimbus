@@ -97,15 +97,21 @@ function decidirAviso({ before, after, user }) {
   const eraPago = !!antes.planId && antes.planId !== "free";
   if (!eraPago && depois.planId && depois.planId !== "free" && EM_DIA.has(depois.status)) {
     const trial = depois.status === "trialing";
+    // Início adiado pela cortesia do admin: o status é "trialing" igual ao teste
+    // de R$1, mas nada foi cobrado agora — dizer "recebemos seu pagamento" seria
+    // mentira. A cortesia ainda vigente é o que separa um caso do outro.
+    const adiado = trial && limits.manualTrialActive(depois);
     const mensal = centavosDoPlano(depois.planId);
     return {
       kind: "subscription_started",
       payload: {
         ...base(user, depois),
         trial,
+        deferred: adiado,
         // No teste, o que a pessoa pagou agora foi a taxa de R$ 1,00 — o valor
-        // do plano só entra na frase sobre a próxima cobrança.
-        amount: trial ? limits.TRIAL_FEE_CENTS : mensal,
+        // do plano só entra na frase sobre a próxima cobrança. No início adiado
+        // não houve cobrança nenhuma.
+        amount: adiado ? 0 : trial ? limits.TRIAL_FEE_CENTS : mensal,
         planAmount: mensal,
         currency: "brl",
         // Em trial, currentPeriodEnd é o fim do teste (é quando a cobrança cheia

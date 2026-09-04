@@ -368,6 +368,19 @@ model Subscription {
   pastDueSince         DateTime? // início do atraso (past_due/unpaid) — base da carência de 3 dias
   stripeMode           String?   // "test" | "live" — modo do Stripe em que esta assinatura nasceu; NULL = linha sem Stripe
 
+  // Trial manual (cortesia dada pelo admin em Admin › Usuários). Não tem relação
+  // nenhuma com o trial de R$1: não consome `trialUsedAt`, não existe no Stripe e
+  // não cobra nada. Vale só quando NÃO há assinatura paga valendo — a ordem está
+  // em limits.effectivePlanId. `manualTrialEndedAt` não é a data de fim: é o
+  // carimbo de "esta concessão já foi encerrada/reconciliada", que faz a varredura
+  // de expiração rodar uma vez por concessão em vez de a cada 6h pra sempre.
+  manualTrialPlanId    String?   // "basic" | "pro" | "business"
+  manualTrialStartedAt DateTime?
+  manualTrialEndsAt    DateTime?
+  manualTrialEndedAt   DateTime?
+  manualTrialGrantedBy String?   // users.id do admin que concedeu
+  manualTrialNote      String?
+
   // Checkout público (veio da landing page, sem conta): a Checkout Session é o
   // que liga o retorno do Stripe (/bem-vindo?session_id=…) à conta provisionada.
   // claimedAt trava o resgate em uso único — o session_id anda na URL.

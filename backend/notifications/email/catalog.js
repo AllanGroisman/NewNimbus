@@ -316,16 +316,22 @@ const EMAILS = [
     variables: [
       V_NOME,
       { name: "plano", desc: "Nome do plano assinado" },
-      { name: "valor", desc: 'Quanto foi pago agora (ex.: "R$ 1,00")' },
+      { name: "valor", desc: 'Quanto foi pago agora (ex.: "R$ 1,00"; "R$ 0,00" quando a cobrança foi adiada)' },
+      {
+        name: "abertura",
+        desc: "Primeira frase — confirma o pagamento, ou avisa que nada foi cobrado quando a assinatura começou durante uma cortesia",
+      },
       {
         name: "cobranca",
-        desc: "Frase pronta sobre a próxima cobrança — muda se for teste ou assinatura cheia",
+        desc: "Frase pronta sobre a próxima cobrança — muda se for teste, cortesia ou assinatura cheia",
       },
     ],
     example: {
       nome: "Ana",
       plano: "Básico",
       valor: "R$ 1,00",
+      abertura:
+        "Recebemos seu pagamento de *R$ 1,00* e sua assinatura do plano *Básico* já está ativa.",
       cobranca:
         "Seu teste vai até *22 de agosto de 2026*. A partir daí a assinatura passa a *R$ 69,90 por mês*, cobrada automaticamente no mesmo cartão.",
     },
@@ -336,7 +342,7 @@ const EMAILS = [
       greeting: "{nome}",
       tone: "normal",
       paragraphs: [
-        "Recebemos seu pagamento de *{valor}* e sua assinatura do plano *{plano}* já está ativa.",
+        "{abertura}",
         "{cobranca}",
         "Tudo pronto pra usar: é só entrar no sistema, conectar seu WhatsApp e criar a primeira campanha.",
       ],

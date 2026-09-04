@@ -424,3 +424,140 @@ describe("Subscription — billingMe falha", () => {
     await waitFor(() => expect(screen.getByText(/network down/i)).toBeInTheDocument(), { timeout: 3000 });
   });
 });
+
+// Cortesia (trial manual): plano liberado pelo admin, sem Stripe e sem cobrança.
+// O risco desta tela é travar o card do plano da cortesia como "Plano atual" e
+// impedir a pessoa de assinar justamente o plano que testou.
+describe("Subscription — trial manual (cortesia)", () => {
+  const CORTESIA = {
+    planId: "free", effectivePlan: "pro", status: "inactive",
+    hasStripeCustomer: false, stripeEnabled: true, isAdmin: false,
+    limits: { numbers: 3, groups: 5 },
+    manualTrial: {
+      planId: "pro", planLabel: "Pro", endsAt: "2026-09-16T12:00:00.000Z",
+      daysLeft: 12, active: true, dormant: false,
+    },
+  };
+
+  it("anuncia a cortesia em vez de dizer 'Sem assinatura'", async () => {
+    setBillingMe(CORTESIA);
+    render(<PageSubscription />);
+    await waitFor(() => expect(screen.getByText(/Cortesia \(12d restantes\)/)).toBeInTheDocument());
+    expect(screen.getByText(/liberada pela equipe/i)).toBeInTheDocument();
+    expect(screen.queryByText("Sem assinatura")).not.toBeInTheDocument();
+  });
+
+  it("o card do plano em cortesia continua assinável — não vira 'Plano atual'", async () => {
+    setBillingMe(CORTESIA);
+    render(<PageSubscription />);
+    await waitFor(() => expect(screen.getByText("EM CORTESIA")).toBeInTheDocument());
+    expect(screen.queryByText("SEU PLANO")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Plano atual" })).not.toBeInTheDocument();
+    // Os três planos seguem clicáveis.
+    expect(screen.getAllByRole("button", { name: /Assinar|Fazer upgrade|Testar por/ }).length).toBe(3);
+  });
+
+  it("não oferece o teste de R$1 durante a cortesia", async () => {
+    // Pagar R$1 por 7 dias de acesso que já se tem de graça não é oferta.
+    setBillingMe({ ...CORTESIA, trialEligible: true });
+    render(<PageSubscription />);
+    await waitFor(() => expect(screen.getByText("EM CORTESIA")).toBeInTheDocument());
+    expect(screen.queryByText("7 DIAS POR R$1")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Testar por R\$ 1,00/ })).not.toBeInTheDocument();
+  });
+
+  it("avisa que assinar agora não cobra hoje", async () => {
+    setBillingMe(CORTESIA);
+    render(<PageSubscription />);
+    await waitFor(() => expect(screen.getByText(/primeira cobrança só acontece em/i)).toBeInTheDocument());
+  });
+
+  // Assinou e escolheu manter a cortesia: até a primeira cobrança quem vale é a
+  // CORTESIA (Básico), não o plano contratado (Pro) — é o degrau que faz o
+  // downgrade não tirar o plano no meio do prazo prometido.
+  it("assinou durante a cortesia: mostra o plano da cortesia e quando o contratado entra", async () => {
+    setBillingMe({
+      ...CORTESIA,
+      planId: "pro", effectivePlan: "basic", status: "trialing", hasStripeCustomer: true,
+      daysLeftInTrial: 12, currentPeriodEnd: "2026-09-16T12:00:00.000Z",
+      limits: { numbers: 1, groups: 1 },
+      manualTrial: { ...CORTESIA.manualTrial, planId: "basic", planLabel: "Básico" },
+    });
+    render(<PageSubscription />);
+    await waitFor(() => expect(screen.getByText(/você segue/i)).toBeInTheDocument());
+    // O plano em vigor no hero é o da cortesia, e o Pro tem data pra entrar.
+    expect(screen.getAllByText(/Nimbus Básico/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/^A PARTIR DE /)).toBeInTheDocument();
+    // O card do Pro não pode se anunciar como plano atual antes de valer.
+    expect(screen.queryByText("SEU PLANO")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Adicione um cartão antes/i)).not.toBeInTheDocument();
+  });
+
+  it("assinar em cortesia abre o modal de escolha em vez de ir direto pro Stripe", async () => {
+    setBillingMe(CORTESIA);
+    render(<PageSubscription />);
+    await waitFor(() => expect(screen.getByText("EM CORTESIA")).toBeInTheDocument());
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Assinar" })[0]);
+    expect(await screen.findByText(/Você está em cortesia até/)).toBeInTheDocument();
+    // Nada de checkout enquanto a pessoa não escolhe.
+    expect(billingCheckout).not.toHaveBeenCalled();
+  });
+
+  it("'manter a cortesia' é o default e não cobra hoje", async () => {
+    billingCheckout.mockResolvedValue({ url: "https://checkout.stripe.test/c/business" });
+    setBillingMe(CORTESIA);
+    render(<PageSubscription />);
+    await waitFor(() => expect(screen.getByText("EM CORTESIA")).toBeInTheDocument());
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Assinar" })[0]);
+    fireEvent.click(await screen.findByRole("button", { name: "Continuar" }));
+
+    await waitFor(() => expect(billingCheckout).toHaveBeenCalledWith(
+      expect.any(String), { keepManualTrial: true },
+    ));
+  });
+
+  it("'começar agora' manda encerrar a cortesia", async () => {
+    billingCheckout.mockResolvedValue({ url: "https://checkout.stripe.test/c/business" });
+    setBillingMe(CORTESIA);
+    render(<PageSubscription />);
+    await waitFor(() => expect(screen.getByText("EM CORTESIA")).toBeInTheDocument());
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Assinar" })[0]);
+    fireEvent.click(await screen.findByText(/^Começar o /));
+    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+
+    await waitFor(() => expect(billingCheckout).toHaveBeenCalledWith(
+      expect.any(String), { keepManualTrial: false },
+    ));
+  });
+
+  it("sem cortesia o clique segue direto pro Stripe (fluxo normal intacto)", async () => {
+    billingCheckout.mockResolvedValue({ url: "https://checkout.stripe.test/c/pro" });
+    setBillingMe({
+      planId: "free", effectivePlan: "free", status: "inactive",
+      hasStripeCustomer: false, stripeEnabled: true, isAdmin: false,
+      limits: { numbers: 0, groups: 0 },
+    });
+    render(<PageSubscription />);
+    await waitFor(() => expect(screen.getByText("Básico")).toBeInTheDocument());
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Assinar" })[0]);
+    await waitFor(() => expect(billingCheckout).toHaveBeenCalled());
+    expect(screen.queryByText(/Você está em cortesia até/)).not.toBeInTheDocument();
+  });
+
+  it("cortesia dormente (assinatura paga vence) não aparece como plano em vigor", async () => {
+    setBillingMe({
+      ...CORTESIA,
+      planId: "basic", effectivePlan: "basic", status: "active", hasStripeCustomer: true,
+      limits: { numbers: 1, groups: 1 },
+      manualTrial: { ...CORTESIA.manualTrial, dormant: true },
+    });
+    render(<PageSubscription />);
+    await waitFor(() => expect(screen.getByText(/Nimbus Básico/)).toBeInTheDocument());
+    expect(screen.queryByText(/liberada pela equipe/i)).not.toBeInTheDocument();
+    expect(screen.getByText("SEU PLANO")).toBeInTheDocument();
+  });
+});

@@ -904,6 +904,11 @@ function decorateSubscription(sub) {
     // e aqui a pergunta é o que a ASSINATURA vale, não o que o cargo concede.
     effectivePlanId: billingLimits.effectivePlanId(sub, "user"),
     graceEndsAt: billingLimits.graceEndsAt(sub),
+    // Cortesia do admin (trial manual): a lista e a ficha mostram o selo a partir
+    // daqui em vez de refazer conta de data no navegador. `effectivePlanId` acima
+    // já reflete a cortesia quando ela é o que vale.
+    manualTrialActive: billingLimits.manualTrialActive(sub),
+    manualTrialDaysLeft: billingLimits.manualTrialDaysLeft(sub),
     crossMode: sub.stripeMode && sub.stripeMode !== stripe.mode() ? sub.stripeMode : null,
   };
 }

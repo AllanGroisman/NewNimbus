@@ -101,3 +101,33 @@ describe("computePlanPaused — números de WhatsApp", () => {
     expect(r.numbers).toEqual([]);
   });
 });
+
+// Cortesia do admin (trial manual): entra e sai pelos mesmos limites de qualquer
+// plano — quem resolve isso é `getLimits`/`effectivePlanId`, então aqui a prova é
+// que a pausa acompanha a cortesia começando e terminando.
+describe("computePlanPaused — trial manual (cortesia)", () => {
+  const DIA = 24 * 60 * 60 * 1000;
+  const semPlano = { planId: "free", status: "inactive" };
+  const comCortesia = {
+    ...semPlano,
+    manualTrialPlanId: "pro",
+    manualTrialEndsAt: new Date(Date.now() + 10 * DIA),
+  };
+  const cortesiaVencida = { ...comCortesia, manualTrialEndsAt: new Date(Date.now() - DIA) };
+
+  it("conceder a cortesia despausa as campanhas que passam a caber", () => {
+    const s = state([g(1), g(2), g(3)]);
+    const semNada = enforce.computePlanPaused(s, limits.getLimits(semPlano), EMPTY);
+    expect(semNada.groups.sort()).toEqual([1, 2, 3]); // free = 0 campanhas
+
+    const comPro = enforce.computePlanPaused(s, limits.getLimits(comCortesia), semNada);
+    expect(comPro.groups).toEqual([]); // pro = 5 campanhas
+  });
+
+  it("cortesia vencida repausa tudo de novo", () => {
+    const s = state([g(1), g(2), g(3)]);
+    const ativo = enforce.computePlanPaused(s, limits.getLimits(comCortesia), EMPTY);
+    const vencido = enforce.computePlanPaused(s, limits.getLimits(cortesiaVencida), ativo);
+    expect(vencido.groups.sort()).toEqual([1, 2, 3]);
+  });
+});

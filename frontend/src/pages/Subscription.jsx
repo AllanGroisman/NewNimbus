@@ -98,6 +98,11 @@ export default function PageSubscription() {
   // Confirmação de ações que acontecem sem sair da página (hoje: upgrade).
   const [notice, setNotice] = useState("");
   const [showCancel, setShowCancel] = useState(false);
+  // Assinatura pedida por quem está em cortesia: { planId, planName, price } —
+  // antes de ir pro Stripe a pessoa escolhe se mantém a cortesia ou começa a
+  // pagar hoje. `manterCortesia` guarda a escolha enquanto o modal está aberto.
+  const [cortesiaCheckout, setCortesiaCheckout] = useState(null);
+  const [manterCortesia, setManterCortesia] = useState(true);
   // Detalhes de cobrança (próxima fatura, cartão, histórico) — carrega 1x no
   // mount, separado do status pra não bloquear a página se o Stripe demorar.
   const [details, setDetails] = useState(null);
@@ -169,6 +174,15 @@ export default function PageSubscription() {
     }
   }
 
+  // Fecha o modal e segue pro Stripe. Chamado do clique no "Continuar" — tem que
+  // continuar sendo um clique de verdade, senão o window.open de startCheckout
+  // cai no bloqueador de popup.
+  function confirmarCortesiaCheckout() {
+    const alvo = cortesiaCheckout;
+    setCortesiaCheckout(null);
+    startCheckout(alvo.planId, { keepManualTrial: manterCortesia });
+  }
+
   // Upgrade de quem JÁ tem assinatura: troca o plano na assinatura existente e
   // cobra só a diferença proporcional. Sem isto, subir de plano abria um novo
   // checkout — e o cliente terminaria com duas assinaturas ativas.
@@ -235,14 +249,40 @@ export default function PageSubscription() {
     );
   }
 
+  // Nome de exibição de um plano — mesmo critério do hero: catálogo do Stripe
+  // primeiro, PLAN_META como reserva.
+  const nomeDoPlano = id => me.plans?.find(p => p.id === id)?.label || PLAN_META[id]?.name || id;
   const currentPlan = me.effectivePlan || "free";
   // Nome do produto no Stripe; PLAN_META (e, no limite, o próprio id) é fallback.
   const currentPlanName = me.plans?.find(p => p.id === currentPlan)?.label
     || PLAN_META[currentPlan]?.name
     || currentPlan;
   const isAdmin = !!me.isAdmin;
+  // Cortesia do admin (trial manual) valendo agora — só quando não está dormente
+  // por baixo de uma assinatura paga.
+  const cortesia = me.manualTrial?.active && !me.manualTrial?.dormant ? me.manualTrial : null;
+  // Assinou DURANTE a cortesia: a assinatura já existe, mas a primeira cobrança
+  // só roda quando a cortesia acaba (trial_end no Stripe). O status é "trialing"
+  // igual ao teste de R$1 — o que separa os dois é a cortesia ainda vigente.
+  const inicioAdiado = me.status === "trialing" && me.manualTrial?.active ? me.manualTrial : null;
+  // O que a pessoa realmente ASSINA, que não é a mesma coisa que o plano em vigor:
+  // `currentPlan` pode ser uma cortesia, e travar o card dela como "Plano atual"
+  // impediria justamente que ela assinasse o plano que acabou de testar.
+  // Durante a janela adiada o plano contratado ainda NÃO está valendo (quem vale
+  // é a cortesia), então ele não pode aparecer como "SEU PLANO" nem travar o card.
+  const planoAssinado = inicioAdiado
+    ? "free"
+    : (me.status === "active" || me.status === "trialing" || me.inGrace)
+      ? (me.planId || "free")
+      : "free";
+  // O plano que passa a valer na data da primeira cobrança.
+  const planoContratado = inicioAdiado ? (me.planId || null) : null;
   const hasActiveSub = (me.status === "active" || me.status === "trialing") && me.hasStripeCustomer;
-  const badge = statusBadge(me.status, me.daysLeftInTrial, me.cancelAtPeriodEnd);
+  const badge = cortesia
+    ? { label: `Cortesia (${cortesia.daysLeft}d restantes)`, color: "#0C4A6E", bg: "#E0F2FE", border: "#7DD3FC" }
+    : inicioAdiado
+      ? { label: `${nomeDoPlano(planoContratado)} em ${fmtDate(inicioAdiado.endsAt)}`, color: "#3B6D11", bg: "#EAF3DE", border: "#C5DBA7" }
+      : statusBadge(me.status, me.daysLeftInTrial, me.cancelAtPeriodEnd);
 
   return (
     <div style={{ maxWidth: 920 }}>
@@ -283,6 +323,23 @@ export default function PageSubscription() {
         </div>
       )}
 
+      {cortesia && (
+        <div style={{ background: "#E0F2FE", border: "0.5px solid #7DD3FC", color: "#0C4A6E", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
+          Cortesia <strong>Nimbus {cortesia.planLabel}</strong> liberada pela equipe até <strong>{fmtDate(cortesia.endsAt)}</strong>
+          {" "}— {cortesia.daysLeft} {cortesia.daysLeft === 1 ? "dia restante" : "dias restantes"}. Não há cobrança nenhuma.
+          {" "}Se assinar agora, <strong>a primeira cobrança só acontece em {fmtDate(cortesia.endsAt)}</strong> — você não paga
+          duas vezes pelos dias que já tem.
+        </div>
+      )}
+
+      {inicioAdiado && (
+        <div style={{ background: "#EAF3DE", border: "0.5px solid #C5DBA7", color: "#3B6D11", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
+          Assinatura do <strong>{nomeDoPlano(planoContratado)}</strong> confirmada, e nada foi cobrado ainda: você segue
+          no <strong>{inicioAdiado.planLabel}</strong> da cortesia até <strong>{fmtDate(inicioAdiado.endsAt)}</strong>.
+          Nessa data o {nomeDoPlano(planoContratado)} entra e a primeira cobrança acontece, no cartão que você cadastrou.
+        </div>
+      )}
+
       {me.cancelAtPeriodEnd && (
         <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", color: "var(--warn-text)", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <span>
@@ -313,7 +370,10 @@ export default function PageSubscription() {
               </span>
             </div>
             <div style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>
-              {me.status === "trialing" && me.currentPeriodEnd && (
+              {inicioAdiado && (
+                <>Cortesia até <strong style={{ color: "var(--color-text-primary)" }}>{fmtDate(inicioAdiado.endsAt)}</strong>, quando o {nomeDoPlano(planoContratado)} entra e começa a cobrança. Nada foi cobrado até aqui.</>
+              )}
+              {!inicioAdiado && me.status === "trialing" && me.currentPeriodEnd && (
                 <>Trial acaba em <strong style={{ color: "var(--color-text-primary)" }}>{fmtDate(me.currentPeriodEnd)}</strong>. Adicione um cartão antes pra continuar sem interrupção.</>
               )}
               {me.status === "active" && me.currentPeriodEnd && !me.cancelAtPeriodEnd && (
@@ -325,10 +385,13 @@ export default function PageSubscription() {
               {me.status === "past_due" && (
                 <>Falha no pagamento — atualize o cartão pra evitar suspensão dos envios.</>
               )}
-              {me.status === "canceled" && (
+              {me.status === "canceled" && !cortesia && (
                 <>Assinatura encerrada. Escolha um plano abaixo pra reativar.</>
               )}
-              {currentPlan === "free" && me.status !== "trialing" && me.status !== "canceled" && (
+              {cortesia && (
+                <>Cortesia da equipe até <strong style={{ color: "var(--color-text-primary)" }}>{fmtDate(cortesia.endsAt)}</strong>. Depois disso a conta volta pro plano Free — assine antes pra não parar os envios.</>
+              )}
+              {currentPlan === "free" && !cortesia && me.status !== "trialing" && me.status !== "canceled" && (
                 <>Sem plano ativo. Escolha um abaixo pra começar.</>
               )}
             </div>
@@ -438,14 +501,19 @@ export default function PageSubscription() {
           const livePlan = me.plans?.find(pl => pl.id === id);
           const price = livePlan?.priceBRL ?? p.price;
           const name = livePlan?.label || p.name;
-          const current = currentPlan === id;
+          const current = planoAssinado === id;
+          // Plano que está liberado por cortesia — marcado, mas nunca travado.
+          const emCortesia = cortesia?.planId === id;
           // Plano que a pessoa escolheu na landing — o card ganha destaque e um
           // selo, pra ela reconhecer onde confirmar.
           const wanted = wantedPlan === id && !current;
           // Trial de R$1: só no Básico, só pra quem nunca assinou/trialou.
-          const trialOffer = id === "basic" && !!me.trialEligible && me.stripeEnabled && !current;
+          // Durante a cortesia o teste de R$1 não é oferecido: pagar R$1 por 7 dias
+          // de acesso que a pessoa já tem de graça não é oferta, é pegadinha. A
+          // elegibilidade continua guardada pra quando a cortesia acabar.
+          const trialOffer = id === "basic" && !!me.trialEligible && me.stripeEnabled && !current && !cortesia;
           const recommended = p.recommended && !current;
-          const currentIdx = PLAN_ORDER.indexOf(currentPlan);
+          const currentIdx = PLAN_ORDER.indexOf(planoAssinado);
           const isUpgrade = currentIdx >= 0 && PLAN_ORDER.indexOf(id) > currentIdx;
           const isDowngrade = currentIdx >= 0 && PLAN_ORDER.indexOf(id) < currentIdx;
           // Com assinatura viva, subir de plano é troca na própria assinatura
@@ -490,7 +558,17 @@ export default function PageSubscription() {
                   SEU PLANO
                 </div>
               )}
-              {recommended && !trialOffer && !wanted && (
+              {planoContratado === id && (
+                <div style={{ position: "absolute", top: -10, left: "50%", transform: "translateX(-50%)", background: "#3B6D11", color: "#fff", fontSize: 10, padding: "3px 10px", borderRadius: 6, fontWeight: 600, whiteSpace: "nowrap", letterSpacing: 0.3 }}>
+                  A PARTIR DE {fmtDate(inicioAdiado.endsAt)}
+                </div>
+              )}
+              {emCortesia && !current && !wanted && planoContratado !== id && (
+                <div style={{ position: "absolute", top: -10, left: "50%", transform: "translateX(-50%)", background: "#0E7490", color: "#fff", fontSize: 10, padding: "3px 10px", borderRadius: 6, fontWeight: 600, whiteSpace: "nowrap", letterSpacing: 0.3 }}>
+                  EM CORTESIA
+                </div>
+              )}
+              {recommended && !trialOffer && !wanted && !emCortesia && (
                 <div style={{ position: "absolute", top: -10, left: "50%", transform: "translateX(-50%)", background: PRIMARY, color: "#fff", fontSize: 10, padding: "3px 10px", borderRadius: 6, fontWeight: 600, whiteSpace: "nowrap", letterSpacing: 0.3 }}>
                   MAIS POPULAR
                 </div>
@@ -524,6 +602,13 @@ export default function PageSubscription() {
                 onClick={() => {
                   if (current) return;
                   if (inlineUpgrade) return upgradePlan(id, name);
+                  // Em cortesia, assinar tem duas saídas possíveis e nenhuma
+                  // delas é óbvia — a pessoa escolhe antes de ver o Stripe.
+                  if (cortesia) {
+                    setManterCortesia(true);
+                    setCortesiaCheckout({ planId: id, planName: name, price });
+                    return;
+                  }
                   startCheckout(id, trialOffer ? { trial: true } : undefined);
                 }}
                 disabled={current || !!busy || !me.stripeEnabled}
@@ -698,6 +783,60 @@ export default function PageSubscription() {
       </div>
 
       {/* ─── MODAL DE CANCELAMENTO ─── */}
+      {/* Assinar durante a cortesia: as duas saídas, com as datas e os valores já
+          calculados. Sem isto o sistema escolhia sozinho — e a escolha errada
+          ou cobrava dias já concedidos, ou tirava o plano no meio do prazo. */}
+      {cortesiaCheckout && cortesia && (() => {
+        const opcao = (valor, titulo, texto) => (
+          <button
+            onClick={() => setManterCortesia(valor)}
+            style={{
+              width: "100%", textAlign: "left", padding: 12, borderRadius: 10, cursor: "pointer",
+              marginBottom: 8, background: manterCortesia === valor ? PRIMARY_LIGHT : "transparent",
+              border: manterCortesia === valor ? `0.5px solid ${PRIMARY}` : "0.5px solid var(--color-border-tertiary)",
+            }}
+          >
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, color: manterCortesia === valor ? PRIMARY_DARK : "var(--color-text-primary)" }}>
+              {titulo}
+            </div>
+            <div style={{ fontSize: 12, lineHeight: 1.5, color: "var(--color-text-secondary)" }}>{texto}</div>
+          </button>
+        );
+        return (
+          <Modal title={`Você está em cortesia até ${fmtDate(cortesia.endsAt)}`} onClose={() => setCortesiaCheckout(null)}>
+            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14, lineHeight: 1.5 }}>
+              Sua equipe liberou o <strong>Nimbus {cortesia.planLabel}</strong> sem cobrança até{" "}
+              {fmtDate(cortesia.endsAt)} ({cortesia.daysLeft} {cortesia.daysLeft === 1 ? "dia" : "dias"}).
+              Como você está assinando o <strong>{cortesiaCheckout.planName}</strong> antes disso, escolha o que prefere:
+            </div>
+
+            {opcao(true, "Manter a cortesia (nada é cobrado agora)",
+              `Você continua no ${cortesia.planLabel} até ${fmtDate(cortesia.endsAt)}. Nesse dia o `
+              + `${cortesiaCheckout.planName} entra e a primeira cobrança de ${fmtPrice(cortesiaCheckout.price)} acontece `
+              + "no cartão que você cadastrar agora.")}
+
+            {opcao(false, `Começar o ${cortesiaCheckout.planName} agora`,
+              `Sua cortesia é encerrada hoje, o ${cortesiaCheckout.planName} entra na hora e a cobrança de `
+              + `${fmtPrice(cortesiaCheckout.price)} é feita agora. Os dias restantes de cortesia não voltam depois.`)}
+
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
+              <button
+                onClick={() => setCortesiaCheckout(null)}
+                style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 13, cursor: "pointer" }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmarCortesiaCheckout}
+                style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}
+              >
+                Continuar
+              </button>
+            </div>
+          </Modal>
+        );
+      })()}
+
       {showCancel && (
         <Modal title={me.cancelAtPeriodEnd ? "Reativar assinatura?" : "Cancelar assinatura?"} onClose={() => setShowCancel(false)} danger={!me.cancelAtPeriodEnd}>
           {me.cancelAtPeriodEnd ? (

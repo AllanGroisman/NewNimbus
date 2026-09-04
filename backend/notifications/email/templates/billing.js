@@ -50,21 +50,35 @@ function moeda(cents, currency) {
 function subscription_started(p) {
   const fim = data(p.periodEnd);
   const mensal = moeda(p.planAmount, p.currency);
+  const plano = p.planLabel || "";
+  let abertura;
   let cobranca;
-  if (p.trial) {
+  if (p.deferred) {
+    // Assinou durante uma cortesia da equipe: nada foi cobrado hoje, e a primeira
+    // cobrança só acontece quando a cortesia acaba. Anunciar um pagamento que não
+    // houve é o jeito mais rápido de gerar desconfiança (e chamado de suporte).
+    abertura = `Sua assinatura do plano *${plano}* está confirmada — e não houve `
+      + "cobrança agora: seu período de cortesia continua valendo até o fim.";
+    cobranca = fim
+      ? `A primeira cobrança${mensal ? ` de *${mensal}*` : ""} acontece em *${fim}*, automaticamente no cartão cadastrado.`
+      : "A primeira cobrança acontece no fim da cortesia, automaticamente no cartão cadastrado.";
+  } else if (p.trial) {
+    abertura = `Recebemos seu pagamento de *${moeda(p.amount, p.currency)}* e sua assinatura do plano *${plano}* já está ativa.`;
     cobranca = `Seu teste vai até *${fim || "o fim do período"}*`
       + (mensal
         ? `. A partir daí a assinatura passa a *${mensal} por mês*, cobrada automaticamente no mesmo cartão.`
         : ", e a partir daí a assinatura é cobrada automaticamente no mesmo cartão.");
   } else {
+    abertura = `Recebemos seu pagamento de *${moeda(p.amount, p.currency)}* e sua assinatura do plano *${plano}* já está ativa.`;
     cobranca = fim
       ? `A próxima cobrança é em *${fim}*, automaticamente no mesmo cartão.`
       : "As próximas cobranças são automáticas, no mesmo cartão.";
   }
   return {
     nome: nome(p),
-    plano: p.planLabel || "",
+    plano,
     valor: moeda(p.amount, p.currency),
+    abertura,
     cobranca,
   };
 }

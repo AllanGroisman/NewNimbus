@@ -218,6 +218,10 @@ async function updateCustomerEmail(customerId, email) {
 // Cria sessão de Checkout em modo subscription.
 // payment_method_types: cartão sempre; Pix só se planId não for trial-only.
 // withTrial: cobra R$1 hoje (line item avulso) + 7 dias de trial na assinatura.
+// trialEndsAt: adia a PRIMEIRA cobrança pra esta data (Date). É o que faz quem
+//   está numa cortesia do admin não pagar duas vezes pelo mesmo período — o
+//   cartão é coletado agora e só roda quando a cortesia acaba. O Stripe exige
+//   trial_end pelo menos 48h à frente no Checkout; quem chama já filtrou isso.
 //
 // Dois chamadores:
 //   - app (usuário logado): passa `customer` + `userId`, volta pra SUCCESS_URL.
@@ -225,7 +229,7 @@ async function updateCustomerEmail(customerId, email) {
 //     em client_reference_id, então a conta é provisionada depois a partir da
 //     própria Checkout Session — daí o retorno em stripeWelcomeUrl.
 async function createCheckoutSession({
-  planId, customer, customerEmail, userId, withTrial = false,
+  planId, customer, customerEmail, userId, withTrial = false, trialEndsAt = null,
   successUrl, cancelUrl, metadataExtra,
 }) {
   const price = priceFor(planId);
@@ -247,11 +251,26 @@ async function createCheckoutSession({
     ...(metadataExtra || {}),
   };
 
+  // Cobrança adiada pela cortesia — nunca junto do trial de R$1 (quem tem
+  // cortesia já está com o acesso liberado; o roteador é quem garante isso).
+  const adiado = !withTrial && trialEndsAt instanceof Date;
+
   const subscriptionData = {
-    metadata: { ...baseMeta, ...(withTrial ? { trial: "1" } : {}) },
+    metadata: {
+      ...baseMeta,
+      ...(withTrial ? { trial: "1" } : {}),
+      // Lido pelo webhook: é o que separa "trial de R$1" (queima a elegibilidade
+      // da conta) de "início adiado pela cortesia" (não queima nada).
+      ...(adiado ? { manualTrialDefer: "1" } : {}),
+    },
   };
   if (withTrial) {
     subscriptionData.trial_period_days = TRIAL_DAYS;
+  }
+  if (adiado) {
+    subscriptionData.trial_end = Math.floor(trialEndsAt.getTime() / 1000);
+  }
+  if (withTrial || adiado) {
     subscriptionData.trial_settings = {
       end_behavior: { missing_payment_method: "cancel" },
     };
@@ -268,8 +287,9 @@ async function createCheckoutSession({
     // Pix recorrente em BRL precisa estar habilitado no dashboard.
     // Se ainda não ativou, deixar só "card" funciona; com Pix ativo, ambos.
     payment_method_types: ["card"],
-    // Garante cartão salvo durante o trial pra renovação funcionar.
-    ...(withTrial ? { payment_method_collection: "always" } : {}),
+    // Garante cartão salvo durante o trial pra renovação funcionar. No início
+    // adiado é ainda mais importante: sem cartão, a assinatura morre na virada.
+    ...(withTrial || adiado ? { payment_method_collection: "always" } : {}),
     locale: "pt-BR",
     allow_promotion_codes: true,
     success_url: successUrl || SUCCESS_URL,
@@ -363,6 +383,13 @@ function normalizeSubscription(sub) {
     cancelAtPeriodEnd: !!sub.cancel_at_period_end,
     // Não é coluna do banco — chamadores usam pra marcar trialUsedAt e removem antes de persistir.
     trialEnd: sub.trial_end ? new Date(sub.trial_end * 1000) : null,
+    // Idem: true quando o trial é só o início adiado pela cortesia do admin, e
+    // não o teste de R$1. Impede que adiar a cobrança queime a elegibilidade.
+    trialFromManual: sub.metadata?.manualTrialDefer === "1",
+    // Idem: a pessoa escolheu "começar agora" no checkout, encerrando a cortesia.
+    // Quem age nisso é o webhook — encerrar no clique faria um checkout abandonado
+    // custar a cortesia dela.
+    manualTrialCancel: sub.metadata?.manualTrialCancel === "1",
   };
 }
 

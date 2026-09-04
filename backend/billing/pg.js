@@ -9,6 +9,10 @@ const stripe = require("./stripe");
 // plano" enquanto o sistema está no outro modo — e volta ao normal quando o
 // admin volta o modo. Nada é apagado.
 // `crossMode` deixa a UI explicar a situação em vez de sumir com o plano.
+//
+// Os campos do trial manual passam intactos pelo spread, de propósito: a cortesia
+// não é um objeto do Stripe e não tem modo — uma conta com assinatura do outro
+// modo continua tendo a cortesia que o admin deu.
 function maskCrossMode(row) {
   if (!row || !row.stripeMode || row.stripeMode === stripe.mode()) return row;
   return {
@@ -50,6 +54,24 @@ async function listForReminders() {
     include: {
       user: { select: { id: true, email: true, name: true, role: true, suspended: true } },
     },
+  });
+}
+
+// Cortesias que já venceram e ainda não foram encerradas. Serve pra varredura que
+// repausa as campanhas que só cabiam no plano da cortesia — o gating em si já
+// expira sozinho (é data), o que fica velho é o `planPaused`.
+//
+// `listForReminders` não serve aqui: ela filtra por `status`, e conta em cortesia
+// costuma estar em "inactive"/"canceled". O filtro por `manualTrialEndedAt: null`
+// é o que faz cada concessão ser processada uma vez só, e não a cada 6h pra sempre.
+async function listExpiredManualTrials(now = new Date()) {
+  return prisma().subscription.findMany({
+    where: {
+      manualTrialPlanId: { not: null },
+      manualTrialEndsAt: { lt: now instanceof Date ? now : new Date(now) },
+      manualTrialEndedAt: null,
+    },
+    include: { user: { select: { id: true, role: true } } },
   });
 }
 
@@ -106,8 +128,14 @@ async function update(userId, patch) {
   const data = { ...patch };
   if (patch.currentPeriodEnd) data.currentPeriodEnd = new Date(patch.currentPeriodEnd);
   if (patch.trialUsedAt) data.trialUsedAt = new Date(patch.trialUsedAt);
-  // trialEnd vem de normalizeSubscription mas não é coluna — nunca persistir.
+  for (const k of ["manualTrialStartedAt", "manualTrialEndsAt", "manualTrialEndedAt"]) {
+    if (patch[k]) data[k] = new Date(patch[k]);
+  }
+  // trialEnd, trialFromManual e manualTrialCancel vêm de normalizeSubscription
+  // mas não são coluna — são recados pro chamador, não estado persistido.
   delete data.trialEnd;
+  delete data.trialFromManual;
+  delete data.manualTrialCancel;
   // crossMode é anotação da máscara de leitura, não coluna.
   delete data.crossMode;
 
@@ -148,6 +176,14 @@ async function update(userId, patch) {
       checkoutSessionId: data.checkoutSessionId || null,
       claimedAt: data.claimedAt || null,
       signupSource: data.signupSource || null,
+      // Sem isto, conceder cortesia pra quem nunca teve linha de assinatura criaria
+      // a linha SEM a cortesia — o upsert só copia o que está listado aqui.
+      manualTrialPlanId: data.manualTrialPlanId || null,
+      manualTrialStartedAt: data.manualTrialStartedAt || null,
+      manualTrialEndsAt: data.manualTrialEndsAt || null,
+      manualTrialEndedAt: data.manualTrialEndedAt || null,
+      manualTrialGrantedBy: data.manualTrialGrantedBy || null,
+      manualTrialNote: data.manualTrialNote || null,
     },
     update: data,
   });
@@ -173,6 +209,7 @@ module.exports = {
   getByUserId,
   getRawByUserId,
   listForReminders,
+  listExpiredManualTrials,
   getByCustomerId,
   getBySubscriptionId,
   getByCheckoutSessionId,

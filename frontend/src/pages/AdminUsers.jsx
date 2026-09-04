@@ -24,6 +24,8 @@ import {
   adminSetUserSuspended,
   adminResendUserVerification,
   adminUserDetail,
+  adminGrantManualTrial,
+  adminRevokeManualTrial,
   adminGetRegistration,
   adminSetRegistration,
   errText,
@@ -64,6 +66,15 @@ const SESSION_STATUS = {
 const PAGANDO = new Set(["active", "trialing"]);
 const ATRASADO = new Set(["past_due", "unpaid"]);
 
+// Trial manual (cortesia): planos que o admin pode liberar à mão e as durações
+// mais usadas. O campo de dias continua livre — os botões são só atalho.
+const TRIAL_PLANOS = [
+  { id: "basic",    label: "Básico" },
+  { id: "pro",      label: "Pro" },
+  { id: "business", label: "Business" },
+];
+const TRIAL_DIAS = [7, 14, 30, 60];
+
 const dt = iso => (iso ? new Date(iso).toLocaleDateString("pt-BR") : null);
 const dtHora = iso =>
   iso ? new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : null;
@@ -91,6 +102,23 @@ function AssinaturaBadge({ sub }) {
   // como selo verde de Pro era a leitura errada mais fácil desta tela.
   const vale = PAGANDO.has(sub.status) || ATRASADO.has(sub.status);
   return <Badge color={s.color}>{vale ? `${s.label} · ${plano}` : s.label}</Badge>;
+}
+
+// Selo próprio, e não um caso dentro do AssinaturaBadge: os dois convivem. Uma
+// conta pode estar "Pagando · Básico" E ter uma cortesia guardada — que nesse caso
+// está dormente (a assinatura paga vence) e reassume se a assinatura cair.
+function CortesiaBadge({ sub }) {
+  if (!sub?.manualTrialActive) return null;
+  const plano = PLAN_LABEL[sub.manualTrialPlanId] || sub.manualTrialPlanId;
+  // Assinou durante a cortesia e escolheu manter: a assinatura existe (status
+  // trialing), mas quem vale até a primeira cobrança é a cortesia. Dizer
+  // "dormente" aqui seria o oposto do que está acontecendo.
+  if (sub.status === "trialing") {
+    return <Badge color="cyan">Cortesia {plano} · {sub.manualTrialDaysLeft}d → {PLAN_LABEL[sub.planId] || sub.planId}</Badge>;
+  }
+  // Assinatura paga em vigor: a cortesia está guardada, e reassume se ela cair.
+  if (PAGANDO.has(sub.status)) return <Badge color="gray">Cortesia {plano} (dormente)</Badge>;
+  return <Badge color="cyan">Cortesia {plano} · {sub.manualTrialDaysLeft}d</Badge>;
 }
 
 function OperacaoBadges({ counts }) {
@@ -194,6 +222,22 @@ function BlocoAssinatura({ sub }) {
           )}
           <Campo label="Em atraso desde">{dt(sub.pastDueSince)}</Campo>
           <Campo label="Trial usado em">{dt(sub.trialUsedAt)}</Campo>
+          {sub.manualTrialPlanId && (
+            <>
+              <Campo label="Cortesia (trial manual)">
+                {PLAN_LABEL[sub.manualTrialPlanId] || sub.manualTrialPlanId}
+                {sub.manualTrialActive ? ` · ${sub.manualTrialDaysLeft}d restantes` : " · encerrada"}
+              </Campo>
+              {sub.manualTrialActive && sub.status === "trialing" && (
+                <Campo label="Contratado durante a cortesia">
+                  {PLAN_LABEL[sub.planId] || sub.planId} entra em {dt(sub.manualTrialEndsAt)}, com a 1ª cobrança
+                </Campo>
+              )}
+              <Campo label="Cortesia de">{dt(sub.manualTrialStartedAt)}</Campo>
+              <Campo label="Cortesia até">{dt(sub.manualTrialEndsAt)}</Campo>
+              <Campo label="Observação">{sub.manualTrialNote}</Campo>
+            </>
+          )}
           <Campo label="Origem">{sub.signupSource}</Campo>
           <Campo label="Modo Stripe">{sub.stripeMode}</Campo>
         </>
@@ -339,7 +383,7 @@ export default function PageAdminUsers({ currentUser }) {
   const [loading, setLoading]       = useState(true);
   const [error, setError]           = useState(null);
   const [search, setSearch]         = useState("");
-  const [filter, setFilter]         = useState("all"); // all | paying | canceled | canceling | unverified | suspended | admin
+  const [filter, setFilter]         = useState("all"); // all | paying | canceled | canceling | manual-trial | unverified | suspended | admin
 
   // Bloqueio de cadastro (beta fechado). null = ainda carregando.
   const [regBlocked, setRegBlocked] = useState(null);
@@ -358,6 +402,12 @@ export default function PageAdminUsers({ currentUser }) {
   const [newPwd, setNewPwd]               = useState("");
   const [pwdError, setPwdError]           = useState(null);
   const [savingPwd, setSavingPwd]         = useState(false);
+  const [trialUser, setTrialUser]         = useState(null);
+  const [trialPlan, setTrialPlan]         = useState("pro");
+  const [trialDays, setTrialDays]         = useState("30");
+  const [trialNote, setTrialNote]         = useState("");
+  const [trialError, setTrialError]       = useState(null);
+  const [savingTrial, setSavingTrial]     = useState(false);
 
   // Ações inline com loading por usuário
   const [busy, setBusy] = useState({}); // userId → true
@@ -457,6 +507,35 @@ export default function PageAdminUsers({ currentUser }) {
     setConfirmDelete(null);
   }
 
+  function abrirTrial(u) {
+    setTrialUser(u);
+    setTrialPlan(u.subscription?.manualTrialPlanId || "pro");
+    setTrialDays("30");
+    setTrialNote("");
+    setTrialError(null);
+  }
+
+  async function handleGrantTrial() {
+    setTrialError(null);
+    const dias = Number(trialDays);
+    if (!Number.isInteger(dias) || dias < 1 || dias > 365) {
+      setTrialError("Informe uma duração de 1 a 365 dias.");
+      return;
+    }
+    const id = trialUser.id;
+    setSavingTrial(true);
+    try {
+      await adminGrantManualTrial(id, { planId: trialPlan, days: dias, note: trialNote.trim() || undefined });
+      setTrialUser(null);
+      // Reaproveita o refresh de sempre (lista + ficha aberta) sem outra chamada.
+      await withBusy(id, async () => {});
+    } catch (err) {
+      setTrialError(errText(err, "Não foi possível conceder o trial. Tente novamente."));
+    } finally {
+      setSavingTrial(false);
+    }
+  }
+
   async function handleChangePassword() {
     setPwdError(null);
     if (newPwd.length < 8) { setPwdError("Senha precisa ter ao menos 8 caracteres"); return; }
@@ -479,6 +558,7 @@ export default function PageAdminUsers({ currentUser }) {
   // (status canceled) e quem avisou que vai (cancelAtPeriodEnd, ainda pagando).
   const isCancelado  = u => u.subscription?.status === "canceled";
   const isCancelando = u => isPagando(u) && !!u.subscription?.cancelAtPeriodEnd;
+  const temCortesia  = u => !!u.subscription?.manualTrialActive;
 
   const filtered = users.filter(u => {
     if (filter === "paying" && !isPagando(u)) return false;
@@ -487,6 +567,7 @@ export default function PageAdminUsers({ currentUser }) {
     if (filter === "admin" && u.role !== "admin") return false;
     if (filter === "canceled" && !isCancelado(u)) return false;
     if (filter === "canceling" && !isCancelando(u)) return false;
+    if (filter === "manual-trial" && !temCortesia(u)) return false;
     if (search) {
       const s = search.toLowerCase();
       return (u.name || "").toLowerCase().includes(s) || (u.email || "").toLowerCase().includes(s);
@@ -502,6 +583,7 @@ export default function PageAdminUsers({ currentUser }) {
   const operandoCount   = users.filter(isOperando).length;
   const canceladoCount  = users.filter(isCancelado).length;
   const cancelandoCount = users.filter(isCancelando).length;
+  const cortesiaCount   = users.filter(temCortesia).length;
 
   // Quebra por plano entre quem está pagando — "12 pagando" sem dizer de quê é
   // a mesma ambiguidade que este trabalho veio consertar.
@@ -619,6 +701,7 @@ export default function PageAdminUsers({ currentUser }) {
         {filterBtn("paying",     "Pagando",         pagandoCount)}
         {filterBtn("canceled",   "Cancelados",      canceladoCount)}
         {filterBtn("canceling",  "Cancelamento agendado", cancelandoCount)}
+        {filterBtn("manual-trial", "Cortesia",   cortesiaCount)}
         {filterBtn("unverified", "Não verificados", unverifiedCount)}
         {filterBtn("suspended",  "Suspensos",       suspendedCount)}
         {filterBtn("admin",      "Admins",          adminCount)}
@@ -664,6 +747,7 @@ export default function PageAdminUsers({ currentUser }) {
                         <span style={{ fontSize: 14, fontWeight: 500 }}>{u.name || "(sem nome)"}</span>
                         <ContaBadge user={u} />
                         <AssinaturaBadge sub={u.subscription} />
+                        <CortesiaBadge sub={u.subscription} />
                         <OperacaoBadges counts={u.counts} />
                         {isAdmin && <Badge color="purple">Admin</Badge>}
                         {isMe && <Badge color="gray">Você</Badge>}
@@ -719,6 +803,26 @@ export default function PageAdminUsers({ currentUser }) {
                           style={btnStyle(isAdmin ? "default" : "primary")}
                         >
                           {isAdmin ? "Rebaixar" : "Tornar admin"}
+                        </button>
+                      )}
+
+                      {u.subscription?.manualTrialActive ? (
+                        <button
+                          disabled={isBusy}
+                          onClick={acao(() => withBusy(u.id, () => adminRevokeManualTrial(u.id)))}
+                          style={btnStyle("warning")}
+                          title="Encerra a cortesia agora. Nada é cobrado nem apagado."
+                        >
+                          Desativar trial
+                        </button>
+                      ) : (
+                        <button
+                          disabled={isBusy}
+                          onClick={acao(() => abrirTrial(u))}
+                          style={btnStyle("primary")}
+                          title="Libera um plano por N dias sem passar pelo Stripe."
+                        >
+                          Adicionar trial
                         </button>
                       )}
 
@@ -792,6 +896,107 @@ export default function PageAdminUsers({ currentUser }) {
           </div>
         </Modal>
       )}
+
+      {/* Modal: conceder trial manual (cortesia) */}
+      {trialUser && (() => {
+        const dias = Number(trialDays);
+        const validos = Number.isInteger(dias) && dias >= 1 && dias <= 365;
+        const ate = validos ? new Date(Date.now() + dias * 86400000) : null;
+        const pagando = PAGANDO.has(trialUser.subscription?.status) && !trialUser.subscription?.crossMode;
+        const inputStyle = {
+          width: "100%", padding: "9px 12px", borderRadius: 8,
+          border: "0.5px solid var(--color-border-tertiary)",
+          background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box",
+        };
+        return (
+          <Modal title={`Adicionar trial — ${trialUser.name || trialUser.email}`} onClose={() => setTrialUser(null)}>
+            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14, lineHeight: 1.5 }}>
+              Libera o plano escolhido por tempo determinado, sem passar pelo Stripe e sem cobrar nada.
+              Não consome o teste de R$ 1,00 da conta.
+            </div>
+
+            <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6 }}>Plano</div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+              {TRIAL_PLANOS.map(p => (
+                <button
+                  key={p.id}
+                  onClick={() => setTrialPlan(p.id)}
+                  style={{
+                    padding: "7px 14px", borderRadius: 7, fontSize: 12, cursor: "pointer",
+                    border: trialPlan === p.id ? `0.5px solid ${PRIMARY}` : "0.5px solid var(--color-border-tertiary)",
+                    background: trialPlan === p.id ? PRIMARY_LIGHT : "transparent",
+                    color: trialPlan === p.id ? PRIMARY_DARK : "var(--color-text-secondary)",
+                    fontWeight: trialPlan === p.id ? 600 : 400,
+                  }}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6 }}>Duração</div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+              {TRIAL_DIAS.map(d => (
+                <button
+                  key={d}
+                  onClick={() => setTrialDays(String(d))}
+                  style={{
+                    padding: "7px 14px", borderRadius: 7, fontSize: 12, cursor: "pointer",
+                    border: trialDays === String(d) ? `0.5px solid ${PRIMARY}` : "0.5px solid var(--color-border-tertiary)",
+                    background: trialDays === String(d) ? PRIMARY_LIGHT : "transparent",
+                    color: trialDays === String(d) ? PRIMARY_DARK : "var(--color-text-secondary)",
+                    fontWeight: trialDays === String(d) ? 600 : 400,
+                  }}
+                >
+                  {d} dias
+                </button>
+              ))}
+            </div>
+            <input
+              type="number"
+              min={1}
+              max={365}
+              value={trialDays}
+              onChange={e => setTrialDays(e.target.value)}
+              aria-label="Dias de trial"
+              style={{ ...inputStyle, marginBottom: 6 }}
+            />
+            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>
+              {ate ? <>Vale até <strong style={{ color: "var(--color-text-primary)" }}>{ate.toLocaleDateString("pt-BR")}</strong>.</> : "Informe de 1 a 365 dias."}
+            </div>
+
+            <input
+              value={trialNote}
+              onChange={e => setTrialNote(e.target.value)}
+              placeholder="Observação (opcional) — ex: beta tester, cortesia de suporte"
+              aria-label="Observação"
+              style={{ ...inputStyle, marginBottom: 12 }}
+            />
+
+            {pagando && (
+              <AlertBanner
+                tone="warn"
+                message={`Esta conta tem assinatura paga (${PLAN_LABEL[trialUser.subscription?.planId] || trialUser.subscription?.planId}), e ela continua valendo. A cortesia fica guardada e só assume se a assinatura cair antes do fim do prazo.`}
+                style={{ marginBottom: 12 }}
+              />
+            )}
+            {trialError && (
+              <div style={{ background: "var(--danger-bg)", color: "var(--danger-text)", padding: "8px 10px", borderRadius: 8, fontSize: 12, marginBottom: 10 }}>{trialError}</div>
+            )}
+
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button onClick={() => setTrialUser(null)} disabled={savingTrial} style={btnStyle("default")}>Cancelar</button>
+              <button
+                onClick={handleGrantTrial}
+                disabled={savingTrial || !validos}
+                style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: (savingTrial || !validos) ? 0.5 : 1 }}
+              >
+                {savingTrial ? "Liberando..." : "Liberar trial"}
+              </button>
+            </div>
+          </Modal>
+        );
+      })()}
 
       {/* Modal: confirmar exclusão */}
       {confirmDelete && (

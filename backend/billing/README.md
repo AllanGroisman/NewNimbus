@@ -30,6 +30,21 @@ Caminho: landing (popup de e-mail + CPF no `index.html`, ou `/assinar?plano=pro`
 - **Conta criada pelo pagamento** (`auth.createPaidUser`): senha aleatória, `emailVerified=true` (o cartão naquele e-mail prova posse melhor que o link de verificação) e **bypass do beta fechado** — quem pagou não pode ficar sem acesso. A senha é escolhida em `/bem-vindo` (`POST /api/auth/set-initial-password`), e o e-mail de boas-vindas com link de definição de senha é o plano B.
 - **`/claim` é de uso único** (`Subscription.claimedAt`) e expira em 2h: o `session_id` viaja na URL de retorno do Stripe, então vale como credencial temporária.
 
+## Trial manual (cortesia do admin)
+
+Acesso liberado à mão em **Admin › Usuários** (`POST`/`DELETE /api/admin/users/:id/manual-trial`), para beta tester, teste com conta real ou compensação de suporte. **Não é o teste de R$ 1,00**: não passa pelo Stripe, não cobra nada e não consome `trialUsedAt` — quem ganhou cortesia continua elegível ao teste de R$1.
+
+Mora nas colunas `manualTrial*` da própria `Subscription`, então `limits.effectivePlanId` e `billing.isActive` resolvem tudo e nenhum call site de gating precisou mudar.
+
+- **Ordem:** assinatura paga (`active`/`trialing`/carência) vence a cortesia, mesmo sendo de um plano menor. Sem ela, vale a cortesia enquanto `manualTrialEndsAt` estiver no futuro — inclusive **depois de um cancelamento**, até a data acabar (é o estado que `manualTrialInfo` chama de `dormant` enquanto a assinatura paga cobre).
+- **Expiração:** é só data, então o acesso cai sozinho na virada. `reminders.expireManualTrials()` (dentro do `runOnce`, de 6 em 6h) existe só pra reconciliar o `planPaused` das campanhas que só cabiam no plano da cortesia; `manualTrialEndedAt` faz cada concessão ser varrida uma vez só.
+- **Assinar durante a cortesia é uma escolha do cliente**, num modal da página de Assinatura (`POST /api/billing/checkout` aceita `keepManualTrial`, default `true`):
+  - **Manter a cortesia** — `subscription_data.trial_end` = fim da cortesia, com `payment_method_collection: "always"`: o cartão entra hoje e a primeira fatura roda na virada. **Enquanto não cobra, vale o plano da CORTESIA**, e o contratado assume no mesmo instante da primeira cobrança (`trialing` → `active`). É o degrau do meio de `effectivePlanId`, e é o que faz upgrade e downgrade terem uma resposta só — ninguém perde plano no meio de um prazo prometido, nem paga por dias que já tem.
+  - **Começar agora** (`keepManualTrial: false`) — sem `trial_end`: cobra hoje, o plano contratado vale na hora, e a Checkout Session leva `metadata.manualTrialCancel="1"`. **Quem encerra a cortesia é o webhook**, não o clique: encerrar antes faria um checkout abandonado custar os dias dela. Essa cortesia é consumida e não reassume depois.
+  O Stripe exige `trial_end` ao menos 48h à frente, então cortesia terminando antes disso cobra normal (`deferralFor` em `server.js`). `metadata.manualTrialDefer="1"` é como o webhook sabe **não** queimar o teste de R$1 — que, pelo mesmo motivo, não é oferecido enquanto a cortesia corre.
+- **`limits.paidPlanId`** é o "já é cliente?" sem a cortesia. O checkout público usa ele, e não `effectivePlanId`: senão a landing bloquearia a compra de quem está em cortesia dizendo que "já assina".
+- **Revogar** não apaga nada: puxa `manualTrialEndsAt` pro instante atual e carimba `manualTrialEndedAt`. Plano e observação ficam de histórico na ficha do usuário.
+
 ## Admin bypass
 
 `role=admin` (via `ADMIN_EMAILS`) sempre vira `effectivePlan=business` independente da assinatura. Vide `limits.effectivePlanId` e `billing.isActive`.

@@ -2,7 +2,7 @@
 // catalog admin, DLQ. Cobre tanto gating (403 pra user comum) quanto comportamento.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { request, app, createTestUser, auth as authMod, catalog, setStripeMock, waConnect } from "../helpers/app.js";
+import { request, app, createTestUser, auth as authMod, billing as billingMod, catalog, setStripeMock, waConnect } from "../helpers/app.js";
 import { mlProduct, amazonProduct, shopeeProduct } from "../helpers/fixtures.js";
 
 async function makeAdmin(opts = {}) {
@@ -30,6 +30,8 @@ describe("Admin — gating", () => {
       ["put", "/api/admin/scraper/amazon/filters"],
       ["get", "/api/admin/scraper/shopee/filters"],
       ["put", "/api/admin/scraper/shopee/filters"],
+      ["post", "/api/admin/users/qualquer-id/manual-trial"],
+      ["delete", "/api/admin/users/qualquer-id/manual-trial"],
       ["get", "/api/admin/system/disk"],
       ["get", "/api/admin/stripe"],
       ["put", "/api/admin/stripe"],
@@ -172,6 +174,104 @@ describe("Admin — users", () => {
 
     const list = await admin.auth("get", "/api/admin/users");
     expect(list.body.users.find(u => u.id === alvo.user.id)).toBeUndefined();
+  });
+});
+
+// Trial manual = cortesia liberada à mão pelo admin. Não passa pelo Stripe, não
+// cobra e não consome o teste de R$1 da conta.
+describe("Admin — trial manual (cortesia)", () => {
+  const linhaDe = (body, id) => body.users.find(u => u.id === id);
+
+  it("concede cortesia pra conta que nunca teve assinatura", async () => {
+    const admin = await makeAdmin();
+    const alvo = await createTestUser({ name: "Cortesia" });
+
+    const res = await admin.auth("post", `/api/admin/users/${alvo.user.id}/manual-trial`)
+      .send({ planId: "pro", days: 15, note: "beta tester" });
+    expect(res.status).toBe(200);
+    expect(res.body.manualTrial).toMatchObject({ planId: "pro", active: true });
+
+    const list = await admin.auth("get", "/api/admin/users");
+    const linha = linhaDe(list.body, alvo.user.id);
+    expect(linha.subscription.manualTrialActive).toBe(true);
+    expect(linha.subscription.manualTrialPlanId).toBe("pro");
+    expect(linha.subscription.manualTrialDaysLeft).toBe(15);
+    // O plano em vigor passa a ser o da cortesia, mesmo sem linha paga nenhuma.
+    expect(linha.subscription.effectivePlanId).toBe("pro");
+    expect(linha.subscription.manualTrialNote).toBe("beta tester");
+  });
+
+  it("desativar encerra na hora — volta pra free", async () => {
+    const admin = await makeAdmin();
+    const alvo = await createTestUser();
+    await admin.auth("post", `/api/admin/users/${alvo.user.id}/manual-trial`).send({ planId: "business", days: 30 });
+
+    const res = await admin.auth("delete", `/api/admin/users/${alvo.user.id}/manual-trial`);
+    expect(res.status).toBe(200);
+
+    const list = await admin.auth("get", "/api/admin/users");
+    const linha = linhaDe(list.body, alvo.user.id);
+    expect(linha.subscription.manualTrialActive).toBe(false);
+    expect(linha.subscription.effectivePlanId).toBe("free");
+    // O plano concedido fica como histórico — só a data de fim foi puxada pra agora.
+    expect(linha.subscription.manualTrialPlanId).toBe("business");
+  });
+
+  it("conceder de novo por cima redefine plano e prazo", async () => {
+    const admin = await makeAdmin();
+    const alvo = await createTestUser();
+    await admin.auth("post", `/api/admin/users/${alvo.user.id}/manual-trial`).send({ planId: "basic", days: 7 });
+    await admin.auth("post", `/api/admin/users/${alvo.user.id}/manual-trial`).send({ planId: "business", days: 60 });
+
+    const list = await admin.auth("get", "/api/admin/users");
+    const linha = linhaDe(list.body, alvo.user.id);
+    expect(linha.subscription.manualTrialPlanId).toBe("business");
+    expect(linha.subscription.manualTrialDaysLeft).toBe(60);
+  });
+
+  it("recusa plano fora do catálogo e duração inválida", async () => {
+    const admin = await makeAdmin();
+    const alvo = await createTestUser();
+    const url = `/api/admin/users/${alvo.user.id}/manual-trial`;
+
+    expect((await admin.auth("post", url).send({ planId: "free", days: 10 })).status).toBe(400);
+    expect((await admin.auth("post", url).send({ planId: "enterprise", days: 10 })).status).toBe(400);
+    expect((await admin.auth("post", url).send({ planId: "pro", days: 0 })).status).toBe(400);
+    expect((await admin.auth("post", url).send({ planId: "pro", days: 999 })).status).toBe(400);
+    expect((await admin.auth("post", url).send({ planId: "pro", days: 2.5 })).status).toBe(400);
+  });
+
+  it("conceder despausa as campanhas que passam a caber; desativar repausa", async () => {
+    const admin = await makeAdmin();
+    // Nasce no Pro pra conseguir CRIAR as campanhas (no free o gating recusa),
+    // e cai pra free logo em seguida — que é o estado real de quem vai ganhar
+    // uma cortesia: tem campanhas, mas nenhuma delas roda.
+    const alvo = await createTestUser({ name: "Despausada", plan: "pro" });
+    await alvo.auth("put", "/api/state").send({
+      groups: [{ id: 1, name: "Uma" }, { id: 2, name: "Duas" }, { id: 3, name: "Três" }],
+      numbers: [],
+    });
+    await billingMod.update(alvo.user.id, { planId: "free", status: "canceled" });
+    await alvo.auth("get", "/api/state"); // reconcilia os limites do plano novo
+
+    const semPlano = await admin.auth("get", "/api/admin/users");
+    expect(semPlano.body.users.find(u => u.id === alvo.user.id).counts.activeGroups).toBe(0);
+
+    await admin.auth("post", `/api/admin/users/${alvo.user.id}/manual-trial`).send({ planId: "pro", days: 10 });
+    const comCortesia = await admin.auth("get", "/api/admin/users");
+    expect(comCortesia.body.users.find(u => u.id === alvo.user.id).counts.activeGroups).toBe(3);
+
+    await admin.auth("delete", `/api/admin/users/${alvo.user.id}/manual-trial`);
+    const depois = await admin.auth("get", "/api/admin/users");
+    expect(depois.body.users.find(u => u.id === alvo.user.id).counts.activeGroups).toBe(0);
+  });
+
+  it("404 pra usuário inexistente; 400 ao desativar quem não tem cortesia", async () => {
+    const admin = await makeAdmin();
+    const alvo = await createTestUser();
+    const inexistente = "00000000-0000-0000-0000-000000000000";
+    expect((await admin.auth("post", `/api/admin/users/${inexistente}/manual-trial`).send({ planId: "pro", days: 5 })).status).toBe(404);
+    expect((await admin.auth("delete", `/api/admin/users/${alvo.user.id}/manual-trial`)).status).toBe(400);
   });
 });
 

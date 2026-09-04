@@ -159,10 +159,10 @@ const mock = {
   },
 
   // customer é null no checkout público (landing) — aí vem customerEmail.
-  async createCheckoutSession({ planId, customer, customerEmail, userId, withTrial = false, successUrl, cancelUrl, metadataExtra }) {
+  async createCheckoutSession({ planId, customer, customerEmail, userId, withTrial = false, trialEndsAt = null, successUrl, cancelUrl, metadataExtra }) {
     calls.createCheckoutSession.push({
       planId, customerId: customer?.id || null, customerEmail: customerEmail || null,
-      userId, withTrial, successUrl, cancelUrl, metadataExtra,
+      userId, withTrial, trialEndsAt, successUrl, cancelUrl, metadataExtra,
     });
     const ref = userId || customerEmail || "anon";
     return {
@@ -231,6 +231,12 @@ const mock = {
       currentPeriodEnd,
       cancelAtPeriodEnd: !!sub.cancel_at_period_end,
       trialEnd: sub.trial_end ? new Date(sub.trial_end * 1000) : null,
+      // Trial que só adia a primeira cobrança até o fim de uma cortesia do admin
+      // — não é o teste de R$1 e não queima a elegibilidade da conta.
+      trialFromManual: sub.metadata?.manualTrialDefer === "1",
+      // A pessoa escolheu "começar agora" e encerrar a cortesia — quem age é o
+      // webhook, não o clique.
+      manualTrialCancel: sub.metadata?.manualTrialCancel === "1",
     };
   },
 

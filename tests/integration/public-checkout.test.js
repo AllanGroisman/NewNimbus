@@ -117,6 +117,27 @@ describe("Checkout público — decisão por e-mail", () => {
     expect(res.body.decision).toBe("blocked");
   });
 
+  it("cortesia do admin NÃO bloqueia a compra — não é assinatura", async () => {
+    // A regressão que isto trava: `effectivePlanId` inclui a cortesia, e usá-lo
+    // aqui fazia o site responder "você já tem o plano Pro ativo" pra quem só
+    // estava testando de graça — impedindo justamente a conversão.
+    const { user, email, cpf } = await createTestUser();
+    await billing.grantManualTrial(user.id, { planId: "pro", days: 20 });
+
+    const res = await request(app).post("/api/public/plan-check").send({ planId: "pro", email, cpf });
+    expect(res.body.decision).toBe("checkout");
+  });
+
+  it("comprar durante a cortesia adia a primeira cobrança", async () => {
+    const { user, email, cpf } = await createTestUser();
+    await billing.grantManualTrial(user.id, { planId: "pro", days: 20 });
+
+    const res = await request(app).post("/api/public/checkout").send({ planId: "pro", email, cpf });
+    expect(res.status).toBe(200);
+    const sub = await billing.getByUserId(user.id);
+    expect(stripeCalls.createCheckoutSession.at(-1).trialEndsAt).toEqual(sub.manualTrialEndsAt);
+  });
+
   it("planId inválido é recusado", async () => {
     const res = await request(app).post("/api/public/plan-check")
       .send({ planId: "enterprise", email: uniqueEmail(), cpf: randomCpf() });

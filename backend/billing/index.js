@@ -54,8 +54,13 @@ async function getStatus(userId, userRole) {
     // quando o sistema está em modo teste.
     stripeMode: stripe.mode(),
     // Trial de R$1 só pra quem nunca assinou nem usou trial (assinantes antigos
-    // não têm trialUsedAt, mas têm stripeSubscriptionId).
+    // não têm trialUsedAt, mas têm stripeSubscriptionId). A cortesia do admin NÃO
+    // entra nesta conta: quem ganhou cortesia continua podendo fazer o teste de R$1.
     trialEligible: !sub.trialUsedAt && !sub.stripeSubscriptionId,
+    // Cortesia do admin — null quando a conta nunca recebeu uma. `active` é o que
+    // vale agora; `dormant` é a cortesia ainda na validade que está perdendo pra
+    // uma assinatura paga (e volta a valer se ela cair).
+    manualTrial: manualTrialInfo(sub),
     // Catálogo público — frontend lê preços daqui em vez de hardcodar.
     plans: await publicPlans(),
   };
@@ -97,13 +102,78 @@ async function syncCustomerEmail(userId, email) {
   }
 }
 
+// Resumo da cortesia pro frontend (admin e cliente). null = nunca recebeu uma.
+function manualTrialInfo(sub) {
+  if (!sub?.manualTrialPlanId || !sub.manualTrialEndsAt) return null;
+  const active = limits.manualTrialActive(sub);
+  const pago = sub.status === "active" || sub.status === "trialing" || limits.inGracePeriod(sub);
+  return {
+    planId: sub.manualTrialPlanId,
+    planLabel: limits.getPlan(sub.manualTrialPlanId).label,
+    endsAt: sub.manualTrialEndsAt,
+    daysLeft: limits.manualTrialDaysLeft(sub),
+    active,
+    // Na validade, mas coberta por assinatura paga — não é o que vale agora.
+    dormant: active && pago,
+    note: sub.manualTrialNote || null,
+    grantedBy: sub.manualTrialGrantedBy || null,
+    startedAt: sub.manualTrialStartedAt || null,
+  };
+}
+
 // Indica se o scheduler pode processar grupos desse usuário.
-// trialing/active = sim; past_due/unpaid dentro da carência de 3 dias também.
-// Qualquer outro = não. Admin sempre ativo.
+// trialing/active = sim; past_due/unpaid dentro da carência de 3 dias também;
+// cortesia do admin na validade também. Qualquer outro = não. Admin sempre ativo.
 function isActive(sub, userRole) {
   if (userRole === "admin") return true;
   if (!sub) return false;
-  return sub.status === "active" || sub.status === "trialing" || limits.inGracePeriod(sub);
+  return sub.status === "active" || sub.status === "trialing"
+    || limits.inGracePeriod(sub) || limits.manualTrialActive(sub);
+}
+
+// ── Trial manual (cortesia do admin) ─────────────────────────────────────
+//
+// Nada aqui toca no Stripe nem em `trialUsedAt`: é acesso concedido à mão pelo
+// admin, e o único registro dele são as colunas manualTrial* da assinatura. Quem
+// resolve o que a cortesia vale é limits.effectivePlanId.
+
+const MANUAL_TRIAL_PLANS = ["basic", "pro", "business"];
+const MANUAL_TRIAL_MAX_DAYS = 365;
+
+// Concede ou renova a cortesia. Sempre reescreve: conceder por cima de uma
+// cortesia viva ou já vencida redefine plano, início e fim, e limpa o carimbo de
+// encerramento (é uma concessão nova, tem que ser varrida de novo quando vencer).
+async function grantManualTrial(userId, { planId, days, grantedBy = null, note = null } = {}) {
+  if (!MANUAL_TRIAL_PLANS.includes(planId)) {
+    throw new Error(`Plano inválido para trial manual: escolha ${MANUAL_TRIAL_PLANS.join(", ")}`);
+  }
+  const dias = Number(days);
+  if (!Number.isInteger(dias) || dias < 1 || dias > MANUAL_TRIAL_MAX_DAYS) {
+    throw new Error(`Duração inválida: informe de 1 a ${MANUAL_TRIAL_MAX_DAYS} dias`);
+  }
+  const agora = new Date();
+  const fim = new Date(agora.getTime() + dias * 24 * 60 * 60 * 1000);
+  return store.update(userId, {
+    manualTrialPlanId: planId,
+    manualTrialStartedAt: agora,
+    manualTrialEndsAt: fim,
+    manualTrialEndedAt: null,
+    manualTrialGrantedBy: grantedBy,
+    manualTrialNote: note ? String(note).slice(0, 300) : null,
+  });
+}
+
+// Encerra a cortesia agora. Move a data de fim pro instante atual (é o que faz
+// manualTrialActive virar false na hora) e carimba o encerramento pra varredura
+// não pegar de novo. Plano e observação ficam como histórico.
+async function revokeManualTrial(userId) {
+  const sub = await store.getRawByUserId(userId);
+  if (!sub?.manualTrialPlanId) throw new Error("Este usuário não tem trial manual");
+  const agora = new Date();
+  return store.update(userId, {
+    manualTrialEndsAt: agora,
+    manualTrialEndedAt: agora,
+  });
 }
 
 module.exports = {
@@ -112,6 +182,10 @@ module.exports = {
   publicPlans,
   syncCustomerEmail,
   isActive,
+  manualTrialInfo,
+  grantManualTrial,
+  revokeManualTrial,
+  MANUAL_TRIAL_PLANS,
   limits,
   enforce,
   // require tardio: provision.js requer ../auth, que não conhece billing —

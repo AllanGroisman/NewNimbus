@@ -140,7 +140,25 @@ Como que acha a campanha, mas não consegue puxar ela?
 
 36. [] Quero tornar obrigatório registrar um telefone ao se cadastrar no sistema.
 
-37. [] Quero poder ativar um trial de X dias gratuito no plano em que eu escolher manualmente lá na aba de usuarios de ADMIN. Pode ser um botão "Adicionar Trial" que vira "Desativar Trial" se já estiver ativo, quando clico no botão quero que apareça as opções de quantos dias e qual plano. Esse trial não tem NADA a ver com o trial de 1 real. O trial de 1 real e as assinaturas pagas sobrepoem este trial manual. Quero fazer isso para poder ter controle sobre as contas dos usuarios e dar beneficios/fazer testes.
+37. [x] Quero poder ativar um trial de X dias gratuito no plano em que eu escolher manualmente lá na aba de usuarios de ADMIN. Pode ser um botão "Adicionar Trial" que vira "Desativar Trial" se já estiver ativo, quando clico no botão quero que apareça as opções de quantos dias e qual plano. Esse trial não tem NADA a ver com o trial de 1 real. O trial de 1 real e as assinaturas pagas sobrepoem este trial manual. Quero fazer isso para poder ter controle sobre as contas dos usuarios e dar beneficios/fazer testes.
+
+    **Feito:** botão "Adicionar trial" / "Desativar trial" em Admin › Usuários, com
+    modal de plano + duração (presets 7/14/30/60 ou livre) e observação. Vive nas
+    colunas `manualTrial*` da própria `subscriptions`, então `limits.effectivePlanId`
+    e `billing.isActive` resolvem tudo — nenhum ponto de gating precisou mudar.
+    Assinatura paga (e o trial de R$1) vencem a cortesia; ela fica dormente e
+    reassume sozinha se a assinatura cair antes da data de fim. Não consome
+    `trialUsedAt`. O usuário vê "Cortesia Nimbus Pro até dd/mm" na aba Assinatura
+    (e os cards de plano continuam clicáveis, inclusive o da cortesia) mais um aviso
+    no topo do app nos 3 últimos dias. Filtro "Cortesia" novo na lista de usuários.
+
+    **Cobrança:** quem assina durante a cortesia escolhe num modal o que fazer.
+    "Manter a cortesia" (default) segue no plano da cortesia até a data de fim sem
+    pagar nada, e o plano contratado entra junto com a primeira cobrança.
+    "Começar agora" encerra a cortesia, cobra hoje e o plano contratado vale na
+    hora — a cortesia é consumida e não volta. Nenhum dos dois queima o teste de
+    R$1, que deixa de ser oferecido enquanto a cortesia corre. Cortesia acabando
+    em menos de 48h cobra normal (piso do Stripe pro `trial_end`).
 
 38. [] na aba de Usuarios de ADMIN, acrescenta mais um filtro ali para os "Operando".
 

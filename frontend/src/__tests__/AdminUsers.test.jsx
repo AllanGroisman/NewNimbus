@@ -20,11 +20,14 @@ vi.mock("../data/api", () => ({
   adminVerifyUserEmail: vi.fn(),
   adminSetUserSuspended: vi.fn(),
   adminResendUserVerification: vi.fn(),
+  adminGrantManualTrial: vi.fn(),
+  adminRevokeManualTrial: vi.fn(),
 }));
 
 import PageAdminUsers from "../pages/AdminUsers.jsx";
 import {
   adminListUsers, adminGetRegistration, adminUserDetail, adminSetUserSuspended,
+  adminGrantManualTrial, adminRevokeManualTrial,
 } from "../data/api";
 
 function user(over = {}) {
@@ -240,5 +243,89 @@ describe("Admin › Usuários", () => {
     fireEvent.click(screen.getByRole("button", { name: "Pagando (2)" }));
     expect(screen.getByText("Agendado")).toBeInTheDocument();
     expect(screen.getByText("Pagante")).toBeInTheDocument();
+  });
+});
+
+// Trial manual = cortesia que o admin libera à mão, sem Stripe e sem cobrança.
+describe("Admin › Usuários — trial manual (cortesia)", () => {
+  const cortesia = (over = {}) => sub({
+    planId: "free", status: "inactive", effectivePlanId: "pro",
+    manualTrialPlanId: "pro", manualTrialActive: true, manualTrialDaysLeft: 12,
+    manualTrialEndsAt: "2026-09-16T12:00:00.000Z", manualTrialStartedAt: "2026-09-04T12:00:00.000Z",
+    ...over,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    adminGetRegistration.mockResolvedValue({ blocked: false });
+    adminUserDetail.mockResolvedValue(ficha());
+    adminGrantManualTrial.mockResolvedValue({ ok: true });
+    adminRevokeManualTrial.mockResolvedValue({ ok: true });
+  });
+
+  it("conceder: o modal manda plano e dias escolhidos", async () => {
+    mostrar([user()]);
+    render(<PageAdminUsers currentUser={{ id: "admin" }} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Adicionar trial" }));
+    fireEvent.click(screen.getByRole("button", { name: "Business" }));
+    fireEvent.click(screen.getByRole("button", { name: "14 dias" }));
+    fireEvent.click(screen.getByRole("button", { name: "Liberar trial" }));
+
+    await waitFor(() => expect(adminGrantManualTrial).toHaveBeenCalledWith(
+      "u1", { planId: "business", days: 14, note: undefined },
+    ));
+  });
+
+  it("quem já tem cortesia mostra o selo e o botão de desativar", async () => {
+    mostrar([user({ subscription: cortesia() })]);
+    render(<PageAdminUsers currentUser={{ id: "admin" }} />);
+
+    expect(await screen.findByText("Cortesia Pro · 12d")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Adicionar trial" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Desativar trial" }));
+    await waitFor(() => expect(adminRevokeManualTrial).toHaveBeenCalledWith("u1"));
+  });
+
+  it("assinou durante a cortesia: o selo diz o que vale hoje e o que entra depois", async () => {
+    mostrar([user({ subscription: cortesia({
+      planId: "business", status: "trialing", effectivePlanId: "pro",
+    }) })]);
+    render(<PageAdminUsers currentUser={{ id: "admin" }} />);
+
+    // Quem vale é a cortesia (Pro) até a primeira cobrança, quando entra o Business.
+    expect(await screen.findByText("Cortesia Pro · 12d → Business")).toBeInTheDocument();
+    expect(screen.queryByText(/dormente/)).not.toBeInTheDocument();
+  });
+
+  it("com assinatura paga a cortesia aparece como dormente", async () => {
+    mostrar([user({ subscription: cortesia({ planId: "basic", status: "active", effectivePlanId: "basic" }) })]);
+    render(<PageAdminUsers currentUser={{ id: "admin" }} />);
+
+    expect(await screen.findByText("Cortesia Pro (dormente)")).toBeInTheDocument();
+    expect(screen.getByText("Pagando · Basic")).toBeInTheDocument();
+  });
+
+  it("filtro 'Cortesia' separa quem está em trial manual", async () => {
+    mostrar([
+      user({ id: "a", name: "Cortesia", subscription: cortesia() }),
+      user({ id: "b", name: "Pagante", subscription: sub() }),
+    ]);
+    render(<PageAdminUsers currentUser={{ id: "admin" }} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Cortesia (1)" }));
+    expect(screen.getByText("Cortesia")).toBeInTheDocument();
+    expect(screen.queryByText("Pagante")).not.toBeInTheDocument();
+  });
+
+  it("recusa duração fora da faixa sem chamar a API", async () => {
+    mostrar([user()]);
+    render(<PageAdminUsers currentUser={{ id: "admin" }} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Adicionar trial" }));
+    fireEvent.change(screen.getByLabelText("Dias de trial"), { target: { value: "0" } });
+    expect(screen.getByRole("button", { name: "Liberar trial" })).toBeDisabled();
+    expect(adminGrantManualTrial).not.toHaveBeenCalled();
   });
 });

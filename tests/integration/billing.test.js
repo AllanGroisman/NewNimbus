@@ -21,6 +21,7 @@ import { makeGroup } from "../helpers/fixtures.js";
 // Cache de preços é singleton do backend — os testes de preço precisam limpá-lo.
 const requireCjs = createRequire(import.meta.url);
 const pricesCache = requireCjs("../../backend/billing/prices.js");
+const limitsMod = requireCjs("../../backend/billing/limits.js");
 
 // Helper: postar evento bruto pro webhook. O mock ignora a signature.
 // IMPORTANTE: supertest serializa Buffer pra { type:"Buffer", data:[...] } quando
@@ -682,6 +683,163 @@ describe("Billing — trial de R$1 (7 dias, só Básico, 1x por conta)", () => {
     const sub = await billing.getByUserId(user.id);
     expect(sub.status).toBe("trialing");
     expect(sub.trialUsedAt).not.toBeNull();
+  });
+});
+
+// Cortesia do admin (trial manual): acesso liberado à mão, fora do Stripe. Aqui a
+// prova é do lado do CLIENTE — o que /api/billing/me conta pra ele.
+describe("Billing — trial manual (cortesia)", () => {
+  const DIA = 24 * 60 * 60 * 1000;
+
+  it("/billing/me reflete a cortesia e NÃO consome o teste de R$1", async () => {
+    const { user, auth } = await createTestUser();
+    await billing.grantManualTrial(user.id, { planId: "pro", days: 12, note: "beta" });
+
+    const res = await auth("get", "/api/billing/me");
+    expect(res.status).toBe(200);
+    expect(res.body.effectivePlan).toBe("pro");
+    expect(res.body.limits.groups).toBe(5);
+    expect(res.body.manualTrial).toMatchObject({ planId: "pro", planLabel: "Pro", active: true, dormant: false, daysLeft: 12 });
+    // O status do Stripe continua sendo o que é: cortesia não é assinatura.
+    expect(res.body.status).toBe("inactive");
+    expect(res.body.planId).toBe("free");
+    // E o teste de R$1 segue disponível — são coisas diferentes.
+    expect(res.body.trialEligible).toBe(true);
+  });
+
+  it("assinatura paga vence a cortesia, que fica dormente", async () => {
+    const { user, auth } = await createTestUser();
+    await billing.grantManualTrial(user.id, { planId: "business", days: 30 });
+    await billing.update(user.id, { planId: "basic", status: "active" });
+
+    const res = await auth("get", "/api/billing/me");
+    expect(res.body.effectivePlan).toBe("basic");
+    expect(res.body.limits.groups).toBe(1);
+    expect(res.body.manualTrial).toMatchObject({ active: true, dormant: true });
+  });
+
+  it("cortesia vencida some do plano em vigor", async () => {
+    const { user, auth } = await createTestUser();
+    await billing.grantManualTrial(user.id, { planId: "pro", days: 1 });
+    await billing.update(user.id, { manualTrialEndsAt: new Date(Date.now() - DIA) });
+
+    const res = await auth("get", "/api/billing/me");
+    expect(res.body.effectivePlan).toBe("free");
+    expect(res.body.manualTrial.active).toBe(false);
+  });
+
+  it("assinar durante a cortesia adia a primeira cobrança pro fim dela", async () => {
+    const { user, auth } = await createTestUser();
+    await billing.grantManualTrial(user.id, { planId: "pro", days: 20 });
+
+    const res = await auth("post", "/api/billing/checkout").send({ planId: "pro" });
+    expect(res.status).toBe(200);
+
+    const chamada = stripeCalls.createCheckoutSession.at(-1);
+    const sub = await billing.getByUserId(user.id);
+    expect(chamada.trialEndsAt).toEqual(sub.manualTrialEndsAt);
+    expect(chamada.withTrial).toBe(false);
+  });
+
+  it("cortesia acabando em menos de 48h cobra normal (piso do Stripe)", async () => {
+    const { user, auth } = await createTestUser();
+    await billing.grantManualTrial(user.id, { planId: "pro", days: 10 });
+    await billing.update(user.id, { manualTrialEndsAt: new Date(Date.now() + 3 * 60 * 60 * 1000) });
+
+    await auth("post", "/api/billing/checkout").send({ planId: "pro" });
+    expect(stripeCalls.createCheckoutSession.at(-1).trialEndsAt).toBeNull();
+  });
+
+  it("keepManualTrial=false cobra hoje e marca a cortesia pra encerrar", async () => {
+    const { user, auth } = await createTestUser();
+    await billing.grantManualTrial(user.id, { planId: "basic", days: 20 });
+
+    const res = await auth("post", "/api/billing/checkout").send({ planId: "pro", keepManualTrial: false });
+    expect(res.status).toBe(200);
+
+    const chamada = stripeCalls.createCheckoutSession.at(-1);
+    expect(chamada.trialEndsAt).toBeNull();      // sem adiamento: cobra agora
+    expect(chamada.metadataExtra).toMatchObject({ manualTrialCancel: "1" });
+    // A cortesia NÃO morre no clique — um checkout abandonado não pode custá-la.
+    expect((await billing.getByUserId(user.id)).manualTrialEndedAt).toBeNull();
+  });
+
+  it("o webhook de quem escolheu 'começar agora' encerra a cortesia de vez", async () => {
+    const { user } = await createTestUser();
+    await billing.grantManualTrial(user.id, { planId: "basic", days: 20 });
+    await billing.update(user.id, { stripeCustomerId: "cus_cancel_1" });
+
+    await postEvent({
+      id: "evt_cancel_1",
+      type: "customer.subscription.created",
+      data: {
+        object: {
+          id: "sub_cancel_1",
+          customer: "cus_cancel_1",
+          status: "active",
+          current_period_end: Math.floor(Date.now() / 1000) + 30 * 86400,
+          metadata: { planId: "pro", manualTrialCancel: "1" },
+          items: { data: [{ price: { id: "price_test_pro" } }] },
+        },
+      },
+    });
+
+    const sub = await billing.getByUserId(user.id);
+    expect(sub.manualTrialEndedAt).not.toBeNull();
+    expect(limitsMod.manualTrialActive(sub)).toBe(false);
+    expect(limitsMod.effectivePlanId(sub)).toBe("pro");
+
+    // E não ressuscita quando a assinatura cai: a pessoa gastou a cortesia.
+    await billing.update(user.id, { planId: "free", status: "canceled" });
+    expect(limitsMod.effectivePlanId(await billing.getByUserId(user.id))).toBe("free");
+  });
+
+  it("adiar a cobrança NÃO queima o teste de R$1 da conta", async () => {
+    const { user, auth } = await createTestUser();
+    await billing.grantManualTrial(user.id, { planId: "pro", days: 20 });
+    await billing.update(user.id, { stripeCustomerId: "cus_defer_1" });
+
+    // O webhook do Stripe chega com trial_end (é o adiamento) e a marca que o
+    // checkout gravou na metadata da assinatura.
+    await postEvent({
+      id: "evt_defer_1",
+      type: "customer.subscription.created",
+      data: {
+        object: {
+          id: "sub_defer_1",
+          customer: "cus_defer_1",
+          status: "trialing",
+          trial_end: Math.floor(Date.now() / 1000) + 20 * 86400,
+          current_period_end: Math.floor(Date.now() / 1000) + 20 * 86400,
+          metadata: { planId: "pro", manualTrialDefer: "1" },
+          items: { data: [{ price: { id: "price_test_pro" } }] },
+        },
+      },
+    });
+
+    const sub = await billing.getByUserId(user.id);
+    expect(sub.status).toBe("trialing");
+    expect(sub.trialUsedAt).toBeNull();
+    const me = await auth("get", "/api/billing/me");
+    expect(me.body.trialEligible).toBe(false); // já tem assinatura, mas não por ter "usado o trial"
+    expect(me.body.manualTrial.dormant).toBe(true);
+  });
+
+  it("a varredura encerra a cortesia vencida uma vez só", async () => {
+    const requireCjs2 = createRequire(import.meta.url);
+    const reminders = requireCjs2("../../backend/billing/reminders.js");
+    const { user } = await createTestUser();
+    await billing.grantManualTrial(user.id, { planId: "pro", days: 1 });
+    await billing.update(user.id, { manualTrialEndsAt: new Date(Date.now() - DIA) });
+
+    const primeira = await reminders.expireManualTrials();
+    expect(primeira.expired).toBeGreaterThanOrEqual(1);
+    expect((await billing.getByUserId(user.id)).manualTrialEndedAt).not.toBeNull();
+
+    // Segunda passada não pega a mesma concessão de novo.
+    const antes = (await billing.getByUserId(user.id)).manualTrialEndedAt;
+    await reminders.expireManualTrials();
+    expect((await billing.getByUserId(user.id)).manualTrialEndedAt).toEqual(antes);
   });
 });
 

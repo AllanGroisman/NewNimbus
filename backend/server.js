@@ -209,7 +209,9 @@ async function handleStripeEvent(event) {
       }
       // Marca trialUsedAt na primeira vez que vemos uma sub com trial — queima
       // a elegibilidade do trial de R$1 (set-if-null = idempotente).
-      if (norm.trialEnd) {
+      // `trialFromManual` é o trial que existe só pra adiar a primeira cobrança
+      // até o fim de uma cortesia: esse não é o teste de R$1 e não queima nada.
+      if (norm.trialEnd && !norm.trialFromManual) {
         const existing = await billing.getByUserId(userId);
         if (!existing?.trialUsedAt) norm.trialUsedAt = new Date();
       }
@@ -218,6 +220,17 @@ async function handleStripeEvent(event) {
       // isso, cada reentrega do Stripe viraria um aviso repetido.
       const before = await billing.getRawByUserId(userId);
       await billing.update(userId, norm);
+      // "Cancelar o trial e começar agora": a pessoa pediu no checkout pra
+      // encerrar a cortesia junto com a primeira cobrança. Roda ANTES do
+      // applyPlanLimits pra os limites serem recalculados uma vez só, já sem ela.
+      if (norm.manualTrialCancel) {
+        const atual = await billing.getByUserId(userId);
+        if (billing.limits.manualTrialActive(atual)) {
+          await billing.revokeManualTrial(userId).catch(err => {
+            logger.warn({ err: err.message, userId }, "[billing] encerrar cortesia no checkout falhou");
+          });
+        }
+      }
       const after = await billing.getRawByUserId(userId);
       // Plano mudou → recalcula o que fica ativo/pausado (downgrade pausa o
       // excedente, upgrade despausa). Nunca derruba o webhook se falhar.
@@ -518,6 +531,22 @@ const publicCheckoutLimiter = rateLimit({
 
 const SUBSCRIBABLE_PLANS = ["basic", "pro", "business"];
 
+// Quando a pessoa está numa cortesia do admin, assinar não pode cobrar hoje: ela
+// já tem o acesso até certa data, e pagar agora seria pagar duas vezes pelo mesmo
+// período. A primeira cobrança é empurrada pro fim da cortesia (trial_end do
+// Stripe), com o cartão coletado no ato.
+//
+// O piso de 48h é regra do Stripe pro trial_end no Checkout: cortesia acabando
+// antes disso não dá pra adiar, então a cobrança entra normal — o que também é o
+// certo, porque o intervalo é irrisório.
+const DEFER_MIN_MS = 48 * 60 * 60 * 1000;
+
+function deferralFor(sub) {
+  if (!billing.limits.manualTrialActive(sub)) return null;
+  const fim = new Date(sub.manualTrialEndsAt);
+  return fim.getTime() - Date.now() >= DEFER_MIN_MS ? fim : null;
+}
+
 // Bloqueio nunca é beco sem saída: quem já assina recebe, junto da mensagem, o
 // caminho para os planos MAIORES que o dele. Todos apontam para
 // /assinatura?plano=…, onde a troca cobra só a diferença — abrir um checkout
@@ -644,8 +673,10 @@ app.post("/api/public/checkout", publicCheckoutLimiter, async (req, res) => {
     // Conta existente sem plano ativo: o checkout é dela, com o customer que
     // ela já tiver — cai exatamente no fluxo autenticado de sempre.
     let customer = null;
+    let adiarAte = null;
     if (d.user) {
       const sub = await billing.ensureForUser(d.user.id, { planId: "free", status: "inactive" });
+      adiarAte = deferralFor(sub);
       customer = await stripeMod.getOrCreateCustomer({
         userId: d.user.id,
         email: d.user.email,
@@ -674,7 +705,8 @@ app.post("/api/public/checkout", publicCheckoutLimiter, async (req, res) => {
       customer,
       customerEmail: customer ? undefined : email,
       userId: d.user?.id,
-      withTrial: trial,
+      withTrial: trial && !adiarAte,
+      trialEndsAt: adiarAte,
       successUrl: publicUrl.stripeWelcomeUrl,
       cancelUrl: publicUrl.subscribeUrl(planId),
       metadataExtra: { source: "landing", pendingEmail: email, pendingCpf: cpf },
@@ -1135,7 +1167,9 @@ async function reconcileWithStripe(userId) {
   if (!sub?.stripeCustomerId) return false;
   const norm = await stripeMod.getActiveSubscriptionForCustomer(sub.stripeCustomerId);
   if (!norm) return false;
-  if (norm.trialEnd && !sub.trialUsedAt) norm.trialUsedAt = new Date();
+  // Mesma ressalva do webhook: trial que só adia a cobrança até o fim de uma
+  // cortesia não é o teste de R$1 e não queima a elegibilidade da conta.
+  if (norm.trialEnd && !norm.trialFromManual && !sub.trialUsedAt) norm.trialUsedAt = new Date();
   await billing.update(userId, norm);
   // Plano pode ter mudado no Stripe sem webhook chegar — aplica os limites.
   await applyPlanLimits(userId);
@@ -1317,11 +1351,26 @@ app.post("/api/billing/checkout", auth.requireAuth, async (req, res) => {
       await billing.update(req.user.id, { stripeCustomerId: customer.id });
     }
 
+    // Cortesia correndo: quem decide é a pessoa, no modal da página de
+    // Assinatura. `keepManualTrial` false = "cancelar o trial e começar agora".
+    // O default é MANTER porque é o único que não cobra por dias que ela já tem
+    // — um cliente antigo que não mande o campo nunca é cobrado por engano.
+    //
+    // Em qualquer um dos dois casos o teste de R$1 não entra: o acesso já está
+    // liberado. A elegibilidade fica intacta pra depois; quem a queima é o
+    // webhook, e ele sabe distinguir adiamento de teste pago.
+    const manterCortesia = req.body?.keepManualTrial !== false;
+    const emCortesia = billing.limits.manualTrialActive(sub);
+    const adiarAte = manterCortesia ? deferralFor(sub) : null;
     const session = await stripeMod.createCheckoutSession({
       planId,
       customer,
       userId: req.user.id,
-      withTrial,
+      withTrial: withTrial && !emCortesia,
+      trialEndsAt: adiarAte,
+      // Encerrar a cortesia aqui faria um checkout abandonado custar os dias
+      // dela. Quem encerra é o webhook, quando a assinatura de fato existe.
+      ...(emCortesia && !manterCortesia ? { metadataExtra: { manualTrialCancel: "1" } } : {}),
     });
     metrics.recordCheckout?.(planId, "ok");
     res.json({ url: session.url });
@@ -1937,6 +1986,43 @@ app.patch("/api/admin/users/:id/suspend", auth.requireAuth, auth.requireAdmin, a
     const { suspended } = req.body || {};
     const user = await auth.adminSetSuspended(req.params.id, !!suspended);
     res.json({ user });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Trial manual (cortesia): o admin libera um plano por N dias sem passar pelo
+// Stripe. Não é o teste de R$1 — não consome `trialUsedAt` e não cobra nada. Uma
+// assinatura paga vence a cortesia; ela só assume no vazio.
+//
+// `applyPlanLimits` depois de gravar é o que despausa as campanhas/números que
+// passam a caber no plano da cortesia (e os repausa na revogação) — mesmo
+// encadeamento que `reconcileWithStripe` faz depois de sincronizar com o Stripe.
+app.post("/api/admin/users/:id/manual-trial", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const { planId, days, note } = req.body || {};
+    if (!SUBSCRIBABLE_PLANS.includes(planId)) {
+      return res.status(400).json({ error: "Plano inválido para trial manual" });
+    }
+    const alvo = await auth.findById(req.params.id);
+    if (!alvo) return res.status(404).json({ error: "Usuário não encontrado" });
+    await billing.grantManualTrial(req.params.id, {
+      planId, days, note, grantedBy: req.user.id,
+    });
+    await applyPlanLimits(req.params.id, { role: alvo.role });
+    res.json({ ok: true, manualTrial: billing.manualTrialInfo(await billing.getByUserId(req.params.id)) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete("/api/admin/users/:id/manual-trial", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const alvo = await auth.findById(req.params.id);
+    if (!alvo) return res.status(404).json({ error: "Usuário não encontrado" });
+    await billing.revokeManualTrial(req.params.id);
+    await applyPlanLimits(req.params.id, { role: alvo.role });
+    res.json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

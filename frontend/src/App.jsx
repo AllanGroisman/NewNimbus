@@ -1198,9 +1198,13 @@ export default function App() {
             <div onClick={() => requestNavigation(() => setPage("subscription"))} style={{ cursor: "pointer", background: "var(--danger-bg)", border: "0.5px solid var(--danger-border)", color: "var(--danger-text)", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
               Pagamento pendente — clique para regularizar e manter envios ativos.
             </div>
-          ) : billing.status === "trialing" && billing.daysLeftInTrial !== null && billing.daysLeftInTrial <= 2 ? (
+          ) : billing.status === "trialing" && !billing.manualTrial?.active && billing.daysLeftInTrial !== null && billing.daysLeftInTrial <= 2 ? (
             <div onClick={() => requestNavigation(() => setPage("subscription"))} style={{ cursor: "pointer", background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", color: "var(--warn-text)", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
               Seu trial expira em {billing.daysLeftInTrial}d. Assine para continuar usando.
+            </div>
+          ) : billing.manualTrial?.active && !billing.manualTrial?.dormant && billing.manualTrial.daysLeft <= 3 ? (
+            <div onClick={() => requestNavigation(() => setPage("subscription"))} style={{ cursor: "pointer", background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", color: "var(--warn-text)", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
+              Sua cortesia acaba em {billing.manualTrial.daysLeft}d. Assine um plano para não parar os envios.
             </div>
           ) : billing.effectivePlan === "free" ? (
             <div onClick={() => requestNavigation(() => setPage("subscription"))} style={{ cursor: "pointer", background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", color: "var(--warn-text)", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>

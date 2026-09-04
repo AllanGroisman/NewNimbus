@@ -245,7 +245,10 @@ async function decideForSignup({ planId, email, cpf }) {
   // Admin tem Business por bypass (limits.effectivePlanId) — não faz sentido
   // deixar comprar plano nenhum pela landing.
   const role = auth.isAdminEmail(user.email) ? "admin" : user.role;
-  const currentPlan = limits.effectivePlanId(sub, role);
+  // `paidPlanId`, e não `effectivePlanId`: a pergunta aqui é "já é cliente?".
+  // Uma cortesia do admin não é assinatura — tratá-la como uma bloquearia
+  // justamente quem a gente quer que assine no fim do período de teste.
+  const currentPlan = limits.paidPlanId(sub, role);
   const trialEligible = !sub?.trialUsedAt && !sub?.stripeSubscriptionId;
 
   if (currentPlan === "free") {

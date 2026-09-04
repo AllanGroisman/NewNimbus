@@ -89,15 +89,61 @@ function graceEndsAt(sub) {
   return new Date(since + GRACE_MS);
 }
 
-// Plano efetivo: o que o usuário pode usar AGORA. trialing/active = planId real;
-// past_due/unpaid dentro da carência também. Qualquer outro caso cai pra free.
-// Admins recebem Business permanentemente — bypass de gating.
-function effectivePlanId(sub, userRole) {
+// Trial manual (cortesia do admin) vigente? Só olha a data — de propósito: é
+// justamente ele que segura a conta quando não existe assinatura nenhuma, então
+// não pode depender de status do Stripe. Plano desconhecido não vale nada.
+function manualTrialActive(sub, now = Date.now()) {
+  if (!sub?.manualTrialPlanId || !sub.manualTrialEndsAt) return false;
+  if (!PLANS[sub.manualTrialPlanId]) return false;
+  const end = new Date(sub.manualTrialEndsAt).getTime();
+  return Number.isFinite(end) && end > now;
+}
+
+// Dias que faltam da cortesia (null se não há uma vigente) — os selos do admin e
+// as telas do cliente leem daqui em vez de refazer a conta de data cada um.
+function manualTrialDaysLeft(sub, now = Date.now()) {
+  if (!manualTrialActive(sub, now)) return null;
+  const ms = new Date(sub.manualTrialEndsAt).getTime() - now;
+  return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
+}
+
+// O plano que a ASSINATURA garante agora, ignorando a cortesia do admin.
+// trialing/active = planId real; past_due/unpaid dentro da carência também.
+//
+// Existe separado de `effectivePlanId` porque quem pergunta "esta pessoa já é
+// cliente?" — o checkout público, que bloqueia quem já assina — não pode
+// confundir cortesia com assinatura: senão a cortesia impediria a compra.
+function paidPlanId(sub, userRole) {
   if (userRole === "admin") return "business";
   if (!sub) return "free";
-  const active = sub.status === "active" || sub.status === "trialing" || inGracePeriod(sub);
-  if (!active) return "free";
+  const pago = sub.status === "active" || sub.status === "trialing" || inGracePeriod(sub);
+  if (!pago) return "free";
   return PLANS[sub.planId] ? sub.planId : "free";
+}
+
+// Plano efetivo: o que o usuário pode usar AGORA.
+//
+// Ordem: admin → cortesia enquanto a cobrança não começou → assinatura paga →
+// cortesia → free.
+//
+// O degrau do meio é o que faz "assinei durante a cortesia" ter uma resposta só,
+// em vez de uma pra upgrade e outra pra downgrade: dentro da janela sem cobrança
+// a pessoa segue no plano da cortesia, e o plano contratado assume no MESMO
+// instante da primeira cobrança (o Stripe vira `trialing` → `active`). Quem não
+// quis esperar escolheu "começar agora" no checkout, e aí não há trial nenhum —
+// a assinatura nasce `active` e cai direto no degrau seguinte.
+function effectivePlanId(sub, userRole) {
+  // Bypass explícito: com o degrau da cortesia logo abaixo, delegar o admin pro
+  // paidPlanId deixaria um admin em cortesia cair no plano da cortesia.
+  if (userRole === "admin") return "business";
+  if (manualTrialActive(sub) && sub.status === "trialing") return sub.manualTrialPlanId;
+  // Fora da janela sem cobrança, quem paga tem o que contratou — mesmo que a
+  // cortesia guardada seja de um plano maior. Ela fica dormente e reassume
+  // sozinha se a assinatura cair antes da data de fim dela.
+  const pago = paidPlanId(sub, userRole);
+  if (pago !== "free") return pago;
+  if (manualTrialActive(sub)) return sub.manualTrialPlanId;
+  return "free";
 }
 
 function getLimits(sub, userRole) {
@@ -215,6 +261,9 @@ module.exports = {
   planRank,
   isUpgrade,
   effectivePlanId,
+  paidPlanId,
+  manualTrialActive,
+  manualTrialDaysLeft,
   inGracePeriod,
   graceEndsAt,
   getLimits,

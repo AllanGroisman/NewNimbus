@@ -13,6 +13,7 @@
 
 const store = require("./pg");
 const limits = require("./limits");
+const enforce = require("./enforce");
 const stripe = require("./stripe");
 const emails = require("../notifications/email");
 const logger = require("../infra/logger");
@@ -81,9 +82,43 @@ function decidirLembrete(sub, now = Date.now()) {
   return null;
 }
 
+// Fecha as cortesias (trial manual) que venceram.
+//
+// O acesso em si já expira sozinho — limits.manualTrialActive é só data, então na
+// virada a conta volta a valer "free" sem ninguém fazer nada. O que fica velho é o
+// `planPaused`: as campanhas que só cabiam no plano da cortesia continuariam
+// contando como ativas na lista do admin e no "Operando". Esta varredura carimba
+// `manualTrialEndedAt` (uma vez por concessão) e reconcilia os limites.
+async function expireManualTrials(now = Date.now()) {
+  const stats = { expired: 0, errors: 0 };
+  let rows = [];
+  try {
+    rows = await store.listExpiredManualTrials(new Date(now));
+  } catch (err) {
+    logger.warn({ err: err.message }, "[billing-reminders] cortesias vencidas: leitura falhou");
+    return { ...stats, errors: 1 };
+  }
+
+  for (const sub of rows) {
+    // Uma conta com dado estranho não pode derrubar a varredura das outras.
+    try {
+      await store.update(sub.userId, { manualTrialEndedAt: new Date(now) });
+      await enforce.reconcileLimits(sub.userId, await store.getByUserId(sub.userId), sub.user?.role);
+      stats.expired += 1;
+      logger.info({ userId: sub.userId, planId: sub.manualTrialPlanId }, "[billing-reminders] cortesia encerrada");
+    } catch (err) {
+      stats.errors += 1;
+      logger.warn({ err: err.message, userId: sub.userId }, "[billing-reminders] encerrar cortesia falhou");
+    }
+  }
+  return stats;
+}
+
 // Uma varredura. Exportada pra os testes chamarem direto — em NODE_ENV=test o
 // start() é no-op de propósito.
 async function runOnce(now = Date.now()) {
+  await expireManualTrials(now);
+
   const stats = { checked: 0, sent: 0, errors: 0 };
   let rows = [];
   try {
@@ -143,4 +178,4 @@ function status() {
   return { ...last, checkIntervalMs: CHECK_MS };
 }
 
-module.exports = { start, stop, status, runOnce, decidirLembrete };
+module.exports = { start, stop, status, runOnce, decidirLembrete, expireManualTrials };
