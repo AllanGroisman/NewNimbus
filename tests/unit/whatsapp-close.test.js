@@ -66,6 +66,30 @@ describe("classifyClose", () => {
     const r = classifyClose(undefined);
     expect(r).toEqual({ status: "connecting", lastError: null, reconnect: true });
   });
+
+  it("QR expirado (408) em sessão NÃO registrada → disconnected terminal, limpa, não reconecta", () => {
+    const r = classifyClose(boom(DisconnectReason.timedOut, { message: "QR refs attempts ended" }), { registered: false });
+    expect(r.status).toBe("disconnected");
+    expect(r.reconnect).toBe(false);
+    expect(r.cleanup).toBe(true);
+    expect(r.lastError).toMatch(/QR/i);
+  });
+
+  it("QR expirado (408) em sessão JÁ registrada → connecting, reconecta (timeout de rede normal)", () => {
+    const r = classifyClose(boom(DisconnectReason.timedOut, { message: "QR refs attempts ended" }), { registered: true });
+    expect(r).toEqual({ status: "connecting", lastError: null, reconnect: true });
+  });
+
+  it("registered default é true → 408 QR-timeout reconecta se `registered` não for passado", () => {
+    const r = classifyClose(boom(DisconnectReason.timedOut, { message: "QR refs attempts ended" }));
+    expect(r.reconnect).toBe(true);
+  });
+
+  it("timeout 408 genérico (sem 'QR refs attempts ended') em sessão não registrada → connecting, reconecta", () => {
+    const r = classifyClose(boom(DisconnectReason.timedOut, { message: "Timed Out" }), { registered: false });
+    expect(r.reconnect).toBe(true);
+    expect(r.cleanup).toBeUndefined();
+  });
 });
 
 describe("isStuckReconnecting", () => {

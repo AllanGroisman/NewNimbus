@@ -77,7 +77,7 @@ function key(userId, numberId) { return `${userId}::${numberId}`; }
 // (mesma conta em outro lugar, ou overlap de processos num restart). No conflito as
 // credenciais continuam VÁLIDAS — apagá-las forçava re-scan a cada restart. Então
 // só é logout definitivo o 401 que NÃO seja conflito.
-function classifyClose(err, { shuttingDown = false } = {}) {
+function classifyClose(err, { shuttingDown = false, registered = true } = {}) {
   const code = err?.output?.statusCode;
   const reasonTag = err?.data?.content?.[0]?.tag;
   const isConflict = reasonTag === "conflict" || /\(conflict\)/i.test(err?.message || "");
@@ -88,6 +88,20 @@ function classifyClose(err, { shuttingDown = false } = {}) {
   // pra "disconnected" (coerente com closeAll), pra tela não ficar num "connecting"
   // eterno de uma sessão que o worker não tem mais.
   if (shuttingDown) return { status: "disconnected", lastError: err?.message || null, reconnect: false };
+
+  // QR nunca escaneado: a sessão NÃO está registrada (nenhum telefone pareou) e o
+  // Baileys encerrou porque esgotou as tentativas de QR (408 "QR refs attempts
+  // ended"). Reconectar aqui só gera um QR novo que ninguém escaneia → loop
+  // infinito (era o caso do usuário que abria o QR e fechava a aba: a sessão órfã
+  // reciclava de 3 em 3 min pra sempre, queimando CPU). Vira terminal e sinaliza
+  // limpeza; o usuário reabre o QR explicitamente ("cancele e tente novamente")
+  // quando for de fato escanear. Só vale pra sessão não-registrada: pra uma já
+  // autenticada, 408 é timeout de rede normal e deve reconectar como antes.
+  const qrExpired = code === DisconnectReason.timedOut && /QR refs attempts ended/i.test(err?.message || "");
+  if (qrExpired && !registered) {
+    return { status: "disconnected", lastError: "QR não escaneado a tempo.", reconnect: false, cleanup: true };
+  }
+
   return { status: "connecting", lastError: null, reconnect: true };
 }
 
@@ -191,7 +205,8 @@ async function startSession(userId, numberId) {
       if (session.migrating) return;
 
       const err = lastDisconnect?.error;
-      const { status, lastError, reconnect } = classifyClose(err, { shuttingDown });
+      const registered = !!sock.authState?.creds?.registered;
+      const { status, lastError, reconnect, cleanup } = classifyClose(err, { shuttingDown, registered });
 
       // Diagnóstico: `classifyClose` rebaixa quase tudo pra "connecting" com
       // lastError null (de propósito, pra UI não piscar erro). Sem este log, uma
@@ -215,6 +230,16 @@ async function startSession(userId, numberId) {
         session.reconnectingSince = null;
         session.stuck = false;
         publishStatus(session);
+        // QR expirado numa sessão nunca registrada: remove o órfão do worker e
+        // apaga a auth parcial (pre-keys/noise, sem creds válidas) pra não deixar
+        // resquício. Mantém o status "disconnected" publicado (com lastError) pro
+        // frontend mostrar o aviso + "cancele e tente novamente". NÃO faz logout
+        // (não há device pareado). Não vale pro logout real, que preserva as creds.
+        if (cleanup) {
+          sessions.delete(k);
+          try { sock.end(undefined); } catch {}
+          pgAuth().deleteSession(`${userId}::${numberId}`).catch(() => {});
+        }
         return;
       }
 

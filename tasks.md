@@ -135,3 +135,9 @@ Como que acha a campanha, mas não consegue puxar ela?
 33. [] Consigo entrar no PC da VPS que tem linux, instalar o chrome com a extensão e fazer o captcha manualmente quando necessario? Para automatizar a busca por cupom ou as coisas que precisam de captcha
 
 34. [x] Quero trocar o ? que tem embaixo das telas por um simbolo do whatsapp para contatar o suporte que encaminhe para https://wa.me/55997140686
+
+35. [] Adiciona um botão para testar se o Whats esta conectado la no card de cada numero conectado do Whatsapp. Nele dispara uma mensagem teste do WhatsNimbus do sistema que envia para o numero no privado, assim consigo testar se esta conectando e funcionando na pratica.
+
+36. [] Quero tornar obrigatório registrar um telefone ao se cadastrar no sistema.
+
+37. [] Quero poder ativar um trial de X dias gratuito no plano em que eu escolher manualmente lá na aba de usuarios de ADMIN. Pode ser um botão "Adicionar Trial" que vira "Desativar Trial" se já estiver ativo, quando clico no botão quero que apareça as opções de quantos dias e qual plano. Esse trial não tem NADA a ver com o trial de 1 real. O trial de 1 real e as assinaturas pagas sobrepoem este trial manual. Quero fazer isso para poder ter controle sobre as contas dos usuarios e dar beneficios/fazer testes.
