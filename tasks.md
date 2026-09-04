@@ -141,3 +141,7 @@ Como que acha a campanha, mas não consegue puxar ela?
 36. [] Quero tornar obrigatório registrar um telefone ao se cadastrar no sistema.
 
 37. [] Quero poder ativar um trial de X dias gratuito no plano em que eu escolher manualmente lá na aba de usuarios de ADMIN. Pode ser um botão "Adicionar Trial" que vira "Desativar Trial" se já estiver ativo, quando clico no botão quero que apareça as opções de quantos dias e qual plano. Esse trial não tem NADA a ver com o trial de 1 real. O trial de 1 real e as assinaturas pagas sobrepoem este trial manual. Quero fazer isso para poder ter controle sobre as contas dos usuarios e dar beneficios/fazer testes.
+
+38. [] na aba de Usuarios de ADMIN, acrescenta mais um filtro ali para os "Operando".
+
+39. [] deu alguns problemas com alguns usuarios na conexão dos whats. De uma boa revisada para deixar bem redondo e funcionando certinho, sem criar conexoes fantasma, sem dar erros, é uma parte bem importante do sistema.
