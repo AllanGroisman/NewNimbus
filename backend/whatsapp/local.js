@@ -61,6 +61,10 @@ function pgAuth() {
 // Baileys — necessário pra diagnosticar sessão que não conecta e não fecha.
 const log = pino({ level: process.env.WA_LOG_LEVEL || "warn" });
 
+// Últimas mensagens enviadas por este processo — serve o getMessage do socket
+// (retry receipt). Módulo puro, sem IO: pode entrar direto no topo.
+const msgStore = require("./msg-store");
+
 // chave: `${userId}::${numberId}` -> { sock, status, qr, qrDataUrl, info, ... }
 const sessions = new Map();
 
@@ -279,6 +283,13 @@ async function _openSocket(userId, numberId, k) {
     logger: log,
     syncFullHistory: false,
     markOnlineOnConnect: false,
+    // Retry receipt: quando o celular do destinatário não decripta o pacote, ele
+    // mostra "Aguardando mensagem. Essa ação pode levar alguns instantes" e pede o
+    // reenvio. O Baileys atende esse pedido em sendMessagesAgain buscando a
+    // mensagem original AQUI. Sem este callback vale o default do Baileys
+    // (`async () => undefined`): o reenvio nunca sai e o placeholder fica pra
+    // sempre no celular do usuário. Ver whatsapp/msg-store.js.
+    getMessage: async (key) => msgStore.get(key && key.id),
   });
   const gen = ++_gen;
 
@@ -552,14 +563,21 @@ function ensureConnected(userId, numberId) {
   return s;
 }
 
+// O retorno vai pro msg-store antes de voltar: é dele que o getMessage tira a
+// mensagem quando o destinatário pede reenvio. Guardamos o proto como veio — no
+// caso da imagem, o reenvio reaproveita as media keys em vez de subir de novo.
 async function sendText(userId, numberId, jid, text) {
   const s = ensureConnected(userId, numberId);
-  return s.sock.sendMessage(jid, { text });
+  const sent = await s.sock.sendMessage(jid, { text });
+  msgStore.put(sent);
+  return sent;
 }
 
 async function sendImage(userId, numberId, jid, imageUrl, caption) {
   const s = ensureConnected(userId, numberId);
-  return s.sock.sendMessage(jid, { image: { url: imageUrl }, caption });
+  const sent = await s.sock.sendMessage(jid, { image: { url: imageUrl }, caption });
+  msgStore.put(sent);
+  return sent;
 }
 
 async function createGroup(userId, numberId, name, participantPhones) {

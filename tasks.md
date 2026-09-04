@@ -260,3 +260,48 @@ Como que acha a campanha, mas não consegue puxar ela?
     **Fora do escopo (decidido):** trava de dono de sessão entre instâncias no
     Postgres. Se o problema voltar, o passo barato é uma claim
     `SET nimbus:worker:heartbeat NX` pro worker recusar boot com outro vivo.
+
+40. [x] pq da "Aguardando mensagem. Essa ação pode levar alguns instantes" nas msg que a nimbus envia no sistema, no privado? No grupo de config quando envio o teste fica normal. Tb teve um usuario que mandava msgs no grupo dele e fica aparecendo isso tb
+
+    **Causa raiz:** esse texto é o WhatsApp do DESTINATÁRIO dizendo que recebeu o
+    pacote mas não conseguiu decriptar (sessão Signal nova ou com o ratchet
+    dessincronizado — os 325k `Bad MAC` do `worker-error.log`). Nessa hora o celular
+    dele manda um *retry receipt* de volta pedindo o reenvio, e o Baileys sabe
+    atender: `sendMessagesAgain` recupera a mensagem original chamando o callback
+    `getMessage(key)` do `makeWASocket` e a repassa forçando sessão nova. **Nós não
+    passávamos esse callback**, então valia o default do Baileys
+    (`async () => undefined`): o reenvio nunca saía e o placeholder ficava no celular
+    do usuário pra sempre. Falhar a decriptação é normal no WhatsApp; o bug nosso era
+    o retry ficar sem resposta.
+
+    O privado sofre mais que o grupo de config porque uma DM precisa de sessão
+    par-a-par com cada dispositivo do destinatário, e a primeira mensagem de uma
+    sessão nova é justo a que falha — o grupo de config já tem a *sender key*
+    estabelecida e reusada. O caso do outro usuário no grupo dele é o mesmo
+    mecanismo: quando a sender key roda (alguém entra/sai, aparelho novo, socket
+    reiniciado), a próxima mensagem renegocia, falha igual e o retry morre igual.
+
+    **Feito:**
+    - **`backend/whatsapp/msg-store.js`** (novo): as últimas mensagens que este
+      processo enviou, em memória, chaveadas pelo `id` puro — o `remoteJid` do
+      receipt pode vir na forma LID enquanto gravamos a PN, então casar por jid
+      perderia justo os casos que interessam. Teto de 1000 (evicção FIFO) e TTL de
+      1h, ambos por env; expira na leitura, sem timer segurando o processo vivo.
+    - **`getMessage` no socket** (`local.js`), servido pelo store, e `sendText`/
+      `sendImage` alimentando o store com o proto como veio — no caso da imagem o
+      reenvio reaproveita as media keys em vez de subir o arquivo de novo.
+    - Só em memória e no mesmo processo do socket que recebe o receipt: a janela real
+      de retry é de segundos a poucos minutos (`maxMsgRetryCount` do Baileys é 5).
+      Um restart do worker perde os pendentes daquele instante — trade-off aceito em
+      troca de zero infra nova. Nada muda no modo Redis: o socket só existe dentro do
+      `local.js`, e o `worker.js` segue reduzindo o retorno do envio a `{ ok, key }`.
+    - Testes: `unit/whatsapp-msg-store.test.js` (teto, TTL, retorno malformado) e
+      `unit/whatsapp-retry-getmessage.test.js`, que trava as duas pontas — o socket
+      nasce com o callback e o que sai por `sendText`/`sendImage` volta por ele.
+
+    **Não feito (atacam a FREQUÊNCIA das falhas de decriptação, não o sintoma):**
+    `cachedGroupMetadata` (hoje todo envio em grupo dispara um IQ de `groupMetadata`);
+    `keys.set` atômico em `auth/baileys-pg.js` (hoje é `Promise.all` de upserts
+    soltos — morrer no meio grava metade do ratchet e o peer nunca mais decripta);
+    `makeCacheableSignalKeyStore` (hoje cada mensagem decriptada custa um SELECT por
+    chave Signal no PG; só é seguro enquanto um único worker for dono de cada sessão).
