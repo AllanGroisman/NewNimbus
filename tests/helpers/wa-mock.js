@@ -23,9 +23,17 @@ const calls = {
 // testes que exercitam a perna que falha (ex.: sessão caída no /test).
 let sendError = null;
 
+// Espelha o msg-store do worker: quantas vezes o aparelho pediu reenvio da última
+// mensagem. `known` é false quando o id não passou por este processo (worker
+// reiniciado) — a rota de teste trata isso como "sem informação".
+let msgStatsResult = { known: true, retries: 0, lastRetryAt: null };
+let msgIdSeq = 0;
+
 function reset() {
   for (const k of Object.keys(calls)) calls[k].length = 0;
   sendError = null;
+  msgStatsResult = { known: true, retries: 0, lastRetryAt: null };
+  msgIdSeq = 0;
 }
 
 const fakeSessions = new Map();
@@ -54,8 +62,11 @@ const mock = {
   async sendText(userId, numberId, jid, text) {
     if (sendError) throw new Error(sendError);
     calls.sendText.push({ userId, numberId, jid, text });
-    return { ok: true };
+    // Como o real (worker.js reduz o WebMessageInfo a { ok, key }): a rota de teste
+    // precisa do key.id pra perguntar depois se houve pedido de reenvio.
+    return { ok: true, key: { id: `MSG${++msgIdSeq}` } };
   },
+  async msgStats() { return msgStatsResult; },
   async sendImage(userId, numberId, jid, imageUrl, caption) {
     calls.sendImage.push({ userId, numberId, jid, imageUrl, caption });
     return { ok: true };
@@ -96,6 +107,8 @@ const mock = {
   __connect: connect,
   // Setter do gancho de falha (null desliga).
   __failSend: (msg) => { sendError = msg; },
+  // Setter do resultado do msgStats — simula o aparelho pedindo (ou não) reenvio.
+  __setMsgStats: (stats) => { msgStatsResult = { known: true, retries: 0, lastRetryAt: null, ...stats }; },
   // Espelha backend/whatsapp/local.js:232-233 — o módulo real exporta os dois.
   normalizePhone(p) { return String(p).replace(/\D/g, ""); },
   jidFromPhone(phone) { return `${String(phone).replace(/\D/g, "")}@s.whatsapp.net`; },
@@ -134,3 +147,4 @@ function installMock() {
 
 export { installMock, mock, calls, reset, connect };
 export const failSend = (msg) => mock.__failSend(msg);
+export const setMsgStats = (stats) => mock.__setMsgStats(stats);

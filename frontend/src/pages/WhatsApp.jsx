@@ -21,16 +21,37 @@ function statusUI(status) {
 
 // Uma linha do resultado do teste. `leg` é { ok, skipped?, error? } vindo do
 // backend. Pulada (WhatsNimbus não conectado) não é falha: fica neutra.
-function TestLine({ label, leg }) {
+function TestLine({ label, leg, note }) {
   const skipped = !leg.ok && leg.skipped;
   const icon = leg.ok ? "✓" : skipped ? "—" : "✗";
   const color = leg.ok ? "#22C55E" : skipped ? "var(--color-text-secondary)" : "var(--danger-text)";
   return (
     <div style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
       <span aria-hidden="true" style={{ color, fontWeight: 600, flexShrink: 0 }}>{icon}</span>
-      <span>{label}: {leg.ok ? "ok" : (leg.error || "falhou")}</span>
+      <span>
+        {label}: {leg.ok ? "ok" : (leg.error || "falhou")}
+        {note ? <div style={{ marginTop: 2, opacity: 0.9 }}>{note}</div> : null}
+      </span>
     </div>
   );
+}
+
+// O envio ter saído do servidor não quer dizer que o celular conseguiu abrir a
+// mensagem. Quando ele não consegue, mostra "Aguardando mensagem…" e pede o reenvio
+// — e o backend detecta isso (self.retried). Só falamos de entrega quando o backend
+// sabe (self.deliveryKnown); sem isso, silêncio é melhor que um "entregue" mentiroso.
+function selfNote(leg) {
+  if (!leg || !leg.ok || !leg.deliveryKnown) return null;
+  if (leg.retried) {
+    return (
+      <span style={{ color: "var(--danger-text)" }}>
+        ⚠️ O aparelho não conseguiu ler a mensagem de primeira e pediu reenvio — é isso
+        que aparece como “Aguardando mensagem. Essa ação pode levar alguns instantes”
+        no celular. Reenviamos; se continuar assim, avise.
+      </span>
+    );
+  }
+  return <span>entregue, sem pedido de reenvio</span>;
 }
 
 // Bloco de resultado dentro do card. `result` pode ser o veredito das duas
@@ -53,7 +74,7 @@ function TestResult({ result, onDismiss }) {
           <div style={{ color: "var(--danger-text)" }}>{result.error}</div>
         ) : (
           <>
-            <TestLine label="Envio pelo próprio número" leg={result.self || {}} />
+            <TestLine label="Envio pelo próprio número" leg={result.self || {}} note={selfNote(result.self)} />
             <TestLine label="DM do WhatsNimbus" leg={result.whatsnimbus || {}} />
           </>
         )}

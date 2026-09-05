@@ -3716,6 +3716,10 @@ app.delete("/api/whatsapp/sessions/:id/groups/:jid", auth.requireAuth, async (re
 // As pernas são independentes: a 2 roda mesmo se a 1 falhou — é justamente o
 // caso em que o usuário quer saber se ao menos a DM do sistema chega.
 const TEST_COOLDOWN_MS = 60 * 1000;
+// Janela de espera antes de perguntar se o aparelho pediu reenvio. O retry receipt
+// vem em segundos (retryRequestDelayMs do Baileys é 350ms + ida e volta), e 6s cabe
+// folgado dentro do cooldown de 60s. Zero em teste pra não arrastar a suíte.
+const TEST_RETRY_WAIT_MS = process.env.NODE_ENV === "test" ? 0 : 6000;
 const testCooldown = new Map(); // `${userId}::${numberId}` -> timestamp do último teste
 
 app.post("/api/whatsapp/sessions/:id/test", auth.requireAuth, requireActiveSubscription, requireUsableNumber, async (req, res) => {
@@ -3758,8 +3762,10 @@ app.post("/api/whatsapp/sessions/:id/test", auth.requireAuth, requireActiveSubsc
     }
 
     const self = { ok: false };
+    let selfMsgId = null;
     try {
-      await wa.sendText(req.user.id, numberId, wa.jidFromPhone(phone), userNotifier.selfTestText());
+      const sent = await wa.sendText(req.user.id, numberId, wa.jidFromPhone(phone), userNotifier.selfTestText());
+      selfMsgId = sent?.key?.id || null;
       self.ok = true;
     } catch (err) {
       self.error = err.message;
@@ -3773,6 +3779,24 @@ app.post("/api/whatsapp/sessions/:id/test", auth.requireAuth, requireActiveSubsc
       whatsNimbusLeg.error = err.message;
       // Não conectado é ausência de configuração, não falha do teste.
       if (/WhatsNimbus não está conectado/.test(err.message)) whatsNimbusLeg.skipped = true;
+    }
+
+    // O envio ter saído do servidor NÃO prova que o aparelho conseguiu ler: quando a
+    // sessão Signal está dessincronizada, o celular mostra "Aguardando mensagem" e
+    // manda um retry receipt pedindo o reenvio. O único sinal disso do nosso lado é o
+    // Baileys vir buscar a mensagem no msg-store — que conta os pedidos. Esperamos a
+    // janela do retry (segundos) e perguntamos ao worker, dono do store.
+    if (self.ok && selfMsgId) {
+      if (TEST_RETRY_WAIT_MS) await new Promise(r => setTimeout(r, TEST_RETRY_WAIT_MS));
+      try {
+        const stats = await wa.msgStats(selfMsgId);
+        self.retried = !!(stats && stats.retries > 0);
+        self.retries = (stats && stats.retries) || 0;
+        // Sem o id no store (worker reiniciado, teto/TTL) não dá pra afirmar nada.
+        self.deliveryKnown = !!(stats && stats.known);
+      } catch (err) {
+        self.deliveryKnown = false;
+      }
     }
 
     // Resultado parcial ainda é um diagnóstico bem-sucedido: 200 e o veredito vai

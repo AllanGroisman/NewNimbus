@@ -52,6 +52,30 @@ describe("msg-store — mensagens enviadas disponíveis pro reenvio", () => {
     expect(store.get("MSG4")).toEqual({ conversation: "t4" });
   });
 
+  it("cada busca pelo reenvio é contada — é o único sinal de que o aparelho travou", () => {
+    store.put(sent("MSG1", "oi"));
+    expect(store.stats("MSG1")).toMatchObject({ known: true, retries: 0 });
+
+    store.get("MSG1");   // o Baileys veio buscar pra atender um retry receipt
+    store.get("MSG1");   // e veio de novo
+    const st = store.stats("MSG1");
+    expect(st).toMatchObject({ known: true, retries: 2 });
+    expect(typeof st.lastRetryAt).toBe("number");
+  });
+
+  it("stats de id que o processo não conhece não afirma nada", () => {
+    expect(store.stats("NUNCA_VISTO")).toEqual({ known: false, retries: 0, lastRetryAt: null });
+    expect(store.stats(undefined)).toEqual({ known: false, retries: 0, lastRetryAt: null });
+  });
+
+  it("stats depois do TTL volta a ser desconhecido", () => {
+    vi.useFakeTimers();
+    store.put(sent("MSG1", "oi"));
+    vi.advanceTimersByTime(61_000);
+    store.get("MSG1");                             // a leitura expira a entrada
+    expect(store.stats("MSG1").known).toBe(false);
+  });
+
   it("passado o TTL a mensagem não volta mais", () => {
     vi.useFakeTimers();
     store.put(sent("MSG1", "oi"));

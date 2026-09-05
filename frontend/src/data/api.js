@@ -485,8 +485,10 @@ export async function broadcastWA(id, jids, text, imageUrl, intervalMs = 4000) {
 // Teste de conexão do número: auto-DM pelo próprio número + DM do WhatsNimbus.
 // Responde 200 com o veredito de cada perna ({ ok, self, whatsnimbus }); falha de
 // perna NÃO é erro HTTP. 429 quando o cooldown de 60s ainda não passou.
+// Timeout maior que o padrão: além dos dois envios, o backend espera alguns
+// segundos pra saber se o aparelho pediu reenvio da mensagem de teste.
 export async function testWASession(id) {
-  return http("POST", `/api/whatsapp/sessions/${id}/test`);
+  return http("POST", `/api/whatsapp/sessions/${id}/test`, undefined, { timeoutMs: 60_000 });
 }
 
 // ─── Admin / usuários ──────────────────────────────────────────────────

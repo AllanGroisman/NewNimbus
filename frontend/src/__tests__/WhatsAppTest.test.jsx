@@ -74,6 +74,43 @@ describe("WhatsApp — botão 'Testar'", () => {
     expect(screen.getByText(/DM do WhatsNimbus: ok/)).toBeTruthy();
   });
 
+  it("aparelho pediu reenvio → o card avisa em vez de fingir sucesso", async () => {
+    testWASession.mockResolvedValue({
+      ok: true,
+      self: { ok: true, retried: true, retries: 1, deliveryKnown: true },
+      whatsnimbus: { ok: true },
+    });
+    await act(async () => { renderPage(); });
+    await act(async () => { fireEvent.click(testBtn()); });
+
+    expect(screen.getByText(/não conseguiu ler a mensagem de primeira/)).toBeTruthy();
+  });
+
+  it("sem pedido de reenvio → diz que entregou", async () => {
+    testWASession.mockResolvedValue({
+      ok: true,
+      self: { ok: true, retried: false, retries: 0, deliveryKnown: true },
+      whatsnimbus: { ok: true },
+    });
+    await act(async () => { renderPage(); });
+    await act(async () => { fireEvent.click(testBtn()); });
+
+    expect(screen.getByText(/entregue, sem pedido de reenvio/)).toBeTruthy();
+  });
+
+  it("sem informação de entrega → não afirma nada sobre o aparelho", async () => {
+    testWASession.mockResolvedValue({
+      ok: true,
+      self: { ok: true, deliveryKnown: false },
+      whatsnimbus: { ok: true },
+    });
+    await act(async () => { renderPage(); });
+    await act(async () => { fireEvent.click(testBtn()); });
+
+    expect(screen.queryByText(/entregue, sem pedido de reenvio/)).toBeNull();
+    expect(screen.queryByText(/não conseguiu ler a mensagem/)).toBeNull();
+  });
+
   it("mostra 'Testando...' e desabilita o botão enquanto roda", async () => {
     let resolve;
     testWASession.mockReturnValue(new Promise(r => { resolve = r; }));

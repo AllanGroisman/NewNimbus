@@ -126,7 +126,7 @@ Como que acha a campanha, mas não consegue puxar ela?
 
     Quero que continue o botão de apagar todos os cupons e que tenha botão individual de apagar também.
 
-29. [] Na busca dos cupons quero ver o progresso da raspagem dos cupons.
+29. [] Na busca dos cupons quero ver o progresso da raspagem dos cupons, exatamente o que esta sendo feito na hora, pra saber o que acontece, pq demora, e etc...
 
 30. [] Como funciona o vinculo dos produtos dos cupons com os produtos que ja fiz scraping, o sistema percebe quando sao o mesmo produto e ja vincula? Os cupons ficam vinculados?
 

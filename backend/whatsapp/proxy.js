@@ -68,6 +68,17 @@ async function sendImage(userId, numberId, jid, imageUrl, caption) {
   return queue.callControl("sendImage", [String(userId), String(numberId), jid, imageUrl, caption], { timeoutMs: 60000 });
 }
 
+// Quantas vezes o aparelho pediu reenvio desta mensagem. O store vive no processo do
+// worker (é lá que o socket recebe o retry receipt), então o server pergunta por RPC.
+// Timeout curto e falha silenciosa: é diagnóstico, nunca pode derrubar a rota.
+async function msgStats(id) {
+  try {
+    return await queue.callControl("msgStats", [String(id)], { timeoutMs: 10000 });
+  } catch (err) {
+    return { known: false, retries: 0, lastRetryAt: null, error: err.message };
+  }
+}
+
 async function createGroup(userId, numberId, name, participantPhones) {
   return queue.callControl("createGroup", [String(userId), String(numberId), name, participantPhones], { timeoutMs: 60000 });
 }
@@ -111,7 +122,7 @@ async function status() {
 
 module.exports = {
   startSession, getSession, listSessions, listAllSessions, deleteSession,
-  sendText, sendImage,
+  sendText, sendImage, msgStats,
   createGroup, getInviteLink, revokeInvite, listGroups, leaveGroup, getGroupMetadata,
   restoreSessions, closeAll, status,
   jidFromPhone, normalizePhone,

@@ -2,7 +2,7 @@
 // registra chamadas pra inspeção. Plan-gating de número novo testado aqui.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { request, app, createTestUser, waCalls, resetWa, waFailSend, auth as authMod, billing } from "../helpers/app.js";
+import { request, app, createTestUser, waCalls, resetWa, waFailSend, waSetMsgStats, auth as authMod, billing } from "../helpers/app.js";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
@@ -283,6 +283,39 @@ describe("WhatsApp — teste de conexão (/test)", () => {
       numberId: "5511888888888",
       jid: "5511999999999@s.whatsapp.net",
     });
+  });
+
+  it("aparelho pediu reenvio: a resposta conta isso em vez de dizer só `ok`", async () => {
+    const { auth } = await userOnPlan("pro");
+    await auth("post", "/api/whatsapp/sessions/num-1");
+    await registerNumbers(auth, ["num-1"]);
+    // O celular não decriptou e pediu a mensagem de volta — é o que produz o
+    // "Aguardando mensagem. Essa ação pode levar alguns instantes" na tela dele.
+    waSetMsgStats({ known: true, retries: 2 });
+
+    const r = await auth("post", "/api/whatsapp/sessions/num-1/test");
+    expect(r.status).toBe(200);
+    expect(r.body.self).toMatchObject({ ok: true, retried: true, retries: 2, deliveryKnown: true });
+  });
+
+  it("sem pedido de reenvio: `retried:false` com a entrega confirmada", async () => {
+    const { auth } = await userOnPlan("pro");
+    await auth("post", "/api/whatsapp/sessions/num-1");
+    await registerNumbers(auth, ["num-1"]);
+
+    const r = await auth("post", "/api/whatsapp/sessions/num-1/test");
+    expect(r.body.self).toMatchObject({ ok: true, retried: false, retries: 0, deliveryKnown: true });
+  });
+
+  it("id fora do store (worker reiniciado): não afirma entrega nenhuma", async () => {
+    const { auth } = await userOnPlan("pro");
+    await auth("post", "/api/whatsapp/sessions/num-1");
+    await registerNumbers(auth, ["num-1"]);
+    waSetMsgStats({ known: false, retries: 0 });
+
+    const r = await auth("post", "/api/whatsapp/sessions/num-1/test");
+    expect(r.body.self.ok).toBe(true);
+    expect(r.body.self.deliveryKnown).toBe(false);
   });
 
   it("WhatsNimbus não conectado: perna 2 vira `skipped` e NÃO reprova o teste", async () => {

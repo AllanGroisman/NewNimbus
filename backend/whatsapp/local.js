@@ -59,7 +59,35 @@ function pgAuth() {
 
 // "warn" no dia a dia. WA_LOG_LEVEL=debug/trace liga o log de protocolo do
 // Baileys — necessário pra diagnosticar sessão que não conecta e não fecha.
-const log = pino({ level: process.env.WA_LOG_LEVEL || "warn" });
+//
+// Fora isso, rodamos em `debug` com um destino que FILTRA: as linhas do caminho de
+// retry (`recv retry request`, `message not available`, `forced new session for
+// retry recp`, `fetching sessions`) nascem em debug/info no Baileys e eram a única
+// evidência de por que o placeholder "Aguardando mensagem" não some — mas subir o
+// nível inteiro despejaria os ~6.700 `Bad MAC`/dia no log. Então deixamos passar
+// warn/error como sempre e, abaixo disso, só o que casa com RETRY_LINES.
+// WA_RETRY_DEBUG=0 desliga sem deploy.
+const RETRY_LINES = /retry|fetching sessions|not available|forced new session/i;
+
+function makeLogger() {
+  const explicit = process.env.WA_LOG_LEVEL;
+  if (explicit) return pino({ level: explicit });
+  if (process.env.WA_RETRY_DEBUG === "0") return pino({ level: "warn" });
+  const dest = {
+    write(line) {
+      try {
+        const rec = JSON.parse(line);
+        // 40 = warn no pino. Abaixo disso, só o caminho de retry.
+        if (rec.level >= 40 || RETRY_LINES.test(rec.msg || "")) process.stdout.write(line);
+      } catch {
+        process.stdout.write(line);
+      }
+    },
+  };
+  return pino({ level: "debug" }, dest);
+}
+
+const log = makeLogger();
 
 // Últimas mensagens enviadas por este processo — serve o getMessage do socket
 // (retry receipt). Módulo puro, sem IO: pode entrar direto no topo.
@@ -835,6 +863,12 @@ function status() {
   return { totalSessions: total, connectedSessions: connected };
 }
 
+// Consultado pela rota de teste (via control queue, em modo redis): quantas vezes o
+// aparelho pediu o reenvio desta mensagem. Ver msg-store.js.
+function msgStats(id) {
+  return msgStore.stats(id);
+}
+
 module.exports = {
   startSession,
   getSession,
@@ -843,6 +877,7 @@ module.exports = {
   deleteSession,
   sendText,
   sendImage,
+  msgStats,
   createGroup,
   getInviteLink,
   revokeInvite,
@@ -870,6 +905,7 @@ function makeStub() {
     deleteSession: fail,
     sendText: fail,
     sendImage: fail,
+    msgStats: () => ({ known: false, retries: 0, lastRetryAt: null }),
     createGroup: fail,
     getInviteLink: fail,
     revokeInvite: fail,

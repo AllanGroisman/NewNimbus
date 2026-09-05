@@ -22,8 +22,14 @@
 const MAX = Number(process.env.WA_MSG_STORE_MAX) || 1000;
 const TTL_MS = Number(process.env.WA_MSG_STORE_TTL_MS) || 60 * 60 * 1000; // 1h
 
-// id -> { message, at }. A ordem de iteração do Map é a de inserção, então o
-// primeiro `keys().next()` é sempre o mais antigo — evicção FIFO sem estrutura extra.
+// id -> { message, at, retries, lastRetryAt }. A ordem de iteração do Map é a de
+// inserção, então o primeiro `keys().next()` é sempre o mais antigo — evicção FIFO
+// sem estrutura extra.
+//
+// `retries` é o contador de vezes que o Baileys veio buscar esta mensagem aqui. Ele
+// só faz isso pra atender um retry receipt, ou seja: **cada incremento é a prova de
+// que o aparelho do destinatário mostrou "Aguardando mensagem"**. É o único sinal
+// que temos disso — o WhatsApp não avisa de outro jeito.
 const store = new Map();
 
 // Recebe o WebMessageInfo que o sock.sendMessage devolveu. Guarda o proto COMO
@@ -35,26 +41,53 @@ function put(sent) {
   const message = sent && sent.message;
   if (!id || !message) return;
   store.delete(id); // reinsere no fim: mantém a ordem FIFO honesta
-  store.set(String(id), { message, at: Date.now() });
+  store.set(String(id), { message, at: Date.now(), retries: 0, lastRetryAt: null });
   while (store.size > MAX) store.delete(store.keys().next().value);
 }
 
-// Expira na leitura — junto com o teto do put(), segura o tamanho sem varredura
-// periódica (nada de timer segurando o processo vivo).
+// Chamado SÓ pelo getMessage do socket, que só é chamado pra atender retry receipt.
+// Por isso contamos aqui: quem lê é o reenvio. Expira na leitura — junto com o teto
+// do put(), segura o tamanho sem varredura periódica (nada de timer segurando o
+// processo vivo).
 function get(id) {
   if (!id) return undefined;
   const entry = store.get(String(id));
-  if (!entry) return undefined;
-  if (Date.now() - entry.at > TTL_MS) {
-    store.delete(String(id));
+  if (!entry) {
+    logRetry(id, "miss");
     return undefined;
   }
+  if (Date.now() - entry.at > TTL_MS) {
+    store.delete(String(id));
+    logRetry(id, "expirado");
+    return undefined;
+  }
+  entry.retries += 1;
+  entry.lastRetryAt = Date.now();
+  logRetry(id, `hit #${entry.retries}`);
   return entry.message;
+}
+
+// O que a rota de teste consulta pra saber se o aparelho pediu reenvio. `known:false`
+// = o id caiu do teto/TTL ou nunca passou por este processo (worker reiniciado), e aí
+// não dá pra afirmar nada — a rota trata como "sem informação", não como sucesso.
+function stats(id) {
+  const entry = id ? store.get(String(id)) : null;
+  if (!entry) return { known: false, retries: 0, lastRetryAt: null };
+  return { known: true, retries: entry.retries, lastRetryAt: entry.lastRetryAt };
+}
+
+// Uma linha por pedido de reenvio. Acontece só quando uma mensagem NOSSA falhou a
+// decriptação no destinatário — volume desprezível, e é o sinal que faltava pra
+// diagnosticar o placeholder eterno.
+function logRetry(id, outcome) {
+  if (process.env.WA_RETRY_DEBUG === "0") return;
+  console.log(`[wa] retry pedido id=${id} ${outcome}`);
 }
 
 module.exports = {
   put,
   get,
+  stats,
   MAX,
   TTL_MS,
   // Só pra teste.
