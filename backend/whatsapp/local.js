@@ -89,6 +89,28 @@ function makeLogger() {
 
 const log = makeLogger();
 
+// Nome que o celular mostra em WhatsApp › Aparelhos conectados. É o browser[0]
+// do Baileys, que ele manda como `os` do device (`generateRegistrationNode`, em
+// Utils/validate-connection.js): o app renderiza "Google Chrome (<browser[0]>)".
+//
+// Fora de produção (NIMBUS_MODE=ngrok/e2e) o rótulo vira "Teste": a máquina de
+// testes pareia no MESMO celular que a produção, e com os dois devices chamados
+// "(Nimbus)" não há como saber qual desconectar. WHATSAPP_DEVICE_LABEL sobrepõe,
+// pra uma segunda máquina de teste ter rótulo próprio.
+//
+// Vale só pra pareamento NOVO: o campo viaja no registro do device. Sessão que já
+// tem credencial entra por generateLoginNode, que não reenvia isso — o nome do
+// device já pareado não muda.
+//
+// Lê o process.env direto (e não o `mode` do config/loadEnv) porque NIMBUS_MODE
+// sempre vem do ambiente do PM2, nunca de arquivo .env; assim não dependemos da
+// ordem de require deste módulo.
+function deviceLabel() {
+  const custom = String(process.env.WHATSAPP_DEVICE_LABEL || "").trim();
+  if (custom) return custom;
+  return (process.env.NIMBUS_MODE || "prod").toLowerCase() === "prod" ? "Nimbus" : "Teste";
+}
+
 // Últimas mensagens enviadas por este processo — serve o getMessage do socket
 // (retry receipt). Módulo puro, sem IO: pode entrar direto no topo.
 const msgStore = require("./msg-store");
@@ -307,7 +329,7 @@ async function _openSocket(userId, numberId, k) {
     version: version || undefined,
     auth: state,
     printQRInTerminal: false,
-    browser: ["Nimbus", "Chrome", "1.0"],
+    browser: [deviceLabel(), "Chrome", "1.0"],
     logger: log,
     syncFullHistory: false,
     markOnlineOnConnect: false,

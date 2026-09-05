@@ -342,3 +342,31 @@ Como que acha a campanha, mas não consegue puxar ela?
     soltos — morrer no meio grava metade do ratchet e o peer nunca mais decripta);
     `makeCacheableSignalKeyStore` (hoje cada mensagem decriptada custa um SELECT por
     chave Signal no PG; só é seguro enquanto um único worker for dono de cada sessão).
+
+41. [x] Quero que o nome da conexao que aparece no whats seja diferente no modo ngrok, quero que aparece TESTE ou algo do tipo. Hoje aparece Google Chrome (Nimbus) quero que no modo ngrok de testes apareca Google Chrome (Teste).
+
+    **Feito:** o rótulo do device saiu do hardcode e virou `deviceLabel()` em
+    `backend/whatsapp/local.js`: `NIMBUS_MODE=prod` (ou ausente) → "Nimbus",
+    qualquer outro modo (ngrok, e2e) → "Teste". `WHATSAPP_DEVICE_LABEL` sobrepõe,
+    se um dia uma segunda máquina de teste precisar de nome próprio. Só o
+    `browser[0]` muda: `browser[1]` ("Chrome") é o que o Baileys passa pro
+    `getPlatformType`, então mexer ali mudaria o TIPO do device em vez do texto
+    entre parênteses.
+
+    **Vale só pra pareamento NOVO.** O campo viaja no registro do device
+    (`generateRegistrationNode`, que manda `browser[0]` como `os`); sessão que já
+    tem credencial reconecta por `generateLoginNode`, que não reenvia isso. Então
+    número já conectado continua "Google Chrome (Nimbus)" na lista do celular até
+    ser removido e escanear um QR novo — que é justamente o fluxo do modo ngrok,
+    porque ele sobe com banco local e o `restore-remote.js` pergunta à parte antes
+    de trazer o `baileys_auth` (task 39).
+
+    **Por que importa:** a máquina de testes pareia no MESMO celular que a
+    produção, e com os dois devices chamados "(Nimbus)" não havia como saber qual
+    desconectar.
+
+    **Teste:** `unit/whatsapp-device-label.test.js` — captura o config entregue ao
+    `makeWASocket` e trava os quatro casos (prod, ngrok, modo qualquer, override),
+    mais a guarda de que `browser[1]`/`browser[2]` não mudam.
+
+42. [] Tenho um usuario do sistema que disse que as mensagens no whats ficam  
