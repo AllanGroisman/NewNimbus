@@ -1,4 +1,4 @@
-<!-- ============== MODAL DE ASSINATURA (email + CPF) ============== -->
+<!-- ============== MODAL DE ASSINATURA (email + CPF + WhatsApp) ============== -->
 <!--
 Modal identico ao usado no index.html: pede e-mail e CPF antes do
 Stripe, porque e a unica chance de barrar quem ja assina ou ja usou
@@ -87,6 +87,11 @@ logo abaixo.
           <input x-model="cpf" @input="cpf = mascara(cpf)" inputmode="numeric" required maxlength="14" placeholder="000.000.000-00" class="mt-1.5 w-full rounded-xl border border-stone-300 px-4 py-3 text-base outline-none focus:border-stone-900">
           <span class="mt-1 block text-xs text-stone-500">Cada CPF pode ter uma conta na Nimbus.</span>
         </label>
+        <label class="block">
+          <span class="text-sm font-medium text-stone-700">Seu WhatsApp</span>
+          <input x-model="telefone" @input="telefone = mascaraTel(telefone)" type="tel" inputmode="tel" required maxlength="15" placeholder="(11) 99999-9999" class="mt-1.5 w-full rounded-xl border border-stone-300 px-4 py-3 text-base outline-none focus:border-stone-900">
+          <span class="mt-1 block text-xs text-stone-500">É por ele que o suporte fala com você.</span>
+        </label>
 
         <template x-if="erro">
           <p class="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700" x-text="erro"></p>
@@ -140,6 +145,7 @@ function assinar() {
     trial: false,
     email: '',
     cpf: '',
+    telefone: '',
     carregando: false,
     erro: null,
     bloqueio: null,
@@ -189,6 +195,29 @@ function assinar() {
       if (d.length <= 9) return d.slice(0,3) + '.' + d.slice(3,6) + '.' + d.slice(6);
       return d.slice(0,3) + '.' + d.slice(3,6) + '.' + d.slice(6,9) + '-' + d.slice(9);
     },
+    // Mascara progressiva do celular: (11) 99999-9999. O 55 do pais e
+    // descartado enquanto digita — quem cola "+55 11 ..." ve o numero acomodar.
+    mascaraTel(v) {
+      let d = String(v || '').replace(/\D/g, '');
+      if (d.length > 11 && d.startsWith('55')) d = d.slice(2);
+      d = d.slice(0, 11);
+      if (d.length <= 2) return d;
+      if (d.length <= 7) return '(' + d.slice(0,2) + ') ' + d.slice(2);
+      return '(' + d.slice(0,2) + ') ' + d.slice(2,7) + '-' + d.slice(7);
+    },
+    // Mesma regra do backend (utils/phone.js): DDD valido + celular (nono
+    // digito 9). Devolve 55 + 11 digitos, ou '' se nao servir.
+    telParaEnvio(v) {
+      const DDDS = [11,12,13,14,15,16,17,18,19,21,22,24,27,28,31,32,33,34,35,37,38,
+        41,42,43,44,45,46,47,48,49,51,53,54,55,61,62,63,64,65,66,67,68,69,
+        71,73,74,75,77,79,81,82,83,84,85,86,87,88,89,91,92,93,94,95,96,97,98,99];
+      let d = String(v || '').replace(/\D/g, '');
+      if (d.length === 13 && d.startsWith('55')) d = d.slice(2);
+      if (d.length !== 11) return '';
+      if (!DDDS.includes(Number(d.slice(0,2)))) return '';
+      if (d[2] !== '9') return '';
+      return '55' + d;
+    },
     // Mesmos digitos verificadores conferidos no backend (utils/cpf.js).
     cpfValido(v) {
       const cpf = String(v || '').replace(/\D/g, '');
@@ -207,12 +236,14 @@ function assinar() {
       const cpf = this.cpf.replace(/\D/g, '');
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { this.erro = 'Informe um e-mail válido'; return; }
       if (!this.cpfValido(cpf)) { this.erro = 'Informe um CPF válido'; return; }
+      const phone = this.telParaEnvio(this.telefone);
+      if (!phone) { this.erro = 'Informe um celular válido com DDD'; return; }
       this.carregando = true;
       try {
         const r = await fetch(NIMBUS_SISTEMA + '/api/public/checkout', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ planId: this.plano, email, cpf, trial: this.trial }),
+          body: JSON.stringify({ planId: this.plano, email, cpf, phone, trial: this.trial }),
         });
         const data = await r.json().catch(() => ({}));
         if (r.ok && data.url) {

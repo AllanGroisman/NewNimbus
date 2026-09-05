@@ -125,4 +125,5 @@ export {
   emailCalls,
   resetEmail,
   emailByKind,
+  prisma,
 };

@@ -6,6 +6,7 @@ import Modal from "../components/ui/Modal";
 import LogoutConfirmModal from "../components/LogoutConfirmModal";
 import { authUpdate, authChangePassword, accountRequestEmailChange, errText} from "../data/api";
 import { useUnsavedGuard } from "../data/navGuard";
+import { formatPhone, isValidPhone, maskPhoneInput, toStoredPhone } from "../data/phone";
 
 // Eventos que o WhatsNimbus (WhatsApp do sistema) pode avisar por DM.
 const WHATSNIMBUS_EVENTS = [
@@ -33,7 +34,8 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
     email: user?.email || "",
     // Já vem mascarado do servidor (123.***.***-09) — o CPF inteiro nunca sai do backend.
     cpf: user?.cpf || "",
-    phone: user?.phone || "",
+    // O campo trabalha na forma legível; o servidor guarda 5511999999999.
+    phone: formatPhone(user?.phone || ""),
   });
   const [accountMsg, setAccountMsg] = useState(null);
   const [accountSaving, setAccountSaving] = useState(false);
@@ -51,17 +53,23 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
 
   // Guard de navegação: avisa ao sair de Configurações com o form de conta editado.
   const accountDirty = account.name !== (user?.name || "")
-    || account.phone !== (user?.phone || "");
+    || account.phone !== formatPhone(user?.phone || "");
   const discardAccount = () => setAccount({
-    name: user?.name || "", email: user?.email || "", cpf: user?.cpf || "", phone: user?.phone || "",
+    name: user?.name || "", email: user?.email || "", cpf: user?.cpf || "",
+    phone: formatPhone(user?.phone || ""),
   });
   useUnsavedGuard({ dirty: accountDirty, save: handleSaveAccount, discard: discardAccount });
 
   async function handleSaveAccount() {
+    // O telefone é obrigatório na conta — salvar vazio ou torto o apagaria.
+    if (!isValidPhone(account.phone)) {
+      setAccountMsg({ type: "err", text: "Informe um celular válido com DDD" });
+      return;
+    }
     setAccountSaving(true);
     setAccountMsg(null);
     try {
-      const r = await authUpdate({ name: account.name, phone: account.phone });
+      const r = await authUpdate({ name: account.name, phone: toStoredPhone(account.phone) });
       if (setUser) setUser(r.user);
       setAccountMsg({ type: "ok", text: "Salvo!" });
     } catch (err) {
@@ -147,7 +155,10 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
                       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                         <input
                           value={account[key]}
-                          onChange={e => !readOnly && setAccount(a => ({ ...a, [key]: e.target.value }))}
+                          onChange={e => !readOnly && setAccount(a => ({
+                            ...a,
+                            [key]: key === "phone" ? maskPhoneInput(e.target.value) : e.target.value,
+                          }))}
                           readOnly={readOnly}
                           // Campo travado: o fundo e a borda é que dizem "não dá pra editar".
                           // O texto fica na cor normal — cinza sobre cinza some no tema escuro.

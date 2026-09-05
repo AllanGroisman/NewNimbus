@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { PRIMARY, popQueryParam } from "../data/constants";
 import Logo from "../components/ui/Logo";
 import { passwordChecks, passwordOk, MIN_PASSWORD } from "../data/password";
+import { isValidPhone, maskPhoneInput, toStoredPhone } from "../data/phone";
 
 import {
   authLogin, authRegister, authGoogle,
@@ -25,6 +26,7 @@ export default function Login({ onLogin }) {
   // mode: "login" | "register" | "forgot" | "registered" | "verifying" | "reset"
   const [mode, setMode] = useState("login");
   const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [password2, setPassword2] = useState("");
@@ -106,10 +108,11 @@ export default function Login({ onLogin }) {
         if (cleanName.length > LIMITS.name) return setError(`Nome muito longo (máx ${LIMITS.name})`);
         if (!EMAIL_RE.test(cleanEmail)) return setError("Email inválido");
         if (cleanEmail.length > LIMITS.email) return setError(`Email muito longo (máx ${LIMITS.email})`);
+        if (!isValidPhone(phone)) return setError("Informe um celular válido com DDD");
         if (!passwordOk(password)) return setError("Senha não atende aos requisitos");
         if (password !== password2) return setError("As senhas não coincidem");
         setLoading(true);
-        await authRegister({ name: cleanName, email: cleanEmail, password });
+        await authRegister({ name: cleanName, email: cleanEmail, password, phone: toStoredPhone(phone) });
         setMode("registered");
         setInfo(cleanEmail);
       } else if (mode === "login") {
@@ -281,6 +284,19 @@ export default function Login({ onLogin }) {
               autoComplete="name"
               required
               maxLength={LIMITS.name}
+              style={inputStyle}
+            />
+          )}
+          {mode === "register" && (
+            <input
+              value={phone}
+              onChange={e => setPhone(maskPhoneInput(e.target.value))}
+              type="tel"
+              inputMode="tel"
+              placeholder="WhatsApp (com DDD)"
+              autoComplete="tel-national"
+              required
+              maxLength={15}
               style={inputStyle}
             />
           )}

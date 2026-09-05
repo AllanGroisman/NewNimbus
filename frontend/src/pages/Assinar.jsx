@@ -3,6 +3,7 @@ import { PRIMARY } from "../data/constants";
 import AuthCard, { Alert } from "../components/ui/AuthCard";
 import { publicPlans, publicCheckout, errText} from "../data/api";
 import { isValidCpf, maskCpfInput, normalizeCpf } from "../data/cpf";
+import { maskPhoneInput, toStoredPhone } from "../data/phone";
 
 // Ponte entre a landing page e o Stripe.
 //
@@ -10,11 +11,13 @@ import { isValidCpf, maskCpfInput, normalizeCpf } from "../data/cpf";
 // pessoa informa e-mail e CPF e segue pro pagamento — não é cadastro: a conta
 // nasce depois, do pagamento aprovado (backend/billing/provision.js).
 //
-// Os dois campos são pedidos ANTES do Stripe porque é a única forma de avisar
-// quem já assina; o Checkout só coletaria o e-mail depois de cobrar. O CPF é o
-// que garante uma conta por pessoa — sem ele, bastaria trocar de e-mail pra
-// repetir o teste de R$ 1,00. Se a landing já souber o e-mail e mandar em
-// ?email=, esta tela só pré-preenche o campo; o CPF sempre é digitado aqui.
+// Os campos são pedidos ANTES do Stripe porque é a única forma de avisar quem
+// já assina; o Checkout só coletaria o e-mail depois de cobrar. O CPF é o que
+// garante uma conta por pessoa — sem ele, bastaria trocar de e-mail pra repetir
+// o teste de R$ 1,00. O telefone entra aqui pelo mesmo motivo: a conta nasce do
+// pagamento aprovado, então não há "primeira entrada" antes de cobrar em que
+// pedir. Se a landing já souber o e-mail e mandar em ?email=, esta tela só
+// pré-preenche o campo; CPF e telefone são sempre digitados aqui.
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PLAN_IDS = ["basic", "pro", "business"];
@@ -34,6 +37,7 @@ export default function Assinar({ onGoToLogin }) {
   const [plans, setPlans] = useState(null);
   const [email, setEmail] = useState(emailFromUrl);
   const [cpf, setCpf] = useState("");
+  const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   // Bloqueio/upgrade: a saída é entrar na conta, não pagar de novo.
@@ -46,18 +50,20 @@ export default function Assinar({ onGoToLogin }) {
   const plan = plans?.find(p => p.id === planId);
   const planLabel = plan?.label || { basic: "Básico", pro: "Pro", business: "Business" }[planId];
 
-  async function start(rawEmail, rawCpf) {
+  async function start(rawEmail, rawCpf, rawPhone) {
     const cleanEmail = String(rawEmail || "").trim().toLowerCase();
     const cleanCpf = normalizeCpf(rawCpf);
+    const cleanPhone = toStoredPhone(rawPhone);
     setError(null);
     setBlocked(null);
     if (!EMAIL_RE.test(cleanEmail)) return setError("Informe um e-mail válido");
     if (!isValidCpf(cleanCpf)) return setError("Informe um CPF válido");
+    if (!cleanPhone) return setError("Informe um celular válido com DDD");
 
     setLoading(true);
     try {
       const { url } = await publicCheckout({
-        planId, email: cleanEmail, cpf: cleanCpf, trial: wantsTrial,
+        planId, email: cleanEmail, cpf: cleanCpf, phone: cleanPhone, trial: wantsTrial,
       });
       window.location.assign(url);
     } catch (err) {
@@ -167,7 +173,7 @@ export default function Assinar({ onGoToLogin }) {
             </button>
           </>
         ) : (
-          <form onSubmit={(e) => { e.preventDefault(); if (!loading) start(email, cpf); }} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <form onSubmit={(e) => { e.preventDefault(); if (!loading) start(email, cpf, phone); }} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <label style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
               Seu e-mail
               <input
@@ -201,6 +207,24 @@ export default function Assinar({ onGoToLogin }) {
             </label>
             <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: -2 }}>
               Cada CPF pode ter uma conta. Serve para identificar sua assinatura.
+            </div>
+
+            <label style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+              Seu WhatsApp
+              <input
+                value={phone}
+                onChange={e => setPhone(maskPhoneInput(e.target.value))}
+                type="tel"
+                inputMode="tel"
+                placeholder="(11) 99999-9999"
+                autoComplete="tel-national"
+                required
+                maxLength={15}
+                style={{ ...inputStyle, marginTop: 6 }}
+              />
+            </label>
+            <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: -2 }}>
+              É por ele que o suporte fala com você.
             </div>
 
             {error && <Alert kind="error">{error}</Alert>}

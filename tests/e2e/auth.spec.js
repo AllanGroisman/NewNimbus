@@ -10,6 +10,8 @@ test.describe("Autenticação", () => {
     await page.goto("/");
     await page.getByRole("button", { name: "Cadastrar" }).click();
     await page.getByPlaceholder("Nome completo").fill("Teste E2E");
+    // Telefone é obrigatório no cadastro; o campo mascara enquanto digita.
+    await page.getByPlaceholder("WhatsApp (com DDD)").fill("11999999999");
     const email = uniqueEmail();
     await page.getByPlaceholder("Email").fill(email);
     // exact: "Senha" senão casa também "Confirmar senha".

@@ -15,6 +15,7 @@ import Badge from "../components/ui/Badge";
 import Modal from "../components/ui/Modal";
 import StatCard from "../components/ui/StatCard";
 import AlertBanner from "../components/ui/AlertBanner";
+import { formatPhone } from "../data/phone";
 import {
   adminListUsers,
   adminDeleteUser,
@@ -768,7 +769,7 @@ export default function PageAdminUsers({ currentUser }) {
                       {/* Info secundária */}
                       <div style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
                         <span>{u.email}</span>
-                        {u.phone && <span>📱 {u.phone}</span>}
+                        {u.phone && <span>📱 {formatPhone(u.phone)}</span>}
                         {u.createdAt && <span>Criado {dt(u.createdAt)}</span>}
                         {u.counts?.repasseGroups > 0 && <span>{u.counts.repasseGroups} de repasse</span>}
                         <NumerosDaLinha numbers={u.numbers} />

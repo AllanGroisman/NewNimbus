@@ -16,6 +16,7 @@ const auth = require("../auth");
 const mailer = require("../auth/mailer");
 const logger = require("../infra/logger");
 const { normalizeCpf, isValidCpf, maskEmail } = require("../utils/cpf");
+const { isValidPhone } = require("../utils/phone");
 
 // E-mail do pagador. customer_details é o que a pessoa digitou no Checkout;
 // customer_email é o prefill que mandamos. Um dos dois sempre vem.
@@ -91,8 +92,9 @@ async function provisionFromCheckout(session) {
     const res = await auth.createPaidUser({
       email,
       name: session?.customer_details?.name,
-      // Coletado no popup da landing, antes de abrir o Stripe.
+      // Coletados no popup da landing, antes de abrir o Stripe.
       cpf: session?.metadata?.pendingCpf,
+      phone: session?.metadata?.pendingPhone,
     });
     user = res.user;
     created = res.created;
@@ -110,6 +112,16 @@ async function provisionFromCheckout(session) {
       user = await auth.findById(user.id);
     } catch (err) {
       logger.warn({ err: err.message, userId: user.id }, "[provision] CPF do checkout não gravado");
+    }
+  }
+
+  // Mesma ideia para o telefone de quem assinou por dentro do app sem ter um.
+  if (knownUserId && !isValidPhone(user.phone) && session?.metadata?.pendingPhone) {
+    try {
+      await auth.setPhone(user.id, session.metadata.pendingPhone);
+      user = await auth.findById(user.id);
+    } catch (err) {
+      logger.warn({ err: err.message, userId: user.id }, "[provision] telefone do checkout não gravado");
     }
   }
 

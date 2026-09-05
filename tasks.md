@@ -38,7 +38,9 @@ Vale no preenchimento automático da fila. Os cupons vêm de Admin › Cupom ›
 
 13. [] Verificar brechas de segurança pelos endpoints do site.
 
-14. [] Quero exigir telefone dos usuários. Como tu sugere que seja feito?
+14. [x] Quero exigir telefone dos usuários. Como tu sugere que seja feito?
+
+    **Feito:** é a mesma coisa do item 36 — resolvido lá.
 
 15. [] Nos cupons, quero que todos os cupons que são detectados no repasse sejam adicionados na lista e que se não estiverem, seja feito o scraping de seus produtos.
 
@@ -153,7 +155,42 @@ Como que acha a campanha, mas não consegue puxar ela?
     nunca vem do cliente. Cooldown de 60s por número, porque cada clique manda duas
     mensagens de verdade e martelar o botão é vetor de ban.
 
-36. [] Quero tornar obrigatório registrar um telefone ao se cadastrar no sistema.
+36. [x] Quero tornar obrigatório registrar um telefone ao se cadastrar no sistema.
+    (Responde também o item 14.)
+
+    **Feito:** o campo `users.phone` já existia e era dado morto — nascia `""`
+    nos quatro caminhos de criação de conta e ninguém lia. Agora é celular
+    obrigatório, no mesmo trilho que o CPF já usa: util espelhado
+    (`backend/utils/phone.js` ↔ `frontend/src/data/phone.js`), flag
+    `phoneRequired` no `/me` e uma tela na entrada pra quem está sem número.
+    Sem migration: `phone` continua `String?` e **não** é unique — o mesmo
+    número pode ser de mais de uma conta.
+
+    **Formato:** guarda só dígitos com o 55 na frente (`5511999999999`), que é o
+    que `jidFromPhone` consome e o que a UI já assumia ao mostrar `+${phone}`.
+    Aceita digitado de quatro jeitos ("(11) 99999-9999", "11999999999",
+    "5511999999999", "+55 11 …"). Valida DDD contra a lista real e exige o nono
+    dígito 9: **fixo é recusado de propósito**, o número existe pra virar
+    conversa de WhatsApp. DDD 55 (RS) não se confunde com o 55 do país porque a
+    poda só acontece em string de 13 dígitos.
+
+    **Onde é coletado:** cadastro por e-mail/senha, popup da landing
+    (`lead-modal.php`) e `/assinar` — nesses dois é aqui ou nunca, porque a conta
+    nasce do pagamento aprovado e não existe "primeira entrada" antes de cobrar.
+    Google fica de fora do formulário (o Google não devolve telefone).
+
+    **Quem já tinha conta:** vê a tela "Confirme seu telefone" na entrada, com um
+    **"Agora não"** que libera o painel e volta a pedir na entrada seguinte. O
+    pulo vive em `sessionStorage`, não no banco — sessão de navegador é
+    exatamente a janela do "próxima entrada", e não precisou de coluna nova.
+    Admin é isento, igual ao CPF.
+
+    **O pulo não vale pra pagar:** `/api/billing/checkout` recusa com
+    `phone_required` enquanto a conta estiver sem número, e a página de
+    Assinatura mostra o campo pra resolver ali mesmo (antes do `window.open`, que
+    senão deixaria uma aba em branco pendurada). Configurações também passou a
+    mascarar e validar o campo — era por `PATCH /api/auth/me` que entrava
+    qualquer texto no telefone.
 
 37. [x] Quero poder ativar um trial de X dias gratuito no plano em que eu escolher manualmente lá na aba de usuarios de ADMIN. Pode ser um botão "Adicionar Trial" que vira "Desativar Trial" se já estiver ativo, quando clico no botão quero que apareça as opções de quantos dias e qual plano. Esse trial não tem NADA a ver com o trial de 1 real. O trial de 1 real e as assinaturas pagas sobrepoem este trial manual. Quero fazer isso para poder ter controle sobre as contas dos usuarios e dar beneficios/fazer testes.
 

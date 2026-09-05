@@ -25,6 +25,7 @@ const couponsStore = require("./coupons");
 const tutorials = require("./tutorials");
 const appConfig = require("./config");
 const cpfUtil = require("./utils/cpf");
+const phoneUtil = require("./utils/phone");
 const repasseLeaders = require("./repasse/leaders");
 const couponWords = require("./repasse/coupon-words");
 const queueMod = require("./infra/queue");
@@ -495,8 +496,8 @@ app.get("/healthz", async (req, res) => {
 
 app.post("/api/auth/register", registerLimiter, async (req, res) => {
   try {
-    const { name, email, password } = req.body || {};
-    const user = await auth.register({ name, email, password });
+    const { name, email, password, phone } = req.body || {};
+    const user = await auth.register({ name, email, password, phone });
     // Sem trial: novas contas nascem free/inactive — acesso só após checkout.
     // Sem token: usuário precisa verificar email antes de logar.
     res.json({ user, requiresVerification: true });
@@ -630,13 +631,14 @@ app.post("/api/public/plan-check", publicCheckoutLimiter, async (req, res) => {
   }
 });
 
-// Cria a Checkout Session de quem veio da landing. Body: { planId, email, cpf, trial }.
+// Cria a Checkout Session de quem veio da landing. Body: { planId, email, cpf, phone, trial }.
 app.post("/api/public/checkout", publicCheckoutLimiter, async (req, res) => {
   try {
     if (!stripeMod.enabled()) return res.status(501).json({ error: "Stripe não configurado" });
     const planId = String(req.body?.planId || "").trim();
     const email = String(req.body?.email || "").trim().toLowerCase();
     const cpf = cpfUtil.normalizeCpf(req.body?.cpf);
+    const phone = phoneUtil.toStoredPhone(req.body?.phone);
     const withTrial = !!req.body?.trial;
 
     if (!SUBSCRIBABLE_PLANS.includes(planId)) {
@@ -648,6 +650,11 @@ app.post("/api/public/checkout", publicCheckoutLimiter, async (req, res) => {
     // CPF conferido antes de qualquer chamada ao Stripe: uma conta = um CPF.
     if (!cpfUtil.isValidCpf(cpf)) {
       return res.status(400).json({ error: "Informe um CPF válido", code: "invalid_cpf" });
+    }
+    // Telefone junto: a conta nasce do pagamento, então é aqui ou nunca — o
+    // painel só voltaria a pedir depois que a pessoa já pagou.
+    if (!phone) {
+      return res.status(400).json({ error: "Informe um telefone válido (DDD + celular)", code: "invalid_phone" });
     }
     if (!stripeMod.priceFor(planId)) {
       return res.status(500).json({ error: `Price ID do plano "${planId}" não configurado no servidor` });
@@ -710,7 +717,7 @@ app.post("/api/public/checkout", publicCheckoutLimiter, async (req, res) => {
       trialEndsAt: adiarAte,
       successUrl: publicUrl.stripeWelcomeUrl,
       cancelUrl: publicUrl.subscribeUrl(planId),
-      metadataExtra: { source: "landing", pendingEmail: email, pendingCpf: cpf },
+      metadataExtra: { source: "landing", pendingEmail: email, pendingCpf: cpf, pendingPhone: phone },
     });
     metrics.recordCheckout?.(planId, "ok");
     res.json({ url: session.url });
@@ -941,6 +948,18 @@ app.post("/api/account/cpf", auth.requireAuth, async (req, res) => {
   } catch (err) {
     const status = err.code === "cpf_taken" ? 409 : 400;
     res.status(status).json({ error: err.message, code: err.code || null });
+  }
+});
+
+// Telefone de quem entrou sem informar um (conta anterior à regra, conta do
+// Google, conta provisionada por pagamento sem o número). O painel pede na
+// entrada e deixa pular; esta rota é o que grava quando a pessoa informa.
+app.post("/api/account/phone", auth.requireAuth, async (req, res) => {
+  try {
+    const user = await auth.setPhone(req.user.id, req.body?.phone);
+    res.json({ ok: true, user });
+  } catch (err) {
+    res.status(400).json({ error: err.message, code: err.code || null });
   }
 });
 
@@ -1329,6 +1348,13 @@ app.post("/api/billing/checkout", auth.requireAuth, async (req, res) => {
       } catch (err) {
         return res.status(err.code === "cpf_taken" ? 409 : 400).json({ error: err.message, code: err.code });
       }
+    }
+
+    // Telefone obrigatório. Na entrada do painel a tela deixa pular; aqui não:
+    // este é o momento em que a conta vira cliente pagante e o número é o canal
+    // de suporte. Quem pulou informa no bloco que a página de Assinatura mostra.
+    if (req.user.phoneRequired) {
+      return res.status(400).json({ error: "Informe seu telefone para assinar", code: "phone_required" });
     }
 
     // Garante sub existente; pega customer se já tem.

@@ -53,6 +53,7 @@ import Login from "./pages/Login";
 import PageAssinar from "./pages/Assinar";
 import PageBemVindo from "./pages/BemVindo";
 import ConfirmarCpf from "./pages/ConfirmarCpf";
+import ConfirmarTelefone from "./pages/ConfirmarTelefone";
 import ConfirmarNovoEmail from "./pages/ConfirmarNovoEmail";
 import TourOverlay from "./components/onboarding/TourOverlay";
 import SupportButton from "./components/onboarding/SupportButton";
@@ -88,6 +89,9 @@ const MAX_BACKOFF_MULT = 8;
 // cada render e disparar efeitos à toa.
 const EMPTY_PLAN_PAUSED = { groups: [], numbers: [] };
 
+// Chave do "agora não" da tela de telefone (sessionStorage, por sessão de aba).
+const PHONE_SKIP_KEY = "nimbus.phoneSkip";
+
 export default function App() {
   const [groups, setGroups] = useState(initialGroups);
   const [numbers, setNumbers] = useState(initialNumbers);
@@ -121,6 +125,17 @@ export default function App() {
   const [tutorialTarget, setTutorialTarget] = useState(null);
   const openTutorial = (id) => requestNavigation(() => { setTutorialTarget(id); setSelectedGroup(null); setPage("tutorials"); });
   const [user, setUser] = useState(null);
+  // "Agora não" da tela de telefone. Vive em sessionStorage e não no banco: o
+  // pedido tem que voltar na entrada seguinte, e sessão de navegador é
+  // exatamente essa janela. Guarda o id pra um logout/login de outra conta na
+  // mesma aba não herdar o pulo.
+  const [phoneSkipped, setPhoneSkipped] = useState(() => {
+    try { return sessionStorage.getItem(PHONE_SKIP_KEY); } catch { return null; }
+  });
+  const skipPhone = (id) => {
+    try { sessionStorage.setItem(PHONE_SKIP_KEY, id); } catch { /* ignora */ }
+    setPhoneSkipped(id);
+  };
   const [bootstrapping, setBootstrapping] = useState(true);
   // Boot que falhou por falta de conexão (≠ token inválido) — mostra a tela de
   // "sem conexão" em vez de mandar pro login com a sessão ainda válida.
@@ -792,6 +807,8 @@ export default function App() {
     stateLoadedRef.current = false;
     setActiveTour(null);
     setUser(null);
+    try { sessionStorage.removeItem(PHONE_SKIP_KEY); } catch { /* ignora */ }
+    setPhoneSkipped(null);
     setGroups([]); setNumbers([]); setWhatsappGroups([]);
     setSettings(DEFAULT_SETTINGS);
     setSelectedGroup(null);
@@ -1055,6 +1072,20 @@ export default function App() {
     return <ConfirmarCpf user={user} onDone={setUser} onLogout={handleLogout} />;
   }
 
+  // Telefone: mesma ideia, mas com saída. Quem pula segue pro painel e volta a
+  // ver a tela na próxima entrada — só a página de Assinatura é que não aceita
+  // o pulo, porque lá o número vira dado de cliente pagante.
+  if (user.phoneRequired && phoneSkipped !== user.id) {
+    return (
+      <ConfirmarTelefone
+        user={user}
+        onDone={setUser}
+        onSkip={() => skipPhone(user.id)}
+        onLogout={handleLogout}
+      />
+    );
+  }
+
   const fallbackPage = <PageDashboard groups={groups} whatsappGroups={liveWhatsappGroups} onSelectGroup={handleSelectGroup} onCreateGroup={handleCreateGroup} onUpdate={handleUpdate} affiliateConfigured={affiliateConfigured} onGoToSettings={() => setPage("settings")} limits={billing?.limits} planPausedIds={planPaused.groups} onActivatePlanPaused={(id) => activatePlanPaused("groups", id)} />;
   // Loja trancada pelo admin → mostra só a mensagem no lugar da página de
   // afiliado. Admin continua vendo a página normal pra poder validar antes de liberar.
@@ -1082,7 +1113,7 @@ export default function App() {
       onActivatePlanPaused={(id) => activatePlanPaused("numbers", id)}
     />,
     settings: <PageSettings user={user} setUser={setUser} onLogout={handleLogout} settings={settings} setSettings={setSettings} numbers={liveNumbers} onAffiliateChange={applyAffiliateStatus} />,
-    subscription: <PageSubscription />,
+    subscription: <PageSubscription user={user} setUser={setUser} />,
     "mercado-livre": lockedStore("ml") || <PageAffiliateML onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
     "amazon": lockedStore("amazon") || <PageAffiliateAmazon onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
     "shopee": lockedStore("shopee") || <PageAffiliateShopee onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,

@@ -19,6 +19,10 @@ model User {
   id           String   @id @default(uuid())
   email        String   @unique
   name         String
+  // Celular obrigatório desde o cadastro. Guardado só com dígitos e COM o 55 na
+  // frente (5511999999999), que é o que whatsapp/jidFromPhone consome. Não é
+  // unique: o mesmo número pode ser de mais de uma conta. Vazio nas contas
+  // anteriores à regra — o painel pede na entrada (publicUser.phoneRequired).
   phone        String?
   // Uma conta por CPF. Só os 11 dígitos, sem pontuação. Nulo nas contas
   // criadas antes da regra — o índice único do Postgres ignora NULL, e o

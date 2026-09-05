@@ -14,7 +14,7 @@ import { createRequire } from "module";
 import {
   app, request, createTestUser,
   auth as authMod, billing,
-  stripeCalls, setStripeMock,
+  stripeCalls, setStripeMock, prisma,
 } from "../helpers/app.js";
 import { makeGroup } from "../helpers/fixtures.js";
 
@@ -71,6 +71,27 @@ describe("Billing — checkout", () => {
     expect(res.body.url).toMatch(/^https:\/\/checkout\.stripe\.test\/c\/pro/);
     expect(stripeCalls.createCheckoutSession).toHaveLength(1);
     expect(stripeCalls.createCheckoutSession[0].planId).toBe("pro");
+  });
+
+  // Na entrada do painel dá pra adiar o cadastro do telefone; virar cliente
+  // pagante, não — é o número por onde o suporte fala com quem paga.
+  it("conta sem telefone não abre checkout, e abre depois de informar", async () => {
+    const { user, auth } = await createTestUser();
+    await prisma().user.update({ where: { id: user.id }, data: { phone: "" } });
+    authMod.invalidateUser(user.id);
+    const antes = stripeCalls.createCheckoutSession.length;
+
+    const bloqueado = await auth("post", "/api/billing/checkout").send({ planId: "pro" });
+    expect(bloqueado.status).toBe(400);
+    expect(bloqueado.body.code).toBe("phone_required");
+    expect(stripeCalls.createCheckoutSession).toHaveLength(antes);
+
+    const salvo = await auth("post", "/api/account/phone").send({ phone: "(11) 99999-9999" });
+    expect(salvo.status).toBe(200);
+
+    const liberado = await auth("post", "/api/billing/checkout").send({ planId: "pro" });
+    expect(liberado.status).toBe(200);
+    expect(liberado.body.url).toBeTruthy();
   });
 
   it("liga stripeCustomerId no usuário após primeiro checkout", async () => {

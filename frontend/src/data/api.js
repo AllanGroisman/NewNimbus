@@ -153,9 +153,9 @@ async function http(method, path, body, { signal, timeoutMs = DEFAULT_TIMEOUT_MS
 }
 
 // ─── Auth ──────────────────────────────────────────────────────────────
-export async function authRegister({ name, email, password }) {
+export async function authRegister({ name, email, password, phone }) {
   // Backend não devolve token — precisa verificar email primeiro.
-  return http("POST", "/api/auth/register", { name, email, password });
+  return http("POST", "/api/auth/register", { name, email, password, phone });
 }
 export async function authRegistrationStatus() { return http("GET", "/api/auth/registration-status"); }
 export async function authLogin({ email, password }) {
@@ -333,8 +333,8 @@ export async function publicPlanCheck({ planId, email, cpf }) {
 
 // Cria a Checkout Session pública e devolve { url }. Erro 409 traz err.code com
 // a decisão ("cpf_taken" | "blocked" | "upgrade_requires_login") pra tela explicar.
-export async function publicCheckout({ planId, email, cpf, trial }) {
-  return http("POST", "/api/public/checkout", { planId, email, cpf, trial: !!trial });
+export async function publicCheckout({ planId, email, cpf, phone, trial }) {
+  return http("POST", "/api/public/checkout", { planId, email, cpf, phone, trial: !!trial });
 }
 
 // Troca a Checkout Session paga por uma sessão logada: { token, user, needsPassword }.
@@ -346,6 +346,11 @@ export async function publicClaim(sessionId) {
 // Erro 409 traz code "cpf_taken" (documento já usado por outra conta).
 export async function accountSetCpf(cpf) {
   return http("POST", "/api/account/cpf", { cpf });
+}
+
+// Telefone de quem entrou sem informar um (conta antiga, conta do Google).
+export async function accountSetPhone(phone) {
+  return http("POST", "/api/account/phone", { phone });
 }
 
 // Pede a troca de email: manda o link de confirmação pro endereço novo. Nada

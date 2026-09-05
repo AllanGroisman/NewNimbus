@@ -24,6 +24,9 @@ const { prisma } = requireCjs(path.join(backendDir, "db.js"));
 const appConfig = requireCjs(path.join(backendDir, "config"));
 
 // Checkout Session paga, como o Stripe devolve no retorno/webhook.
+// Telefone obrigatório no checkout público (backend/utils/phone.js).
+const PHONE = "11999999999";
+
 function paidSession({ id = "cs_test_public_1", email, cpf = randomCpf(), planId = "pro", customer = "cus_test_public", subscription = "sub_test_public", clientRef = null } = {}) {
   return {
     id,
@@ -37,7 +40,7 @@ function paidSession({ id = "cs_test_public_1", email, cpf = randomCpf(), planId
     client_reference_id: clientRef,
     customer_details: { email, name: "Cliente Landing" },
     customer_email: email,
-    metadata: { planId, source: "landing", pendingEmail: email, pendingCpf: cpf },
+    metadata: { planId, source: "landing", pendingEmail: email, pendingCpf: cpf, pendingPhone: "5511999999999" },
   };
 }
 
@@ -132,7 +135,7 @@ describe("Checkout público — decisão por e-mail", () => {
     const { user, email, cpf } = await createTestUser();
     await billing.grantManualTrial(user.id, { planId: "pro", days: 20 });
 
-    const res = await request(app).post("/api/public/checkout").send({ planId: "pro", email, cpf });
+    const res = await request(app).post("/api/public/checkout").send({ phone: PHONE, planId: "pro", email, cpf });
     expect(res.status).toBe(200);
     const sub = await billing.getByUserId(user.id);
     expect(stripeCalls.createCheckoutSession.at(-1).trialEndsAt).toEqual(sub.manualTrialEndsAt);
@@ -191,7 +194,7 @@ describe("Checkout público — saídas oferecidas no bloqueio", () => {
   it("o 409 do checkout traz as mesmas opções do plan-check", async () => {
     const { user, email, cpf } = await createTestUser();
     await seedLiveSub(user.id, "basic");
-    const res = await request(app).post("/api/public/checkout").send({ planId: "business", email, cpf });
+    const res = await request(app).post("/api/public/checkout").send({ phone: PHONE, planId: "business", email, cpf });
     expect(res.status).toBe(409);
     expect(res.body.code).toBe("upgrade_requires_login");
     expect(res.body.targetPlan.id).toBe("business");
@@ -209,7 +212,7 @@ describe("Checkout público — saídas oferecidas no bloqueio", () => {
 describe("Checkout público — criação da sessão", () => {
   it("e-mail novo gera sessão sem userId, com customer já criado e retorno em /bem-vindo", async () => {
     const email = uniqueEmail("landing");
-    const res = await request(app).post("/api/public/checkout").send({ planId: "pro", email, cpf: randomCpf() });
+    const res = await request(app).post("/api/public/checkout").send({ phone: PHONE, planId: "pro", email, cpf: randomCpf() });
     expect(res.status).toBe(200);
     expect(res.body.url).toMatch(/^https:\/\/checkout\.stripe\.test\/c\/pro/);
     const call = stripeCalls.createCheckoutSession.at(-1);
@@ -225,14 +228,14 @@ describe("Checkout público — criação da sessão", () => {
   it("reaproveita o customer do Stripe quando o e-mail já tem um", async () => {
     setStripeMock({ customerByEmail: { id: "cus_existente_landing" } });
     const res = await request(app).post("/api/public/checkout")
-      .send({ planId: "pro", email: uniqueEmail("recorrente"), cpf: randomCpf() });
+      .send({ phone: PHONE, planId: "pro", email: uniqueEmail("recorrente"), cpf: randomCpf() });
     expect(res.status).toBe(200);
     expect(stripeCalls.createCheckoutSession.at(-1).customerId).toBe("cus_existente_landing");
   });
 
   it("conta existente sem plano reaproveita o customer e vai com userId", async () => {
     const { user, email, cpf } = await createTestUser();
-    const res = await request(app).post("/api/public/checkout").send({ planId: "basic", email, cpf });
+    const res = await request(app).post("/api/public/checkout").send({ phone: PHONE, planId: "basic", email, cpf });
     expect(res.status).toBe(200);
     const call = stripeCalls.createCheckoutSession.at(-1);
     expect(call.userId).toBe(user.id);
@@ -242,7 +245,7 @@ describe("Checkout público — criação da sessão", () => {
   it("quem já assina recebe 409 com o motivo", async () => {
     const { user, email, cpf } = await createTestUser();
     await seedLiveSub(user.id, "pro");
-    const res = await request(app).post("/api/public/checkout").send({ planId: "pro", email, cpf });
+    const res = await request(app).post("/api/public/checkout").send({ phone: PHONE, planId: "pro", email, cpf });
     expect(res.status).toBe(409);
     expect(res.body.code).toBe("blocked");
     expect(res.body.currentPlan).toBe("pro");
@@ -250,21 +253,39 @@ describe("Checkout público — criação da sessão", () => {
 
   it("e-mail inválido é recusado antes de falar com o Stripe", async () => {
     const antes = stripeCalls.createCheckoutSession.length;
-    const res = await request(app).post("/api/public/checkout").send({ planId: "pro", email: "nao-e-email", cpf: randomCpf() });
+    const res = await request(app).post("/api/public/checkout").send({ phone: PHONE, planId: "pro", email: "nao-e-email", cpf: randomCpf() });
     expect(res.status).toBe(400);
     expect(stripeCalls.createCheckoutSession).toHaveLength(antes);
   });
 
+  it("telefone inválido é recusado antes de falar com o Stripe", async () => {
+    const antes = stripeCalls.createCheckoutSession.length;
+    for (const phone of [undefined, "", "1133334444", "(00) 99999-9999"]) {
+      const res = await request(app).post("/api/public/checkout")
+        .send({ planId: "pro", email: uniqueEmail(), cpf: randomCpf(), phone });
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe("invalid_phone");
+    }
+    expect(stripeCalls.createCheckoutSession).toHaveLength(antes);
+  });
+
+  it("telefone segue normalizado na metadata — é dele que a conta nasce com número", async () => {
+    const res = await request(app).post("/api/public/checkout")
+      .send({ planId: "pro", email: uniqueEmail(), cpf: randomCpf(), phone: "(21) 98765-4321" });
+    expect(res.status).toBe(200);
+    expect(stripeCalls.createCheckoutSession.at(-1).metadataExtra.pendingPhone).toBe("5521987654321");
+  });
+
   it("teste de R$1 só vale no Básico", async () => {
     const res = await request(app).post("/api/public/checkout")
-      .send({ planId: "pro", email: uniqueEmail(), cpf: randomCpf(), trial: true });
+      .send({ phone: PHONE, planId: "pro", email: uniqueEmail(), cpf: randomCpf(), trial: true });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/Básico/);
   });
 
   it("teste de R$1 no Básico chega no Stripe como trial", async () => {
     const res = await request(app).post("/api/public/checkout")
-      .send({ planId: "basic", email: uniqueEmail(), cpf: randomCpf(), trial: true });
+      .send({ phone: PHONE, planId: "basic", email: uniqueEmail(), cpf: randomCpf(), trial: true });
     expect(res.status).toBe(200);
     expect(stripeCalls.createCheckoutSession.at(-1).withTrial).toBe(true);
   });
@@ -275,7 +296,7 @@ describe("Checkout público — criação da sessão", () => {
       data: { userId: user.id, planId: "free", status: "canceled", trialUsedAt: new Date() },
     });
     const res = await request(app).post("/api/public/checkout")
-      .send({ planId: "basic", email, cpf, trial: true });
+      .send({ phone: PHONE, planId: "basic", email, cpf, trial: true });
     expect(res.status).toBe(200);
     expect(stripeCalls.createCheckoutSession.at(-1).withTrial).toBe(false);
   });
@@ -285,7 +306,7 @@ describe("Checkout público — uma conta = um CPF", () => {
   it("CPF inválido é recusado antes de falar com o Stripe", async () => {
     const antes = stripeCalls.createCheckoutSession.length;
     const res = await request(app).post("/api/public/checkout")
-      .send({ planId: "pro", email: uniqueEmail(), cpf: "111.111.111-11" });
+      .send({ phone: PHONE, planId: "pro", email: uniqueEmail(), cpf: "111.111.111-11" });
     expect(res.status).toBe(400);
     expect(res.body.code).toBe("invalid_cpf");
     expect(stripeCalls.createCheckoutSession).toHaveLength(antes);
@@ -293,14 +314,14 @@ describe("Checkout público — uma conta = um CPF", () => {
 
   it("CPF ausente é recusado", async () => {
     const res = await request(app).post("/api/public/checkout")
-      .send({ planId: "pro", email: uniqueEmail() });
+      .send({ phone: PHONE, planId: "pro", email: uniqueEmail() });
     expect(res.status).toBe(400);
   });
 
   it("CPF de outra conta bloqueia, mesmo com e-mail novo", async () => {
     const { cpf } = await createTestUser();
     const res = await request(app).post("/api/public/checkout")
-      .send({ planId: "pro", email: uniqueEmail("outro"), cpf });
+      .send({ phone: PHONE, planId: "pro", email: uniqueEmail("outro"), cpf });
     expect(res.status).toBe(409);
     expect(res.body.code).toBe("cpf_taken");
     // A mensagem identifica a conta sem entregar o e-mail inteiro.
@@ -313,7 +334,7 @@ describe("Checkout público — uma conta = um CPF", () => {
       data: { userId: user.id, planId: "free", status: "canceled" },
     });
     const res = await request(app).post("/api/public/checkout")
-      .send({ planId: "basic", email: uniqueEmail("recomeco"), cpf, trial: true });
+      .send({ phone: PHONE, planId: "basic", email: uniqueEmail("recomeco"), cpf, trial: true });
     expect(res.status).toBe(409);
     expect(res.body.code).toBe("cpf_taken");
   });
@@ -321,7 +342,7 @@ describe("Checkout público — uma conta = um CPF", () => {
   it("CPF que não confere com o e-mail informado é bloqueado", async () => {
     const { email } = await createTestUser();
     const res = await request(app).post("/api/public/checkout")
-      .send({ planId: "pro", email, cpf: randomCpf() });
+      .send({ phone: PHONE, planId: "pro", email, cpf: randomCpf() });
     expect(res.status).toBe(409);
     expect(res.body.code).toBe("cpf_mismatch");
   });
@@ -329,20 +350,20 @@ describe("Checkout público — uma conta = um CPF", () => {
   it("o CPF viaja na metadata da sessão do Stripe", async () => {
     const cpf = randomCpf();
     await request(app).post("/api/public/checkout")
-      .send({ planId: "pro", email: uniqueEmail("meta"), cpf });
+      .send({ phone: PHONE, planId: "pro", email: uniqueEmail("meta"), cpf });
     expect(stripeCalls.createCheckoutSession.at(-1).metadataExtra.pendingCpf).toBe(cpf);
   });
 
   it("o CPF vai pro Customer do Stripe, pra virar documento fiscal", async () => {
     const cpf = randomCpf();
     await request(app).post("/api/public/checkout")
-      .send({ planId: "pro", email: uniqueEmail("fiscal"), cpf });
+      .send({ phone: PHONE, planId: "pro", email: uniqueEmail("fiscal"), cpf });
     expect(stripeCalls.getOrCreateCustomer.at(-1).cpf).toBe(cpf);
   });
 
   it("conta existente também leva o CPF pro Customer", async () => {
     const { email, cpf } = await createTestUser();
-    await request(app).post("/api/public/checkout").send({ planId: "basic", email, cpf });
+    await request(app).post("/api/public/checkout").send({ phone: PHONE, planId: "basic", email, cpf });
     expect(stripeCalls.getOrCreateCustomer.at(-1).cpf).toBe(cpf);
   });
 

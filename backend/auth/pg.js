@@ -11,6 +11,7 @@ const appConfig = require("../config");
 const mailer = require("./mailer");
 const emails = require("../notifications/email");
 const { normalizeCpf, isValidCpf, maskCpf } = require("../utils/cpf");
+const { toStoredPhone, isValidPhone } = require("../utils/phone");
 // Só os módulos puros de billing: `../billing` puxaria provision/notify, que
 // requerem este arquivo de volta.
 const billingLimits = require("../billing/limits");
@@ -194,6 +195,11 @@ function publicUser(u) {
   // que faz o painel pedir o CPF de quem tem conta anterior à regra.
   rest.cpfRequired = !rest.cpf && rest.role !== "admin";
   rest.cpf = rest.cpf ? maskCpf(rest.cpf) : null;
+  // Telefone é obrigatório desde o cadastro. phoneRequired marca quem ficou de
+  // fora da regra (conta antiga, conta criada pelo Google, conta provisionada
+  // sem o número) — o painel pede na entrada, deixando pular; o checkout não.
+  // Não é mascarado como o CPF: Configurações e o admin já mostram o número.
+  rest.phoneRequired = !isValidPhone(rest.phone) && rest.role !== "admin";
   return rest;
 }
 
@@ -259,6 +265,28 @@ async function setCpf(userId, cpf) {
   return publicUser(updated);
 }
 
+// Grava o telefone de uma conta que ainda não tem um válido. Ao contrário do
+// CPF, NÃO é write-once: número de celular troca de dono, e o campo já é
+// editável em Configurações — travar aqui só criaria caso de suporte.
+async function setPhone(userId, phone) {
+  const stored = toStoredPhone(phone);
+  if (!stored) {
+    const err = new Error("Informe um telefone válido (DDD + celular)");
+    err.code = "invalid_phone";
+    throw err;
+  }
+  const updated = await prisma().user.update({
+    where: { id: userId },
+    data: { phone: stored },
+  }).catch(err => {
+    if (err.code === "P2025") throw new Error("Usuário não encontrado");
+    throw err;
+  });
+  invalidateUser(userId);
+  cacheUser(updated);
+  return publicUser(updated);
+}
+
 // Sync com cache pra requireAuth (sync) — versão async da consulta original.
 async function findByIdFresh(id) {
   const u = await findById(id);
@@ -279,7 +307,7 @@ async function syncRole(user) {
   return user;
 }
 
-async function register({ name, email, password }) {
+async function register({ name, email, password, phone }) {
   email = normalizeEmail(email);
   name = String(name || "").trim();
   password = String(password || "");
@@ -288,6 +316,13 @@ async function register({ name, email, password }) {
   if (name.length > MAX_NAME_LEN) throw new Error(`Nome não pode ter mais que ${MAX_NAME_LEN} caracteres`);
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Email inválido");
   if (email.length > MAX_EMAIL_LEN) throw new Error(`Email não pode ter mais que ${MAX_EMAIL_LEN} caracteres`);
+  // Telefone obrigatório: conta nova não nasce mais sem canal de WhatsApp.
+  const storedPhone = toStoredPhone(phone);
+  if (!storedPhone) {
+    const err = new Error("Informe um telefone válido (DDD + celular)");
+    err.code = "invalid_phone";
+    throw err;
+  }
   validatePassword(password);
 
   assertRegistrationAllowed(email);
@@ -302,7 +337,7 @@ async function register({ name, email, password }) {
       id: crypto.randomUUID(),
       name,
       email,
-      phone: "",
+      phone: storedPhone,
       passwordHash,
       role: isAdminEmail(email) ? "admin" : "user",
       emailVerified: false,
@@ -551,7 +586,7 @@ const SETUP_PASSWORD_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 //   - senha aleatória (mesma ideia da conta criada pelo Google), com um token
 //     de "defina sua senha" pro e-mail de boas-vindas.
 // Idempotente: e-mail que já tem conta é devolvido como está (created=false).
-async function createPaidUser({ email, name, cpf }) {
+async function createPaidUser({ email, name, cpf, phone }) {
   email = normalizeEmail(email);
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Email inválido");
   const displayName = String(name || "").trim().slice(0, MAX_NAME_LEN)
@@ -560,6 +595,10 @@ async function createPaidUser({ email, name, cpf }) {
   // nasce sem ele e o sistema pede na primeira entrada — a assinatura foi paga
   // e não pode ficar sem dono por causa de um campo.
   const digits = isValidCpf(cpf) ? normalizeCpf(cpf) : null;
+  // Mesma regra do CPF para o telefone: veio torto da metadata, a conta nasce
+  // sem ele e o painel pede depois. Pagamento aprovado não pode virar conta
+  // inexistente por causa de um campo.
+  const storedPhone = toStoredPhone(phone);
 
   const existing = await findByEmail(email);
   if (existing) {
@@ -571,6 +610,7 @@ async function createPaidUser({ email, name, cpf }) {
       Object.assign(fill, { emailVerified: true, emailVerifyToken: null, emailVerifyExpires: null });
     }
     if (digits && !existing.cpf) fill.cpf = digits;
+    if (storedPhone && !isValidPhone(existing.phone)) fill.phone = storedPhone;
     if (!Object.keys(fill).length) return { user: existing, created: false, setPasswordToken: null };
 
     const updated = await prisma().user.update({
@@ -597,7 +637,7 @@ async function createPaidUser({ email, name, cpf }) {
       id: crypto.randomUUID(),
       name: displayName,
       email,
-      phone: "",
+      phone: storedPhone,
       ...(digits ? { cpf: digits } : {}),
       passwordHash: await bcrypt.hash(randomPass, BCRYPT_ROUNDS),
       role: isAdminEmail(email) ? "admin" : "user",
@@ -618,7 +658,7 @@ async function createPaidUser({ email, name, cpf }) {
           id: crypto.randomUUID(),
           name: displayName,
           email,
-          phone: "",
+          phone: storedPhone,
           passwordHash: await bcrypt.hash(randomPass, BCRYPT_ROUNDS),
           role: isAdminEmail(email) ? "admin" : "user",
           emailVerified: true,
@@ -729,7 +769,17 @@ function requireAdmin(req, res, next) {
 async function updateProfile(userId, updates) {
   const data = {};
   if (updates.name !== undefined) data.name = String(updates.name).trim();
-  if (updates.phone !== undefined) data.phone = String(updates.phone).trim();
+  // Telefone passa pela mesma régua do cadastro — este era o ponto por onde
+  // entrava qualquer texto no campo.
+  if (updates.phone !== undefined) {
+    const stored = toStoredPhone(updates.phone);
+    if (!stored) {
+      const err = new Error("Informe um telefone válido (DDD + celular)");
+      err.code = "invalid_phone";
+      throw err;
+    }
+    data.phone = stored;
+  }
   const user = await prisma().user.update({ where: { id: userId }, data }).catch(err => {
     if (err.code === "P2025") throw new Error("Usuário não encontrado");
     throw err;
@@ -1109,6 +1159,10 @@ module.exports = {
   findByEmail,
   findByCpf,
   setCpf,
+  setPhone,
+  // Exportado pros testes forjarem o estado de uma conta anterior à regra
+  // (escrita direta no banco precisa derrubar o cache do requireAuth).
+  invalidateUser,
   createPaidUser,
   issueSession,
   publicUser,

@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, popQueryParam } from "../data/constants";
 import Modal from "../components/ui/Modal";
-import { billingMe, billingCheckout, billingPortal, billingDetails, billingReactivate, billingChangePlan, errText} from "../data/api";
+import { billingMe, billingCheckout, billingPortal, billingDetails, billingReactivate, billingChangePlan, accountSetPhone, errText} from "../data/api";
+import { isValidPhone, maskPhoneInput, toStoredPhone } from "../data/phone";
 
 const BILLING_POLL_MS = 20 * 1000;
 
@@ -90,10 +91,16 @@ function statusBadge(status, trialDays, cancelAtPeriodEnd) {
   return { label: "Sem assinatura", color: "var(--color-text-secondary)", bg: "var(--color-background-secondary)", border: "var(--color-border-tertiary)" };
 }
 
-export default function PageSubscription() {
+export default function PageSubscription({ user, setUser }) {
   const [me, setMe] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(null); // planId em checkout, "portal", "cancel" ou "reactivate"
+  // Telefone de quem pulou a tela de cadastro do número. A entrada do painel
+  // deixa adiar; virar cliente pagante não — o backend recusa o checkout com
+  // code "phone_required". O campo abaixo é onde a pessoa resolve isso.
+  const [phone, setPhone] = useState("");
+  const [phoneSaving, setPhoneSaving] = useState(false);
+  const phoneRequired = !!user?.phoneRequired;
   const [error, setError] = useState("");
   // Confirmação de ações que acontecem sem sair da página (hoje: upgrade).
   const [notice, setNotice] = useState("");
@@ -156,7 +163,28 @@ export default function PageSubscription() {
     };
   }, []);
 
+  async function salvarTelefone() {
+    setError("");
+    if (!isValidPhone(phone)) return setError("Informe um celular válido com DDD");
+    setPhoneSaving(true);
+    try {
+      const r = await accountSetPhone(toStoredPhone(phone));
+      setUser?.(r.user);
+      setPhone("");
+    } catch (err) {
+      setError(errText(err, "Não foi possível salvar o telefone"));
+    } finally {
+      setPhoneSaving(false);
+    }
+  }
+
   async function startCheckout(planId, opts) {
+    // Antes do window.open: abrir a aba e depois descobrir que falta o telefone
+    // deixaria uma aba em branco pendurada.
+    if (phoneRequired) {
+      setError("Informe seu telefone acima para assinar.");
+      return;
+    }
     setBusy(planId);
     setError("");
     // Abre a aba em branco AINDA no clique (síncrono) — se abrisse depois do
@@ -299,6 +327,34 @@ export default function PageSubscription() {
       {notice && (
         <div style={{ background: "var(--success-bg)", border: "0.5px solid var(--success-border)", color: "var(--success-text)", padding: 10, borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
           {notice}
+        </div>
+      )}
+
+      {phoneRequired && (
+        <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", color: "var(--warn-text)", padding: 12, borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
+          <div style={{ marginBottom: 8 }}>
+            Informe seu celular para assinar — é por ele que o suporte fala com você.
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <input
+              value={phone}
+              onChange={e => setPhone(maskPhoneInput(e.target.value))}
+              type="tel"
+              inputMode="tel"
+              placeholder="(11) 99999-9999"
+              autoComplete="tel-national"
+              maxLength={15}
+              style={{ flex: "1 1 180px", minWidth: 0, padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, fontFamily: "inherit", color: "var(--color-text-primary)" }}
+            />
+            <button
+              type="button"
+              onClick={salvarTelefone}
+              disabled={phoneSaving}
+              style={{ padding: "8px 14px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, fontWeight: 500, cursor: phoneSaving ? "default" : "pointer", opacity: phoneSaving ? 0.7 : 1 }}
+            >
+              {phoneSaving ? "Salvando…" : "Salvar"}
+            </button>
+          </div>
         </div>
       )}
 
