@@ -1,0 +1,74 @@
+diff --git a/node_modules/@whiskeysockets/baileys/lib/Socket/messages-send.js b/node_modules/@whiskeysockets/baileys/lib/Socket/messages-send.js
+index 38bb9e0..c75aa12 100644
+--- a/node_modules/@whiskeysockets/baileys/lib/Socket/messages-send.js
++++ b/node_modules/@whiskeysockets/baileys/lib/Socket/messages-send.js
+@@ -108,6 +108,20 @@ export const makeMessagesSocket = (config) => {
+         const readType = privacySettings.readreceipts === 'all' ? 'read' : 'read-self';
+         await sendReceipts(keys, readType);
+     };
++    // ── Identidade própria em DOIS espaços de endereço ────────────────────
++    // O WhatsApp migrou os aparelhos de PN (telefone) para LID. `creds.me.id` é
++    // sempre PN e `creds.me.lid` é o mesmo aparelho em LID — este build do Baileys
++    // compara só contra o PN, então quando o destino/participante vem em LID ele
++    // não reconhece a própria conta: o nosso celular é tratado como "outra pessoa",
++    // recebe a cópia SEM o envelope `deviceSentMessage` e fica em "Aguardando
++    // mensagem" pra sempre. Estes helpers dão a resposta certa nos dois espaços.
++    const selfPnUser = () => jidDecode(authState.creds.me?.id || '')?.user;
++    const selfLidUser = () => jidDecode(authState.creds.me?.lid || '')?.user;
++    const isSelfUser = (user) => {
++        if (!user)
++            return false;
++        return user === selfPnUser() || user === selfLidUser();
++    };
+     /** Fetch all the devices we've to send a message to */
+     const getUSyncDevices = async (jids, useCache, ignoreZeroDevices) => {
+         const deviceResults = [];
+@@ -142,7 +156,12 @@ export const makeMessagesSocket = (config) => {
+         }
+         const result = await sock.executeUSyncQuery(query);
+         if (result) {
+-            const extracted = extractDeviceJids(result?.list, authState.creds.me.id, ignoreZeroDevices);
++            // extractDeviceJids exclui o nosso device comparando com o id PN; quando a
++            // usync responde em LID essa comparação falha e o socket entra na própria
++            // lista de destinatários. Filtramos de novo, agora ciente do LID.
++            const myDevice = jidDecode(authState.creds.me?.id || '')?.device;
++            const extracted = extractDeviceJids(result?.list, authState.creds.me.id, ignoreZeroDevices)
++                .filter(({ user, device }) => !(isSelfUser(user) && device === myDevice));
+             const deviceMap = {};
+             for (const item of extracted) {
+                 deviceMap[item.user] = deviceMap[item.user] || [];
+@@ -396,8 +415,11 @@ export const makeMessagesSocket = (config) => {
+                 const { user: meUser } = jidDecode(meId);
+                 if (!participant) {
+                     devices.push({ user });
+-                    if (user !== meUser) {
+-                        devices.push({ user: meUser });
++                    if (!isSelfUser(user)) {
++                        // Destino em LID: o nosso user precisa ir na forma LID também —
++                        // jidEncode(meUser, 'lid') montaria um endereço que não existe.
++                        const meLidUser = selfLidUser();
++                        devices.push({ user: isLid && meLidUser ? meLidUser : meUser });
+                     }
+                     if (additionalAttributes?.['category'] !== 'peer') {
+                         const additionalDevices = await getUSyncDevices([meId, jid], !!useUserDevicesCache, true);
+@@ -408,8 +430,8 @@ export const makeMessagesSocket = (config) => {
+                 const meJids = [];
+                 const otherJids = [];
+                 for (const { user, device } of devices) {
+-                    const isMe = user === meUser;
+-                    const jid = jidEncode(isMe && isLid ? authState.creds?.me?.lid.split(':')[0] || user : user, isLid ? 'lid' : 's.whatsapp.net', device);
++                    const isMe = isSelfUser(user);
++                    const jid = jidEncode(isMe && isLid ? selfLidUser() || user : user, isLid ? 'lid' : 's.whatsapp.net', device);
+                     if (isMe) {
+                         meJids.push(jid);
+                     }
+@@ -459,7 +481,8 @@ export const makeMessagesSocket = (config) => {
+                     stanza.attrs.to = destinationJid;
+                     stanza.attrs.participant = participant.jid;
+                 }
+-                else if (areJidsSameUser(participant.jid, meId)) {
++                else if (areJidsSameUser(participant.jid, meId) ||
++                    (authState.creds.me?.lid && areJidsSameUser(participant.jid, authState.creds.me.lid))) {
+                     stanza.attrs.to = participant.jid;
+                     stanza.attrs.recipient = destinationJid;
+                 }

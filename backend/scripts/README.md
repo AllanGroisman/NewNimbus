@@ -116,6 +116,26 @@ BACKUP_ALERT_LOCAL_MAX_H=3         # alerta se o dump local passar dessa idade
 BACKUP_ALERT_REMOTE_MAX_H=6        # alerta se o snapshot remoto passar dessa idade
 ```
 
+## WhatsApp: limpar sessões Signal duplicadas (PN×LID)
+
+`fix-lid-sessions.js` — ferramenta pontual para o "Aguardando mensagem" que não some.
+
+O WhatsApp trocou o endereço interno de cada aparelho do telefone (**PN**, `555596168060`) para um número opaco novo (**LID**, `4269197504618`). O Baileys 6.7.23 não sabe que os dois são a mesma conta e acaba guardando **dois ratchets Signal para o mesmo celular**, que divergem: dá `Bad MAC` do nosso lado e "Aguardando mensagem. Essa ação pode levar alguns instantes" do lado do destinatário. O patch em `backend/patches/` fecha a causa; este script limpa os pares que **já** divergiram.
+
+```bash
+cd backend
+node scripts/fix-lid-sessions.js                                  # dry-run, todas as sessões
+node scripts/fix-lid-sessions.js --session "<userId>::<numberId>" # só um número
+node scripts/fix-lid-sessions.js --apply                          # apaga de verdade
+pm2 reload nimbus-worker                                          # o worker é o dono do Baileys
+```
+
+Apagar uma linha `session` é seguro: o libsignal busca um pre-key bundle novo e refaz a sessão — custa um round-trip. O script **nunca** toca em `creds`; apagar creds é que forçaria reler o QR.
+
+Ele só apaga o par quando tem evidência de que os dois endereços são o mesmo aparelho: ou o mapeamento aparece em 2+ devices, ou está provado pelo `creds.me` de alguma sessão. Candidato visto num device só é listado como `ambíguo` e ignorado — o número do device é por conta, então dois contatos diferentes coincidem nele o tempo todo.
+
+Detalhes em `backend/whatsapp/README.md`, seção "O endereço LID".
+
 ## Sonda visual: por que a busca de produtos de um cupom só traz a prévia
 
 `cupom-produtos-visual.js` fotografa, em ordem, cada página do caminho que o botão

@@ -71,6 +71,44 @@ a fila `control` roda concurrency 4, e dois `relayMessage` no mesmo socket
 compartilham o `transactionCache` do Baileys — o que fecha primeiro limpa o
 cache do outro.
 
+### O endereço LID — a causa que faltava
+
+O WhatsApp migrou o endereço interno de cada aparelho do telefone (**PN**,
+`555596168060@s.whatsapp.net`) para um número opaco novo (**LID**,
+`4269197504618@lid`). O Baileys 6.7.23 não tem o mapa PN↔LID: ele compara a
+identidade própria só contra `creds.me.id`, que é sempre PN. Quando o destino ou
+o participante do retry vem em LID:
+
+- o celular **do próprio usuário** é classificado como "outra pessoa" e recebe a
+  cópia sem o envelope `deviceSentMessage` — é exatamente por isso que o
+  auto-DM do teste de conexão ficava em "Aguardando mensagem" para sempre;
+- o fanout empurra o user PN num destino LID, montando `<telefone>@lid`, um
+  endereço que não existe;
+- o stanza de reenvio sai sem o atributo `recipient`;
+- a usync devolve o próprio device do socket como destinatário.
+
+E, como consequência, o banco acumula **duas sessões Signal para o mesmo
+aparelho** (`555596168060.47` e `4269197504618.47` lado a lado em
+`baileys_auth`): dois ratchets independentes que divergem — `Bad MAC` aqui,
+placeholder lá.
+
+Correção em duas partes:
+
+1. **`patches/@whiskeysockets+baileys+6.7.23.patch`** — ensina o Baileys que
+   `creds.me.lid` e `creds.me.id` são a mesma conta. Aplicado pelo `postinstall`
+   (`patch-package`, que por isso é dependência de **produção**: o deploy roda
+   `npm install --omit=dev`). `tests/unit/whatsapp-lid-patch.test.js` falha se o
+   patch sumir do `node_modules` — sem esse alarme, um deploy desfaria a
+   correção em silêncio.
+2. **`scripts/fix-lid-sessions.js`** — apaga os pares PN×LID que já divergiram,
+   para o libsignal refazer a sessão do zero (o patch impede novos casos, não
+   desfaz os antigos). Dry-run por padrão; só apaga com `--apply`. Nunca toca em
+   `creds` — apagar creds é que forçaria reler o QR.
+
+A correção definitiva é o `baileys` 7.x, que tem `LIDMappingStore` nativo. Está
+em release candidate (7.0.0-rc14), muda o nome do pacote e exige adaptar o
+auth-state — fica para quando sair a versão estável.
+
 ## Onde as credenciais ficam
 
 Tabela `baileys_auth` no Postgres (ver `backend/auth/baileys-pg.js`). Trocar de máquina não perde sessão.

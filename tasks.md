@@ -481,3 +481,66 @@ Como que acha a campanha, mas não consegue puxar ela?
     memória, Redis fora do ar não derruba envio nem busca) e as extensões em
     `unit/whatsapp-retry-getmessage.test.js` (chaves embrulhadas em cache,
     `cachedGroupMetadata` com invalidação, retry `peer` em silêncio).
+
+43. [] Além do QRCode, da pra entrar no whats com codigo tb, certo?  Quero acrescentar esta opção.
+44. [x] Fiz o teste de whats e a msg pra mim mesmo fica só em "Aguardando mensagem". Da uma olhada no pq.
+
+    **A causa que faltava na task 42: o endereço LID.** O WhatsApp migrou o
+    endereço interno de cada aparelho do telefone (**PN**, `555596168060`) para
+    um número opaco novo (**LID**, `4269197504618`). O Baileys 6.7.23 não tem o
+    mapa PN↔LID — ele compara a identidade própria só contra `creds.me.id`, que
+    é sempre PN. A task 42 concluiu que "reenvio que não gruda = estado Signal
+    não persistido"; era só metade. A outra metade é que o reenvio saía **montado
+    errado**.
+
+    **Evidências (produção, 06/09 ~10:51).** O teste de conexão manda duas
+    mensagens: o auto-DM (`3EB0209FB184CAFC09533E`) e a perna do WhatsNimbus
+    (`3EB0CAD58ED9813E31AE78`). A segunda pediu reenvio 4 vezes (`hit #1`..`#4`,
+    o teto do Baileys é 5) e nunca colou. O envio sai por
+    `jidFromPhone()` → `…@s.whatsapp.net` (PN), mas **todos** os retry receipts
+    chegaram em LID (`4269197504618:47@lid`). E o `worker-error.log` mostra que
+    nós também não decriptamos o que vem de volta: `Bad MAC` em
+    `async 4269197504618.47` — o endereço LID, não o PN. No banco, a prova
+    direta: `baileys_auth` tem `555596168060.47` **e** `4269197504618.47` lado a
+    lado — dois ratchets independentes para o mesmo celular (21 pares assim).
+
+    **Os quatro pontos quebrados**, todos em
+    `lib/Socket/messages-send.js` do Baileys:
+    1. `const isMe = user === meUser` compara o user LID do device com o nosso
+       user PN → dá `false`, e **o celular do próprio usuário cai em `otherJids`**,
+       recebendo a cópia sem o envelope `deviceSentMessage`. É *este* o motivo de
+       o auto-DM ficar em "Aguardando mensagem": o aparelho recebe uma mensagem
+       que não consegue interpretar como enviada por ele mesmo.
+    2. o fanout empurra `{ user: meUser }` (PN) num destino LID; o `jidEncode`
+       seguinte monta `<telefone>@lid`, um endereço que não existe.
+    3. no caminho de retry, `areJidsSameUser(participant.jid, meId)` falha com o
+       participante em LID e o stanza de reenvio sai sem o atributo `recipient`.
+    4. `extractDeviceJids` exclui o nosso device comparando com o id PN; em LID
+       a exclusão falha e o socket entra na própria lista de destinatários.
+
+    **Feito.**
+    - `patches/@whiskeysockets+baileys+6.7.23.patch` (via `patch-package`, com
+      `postinstall` e a dependência em **produção** porque o deploy roda
+      `npm install --omit=dev`): helpers `selfPnUser`/`selfLidUser`/`isSelfUser`
+      no escopo do socket, e os quatro pontos acima passam a enxergar os dois
+      espaços de endereço. De quebra, `authState.creds?.me?.lid.split(':')[0]`
+      deixa de estourar quando a conta ainda não tem `lid`.
+    - `scripts/fix-lid-sessions.js`: apaga os pares PN×LID que já divergiram
+      (o patch impede novos, não desfaz os antigos). Dry-run por padrão; só
+      apaga com `--apply`; nunca toca em `creds`. Pareia por device mas **só
+      confia** no mapeamento visto em 2+ devices ou provado por algum
+      `creds.me` — o número do device é por conta, e sem essa trava ele apagaria
+      sessões de contatos que só coincidem no device (aconteceu no dry-run:
+      `555596168060.41 ↔ 155439312412685.41`, corretamente listado como ambíguo).
+
+    **Fica para depois:** migrar para o pacote `baileys` 7.x, que tem
+    `LIDMappingStore` nativo e resolve isso na raiz. Hoje está em release
+    candidate (7.0.0-rc14), muda o nome do pacote, exige adaptar o auth-state
+    (novo tipo de chave `lid-mapping`) e provavelmente reler o QR de todos os
+    números. O patch acima é a ponte até a versão estável.
+
+    **Testes:** `unit/whatsapp-lid-patch.test.js` (alarme para o caso de um
+    `npm install` desfazer o patch em silêncio — é a falha mais provável daqui
+    pra frente) e `unit/whatsapp-lid-sessions.test.js` (o pareamento PN×LID:
+    números antigos de 8 dígitos contam como PN, LIDs reais de produção não,
+    candidato de um device só é ambíguo e fica de fora).
