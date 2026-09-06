@@ -483,6 +483,7 @@ Como que acha a campanha, mas não consegue puxar ela?
     `cachedGroupMetadata` com invalidação, retry `peer` em silêncio).
 
 43. [] Além do QRCode, da pra entrar no whats com codigo tb, certo?  Quero acrescentar esta opção.
+
 44. [x] Fiz o teste de whats e a msg pra mim mesmo fica só em "Aguardando mensagem". Da uma olhada no pq.
 
     **A causa que faltava na task 42: o endereço LID.** O WhatsApp migrou o
@@ -544,3 +545,5 @@ Como que acha a campanha, mas não consegue puxar ela?
     pra frente) e `unit/whatsapp-lid-sessions.test.js` (o pareamento PN×LID:
     números antigos de 8 dígitos contam como PN, LIDs reais de produção não,
     candidato de um device só é ambíguo e fica de fora).
+
+45. [] O que foi feito para não ter mais o aguarde das msg no whats, que rodei o script manualmente, roda regularmente para acabar com isso? Como faço para rodar? Um botão na aba de usuarios no ADMIN por exemplo?
