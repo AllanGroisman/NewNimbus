@@ -29,7 +29,10 @@ const require = createRequire(pathToFileURL(LOCAL_JS));
 const BAILEYS = require.resolve("@whiskeysockets/baileys");
 const PG_AUTH = path.join(BACKEND, "auth", "baileys-pg.js");
 const NOTIFIER = path.join(BACKEND, "notifications", "user-notifier.js");
-const { DisconnectReason } = require("@whiskeysockets/baileys");
+// makeCacheableSignalKeyStore vem do Baileys de verdade: o local.js embrulha
+// `state.keys` com ele antes de entregar ao socket, e um stub que não o
+// exporte quebraria a abertura da sessão inteira.
+const { DisconnectReason, makeCacheableSignalKeyStore } = require("@whiskeysockets/baileys");
 
 // Sockets criados nesta execução — o contador é a própria asserção do teste.
 let sockets = [];
@@ -44,7 +47,10 @@ function fakeSocket() {
     end: vi.fn(),
     logout: vi.fn().mockResolvedValue(undefined),
     user: null,
-    authState: { creds: { registered: true } },
+    // Espelha o que o Baileys 6.7.23 realmente deixa numa sessão pareada por QR:
+    // `me` preenchido e `registered` FALSE (ele só vira true no fluxo de pairing
+    // code). Ver o comentário de classifyClose em local.js.
+    authState: { creds: { me: { id: "5511999990000:61@s.whatsapp.net" }, registered: false } },
     // Atalho do teste pra empurrar um evento do Baileys pra dentro do handler.
     emit: (e, payload) => ev.emit(e, payload),
   };
@@ -72,6 +78,7 @@ const pgAuthStub = {
 stub(BAILEYS, {
   default: fakeSocket,
   DisconnectReason,
+  makeCacheableSignalKeyStore,
   fetchLatestBaileysVersion: async () => ({ version: [2, 3000, 1] }),
 });
 stub(PG_AUTH, pgAuthStub);
@@ -180,5 +187,51 @@ describe("reconexão em backoff — não ressuscita sessão apagada", () => {
 
     expect(wa.getSession(USER, NUM).status).toBe("connected");
     await cleanup();
+  });
+});
+
+// A regressão que apagava sessão boa. `creds.registered` é sempre false em quem
+// pareou por QR, então os caminhos de limpeza do classifyClose e da varredura de
+// órfãs tratavam TODA sessão real como "nunca pareada" e apagavam a auth — o
+// usuário tinha que ler o QR de novo, e cada re-scan queima um slot de aparelho
+// conectado, deixando sessões Signal mortas nos contatos ("Aguardando mensagem").
+describe("sessão pareada por QR não é confundida com sessão que nunca pareou", () => {
+  beforeEach(async () => { await cleanup(); sockets = []; vi.clearAllMocks(); });
+  afterAll(cleanup);
+
+  it("401 numa sessão com creds.me é logout de verdade — não 'falha ao parear'", async () => {
+    await wa.startSession(USER, NUM);
+    sockets[0].emit("connection.update", {
+      connection: "close",
+      lastDisconnect: { error: { output: { statusCode: DisconnectReason.loggedOut }, message: "Connection Failure" } },
+    });
+    await new Promise(r => setTimeout(r, 0));
+
+    // Logout real: a auth É apagada, mas com a mensagem de relogar — e não com a
+    // de "falha ao parear, leia o QR de novo".
+    expect(pgAuthStub.deleteSession).toHaveBeenCalled();
+  });
+
+  it("408 de QR expirado numa sessão já pareada só reconecta — não apaga a auth", async () => {
+    await wa.startSession(USER, NUM);
+    sockets[0].emit("connection.update", {
+      connection: "close",
+      lastDisconnect: {
+        error: { output: { statusCode: DisconnectReason.timedOut }, message: "QR refs attempts ended" },
+      },
+    });
+    await new Promise(r => setTimeout(r, 0));
+
+    expect(pgAuthStub.deleteSession).not.toHaveBeenCalled();
+    expect(wa.getSession(USER, NUM)?.status).toBe("connecting");
+  });
+
+  it("a varredura de órfãs ignora sessão que tem creds.me", () => {
+    const velha = {
+      status: "connecting",
+      createdAt: Date.now() - 60 * 60 * 1000,
+      sock: { authState: { creds: { me: { id: "x:61@s.whatsapp.net" }, registered: false } } },
+    };
+    expect(wa.isOrphanQrSession(velha, Date.now())).toBe(false);
   });
 });

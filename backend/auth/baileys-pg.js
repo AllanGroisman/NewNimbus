@@ -69,6 +69,26 @@ async function readKey(sessionId, keyType, keyId) {
   return row ? decode(row.value) : null;
 }
 
+// Lê VÁRIAS chaves do mesmo tipo numa query só. O Baileys pede as sessões Signal
+// de dezenas de devices de uma vez num envio de grupo; com um findUnique por
+// chave isso viravam dezenas de queries paralelas contra um pool de 5 conexões,
+// e o timeout de pool derrubava o keys.get/keys.set no meio da cifra.
+async function readKeys(sessionId, keyType, keyIds) {
+  const wanted = keyIds.map(id => id || "");
+  const rows = await prisma().baileysAuth.findMany({
+    where: { sessionId, keyType, keyId: { in: wanted } },
+  });
+  const byId = new Map(rows.map(r => [r.keyId, r.value]));
+  const out = {};
+  for (const id of keyIds) {
+    const raw = byId.get(id || "");
+    // `null` (e não undefined) no que não existe: dentro de uma transação o
+    // Baileys só refaz a busca do que voltou `undefined` (addTransactionCapability).
+    out[id] = raw == null ? null : decode(raw);
+  }
+  return out;
+}
+
 async function writeKey(sessionId, keyType, keyId, value) {
   const v = encode(value);
   await prisma().baileysAuth.upsert({
@@ -83,8 +103,12 @@ async function deleteKey(sessionId, keyType, keyId) {
     await prisma().baileysAuth.delete({
       where: { sessionId_keyType_keyId: { sessionId, keyType, keyId: keyId || "" } },
     });
-  } catch {
-    // ignore — chave não existia
+  } catch (err) {
+    // P2025 = a linha não existia; qualquer outra coisa (pool esgotado, banco
+    // fora) precisa subir. Engolir tudo aqui fazia o consumo de uma pre-key
+    // parecer persistido quando não foi — origem dos "Key used already or never
+    // filled" e, do outro lado, do "Aguardando mensagem" que não some.
+    if (err?.code !== "P2025") throw err;
   }
 }
 
@@ -108,44 +132,93 @@ async function renameSession(oldSessionId, newSessionId) {
 }
 
 // API que Baileys consome. Espelha useMultiFileAuthState.
-async function useDatabaseAuthState(sessionId) {
+//
+// `onPersistError` é chamado quando uma gravação do estado Signal falha. Isso
+// NÃO é um detalhe de log: o `relayMessage` do Baileys envolve o envio inteiro
+// numa transação de chaves e só COMMITA no fim — o texto cifrado já saiu na
+// rede quando a gravação falha. Se ninguém reage, o ratchet fica avançado na
+// memória e velho no banco, e a partir daí o destinatário não decripta mais
+// nada: é o "Aguardando mensagem" que não some sozinho. Quem passa o callback
+// (whatsapp/local.js) derruba o socket pra que a reconexão releia o banco.
+async function useDatabaseAuthState(sessionId, { onPersistError } = {}) {
   // Carrega creds (cria nova se nunca existiu)
   const stored = await readKey(sessionId, "creds", "");
   const creds = stored || initAuthCreds();
+
+  // O Baileys tenta o commit 10x com 3s de intervalo e desiste EM SILÊNCIO
+  // (addTransactionCapability). Este wrapper é o único lugar onde a falha ainda
+  // é visível — daqui ela vira log e aviso, e depois segue subindo pro Baileys
+  // tentar de novo.
+  const reportPersistError = (what, err) => {
+    console.error(`[baileys-auth] falha ao gravar ${what} de ${sessionId}: ${err.message}`);
+    try { onPersistError?.(err); } catch { /* nunca deixa o aviso quebrar a gravação */ }
+  };
 
   return {
     state: {
       creds,
       keys: {
         get: async (type, ids) => {
-          const data = {};
-          await Promise.all(ids.map(async id => {
-            let value = await readKey(sessionId, type, id);
-            if (type === "app-state-sync-key" && value) {
-              value = proto.Message.AppStateSyncKeyData.fromObject(value);
+          if (!ids?.length) return {};
+          const data = await readKeys(sessionId, type, ids);
+          if (type === "app-state-sync-key") {
+            for (const id of Object.keys(data)) {
+              if (data[id]) data[id] = proto.Message.AppStateSyncKeyData.fromObject(data[id]);
             }
-            data[id] = value;
-          }));
+          }
           return data;
         },
+        // ATÔMICO. Antes era um Promise.all de upserts soltos: morrer no meio
+        // gravava METADE das mutações do ratchet, o que é pior que não gravar
+        // nada — o estado fica inconsistente em vez de só velho, e o peer nunca
+        // mais decripta. O Baileys entrega aqui o mapa inteiro de mutações de
+        // uma transação (auth-utils: state.set(mutations)), então "tudo ou nada"
+        // é exatamente a semântica certa.
         set: async (data) => {
-          const tasks = [];
+          const ops = [];
           for (const type of Object.keys(data)) {
             for (const id of Object.keys(data[type])) {
               const value = data[type][id];
-              if (value) tasks.push(writeKey(sessionId, type, id, value));
-              else tasks.push(deleteKey(sessionId, type, id));
+              const keyId = id || "";
+              if (value) {
+                const v = encode(value);
+                ops.push(prisma().baileysAuth.upsert({
+                  where: { sessionId_keyType_keyId: { sessionId, keyType: type, keyId } },
+                  create: { sessionId, keyType: type, keyId, value: v },
+                  update: { value: v },
+                }));
+              } else {
+                // deleteMany (e não delete): apagar linha inexistente é normal
+                // aqui, e o P2025 do `delete` abortaria a transação inteira.
+                ops.push(prisma().baileysAuth.deleteMany({
+                  where: { sessionId, keyType: type, keyId },
+                }));
+              }
             }
           }
-          await Promise.all(tasks);
+          if (!ops.length) return;
+          try {
+            await prisma().$transaction(ops);
+          } catch (err) {
+            reportPersistError(`${ops.length} chave(s) Signal`, err);
+            throw err;
+          }
         },
       },
     },
     // Baileys chama em creds.update; ref ao `creds` é mutada por Baileys.
+    // Falhar aqui é tão grave quanto falhar no keys.set: é neste blob que vive o
+    // contador de pre-keys (nextPreKeyId/firstUnuploadedPreKeyId), e perdê-lo faz
+    // o servidor servir pre-key já usada ("Key used already or never filled").
     saveCreds: async () => {
-      await writeKey(sessionId, "creds", "", creds);
+      try {
+        await writeKey(sessionId, "creds", "", creds);
+      } catch (err) {
+        reportPersistError("creds", err);
+        throw err;
+      }
     },
   };
 }
 
-module.exports = { useDatabaseAuthState, deleteSession, renameSession, readKey, writeKey, deleteKey };
+module.exports = { useDatabaseAuthState, deleteSession, renameSession, readKey, readKeys, writeKey, deleteKey };

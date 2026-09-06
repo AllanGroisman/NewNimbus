@@ -9,10 +9,13 @@
 // makeWASocket. O default do Baileys é `async () => undefined`: sem um store, o
 // reenvio nunca sai e o placeholder fica no celular do usuário PRA SEMPRE.
 //
-// Escopo de propósito curto: a janela real de retry é de segundos a poucos minutos
-// (maxMsgRetryCount do Baileys é 5). Fica só em memória, no mesmo processo do
-// socket que recebe o receipt — um restart do worker perde os pendentes daquele
-// instante, e esse é o trade-off aceito em troca de zero infra nova.
+// Duas camadas:
+//   1. memória, no processo do socket — atende o caso normal sem tocar em rede;
+//   2. Redis (só em QUEUE_BACKEND=redis), TTL de 24h — atende o retry receipt que
+//      chega DEPOIS de um restart do worker. Sem ela, todo `pm2 reload` de deploy,
+//      todo `max_memory_restart` e todo crash transformavam os retries pendentes
+//      daquele instante em placeholder eterno; e o teto de 1000 mensagens em
+//      memória também derrubava os pendentes de uma campanha grande.
 //
 // Chaveado pelo `id` puro, não por `jid:id`: o receipt monta a key a partir do que
 // o WhatsApp devolveu, e o remoteJid de lá pode vir na forma LID enquanto gravamos
@@ -22,15 +25,41 @@
 const MAX = Number(process.env.WA_MSG_STORE_MAX) || 1000;
 const TTL_MS = Number(process.env.WA_MSG_STORE_TTL_MS) || 60 * 60 * 1000; // 1h
 
-// id -> { message, at, retries, lastRetryAt }. A ordem de iteração do Map é a de
-// inserção, então o primeiro `keys().next()` é sempre o mais antigo — evicção FIFO
-// sem estrutura extra.
+// A camada durável só existe onde o Redis já é dependência dura (worker em modo
+// redis). Em memory mode — dev e testes — o comportamento é o de antes.
+const USE_REDIS = (process.env.QUEUE_BACKEND || "memory").toLowerCase() === "redis";
+const REDIS_TTL_S = Number(process.env.WA_MSG_STORE_REDIS_TTL_S) || 24 * 60 * 60;
+const RKEY = (id) => `nimbus:wamsg:${id}`;
+
+// id -> { message, at, retries, lastRetryAt, source }. A ordem de iteração do Map
+// é a de inserção, então o primeiro `keys().next()` é sempre o mais antigo —
+// evicção FIFO sem estrutura extra.
 //
 // `retries` é o contador de vezes que o Baileys veio buscar esta mensagem aqui. Ele
 // só faz isso pra atender um retry receipt, ou seja: **cada incremento é a prova de
 // que o aparelho do destinatário mostrou "Aguardando mensagem"**. É o único sinal
 // que temos disso — o WhatsApp não avisa de outro jeito.
 const store = new Map();
+
+let _redis = null;
+function redis() {
+  if (_redis) return _redis;
+  const IORedis = require("ioredis");
+  _redis = new IORedis(process.env.REDIS_URL || "redis://localhost:6379", {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+    retryStrategy: (times) => Math.min(times * 200, 3000),
+  });
+  _redis.on("error", () => { /* já logamos por operação; não derruba o worker */ });
+  return _redis;
+}
+
+// O proto do Baileys tem Buffers dentro (media keys, principalmente): BufferJSON
+// é o mesmo par replacer/reviver que auth/baileys-pg.js usa pra persistir chaves.
+// Lazy pra este módulo seguir barato de carregar em teste.
+function bufferJSON() {
+  return require("@whiskeysockets/baileys").BufferJSON;
+}
 
 // Recebe o WebMessageInfo que o sock.sendMessage devolveu. Guarda o proto COMO
 // VEIO: no caso de imagem, o reenvio reaproveita as media keys e não sobe o
@@ -41,39 +70,73 @@ function put(sent) {
   const message = sent && sent.message;
   if (!id || !message) return;
   store.delete(id); // reinsere no fim: mantém a ordem FIFO honesta
-  store.set(String(id), { message, at: Date.now(), retries: 0, lastRetryAt: null });
+  store.set(String(id), { message, at: Date.now(), retries: 0, lastRetryAt: null, source: null });
   while (store.size > MAX) store.delete(store.keys().next().value);
+
+  if (!USE_REDIS) return;
+  // Fire-and-forget: a mensagem já foi entregue ao WhatsApp: um Redis fora do ar
+  // não pode transformar um envio bem-sucedido em erro pro usuário.
+  try {
+    const payload = JSON.stringify(message, bufferJSON().replacer);
+    redis().set(RKEY(id), payload, "EX", REDIS_TTL_S)
+      .catch(err => console.error(`[wa] msg-store: falha ao gravar ${id} no Redis: ${err.message}`));
+  } catch (err) {
+    console.error(`[wa] msg-store: falha ao serializar ${id}: ${err.message}`);
+  }
 }
 
 // Chamado SÓ pelo getMessage do socket, que só é chamado pra atender retry receipt.
 // Por isso contamos aqui: quem lê é o reenvio. Expira na leitura — junto com o teto
 // do put(), segura o tamanho sem varredura periódica (nada de timer segurando o
 // processo vivo).
-function get(id) {
+async function get(id) {
   if (!id) return undefined;
-  const entry = store.get(String(id));
-  if (!entry) {
-    logRetry(id, "miss");
-    return undefined;
+  const key = String(id);
+  const entry = store.get(key);
+
+  if (entry && (Date.now() - entry.at) <= TTL_MS) return hit(key, entry, entry.source || "memoria");
+  if (entry) store.delete(key); // expirado em memória; o Redis ainda pode ter
+
+  const fromRedis = await readRedis(key);
+  if (fromRedis) {
+    // Reidrata a memória pra um segundo retry do mesmo aparelho (é comum vir em
+    // rajada) não voltar à rede.
+    const revived = { message: fromRedis, at: Date.now(), retries: 0, lastRetryAt: null, source: "redis" };
+    store.set(key, revived);
+    while (store.size > MAX) store.delete(store.keys().next().value);
+    return hit(key, revived, "redis");
   }
-  if (Date.now() - entry.at > TTL_MS) {
-    store.delete(String(id));
-    logRetry(id, "expirado");
-    return undefined;
-  }
+
+  logRetry(key, entry ? "expirado" : "miss");
+  return undefined;
+}
+
+function hit(key, entry, source) {
   entry.retries += 1;
   entry.lastRetryAt = Date.now();
-  logRetry(id, `hit #${entry.retries}`);
+  entry.source = source;
+  logRetry(key, `hit #${entry.retries} (${source})`);
   return entry.message;
 }
 
+async function readRedis(key) {
+  if (!USE_REDIS) return null;
+  try {
+    const raw = await redis().get(RKEY(key));
+    return raw ? JSON.parse(raw, bufferJSON().reviver) : null;
+  } catch (err) {
+    console.error(`[wa] msg-store: falha ao ler ${key} do Redis: ${err.message}`);
+    return null;
+  }
+}
+
 // O que a rota de teste consulta pra saber se o aparelho pediu reenvio. `known:false`
-// = o id caiu do teto/TTL ou nunca passou por este processo (worker reiniciado), e aí
+// = o id caiu do teto/TTL e não estava no Redis, ou nunca passou por aqui, e aí
 // não dá pra afirmar nada — a rota trata como "sem informação", não como sucesso.
 function stats(id) {
   const entry = id ? store.get(String(id)) : null;
-  if (!entry) return { known: false, retries: 0, lastRetryAt: null };
-  return { known: true, retries: entry.retries, lastRetryAt: entry.lastRetryAt };
+  if (!entry) return { known: false, retries: 0, lastRetryAt: null, source: null };
+  return { known: true, retries: entry.retries, lastRetryAt: entry.lastRetryAt, source: entry.source };
 }
 
 // Uma linha por pedido de reenvio. Acontece só quando uma mensagem NOSSA falhou a
@@ -90,6 +153,7 @@ module.exports = {
   stats,
   MAX,
   TTL_MS,
+  USE_REDIS,
   // Só pra teste.
   __clear: () => store.clear(),
   __size: () => store.size,

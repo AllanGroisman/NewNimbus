@@ -48,7 +48,7 @@ try {
   return;
 }
 
-const { default: makeWASocket, DisconnectReason, fetchLatestBaileysVersion } = baileys;
+const { default: makeWASocket, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore } = baileys;
 
 // Auth state em Postgres (tabela baileys_auth via auth/baileys-pg.js).
 let _pgAuth = null;
@@ -142,6 +142,49 @@ const reconnectTimers = new Map();
 // agende reconexão enquanto estamos encerrando o processo.
 let shuttingDown = false;
 
+// Fila de envio por sessão. A fila `control` do BullMQ roda concurrency 4
+// (infra/queue.js) e TODO envio vindo do server passa por ela, além do job de
+// campanha na fila `send`. Sem esta trava, dois relayMessage rodam ao mesmo
+// tempo no MESMO socket — e o addTransactionCapability do Baileys usa um
+// `transactionCache`/`mutations` compartilhado com um contador simples: quando a
+// transação de fora termina primeiro, o `finally` dela limpa o cache no meio da
+// outra e as mutações do ratchet se perdem. O destinatário então não decripta e
+// fica no "Aguardando mensagem". Sessões diferentes seguem em paralelo.
+const sendChains = new Map();
+
+function withSendLock(k, fn) {
+  const prev = sendChains.get(k) || Promise.resolve();
+  // `prev.then(fn, fn)`: um envio que falhou não pode travar a fila do próximo.
+  const run = prev.then(fn, fn);
+  const next = run.catch(() => {});
+  sendChains.set(k, next);
+  next.then(() => { if (sendChains.get(k) === next) sendChains.delete(k); });
+  return run;
+}
+
+// Quanto tempo o cache de metadata de grupo vale. Sem `cachedGroupMetadata` o
+// Baileys dispara um IQ de groupMetadata ao vivo a CADA envio em grupo, dentro
+// da transação de chaves — num link ruim isso estoura no meio da cifra.
+const GROUP_META_TTL_MS = 5 * 60 * 1000;
+const GROUP_META_MAX = 200;
+
+// Falha ao gravar o estado Signal: o ratchet avançou na memória e não no banco
+// (o texto cifrado já saiu na rede quando o commit falha). Continuar enviando a
+// partir daí garante que aquele destinatário não decripta mais nada. Derrubamos
+// o socket: a reconexão relê o estado do banco. Debounce porque o Baileys tenta
+// o mesmo commit 10x, e derrubar o socket 10 vezes seguidas não ajuda ninguém.
+const PERSIST_FAIL_DEBOUNCE_MS = 30_000;
+
+function handlePersistError(session, gen, err) {
+  if (!isCurrentGen(session, gen) || !session.socketAlive) return;
+  const now = Date.now();
+  if (session.lastPersistFailAt && (now - session.lastPersistFailAt) < PERSIST_FAIL_DEBOUNCE_MS) return;
+  session.lastPersistFailAt = now;
+  console.error(`[whatsapp] key store falhou ${session.userId}/${session.numberId} (${err?.message || err})` +
+    ` — derrubando o socket pra recarregar o estado do banco`);
+  try { session.sock?.end(new Error("estado Signal não pôde ser gravado")); } catch {}
+}
+
 function key(userId, numberId) { return `${userId}::${numberId}`; }
 
 // Puro/testável: o handler pertence ao socket vigente desta sessão?
@@ -161,6 +204,15 @@ function scheduleReconnect(userId, numberId, k, delayMs) {
     if (!sessions.has(k) || shuttingDown) return;
     startSession(userId, numberId).catch(err => {
       console.error(`[whatsapp] erro ao reconectar ${userId}/${numberId}:`, err.message);
+      // A ABERTURA falhou (ex.: Postgres fora, e é justamente quando isso
+      // acontece). Sem reagendar aqui a sessão fica parada pra sempre: o handler
+      // de "close" — que é quem normalmente marca o próximo backoff — nem chega
+      // a existir, porque não houve socket.
+      const s = sessions.get(k);
+      if (!s || shuttingDown) return;
+      s.restartCount = (s.restartCount || 0) + 1;
+      scheduleReconnect(userId, numberId, k,
+        Math.min(30000, 1500 * s.restartCount) + Math.floor(Math.random() * 1000));
     });
   }, delayMs);
   t.unref?.();
@@ -205,9 +257,20 @@ const CONFLICT_MAX_RETRIES = 3;
 // (mesma conta em outro lugar, ou overlap de processos num restart). No conflito as
 // credenciais continuam VÁLIDAS — apagá-las forçava re-scan a cada restart. Então
 // só é logout definitivo o 401 que NÃO seja conflito nem eco de um conflito recente.
+// `paired` = a sessão JÁ pareou algum dia (creds.me existe).
+//
+// ATENÇÃO: NÃO use `creds.registered` pra isso. No Baileys 6.7.23 esse campo só
+// é setado no fluxo de PAIRING CODE (Socket/messages-recv.js, link_code_pairing);
+// quem pareia por QR — que é todo mundo aqui — fica com `registered: false` pra
+// sempre, mesmo conectado e funcionando há meses. Usar aquele campo fazia toda
+// sessão real ser tratada como "nunca pareada", e os três caminhos abaixo APAGAM
+// a auth nesse caso: o usuário era obrigado a ler o QR de novo, e cada re-scan
+// queima um slot de aparelho conectado (os devices :47, :59, :61 do mesmo número
+// no log). Aparelho antigo evicted = sessão Signal morta em todos os contatos =
+// "Aguardando mensagem" pra todo lado.
 function classifyClose(err, {
   shuttingDown = false,
-  registered = true,
+  paired = true,
   now = Date.now(),
   lastConflictAt = null,
   conflictRetries = 0,
@@ -234,7 +297,7 @@ function classifyClose(err, {
     // Sessão que nunca pareou não tem device pra "deslogar": 401 aqui é falha de
     // handshake. Reconectar só geraria QR novo em loop, então encerra e limpa a
     // auth parcial — o usuário reabre o QR quando quiser tentar de novo.
-    if (!registered) {
+    if (!paired) {
       return { status: "disconnected", lastError: "Falha ao parear. Tente ler o QR de novo.", reconnect: false, cleanup: true };
     }
     return { status: "logged_out", lastError: err?.message || null, reconnect: false, terminal: true };
@@ -249,7 +312,7 @@ function classifyClose(err, {
   // quando for de fato escanear. Só vale pra sessão não-registrada: pra uma já
   // autenticada, 408 é timeout de rede normal e deve reconectar como antes.
   const qrExpired = code === DisconnectReason.timedOut && /QR refs attempts ended/i.test(err?.message || "");
-  if (qrExpired && !registered) {
+  if (qrExpired && !paired) {
     return { status: "disconnected", lastError: "QR não escaneado a tempo.", reconnect: false, cleanup: true };
   }
 
@@ -278,7 +341,11 @@ function isStuckReconnecting(reconnectingSince, now, thresholdMs = STUCK_RECONNE
 const ORPHAN_QR_MAX_AGE_MS = 10 * 60 * 1000;
 function isOrphanQrSession(session, now, maxAgeMs = ORPHAN_QR_MAX_AGE_MS) {
   if (!session) return false;
-  if (session.sock?.authState?.creds?.registered) return false;
+  // Mesmo motivo do classifyClose: `creds.registered` é sempre false em sessão
+  // pareada por QR. `creds.me` é o que de fato só existe depois do pareamento —
+  // sem esta guarda, uma sessão real presa em "connecting" por 10 min (internet
+  // fora, Postgres fora) era varrida daqui com a auth apagada junto.
+  if (session.sock?.authState?.creds?.me?.id) return false;
   if (session.status !== "awaiting_qr" && session.status !== "connecting") return false;
   return (now - (session.createdAt || now)) >= maxAgeMs;
 }
@@ -322,12 +389,31 @@ async function _openSocket(userId, numberId, k) {
     prev.sock = null;
   }
 
-  const { state, saveCreds } = await pgAuth().useDatabaseAuthState(`${userId}::${numberId}`);
+  // A geração é reservada ANTES do socket porque o onPersistError do auth state
+  // já precisa saber a qual delas pertence (ver handlePersistError).
+  const gen = ++_gen;
+  const sessionRef = () => sessions.get(k);
+
+  const { state, saveCreds } = await pgAuth().useDatabaseAuthState(`${userId}::${numberId}`, {
+    onPersistError: (err) => handlePersistError(sessionRef(), gen, err),
+  });
   const version = await cachedBaileysVersion();
+
+  // Metadata de grupo por socket. Zera na reconexão de propósito: estado velho de
+  // participante é justamente o que faz a sender key ir pra lista errada.
+  const groupMetaCache = new Map();
 
   const sock = makeWASocket({
     version: version || undefined,
-    auth: state,
+    auth: {
+      creds: state.creds,
+      // Sem este wrapper cada chave Signal lida custa um SELECT no Postgres +
+      // um AES-GCM: um envio de grupo pede as sessões de dezenas de devices de
+      // uma vez, e o pool de conexões estourava dentro do caminho de cifra. O
+      // cache é por socket e só é seguro porque um único worker é dono de cada
+      // sessão (ver README.md deste diretório).
+      keys: makeCacheableSignalKeyStore(state.keys, log),
+    },
     printQRInTerminal: false,
     browser: [deviceLabel(), "Chrome", "1.0"],
     logger: log,
@@ -339,9 +425,36 @@ async function _openSocket(userId, numberId, k) {
     // mensagem original AQUI. Sem este callback vale o default do Baileys
     // (`async () => undefined`): o reenvio nunca sai e o placeholder fica pra
     // sempre no celular do usuário. Ver whatsapp/msg-store.js.
-    getMessage: async (key) => msgStore.get(key && key.id),
+    getMessage: async (key) => {
+      // Retry de mensagem "peer" — pedido interno que o próprio Baileys gera
+      // (`sendRetryRequest: requested placeholder resend`). Vem sem remoteJid e
+      // nunca passou por sendText, então não está no store por definição, e
+      // reenviá-la não faria sentido (o relayMessage iria pra um jid indefinido).
+      // Devolver undefined em silêncio evita encher o log de "miss" que não são
+      // falha nenhuma — eram TODOS os misses observados no diagnóstico.
+      if (!key?.remoteJid) return undefined;
+      return msgStore.get(key.id);
+    },
+    // Um IQ de groupMetadata por envio em grupo saía caro e ficava dentro da
+    // transação de chaves. Devolver undefined em caso de erro é o contrato: o
+    // Baileys busca por conta própria.
+    cachedGroupMetadata: async (jid) => {
+      const hit = groupMetaCache.get(jid);
+      if (hit && (Date.now() - hit.at) < GROUP_META_TTL_MS) return hit.meta;
+      try {
+        const meta = await sock.groupMetadata(jid);
+        if (meta) {
+          groupMetaCache.set(jid, { at: Date.now(), meta });
+          while (groupMetaCache.size > GROUP_META_MAX) {
+            groupMetaCache.delete(groupMetaCache.keys().next().value);
+          }
+        }
+        return meta;
+      } catch {
+        return undefined;
+      }
+    },
   });
-  const gen = ++_gen;
 
   const session = sessions.get(k) || { userId, numberId, restartCount: 0, createdAt: Date.now() };
   session.sock = sock;
@@ -368,6 +481,18 @@ async function _openSocket(userId, numberId, k) {
     try {
       require("../repasse/capture").onUpsert(userId, numberId, ev.messages).catch(() => {});
     } catch { /* ignore */ }
+  });
+
+  // Invalidação do cache de metadata: participante que entra/sai muda a lista de
+  // destinatários da sender key. Servir lista velha é mandar a mensagem cifrada
+  // pra quem não consegue abrir — o "Aguardando mensagem" do outro lado.
+  sock.ev.on("groups.update", (updates) => {
+    if (!isCurrentGen(session, gen)) return;
+    for (const u of updates || []) if (u?.id) groupMetaCache.delete(u.id);
+  });
+  sock.ev.on("group-participants.update", (u) => {
+    if (!isCurrentGen(session, gen)) return;
+    if (u?.id) groupMetaCache.delete(u.id);
   });
 
   sock.ev.on("connection.update", async (update) => {
@@ -418,10 +543,10 @@ async function _openSocket(userId, numberId, k) {
       if (session.migrating) return;
 
       const err = lastDisconnect?.error;
-      const registered = !!sock.authState?.creds?.registered;
+      const paired = !!sock.authState?.creds?.me?.id;
       const result = classifyClose(err, {
         shuttingDown,
-        registered,
+        paired,
         lastConflictAt: session.lastConflictAt || null,
         conflictRetries: session.conflictRetries || 0,
       });
@@ -616,18 +741,24 @@ function ensureConnected(userId, numberId) {
 // O retorno vai pro msg-store antes de voltar: é dele que o getMessage tira a
 // mensagem quando o destinatário pede reenvio. Guardamos o proto como veio — no
 // caso da imagem, o reenvio reaproveita as media keys em vez de subir de novo.
+// ensureConnected fica DENTRO da trava: numa fila de envios o socket pode ter
+// caído entre o enfileiramento e a vez deste envio.
 async function sendText(userId, numberId, jid, text) {
-  const s = ensureConnected(userId, numberId);
-  const sent = await s.sock.sendMessage(jid, { text });
-  msgStore.put(sent);
-  return sent;
+  return withSendLock(key(userId, numberId), async () => {
+    const s = ensureConnected(userId, numberId);
+    const sent = await s.sock.sendMessage(jid, { text });
+    msgStore.put(sent);
+    return sent;
+  });
 }
 
 async function sendImage(userId, numberId, jid, imageUrl, caption) {
-  const s = ensureConnected(userId, numberId);
-  const sent = await s.sock.sendMessage(jid, { image: { url: imageUrl }, caption });
-  msgStore.put(sent);
-  return sent;
+  return withSendLock(key(userId, numberId), async () => {
+    const s = ensureConnected(userId, numberId);
+    const sent = await s.sock.sendMessage(jid, { image: { url: imageUrl }, caption });
+    msgStore.put(sent);
+    return sent;
+  });
 }
 
 async function createGroup(userId, numberId, name, participantPhones) {

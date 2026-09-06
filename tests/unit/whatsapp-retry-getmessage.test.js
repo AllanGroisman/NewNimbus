@@ -28,13 +28,18 @@ const require = createRequire(pathToFileURL(LOCAL_JS));
 const BAILEYS = require.resolve("@whiskeysockets/baileys");
 const PG_AUTH = path.join(BACKEND, "auth", "baileys-pg.js");
 const NOTIFIER = path.join(BACKEND, "notifications", "user-notifier.js");
-const { DisconnectReason } = require("@whiskeysockets/baileys");
+// makeCacheableSignalKeyStore vem do Baileys de verdade: o local.js embrulha
+// `state.keys` com ele antes de entregar ao socket, e um stub que não o
+// exporte quebraria a abertura da sessão inteira.
+const { DisconnectReason, makeCacheableSignalKeyStore } = require("@whiskeysockets/baileys");
 
 // Config entregue ao makeWASocket — é metade da asserção deste arquivo.
 let configs = [];
 let sockets = [];
 // O que o Baileys devolveria de um envio bem-sucedido.
 let nextSendResult = null;
+// Cada IQ de groupMetadata que o socket teria disparado.
+let groupMetaCalls = [];
 
 function fakeSocket(config) {
   configs.push(config);
@@ -46,6 +51,7 @@ function fakeSocket(config) {
     user: null,
     authState: { creds: { registered: true } },
     sendMessage: async () => nextSendResult,
+    groupMetadata: async (jid) => { groupMetaCalls.push(jid); return { id: jid, subject: "G", participants: [] }; },
     emit: (e, payload) => ev.emit(e, payload),
   };
   sockets.push(sock);
@@ -61,6 +67,7 @@ function stub(modPath, exports) {
 stub(BAILEYS, {
   default: fakeSocket,
   DisconnectReason,
+  makeCacheableSignalKeyStore,
   fetchLatestBaileysVersion: async () => ({ version: [2, 3000, 1] }),
 });
 stub(PG_AUTH, {
@@ -99,7 +106,7 @@ async function connected() {
 describe("getMessage — o socket sabe reenviar o que mandou", () => {
   beforeEach(async () => {
     try { await wa.deleteSession(USER, NUM); } catch { /* ignore */ }
-    configs = []; sockets = []; nextSendResult = null;
+    configs = []; sockets = []; nextSendResult = null; groupMetaCalls = [];
     msgStore.__clear();
   });
 
@@ -136,5 +143,77 @@ describe("getMessage — o socket sabe reenviar o que mandou", () => {
     await expect(configs[0].getMessage({ remoteJid: JID, id: "DESCONHECIDA" })).resolves.toBeUndefined();
     await expect(configs[0].getMessage({})).resolves.toBeUndefined();
     await expect(configs[0].getMessage(undefined)).resolves.toBeUndefined();
+  });
+
+  // Retry de mensagem "peer": pedido interno que o próprio Baileys gera
+  // (sendRetryRequest / placeholder resend). Chega sem remoteJid e nunca passou
+  // por sendText, então não está no store por definição — e era a origem de
+  // TODOS os "miss" que apareciam no log de diagnóstico, sem ser falha nenhuma.
+  it("retry de mensagem peer (sem remoteJid) sai em silêncio, sem consultar o store", async () => {
+    nextSendResult = { key: { id: "MSGP", remoteJid: JID }, message: { conversation: "oi" } };
+    await connected();
+    await wa.sendText(USER, NUM, JID, "oi");
+
+    const peerKey = { id: "MSGP", fromMe: true, participant: "5511999990001@s.whatsapp.net" };
+    await expect(configs[0].getMessage(peerKey)).resolves.toBeUndefined();
+    // Não contou como pedido de reenvio: o store nem foi consultado.
+    expect(msgStore.stats("MSGP")).toMatchObject({ retries: 0 });
+  });
+});
+
+describe("cache de chaves e de metadata de grupo", () => {
+  beforeEach(async () => {
+    try { await wa.deleteSession(USER, NUM); } catch { /* ignore */ }
+    configs = []; sockets = []; nextSendResult = null; groupMetaCalls = [];
+    msgStore.__clear();
+  });
+
+  afterAll(async () => { try { await wa.deleteSession(USER, NUM); } catch { /* ignore */ } });
+
+  it("o socket recebe as chaves Signal embrulhadas em cache, não o store cru", async () => {
+    await wa.startSession(USER, NUM);
+    const { auth } = configs[0];
+    expect(auth.creds).toBeDefined();
+    // makeCacheableSignalKeyStore devolve um objeto novo com get/set/clear — o
+    // store cru do adapter não tem clear.
+    expect(typeof auth.keys.get).toBe("function");
+    expect(typeof auth.keys.clear).toBe("function");
+  });
+
+  it("metadata de grupo é servida do cache — um IQ por grupo, não um por envio", async () => {
+    await connected();
+    const GRUPO = "12345@g.us";
+
+    const first = await configs[0].cachedGroupMetadata(GRUPO);
+    expect(first).toMatchObject({ id: GRUPO });
+    expect(groupMetaCalls).toEqual([GRUPO]);
+
+    await configs[0].cachedGroupMetadata(GRUPO);
+    await configs[0].cachedGroupMetadata(GRUPO);
+    expect(groupMetaCalls).toEqual([GRUPO]);      // não foi à rede de novo
+  });
+
+  // Participante que entra/sai muda a lista de destinatários da sender key.
+  // Servir lista velha é cifrar pra quem não consegue abrir — o "Aguardando
+  // mensagem" do outro lado.
+  it("mudança de participante invalida o cache daquele grupo", async () => {
+    await connected();
+    const GRUPO = "12345@g.us";
+    await configs[0].cachedGroupMetadata(GRUPO);
+    expect(groupMetaCalls).toEqual([GRUPO]);
+
+    sockets[0].emit("group-participants.update", { id: GRUPO, action: "add" });
+    await configs[0].cachedGroupMetadata(GRUPO);
+    expect(groupMetaCalls).toEqual([GRUPO, GRUPO]);
+
+    sockets[0].emit("groups.update", [{ id: GRUPO, subject: "novo nome" }]);
+    await configs[0].cachedGroupMetadata(GRUPO);
+    expect(groupMetaCalls).toHaveLength(3);
+  });
+
+  it("falha no groupMetadata devolve undefined — o Baileys busca por conta própria", async () => {
+    await connected();
+    sockets[0].groupMetadata = async () => { throw new Error("timeout"); };
+    await expect(configs[0].cachedGroupMetadata("999@g.us")).resolves.toBeUndefined();
   });
 });

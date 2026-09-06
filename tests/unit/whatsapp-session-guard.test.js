@@ -41,7 +41,7 @@ describe("isOrphanQrSession", () => {
   const awaiting = (ageMs, extra = {}) => ({
     status: "awaiting_qr",
     createdAt: NOW - ageMs,
-    sock: { authState: { creds: { registered: false } } },
+    sock: { authState: { creds: {} } },
     ...extra,
   });
 
@@ -49,8 +49,14 @@ describe("isOrphanQrSession", () => {
     expect(isOrphanQrSession(null, NOW, MAX)).toBe(false);
   });
 
-  it("já pareada (registered) nunca é órfã, por mais velha que seja", () => {
-    const s = awaiting(60 * 60 * 1000, { sock: { authState: { creds: { registered: true } } } });
+  // `creds.me`, e NÃO `creds.registered`: no Baileys 6.7.23 o `registered` só é
+  // setado no fluxo de pairing code, então toda sessão pareada por QR ficava com
+  // ele false e era varrida daqui — com a auth apagada junto — depois de 10 min
+  // presa em "connecting".
+  it("já pareada (tem creds.me) nunca é órfã, por mais velha que seja", () => {
+    const s = awaiting(60 * 60 * 1000, {
+      sock: { authState: { creds: { me: { id: "5511999999999:61@s.whatsapp.net" }, registered: false } } },
+    });
     expect(isOrphanQrSession(s, NOW, MAX)).toBe(false);
   });
 

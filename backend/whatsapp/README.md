@@ -48,6 +48,29 @@ O frontend abre o QR sob um id provisório (`Date.now()`) antes de saber o telef
 
 `scripts/kill-pending-session.js` continua existindo, mas virou ferramenta de emergência: com as travas acima não deveria mais ser rotina.
 
+### "Aguardando mensagem" no celular do destinatário
+
+É o placeholder do WhatsApp quando o aparelho do outro lado não decriptou um
+pacote nosso. Ele manda um *retry receipt*, o Baileys recria a sessão Signal
+daquele peer e reenvia — buscando a mensagem original no `getMessage`, servido
+por `msg-store.js` (memória + Redis, `nimbus:wamsg:<id>`, 24h; a camada durável
+existe porque um restart do worker no meio de um retry deixava o placeholder pra
+sempre).
+
+Reenvio que **não gruda** é outra coisa: significa que o estado Signal não está
+sendo persistido. O `relayMessage` envolve o envio inteiro numa transação de
+chaves e só commita no fim — quando a gravação falha, o texto cifrado já saiu na
+rede e o ratchet fica avançado na memória e velho no banco. Por isso:
+`keys.set` é uma transação só (tudo ou nada), `keys.get` é uma query só, e uma
+falha de gravação **derruba o socket** (`onPersistError`) para a reconexão
+reler o banco. Não é caso de apagar auth e reler QR — isso não conserta o
+ratchet do outro lado.
+
+Pelo mesmo motivo os envios de uma sessão passam por uma fila (`withSendLock`):
+a fila `control` roda concurrency 4, e dois `relayMessage` no mesmo socket
+compartilham o `transactionCache` do Baileys — o que fecha primeiro limpa o
+cache do outro.
+
 ## Onde as credenciais ficam
 
 Tabela `baileys_auth` no Postgres (ver `backend/auth/baileys-pg.js`). Trocar de máquina não perde sessão.

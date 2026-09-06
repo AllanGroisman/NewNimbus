@@ -369,4 +369,115 @@ Como que acha a campanha, mas não consegue puxar ela?
     `makeWASocket` e trava os quatro casos (prod, ngrok, modo qualquer, override),
     mais a guarda de que `browser[1]`/`browser[2]` não mudam.
 
-42. [] Tenho um usuario do sistema que disse que as mensagens no whats ficam  
+42. [x] Tenho um usuario do sistema que disse que as mensagens no whats ficam no "Aguardando...", quero que tu analise as melhorias possiveis de serem feitas para evitar ao maximo isso em todas as situacoes. Tem que refazer algo na sessao quando isso acontece? Quero saber todos os motivos e todas as possiveis solucoes.
+
+    **Resposta curta: NÃO precisa refazer a sessão** — e refazer é o remédio
+    errado. O que precisa ser refeito é a sessão **Signal daquele destinatário**,
+    e o Baileys já faz isso sozinho ao receber o retry receipt
+    (`assertSessions(..., true)` + limpeza do `sender-key-memory` do grupo, em
+    `sendMessagesAgain`). Apagar a auth e reler o QR (o que o botão "Reconectar"
+    faz) não conserta o ratchet do outro lado e ainda derruba o usuário. O único
+    caso em que reparear ajuda é credencial NOSSA corrompida — e aí o sintoma é
+    desconexão, não placeholder.
+
+    **O que o diagnóstico da task 40/41 revelou.** O log mostrou a mesma
+    mensagem sendo reenviada quatro vezes, com `forced new session` no meio, e o
+    aparelho continuando a pedir:
+
+        [wa] retry pedido id=3EB0E69FA61D6A5F9E1344 hit #1 … #2 … #3 … #4
+
+    Ou seja: o `getMessage` **funcionava** e o reenvio **saía**. Reenvio que não
+    gruda é assinatura de estado Signal que não está sendo persistido. E o motivo
+    apareceu no log do dia 02/09: `failed to commit 3 mutations, tries left=9…6`
+    junto de `Timed out fetching a new connection from the connection pool` e
+    `Can't reach database server`. Quando a gravação falha, o
+    `addTransactionCapability` do Baileys tenta 10× e **desiste em silêncio** —
+    enquanto isso o `relayMessage` já tinha posto o texto cifrado na rede
+    (`messages-send.js` envolve o envio inteiro na transação). O ratchet avança
+    na memória e não no banco, e a partir daí aquele peer não decripta mais nada.
+
+    **Todos os motivos, em dois grupos.**
+
+    *Por que a decriptação falha (frequência):*
+    1. gravação do key store falhando sem ninguém reagir (o caso acima);
+    2. gravação **parcial** — `keys.set` era `Promise.all` de upserts soltos, e
+       meio ratchet gravado é pior que nenhum;
+    3. envios concorrentes no mesmo socket: a fila `control` roda concurrency 4 e
+       o `addTransactionCapability` usa `transactionCache`/`mutations`
+       compartilhados com um contador simples — a transação que fecha primeiro
+       limpa o cache no meio da outra;
+    4. key store lento: um `findUnique` por chave Signal contra um pool de 5
+       conexões, sem `makeCacheableSignalKeyStore`;
+    5. um IQ de `groupMetadata` ao vivo por envio em grupo, dentro da transação;
+    6. pre-key reusada quando o `deleteKey` engolia o erro de gravação
+       ("Key used already or never filled");
+    7. duas máquinas com a mesma auth (dump de prod na máquina de teste) —
+       mitigado na task 39, o `restore-remote.js` trunca `baileys_auth` por padrão;
+    8. restaurar dump do banco rebobina o ratchet de todos os peers de uma vez;
+    9. device novo do destinatário (trocou de celular, abriu o WhatsApp Web,
+       entrou no grupo) fora do cache de devices — normal, o retry resolve;
+    10. primeira mensagem para um contato novo falha de vez em quando por
+        natureza (pre-key) — normal, o retry resolve;
+    11. rajada de envio: a campanha espaça 4s, mas `/broadcast` aceita o intervalo
+        do cliente e as notificações não espaçam nada.
+
+    *Por que o placeholder ficava PARA SEMPRE (permanência):*
+    12. `getMessage` dando miss depois de um restart — o store era só memória,
+        teto 1000, TTL 1h: todo `pm2 reload` de deploy, todo `max_memory_restart`
+        e todo crash matavam os retries pendentes;
+    13. receipt chegando com o socket em backoff (até 30s) se perde;
+    14. teto de 5 reenvios por (id, participante) no Baileys;
+    15. erro dentro do `sendMessagesAgain` vira só um `logger.error`;
+    16. mensagens enviadas antes da task 40 nunca terão reenvio (histórico).
+
+    **Ruído, não falha:** todos os `miss` recentes do log eram de mensagens
+    `category:"peer"` — pedidos internos que o próprio Baileys gera
+    (`sendRetryRequest`), que nunca passam por `sendText` e cuja key vem sem
+    `remoteJid`. Nunca estariam no store, e reenviá-las não faria sentido.
+
+    **Feito** (1 a 6 e 12 da lista; o resto está registrado abaixo):
+
+    - `auth/baileys-pg.js`: `keys.set` agora é **uma** `$transaction` — tudo ou
+      nada; `keys.get` virou **uma** `findMany` com `keyId: { in: ids }` no lugar
+      do fan-out de N `findUnique` que estourava o pool; `deleteKey` só engole
+      P2025 (linha inexistente) e propaga o resto; e um callback `onPersistError`
+      leva a falha pra quem abriu a sessão em vez de ela sumir dentro do retry
+      silencioso do Baileys. O `saveCreds` também avisa — é nele que vive o
+      contador de pre-keys.
+    - `whatsapp/local.js`: o `onPersistError` **derruba o socket** (debounce de
+      30s) para que a reconexão releia o estado do banco, em vez de continuar
+      enviando com um ratchet que só existe na memória — este é o "refazer" que
+      de fato precisa acontecer, e é por sessão, não por QR. As chaves Signal
+      passam por `makeCacheableSignalKeyStore`; entrou `cachedGroupMetadata` com
+      TTL de 5 min, invalidado em `groups.update`/`group-participants.update`; e
+      todo envio de uma mesma sessão passa por uma fila (`withSendLock`), de modo
+      que a concurrency 4 da fila `control` nunca coloque dois `relayMessage` no
+      mesmo socket. De quebra, quando a **abertura** da sessão falha (Postgres
+      fora, que é justamente quando isso acontece) o backoff é reagendado — antes
+      a sessão ficava parada pra sempre, porque quem marca o próximo backoff é o
+      handler de "close" e não houve socket.
+    - `whatsapp/msg-store.js`: ganhou uma camada durável no Redis (só em
+      `QUEUE_BACKEND=redis`), `nimbus:wamsg:<id>` com TTL de 24h, e o `get` virou
+      async: memória primeiro, Redis no miss, reidratando a memória. Retry
+      receipt que chega depois de um restart do worker volta a ser atendível.
+      `stats()` diz de onde veio o hit (`memoria`/`redis`), e o `getMessage`
+      ignora em silêncio o retry `peer` (sem `remoteJid`).
+
+    **Fica para depois** (nada disso é bloqueio, mas está registrado):
+    métricas Prometheus de retry receipt e de decrypt fail (hoje só há
+    `console.log`); trava `NX` de dono do worker no heartbeat, que fecharia o
+    cenário "duas máquinas com a mesma auth" de uma vez (é a mesma sugestão
+    guardada na task 39); espaçamento no `/broadcast` e nas notificações; e uma
+    recomendação de ops que não é código: subir o `connection_limit` do
+    `DATABASE_URL`, hoje no default 5 do Prisma — o `findMany` e o cache de
+    chaves reduzem muito a demanda, mas 5 é apertado para worker + scheduler +
+    Baileys no mesmo processo.
+
+    **Testes:** `unit/baileys-auth-atomic.test.js` (transação única, query única,
+    `onPersistError` avisando e propagando), `unit/whatsapp-send-mutex.test.js`
+    (dois envios da mesma sessão não se sobrepõem, envio que falha não trava a
+    fila, sessões diferentes seguem em paralelo),
+    `unit/whatsapp-msg-store-redis.test.js` (sobrevive ao restart, revive pra
+    memória, Redis fora do ar não derruba envio nem busca) e as extensões em
+    `unit/whatsapp-retry-getmessage.test.js` (chaves embrulhadas em cache,
+    `cachedGroupMetadata` com invalidação, retry `peer` em silêncio).

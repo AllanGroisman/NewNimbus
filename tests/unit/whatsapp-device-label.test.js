@@ -23,7 +23,10 @@ const require = createRequire(pathToFileURL(LOCAL_JS));
 const BAILEYS = require.resolve("@whiskeysockets/baileys");
 const PG_AUTH = path.join(BACKEND, "auth", "baileys-pg.js");
 const NOTIFIER = path.join(BACKEND, "notifications", "user-notifier.js");
-const { DisconnectReason } = require("@whiskeysockets/baileys");
+// makeCacheableSignalKeyStore vem do Baileys de verdade: o local.js embrulha
+// `state.keys` com ele antes de entregar ao socket, e um stub que não o
+// exporte quebraria a abertura da sessão inteira.
+const { DisconnectReason, makeCacheableSignalKeyStore } = require("@whiskeysockets/baileys");
 
 let configs = [];
 
@@ -49,6 +52,7 @@ function stub(modPath, exports) {
 stub(BAILEYS, {
   default: fakeSocket,
   DisconnectReason,
+  makeCacheableSignalKeyStore,
   fetchLatestBaileysVersion: async () => ({ version: [2, 3000, 1] }),
 });
 stub(PG_AUTH, {

@@ -68,7 +68,7 @@ describe("classifyClose", () => {
   });
 
   it("QR expirado (408) em sessão NÃO registrada → disconnected terminal, limpa, não reconecta", () => {
-    const r = classifyClose(boom(DisconnectReason.timedOut, { message: "QR refs attempts ended" }), { registered: false });
+    const r = classifyClose(boom(DisconnectReason.timedOut, { message: "QR refs attempts ended" }), { paired: false });
     expect(r.status).toBe("disconnected");
     expect(r.reconnect).toBe(false);
     expect(r.cleanup).toBe(true);
@@ -76,23 +76,23 @@ describe("classifyClose", () => {
   });
 
   it("QR expirado (408) em sessão JÁ registrada → connecting, reconecta (timeout de rede normal)", () => {
-    const r = classifyClose(boom(DisconnectReason.timedOut, { message: "QR refs attempts ended" }), { registered: true });
+    const r = classifyClose(boom(DisconnectReason.timedOut, { message: "QR refs attempts ended" }), { paired: true });
     expect(r).toEqual({ status: "connecting", lastError: null, reconnect: true });
   });
 
-  it("registered default é true → 408 QR-timeout reconecta se `registered` não for passado", () => {
+  it("paired default é true → 408 QR-timeout reconecta se `paired` não for passado", () => {
     const r = classifyClose(boom(DisconnectReason.timedOut, { message: "QR refs attempts ended" }));
     expect(r.reconnect).toBe(true);
   });
 
   it("timeout 408 genérico (sem 'QR refs attempts ended') em sessão não registrada → connecting, reconecta", () => {
-    const r = classifyClose(boom(DisconnectReason.timedOut, { message: "Timed Out" }), { registered: false });
+    const r = classifyClose(boom(DisconnectReason.timedOut, { message: "Timed Out" }), { paired: false });
     expect(r.reconnect).toBe(true);
     expect(r.cleanup).toBeUndefined();
   });
 
   it("401 em sessão NUNCA registrada não é logout — não há device pra deslogar", () => {
-    const r = classifyClose(boom(DisconnectReason.loggedOut, { message: "Connection Failure" }), { registered: false });
+    const r = classifyClose(boom(DisconnectReason.loggedOut, { message: "Connection Failure" }), { paired: false });
     expect(r.status).toBe("disconnected");
     expect(r.reconnect).toBe(false);
     expect(r.cleanup).toBe(true);
