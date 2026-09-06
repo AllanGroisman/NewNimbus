@@ -254,6 +254,10 @@ const PAIRING_READY_TIMEOUT_MS = 20_000;
 // (~2 min). Ficamos deliberadamente ABAIXO disso pra oferecer "gerar novo código"
 // antes do backend derrubar a sessão por baixo da tela.
 const PAIRING_CODE_TTL_MS = 110_000;
+// Vida útil aproximada do socket contada da ABERTURA dele: é o prazo das refs do QR,
+// que o requestPairingCode não cancela. Serve só pra contagem regressiva da tela não
+// prometer mais do que o socket vai viver (ver pairingPayload).
+const PAIRING_SOCKET_LIFE_MS = 120_000;
 // O `browser` que o socket de PAREAMENTO precisa usar.
 //
 // O deviceLabel() vive na posição 0 da tupla, que é o SISTEMA OPERACIONAL — é um
@@ -465,7 +469,13 @@ function pairingPayload(s) {
     // O celular mostra o código em dois blocos de 4.
     formatted: `${s.pairingCode.slice(0, 4)}-${s.pairingCode.slice(4)}`,
     phone: s.pairingPhone,
-    expiresAt: s.pairingRequestedAt + PAIRING_CODE_TTL_MS,
+    // O relógio de verdade é o das refs do QR, e ele começa na ABERTURA do socket,
+    // não na emissão do código. Contar só da emissão prometia tempo que o socket não
+    // tinha (o pedido vem depois do handshake, às vezes bem depois). Vence o primeiro.
+    expiresAt: Math.min(
+      s.pairingRequestedAt + PAIRING_CODE_TTL_MS,
+      (s.socketOpenedAt || s.pairingRequestedAt) + PAIRING_SOCKET_LIFE_MS,
+    ),
   };
 }
 
@@ -476,6 +486,13 @@ function pairingPayload(s) {
 // habilita o pareamento), e o handler de connection.update já o grava em
 // `session.qr`. Poll em vez de listener: um listener precisaria do próprio cleanup
 // na troca de geração, no close e no deleteSession.
+//
+// ATENÇÃO ao "da geração atual": o objeto `session` sobrevive à troca de socket,
+// então `session.qr` sozinho pode ser o QR do socket ANTERIOR — é o caso normal da
+// tela, que abre em modo QR e reabre o socket ao pedir o código. Aceitar aquele QR
+// fazia o requestPairingCode sair com o WebSocket novo ainda nem aberto, e o Baileys
+// respondia "Connection Closed" (era o erro ao clicar em "Gerar código"). Por isso o
+// `qrGen`: só vale QR emitido POR ESTA geração.
 async function waitPairingReady(k, session, gen, timeoutMs = PAIRING_READY_TIMEOUT_MS) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -489,7 +506,7 @@ async function waitPairingReady(k, session, gen, timeoutMs = PAIRING_READY_TIMEO
     if (!s.socketAlive) {
       return pairingFail("SOCKET_GONE", "A conexão com o WhatsApp caiu. Tente de novo.");
     }
-    if (s.qr) return null;
+    if (s.qr && s.qrGen === gen) return null;
     if (Date.now() >= deadline) {
       return pairingFail("PAIRING_TIMEOUT", "O WhatsApp não respondeu a tempo. Tente de novo.");
     }
@@ -543,7 +560,16 @@ async function _requestPairingCode(userId, numberId, k, digits) {
   const notReady = await waitPairingReady(k, session, gen);
   if (notReady) return notReady;
 
-  const code = await session.sock.requestPairingCode(digits);
+  // O sendNode do link_code_companion_reg lança `Connection Closed` quando o
+  // WebSocket morre entre o waitPairingReady e aqui. É falha de rede esperada, não
+  // bug: vira recusa (503 na rota) em vez de 500 + Sentry.
+  let code;
+  try {
+    code = await session.sock.requestPairingCode(digits);
+  } catch (err) {
+    console.warn(`[whatsapp] requestPairingCode falhou ${userId}/${numberId}: ${err.message}`);
+    return pairingFail("SOCKET_GONE", "A conexão caiu antes de gerar o código. Tente de novo.");
+  }
   // O socket pode ter sido trocado durante o await: o código emitido pertence a
   // um socket que já não existe.
   if (!isCurrentGen(sessions.get(k), gen)) {
@@ -610,9 +636,26 @@ async function _openSocket(userId, numberId, k, opts = {}) {
   const gen = ++_gen;
   const sessionRef = () => sessions.get(k);
 
-  const { state, saveCreds } = await pgAuth().useDatabaseAuthState(`${userId}::${numberId}`, {
-    onPersistError: (err) => handlePersistError(sessionRef(), gen, err),
-  });
+  const authOpts = { onPersistError: (err) => handlePersistError(sessionRef(), gen, err) };
+  let { state, saveCreds } = await pgAuth().useDatabaseAuthState(`${userId}::${numberId}`, authOpts);
+
+  // Auth de uma tentativa de código ABANDONADA envenena todas as seguintes.
+  //
+  // O requestPairingCode do Baileys grava `creds.me` (Socket/socket.js) ANTES de
+  // parear nada, e o nosso handler de creds.update persiste isso no Postgres. No
+  // handshake seguinte o Baileys olha só pra isso: `if (!creds.me) registro senão
+  // login`. Com o `me` fantasma ele manda LOGIN com credencial que não existe →
+  // 401 na hora, sem QR e sem pair-device. Era a fila de "close code=401 Connection
+  // Failure" do log, e o motivo de a 2ª tentativa em diante nunca funcionar.
+  //
+  // Só apagamos o que o isPairedCreds já considera NÃO pareado — número pareado de
+  // verdade não chega aqui (o gate devolve ALREADY_PAIRED/ALREADY_CONNECTED antes) e,
+  // se chegasse, a guarda o preserva. Sem logout: não há device pra desvincular.
+  if (pairing && state.creds?.me?.id && !isPairedCreds(state.creds)) {
+    console.log(`[whatsapp] auth de pareamento incompleta descartada ${userId}/${numberId}`);
+    await pgAuth().deleteSession(`${userId}::${numberId}`);
+    ({ state, saveCreds } = await pgAuth().useDatabaseAuthState(`${userId}::${numberId}`, authOpts));
+  }
   const version = await cachedBaileysVersion();
 
   // Metadata de grupo por socket. Zera na reconexão de propósito: estado velho de
@@ -678,9 +721,21 @@ async function _openSocket(userId, numberId, k, opts = {}) {
   session.socketAlive = true;
   session.terminal = false; // um start explícito sempre tira do estado terminal
   session.pairingMode = pairing;
+  session.socketOpenedAt = Date.now();
   // Socket novo invalida qualquer código pendente: o link_code_companion_reg vale
   // só pra conexão que o emitiu.
   clearPairing(session);
+  // ...e invalida o QR junto. Quem zera o QR é o handler de close (lá embaixo), mas
+  // ele NÃO roda nesta troca: o bloco acima tira os listeners antes do end(). Sem
+  // isto o QR velho continuava no snapshot (tela mostrando um QR que já não vale) e,
+  // pior, o waitPairingReady o tomava como prova de handshake concluído.
+  session.qr = null;
+  session.qrDataUrl = null;
+  session.qrGen = null;
+  // Sem QR na mão, 'awaiting_qr' seria mentira: a tela cai no painel cru
+  // "Status: awaiting_qr" em vez do spinner de conectando, até o socket novo emitir
+  // o dele.
+  if (session.status === "awaiting_qr") session.status = "connecting";
   session.status = session.status && session.status !== "logged_out" ? session.status : "connecting";
   session.lastError = null;
   sessions.set(k, session);
@@ -721,6 +776,9 @@ async function _openSocket(userId, numberId, k, opts = {}) {
 
     if (qr) {
       session.qr = qr;
+      // De qual geração é este QR. O objeto session atravessa a troca de socket, e o
+      // waitPairingReady precisa distinguir "QR desta conexão" de "QR da anterior".
+      session.qrGen = gen;
       try { session.qrDataUrl = await QRCode.toDataURL(qr, { margin: 1, width: 280 }); } catch {}
       session.status = "awaiting_qr";
       publishStatus(session);

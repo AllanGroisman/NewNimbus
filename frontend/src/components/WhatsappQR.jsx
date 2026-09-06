@@ -130,6 +130,11 @@ export default function WhatsappQR({ sessionId, onConnected, onError, autoStart 
 
   const askCode = async (phoneDigits) => {
     busyRef.current = true;
+    // O pedido reabre o socket no backend, então o estado publicado de antes deixa de
+    // valer. Zerar aqui é o que impede um código NOVO de nascer marcado como morto
+    // (codeDead) por causa do erro que derrubou o anterior — o polling está pausado e
+    // só traria o estado fresco depois.
+    setState(s => ({ ...s, status: "connecting", qr: null, error: null }));
     setPair(p => ({ ...p, phase: "loading", code: null, formatted: null, expiresAt: null, error: null }));
     setCopied(false);
     try {
@@ -152,17 +157,14 @@ export default function WhatsappQR({ sessionId, onConnected, onError, autoStart 
     askCode(stored);
   };
 
-  // Gerar outro código: o anterior morre junto com o socket que o emitiu, então
-  // apagamos a sessão e recomeçamos. O DELETE é aguardado ANTES do novo pedido
-  // porque o backend só apaga a auth dentro dele — invertendo a ordem, a limpeza
-  // cairia em cima da sessão recém-criada.
+  // Gerar outro código: é só pedir de novo. Quem garante que o pedido parte de uma
+  // credencial limpa é o backend (ver a auth de pareamento incompleta em
+  // whatsapp/local.js) — antes daquilo esta função apagava a sessão pelo DELETE, o
+  // que abria uma janela de 404 no polling e, numa sessão que tinha ACABADO de
+  // parear, chamaria sock.logout() e desvincularia o aparelho.
   const regenerate = async () => {
     const stored = toWhatsappPhone(pair.phone);
     if (!stored) { setPair(p => ({ ...p, phase: "form", error: "Informe um celular válido com DDD." })); return; }
-    busyRef.current = true;
-    setPair(p => ({ ...p, phase: "loading", code: null, formatted: null, expiresAt: null, error: null }));
-    try { await deleteWASession(sessionId); } catch {}
-    busyRef.current = false;
     await askCode(stored);
   };
 
@@ -195,10 +197,19 @@ export default function WhatsappQR({ sessionId, onConnected, onError, autoStart 
 
   const connected = state.status === "connected";
   const failed = state.status === "error" || (state.error && (state.status === "disconnected" || state.status === "logged_out"));
+  // Sessão caiu com um código na tela. O backend já manda o texto certo pra este
+  // caso ("O código não foi usado a tempo. Gere um novo.", "Confira o número..." —
+  // ver classifyClose), então mostramos a mensagem DENTRO do painel do código, com o
+  // botão de gerar outro. O painel genérico "Erro de conexão" seria um beco sem
+  // saída: ele esconde os botões de modo e o único caminho de volta é o link de
+  // cancelar lá embaixo.
+  const codeDead = failed && mode === "code" && (pair.phase === "code" || pair.phase === "expired");
+  // Código morto (expirado no relógio ou derrubado junto com a sessão).
+  const codeOver = pair.phase === "expired" || codeDead;
 
   return (
     <div>
-      {!connected && !failed && (
+      {!connected && (!failed || codeDead) && (
         <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
           <button type="button" onClick={() => switchMode("qr")} style={modeButtonStyle(mode === "qr")}>QR Code</button>
           <button type="button" onClick={() => switchMode("code")} style={modeButtonStyle(mode === "code")}>Código de 8 dígitos</button>
@@ -213,7 +224,7 @@ export default function WhatsappQR({ sessionId, onConnected, onError, autoStart 
             {state.info?.name && <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 4 }}>{state.info.name}</div>}
             {state.info?.phone && <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>+{state.info.phone}</div>}
           </div>
-        ) : failed ? (
+        ) : failed && !codeDead ? (
           <div style={{ padding: "60px 20px", color: "var(--danger-text)" }}>
             <div style={{ fontSize: 28, marginBottom: 10 }}>⚠</div>
             <div style={{ fontSize: 13, fontWeight: 500 }}>Erro de conexão</div>
@@ -230,12 +241,12 @@ export default function WhatsappQR({ sessionId, onConnected, onError, autoStart 
               <div style={{
                 fontSize: 34, fontWeight: 600, letterSpacing: 3,
                 fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                color: pair.phase === "expired" ? "var(--color-text-secondary)" : "var(--color-text-primary)",
-                opacity: pair.phase === "expired" ? 0.5 : 1,
+                color: codeOver ? "var(--color-text-secondary)" : "var(--color-text-primary)",
+                opacity: codeOver ? 0.5 : 1,
               }}>
                 {pair.formatted}
               </div>
-              {pair.phase === "code" ? (
+              {!codeOver ? (
                 <>
                   <div style={{ marginTop: 8, display: "flex", gap: 10, justifyContent: "center", alignItems: "center" }}>
                     <button type="button" onClick={copyCode} style={{ background: "transparent", border: "none", color: PRIMARY, cursor: "pointer", fontSize: 12, padding: 0 }}>
@@ -258,8 +269,8 @@ export default function WhatsappQR({ sessionId, onConnected, onError, autoStart 
                 </>
               ) : (
                 <div style={{ marginTop: 14 }}>
-                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 10 }}>
-                    O código expirou.
+                  <div style={{ fontSize: 12, color: codeDead ? "var(--danger-text)" : "var(--color-text-secondary)", marginBottom: 10 }}>
+                    {codeDead ? (state.error || "A conexão caiu antes de o código ser usado.") : "O código expirou."}
                   </div>
                   <button type="button" onClick={regenerate} style={{ padding: "7px 14px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 12, fontWeight: 500, cursor: "pointer" }}>
                     Gerar novo código

@@ -59,7 +59,7 @@ digita no celular (Dispositivos vinculados › Vincular dispositivo › **Vincul
 número de telefone**). Pedir um código **reabre o socket** (ver o item 0), mas o QR
 segue valendo no socket novo: o Baileys aceita o scan com um código pendente.
 
-Cinco coisas não são óbvias:
+Sete coisas não são óbvias:
 
 **0. O `browser` tem que ser plausível — é a causa mais provável de "código
 inválido".** A tupla é `[SO, navegador, versão]`, e nós usamos a posição 0 pro
@@ -92,6 +92,16 @@ deixou de ser prova de pareamento e existe o `isPairedCreds`: sem ele, uma
 tentativa abandonada passa por "sessão boa", desliga os dois caminhos de limpeza
 (401 de handshake e 408 de QR esgotado) e reconecta pra sempre — a cada boot.
 
+Reconhecer o veneno não bastava: **o socket de pareamento começa apagando a auth**
+quando ela tem `creds.me` e o `isPairedCreds` diz que não é pareamento de verdade.
+O motivo é o `validateConnection` do Baileys, que decide o handshake por um teste
+só — `if (!creds.me)` manda registro, senão manda **login**. Com o `me` fantasma de
+uma tentativa anterior ele manda login com credencial que não existe: 401 na hora,
+nenhum QR, nenhum pair-device. Era isso que fazia a segunda tentativa em diante
+falhar sempre (`close … code=401 … Connection Failure` em fila no log), com a
+limpeza do close correndo atrás por ser assíncrona e sem `await`. Só apagamos o que
+o `isPairedCreds` já reprova, e sem `logout()`: não há device pra desvincular.
+
 **2. `creds.account` é o marcador durável dos dois fluxos.** `creds.registered`
 sozinho continua proibido (é o parágrafo ATENÇÃO do `classifyClose`: ele é sempre
 false em quem pareou por QR). Quem pareou de verdade tem `creds.account`, o
@@ -106,7 +116,10 @@ Baileys mata o socket (~2 min) — e o código morre com ele. Daí `PAIRING_CODE
 (110s) ser deliberadamente menor: a tela oferece "gerar novo código" antes de o
 backend derrubar a sessão. Aumentar `qrTimeout` resolveria, mas é opção de
 construção do socket — forçaria um socket dedicado e mataria a propriedade de um
-socket servir os dois modos.
+socket servir os dois modos. E como esse relógio começa na **abertura do socket** e
+não na emissão do código, o `expiresAt` da tela é o menor entre os dois prazos
+(`PAIRING_SOCKET_LIFE_MS` a partir do `socketOpenedAt`) — contar só da emissão
+prometia tempo que o socket não tinha.
 
 **4. O código sai só na resposta do RPC, nunca no snapshot do Redis.** Ele só é
 resgatável contra o socket exato que o emitiu, enquanto o snapshot vive 24h — um
@@ -124,6 +137,24 @@ real o tem — o JID é endereçamento, não o número que se digita. Como não 
 saber qual forma a conta usa (o IQ não valida nada), aceitamos as duas e a tela
 mostra, embaixo do código, qual número ele endereça. Mesma regra do
 `looksLikePhoneUser` de `scripts/fix-lid-sessions.js`.
+
+**6. O sinal de "pode pedir o código" é o QR DESTA geração.** O IQ do
+`link_code_companion_reg` só tem pra onde ir depois do handshake noise, e
+`ws.isOpen` é anterior a isso. O sinal que serve é o primeiro evento `qr` — mas o
+objeto `session` sobrevive à troca de socket, então `session.qr` sozinho pode ser o
+QR da conexão ANTERIOR. E é o caso normal: a tela abre em modo QR e reabre o socket
+ao pedir o código (item 0). Aceitar aquele QR fazia o `requestPairingCode` sair com
+o WebSocket novo ainda nem aberto → `Error: Connection Closed` do `sendRawMessage`,
+500 na rota, "não foi possível gerar o código" na tela. Daí o `session.qrGen`, e daí
+o `_openSocket` zerar `qr`/`qrDataUrl` ao reabrir — o handler de `close`, que era o
+único lugar que fazia isso, **não roda** nessa troca, porque os listeners saem antes
+do `end()`.
+
+**7. Regerar código não apaga sessão.** Com o item 1 no lugar, o backend já garante
+credencial limpa a cada pedido. A tela chegou a fazer `DELETE` antes de pedir de
+novo: isso abria uma janela de 404 no polling e, numa sessão que tivesse acabado de
+parear, o `deleteSession` chama `sock.logout()` — desvincularia o aparelho recém
+conectado.
 
 Aviso que a UI dá e o backend não pode dar: o IQ de pareamento é `sendNode`,
 fire-and-forget. Telefone errado gera um código perfeitamente válido que

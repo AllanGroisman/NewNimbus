@@ -159,18 +159,91 @@ describe("requestPairingCode", () => {
     await cleanup();
   });
 
-  it("socket já aberto pro QR é REABERTO pro pareamento", async () => {
-    // Sem isto o gate idempotente do startSession devolveria o socket do QR, e o
-    // código sairia pelo browser errado — invisível até o celular recusar.
+  it("socket já aberto pro QR é REABERTO pro pareamento — e o qr velho não conta", async () => {
+    // Duas coisas de uma vez, porque é o caminho REAL da tela: o modal abre em modo
+    // QR (socket 0, que emite o seu qr) e só então o usuário pede o código.
+    //
+    // 1. Sem a reabertura, o gate idempotente do startSession devolveria o socket do
+    //    QR e o código sairia pelo browser errado — invisível até o celular recusar.
+    // 2. O objeto `session` sobrevive à troca, então o `session.qr` do socket 0
+    //    ficava lá. O waitPairingReady o tomava como prova de handshake e pedia o
+    //    código no socket 1 recém-criado, cujo WebSocket nem tinha aberto: o Baileys
+    //    respondia "Connection Closed" e a tela dizia "não foi possível gerar".
     await wa.startSession(USER, NUM);
     expect(sockets).toHaveLength(1);
+    emitQr(sockets[0]);                       // o QR do socket ANTIGO
+    expect(wa.getSession(USER, NUM).qr).toBeTruthy();
 
     const p = wa.requestPairingCode(USER, NUM, PHONE);
     await new Promise(r => setTimeout(r, 50));
     expect(sockets).toHaveLength(2);
     expect(sockets[1].config.browser).toEqual(["Ubuntu", "Chrome", "22.04.4"]);
+    // O qr do socket 0 foi descartado na reabertura, e o pedido está PARADO
+    // esperando o do socket 1.
+    expect(wa.getSession(USER, NUM).qr).toBeFalsy();
+    expect(sockets[1].requestPairingCode).not.toHaveBeenCalled();
+
     emitQr(sockets[1]);
     await p;
+    expect(sockets[1].requestPairingCode).toHaveBeenCalledWith(PHONE);
+    await cleanup();
+  });
+
+  it("auth de tentativa abandonada é descartada antes de abrir o socket", async () => {
+    // O requestPairingCode do Baileys grava creds.me ANTES de parear, e nós
+    // persistimos isso. No handshake seguinte o Baileys manda LOGIN em vez de
+    // REGISTRO (é só `if (!creds.me)`) → 401 na hora, sem QR e sem pair-device:
+    // a 2ª tentativa em diante NUNCA funcionava.
+    const envenenada = { me: { id: `${PHONE}@s.whatsapp.net` }, pairingCode: "ABCD1234" };
+    pgAuthStub.useDatabaseAuthState.mockImplementationOnce(async () => ({
+      state: { creds: envenenada, keys: { get: async () => ({}), set: async () => {} } },
+      saveCreds: vi.fn(async () => {}),
+    }));
+
+    const p = wa.requestPairingCode(USER, NUM, PHONE);
+    await new Promise(r => setTimeout(r, 50));
+    expect(pgAuthStub.deleteSession).toHaveBeenCalledWith(`${USER}::${NUM}`);
+    // O socket foi montado com as creds RELIDAS (limpas), não com as envenenadas.
+    expect(sockets[0].config.auth.creds).not.toBe(envenenada);
+    expect(sockets[0].config.auth.creds.me).toBeUndefined();
+
+    emitQr(sockets[0]);
+    await p;
+    await cleanup();
+  });
+
+  it("auth de sessão pareada de verdade NÃO é apagada", async () => {
+    // A guarda é o isPairedCreds: `account` (pair-success, vale pros dois fluxos) ou
+    // `registered`. Apagar aqui forçaria um re-scan a cada pedido de código.
+    const boa = {
+      me: { id: `${PHONE}:61@s.whatsapp.net` },
+      pairingCode: "ABCD1234",
+      account: { details: "x" },
+    };
+    pgAuthStub.useDatabaseAuthState.mockImplementationOnce(async () => ({
+      state: { creds: boa, keys: { get: async () => ({}), set: async () => {} } },
+      saveCreds: vi.fn(async () => {}),
+    }));
+
+    const p = wa.requestPairingCode(USER, NUM, PHONE);
+    await new Promise(r => setTimeout(r, 50));
+    expect(pgAuthStub.deleteSession).not.toHaveBeenCalled();
+    expect(sockets[0].config.auth.creds).toBe(boa);
+
+    await wa.deleteSession(USER, NUM);   // encerra o laço da espera
+    await p;
+  });
+
+  it("Connection Closed ao pedir o código vira recusa, não exceção", async () => {
+    // sendNode lança quando o WebSocket morre entre a espera e o pedido. É falha de
+    // rede esperada: 503 com mensagem, em vez de 500 + Sentry.
+    const p = wa.requestPairingCode(USER, NUM, PHONE);
+    await new Promise(r => setTimeout(r, 50));
+    sockets[0].requestPairingCode.mockRejectedValueOnce(new Error("Connection Closed"));
+    emitQr(sockets[0]);
+
+    const r = await p;
+    expect(r).toEqual({ ok: false, reason: "SOCKET_GONE", message: expect.any(String) });
     await cleanup();
   });
 

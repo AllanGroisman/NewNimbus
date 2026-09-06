@@ -175,4 +175,68 @@ describe("WhatsappQR — modo código de pareamento", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(6_000); });
     expect(screen.getByText("Gerar novo código")).toBeTruthy();
   });
+
+  it("regerar pede outro código sem apagar a sessão", async () => {
+    // O DELETE daqui era destrutivo: numa sessão que tivesse ACABADO de parear ele
+    // vira sock.logout() e desvincula o aparelho. Quem garante que o pedido parte de
+    // credencial limpa é o backend (auth de pareamento incompleta, whatsapp/local.js).
+    requestWAPairingCode.mockResolvedValue({
+      ok: true, code: "ABCD1234", formatted: "ABCD-1234",
+      phone: "5511999999999", expiresAt: Date.now() + 5_000,
+    });
+    await abrirModoCodigo();
+    await act(async () => {
+      fireEvent.change(screen.getByPlaceholderText("(11) 99999-9999"), { target: { value: "(11) 99999-9999" } });
+      fireEvent.click(screen.getByText("Gerar código"));
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(6_000); });
+
+    await act(async () => { fireEvent.click(screen.getByText("Gerar novo código")); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+
+    expect(deleteWASession).not.toHaveBeenCalled();
+    expect(requestWAPairingCode).toHaveBeenCalledTimes(2);
+    expect(requestWAPairingCode).toHaveBeenLastCalledWith("num-pair", "5511999999999");
+  });
+
+  it("sessão que cai com o código na tela mostra o motivo ali, sem beco sem saída", async () => {
+    // O painel genérico "Erro de conexão" esconde os botões de modo, e a única saída
+    // seria o link de cancelar. O classifyClose já manda o texto certo pro caso do
+    // código — ele aparece junto do botão de gerar outro.
+    requestWAPairingCode.mockResolvedValue({
+      ok: true, code: "ABCD1234", formatted: "ABCD-1234",
+      phone: "5511999999999", expiresAt: Date.now() + 110_000,
+    });
+    await abrirModoCodigo();
+    await act(async () => {
+      fireEvent.change(screen.getByPlaceholderText("(11) 99999-9999"), { target: { value: "(11) 99999-9999" } });
+      fireEvent.click(screen.getByText("Gerar código"));
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+
+    getWASession.mockResolvedValue({
+      status: "disconnected", qr: null, info: null,
+      lastError: "O código não foi usado a tempo. Gere um novo.",
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+
+    expect(screen.getByText("O código não foi usado a tempo. Gere um novo.")).toBeTruthy();
+    expect(screen.getByText("Gerar novo código")).toBeTruthy();
+    expect(screen.queryByText("Erro de conexão")).toBeNull();
+    expect(screen.getByText("Código de 8 dígitos")).toBeTruthy();
+
+    // E o código NOVO não pode nascer marcado como morto pelo erro do anterior: o
+    // polling está pausado durante o pedido e só traria o estado fresco depois.
+    requestWAPairingCode.mockResolvedValue({
+      ok: true, code: "WXYZ5678", formatted: "WXYZ-5678",
+      phone: "5511999999999", expiresAt: Date.now() + 110_000,
+    });
+    getWASession.mockResolvedValue({ status: "awaiting_qr", qr: null, info: null, lastError: null });
+    await act(async () => { fireEvent.click(screen.getByText("Gerar novo código")); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+
+    expect(screen.getByText("WXYZ-5678")).toBeTruthy();
+    expect(screen.getByText(/Vincular com número de telefone/)).toBeTruthy();
+    expect(screen.queryByText("Gerar novo código")).toBeNull();
+  });
 });
