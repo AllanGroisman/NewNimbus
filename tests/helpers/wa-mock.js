@@ -14,6 +14,7 @@ const calls = {
   sendText: [],
   sendImage: [],
   startSession: [],
+  requestPairingCode: [],
   deleteSession: [],
   listGroups: [],
   createGroup: [],
@@ -77,6 +78,20 @@ const mock = {
       numberId, status: "open", qrDataUrl: null, info: { phone: "5511999999999" }, lastError: null,
     });
     return { id: numberId, status: "open" };
+  },
+  // Espelha o contrato de local.js:requestPairingCode — recusa esperada volta como
+  // valor ({ ok: false, reason }), não como exceção, porque o RPC do BullMQ não
+  // carrega `err.code`. A sessão fica em "awaiting_qr": o código roda no MESMO
+  // socket do QR, então não há status novo.
+  async requestPairingCode(userId, numberId, phone) {
+    calls.requestPairingCode.push({ userId, numberId, phone });
+    fakeSessions.set(`${userId}::${numberId}`, {
+      numberId, status: "awaiting_qr", qrDataUrl: null, info: null, lastError: null,
+    });
+    return {
+      ok: true, code: "ABCD1234", formatted: "ABCD-1234", phone,
+      expiresAt: Date.now() + 110000,
+    };
   },
   async getSession(userId, numberId) {
     return fakeSessions.get(`${userId}::${numberId}`) || null;

@@ -41,6 +41,7 @@ describe("WhatsApp — sessões (gating + auth)", () => {
       ["post", "/api/whatsapp/sessions/num-1"],
       ["get", "/api/whatsapp/sessions/num-1"],
       ["delete", "/api/whatsapp/sessions/num-1"],
+      ["post", "/api/whatsapp/sessions/num-1/pairing-code"],
       ["get", "/api/whatsapp/sessions/num-1/groups"],
     ];
     for (const [m, u] of rotas) {
@@ -96,6 +97,48 @@ describe("WhatsApp — sessões (gating + auth)", () => {
     // Mesma id de novo — não deve disparar 402
     const r = await u.auth("post", "/api/whatsapp/sessions/num-1");
     expect(r.status).toBe(200);
+  });
+
+  // Código de pareamento é a SEGUNDA porta de entrada de sessão (a outra é o QR):
+  // ela chama startSession por dentro, então precisa do mesmo plan-gating — senão
+  // dava pra criar número sem limite passando por aqui.
+  it("código de pareamento devolve o código e registra a chamada", async () => {
+    const u = await userOnPlan("pro");
+    const r = await u.auth("post", "/api/whatsapp/sessions/num-1/pairing-code").send({ phone: "(11) 99999-0000" });
+    expect(r.status).toBe(200);
+    expect(r.body.ok).toBe(true);
+    expect(r.body.code).toBe("ABCD1234");
+    expect(r.body.formatted).toBe("ABCD-1234");
+    expect(r.body.expiresAt).toBeGreaterThan(Date.now());
+    // O telefone chega ao wa já normalizado pelo servidor (55 + DDD + 9 dígitos):
+    // nunca a string que o usuário digitou.
+    expect(waCalls.requestPairingCode).toHaveLength(1);
+    expect(waCalls.requestPairingCode[0].phone).toBe("5511999990000");
+  });
+
+  it("aceita conta antiga de 8 dígitos (o toStoredPhone do cadastro recusaria)", async () => {
+    // Regressão do primeiro teste real: 555596168060 é uma conta de 8 dígitos, e
+    // acrescentar o nono gerava um código endereçado a um número inexistente.
+    const u = await userOnPlan("pro");
+    const r = await u.auth("post", "/api/whatsapp/sessions/num-1/pairing-code").send({ phone: "(55) 9616-8060" });
+    expect(r.status).toBe(200);
+    expect(waCalls.requestPairingCode[0].phone).toBe("555596168060");
+  });
+
+  it("telefone inválido no código de pareamento é 400, sem tocar no wa", async () => {
+    const u = await userOnPlan("pro");
+    const r = await u.auth("post", "/api/whatsapp/sessions/num-1/pairing-code").send({ phone: "123" });
+    expect(r.status).toBe(400);
+    expect(waCalls.requestPairingCode).toHaveLength(0);
+  });
+
+  it("código de pareamento respeita o limite do plano (402 no número extra)", async () => {
+    const u = await userOnPlan("basic"); // limite 1
+    const r1 = await u.auth("post", "/api/whatsapp/sessions/num-1/pairing-code").send({ phone: "11999990000" });
+    expect(r1.status).toBe(200);
+    const r2 = await u.auth("post", "/api/whatsapp/sessions/num-2/pairing-code").send({ phone: "11999990001" });
+    expect(r2.status).toBe(402);
+    expect(r2.body.planRequired).toBe("pro");
   });
 
   it("admin bypass: pode criar quantas sessões quiser", async () => {

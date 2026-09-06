@@ -8,7 +8,7 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const requireCjs = createRequire(import.meta.url);
-const { normalizePhone, toStoredPhone, isValidPhone, formatPhone } =
+const { normalizePhone, toStoredPhone, isValidPhone, formatPhone, toWhatsappPhone, formatWhatsappPhone } =
   requireCjs(path.resolve(__dirname, "..", "..", "backend", "utils", "phone.js"));
 
 describe("normalizePhone", () => {
@@ -92,5 +92,38 @@ describe("formatPhone", () => {
     expect(formatPhone("1133334444")).toBe("1133334444");
     expect(formatPhone("")).toBe("");
     expect(formatPhone(null)).toBe("");
+  });
+});
+
+// toWhatsappPhone — o número tem que bater com a CONTA que o WhatsApp conhece,
+// não com o formato de cadastro. A diferença não é acadêmica: o primeiro teste
+// real do código de pareamento falhou porque o toStoredPhone acrescentou um nono
+// dígito a uma conta antiga de 8 (555596168060), e o código saiu endereçado a um
+// número que não existe — o WhatsApp gera o código sem validar o telefone.
+describe("toWhatsappPhone", () => {
+  it("aceita conta antiga de 8 dígitos, que o toStoredPhone recusa", () => {
+    for (const entrada of ["(55) 9616-8060", "5596168060", "555596168060", "+55 55 9616-8060"]) {
+      expect(toWhatsappPhone(entrada), entrada).toBe("555596168060");
+    }
+    // A prova de que são regras diferentes de propósito:
+    expect(toStoredPhone("(55) 9616-8060")).toBe("");
+  });
+
+  it("aceita as mesmas formas de 9 dígitos que o toStoredPhone", () => {
+    for (const entrada of ["(11) 99999-9999", "11999999999", "5511999999999", "+55 11 99999-9999"]) {
+      expect(toWhatsappPhone(entrada), entrada).toBe("5511999999999");
+    }
+  });
+
+  it("recusa fixo, DDD inexistente e lixo", () => {
+    expect(toWhatsappPhone("(11) 3333-4444")).toBe("");   // fixo: começa com 3
+    expect(toWhatsappPhone("(20) 99999-9999")).toBe("");  // DDD 20 não existe
+    expect(toWhatsappPhone("123")).toBe("");
+    expect(toWhatsappPhone(null)).toBe("");
+  });
+
+  it("formata os dois tamanhos", () => {
+    expect(formatWhatsappPhone("555596168060")).toBe("(55) 9616-8060");
+    expect(formatWhatsappPhone("5511999999999")).toBe("(11) 99999-9999");
   });
 });

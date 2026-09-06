@@ -22,4 +22,14 @@ test.describe("WhatsApp (UI)", () => {
     const qr = page.getByAltText("QR Code WhatsApp");
     await qr.waitFor({ state: "visible", timeout: 15000 }).catch(() => {});
   });
+
+  test("oferece o modo código de 8 dígitos com campo de telefone", async ({ page }) => {
+    // Só a UI: pedir o código de verdade exigiria o Baileys falando com o WhatsApp.
+    await page.getByRole("button", { name: "+ Adicionar número" }).first().click();
+    await expect(page.getByText("Adicionar novo número")).toBeVisible({ timeout: 10000 });
+
+    await page.getByRole("button", { name: "Código de 8 dígitos" }).click();
+    await expect(page.getByPlaceholder("(11) 99999-9999")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Gerar código" })).toBeVisible();
+  });
 });

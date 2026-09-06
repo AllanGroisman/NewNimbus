@@ -451,7 +451,11 @@ export default function PageWhatsApp({
               <input value={pendingLabel} onChange={e => setPendingLabel(e.target.value)} placeholder="Ex: Principal, Trabalho..." style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }} />
             </div>
           )}
-          <WhatsappQR sessionId={pendingNumberId} onConnected={handleConnected} />
+          <WhatsappQR
+            sessionId={pendingNumberId}
+            onConnected={handleConnected}
+            defaultPhone={showQR === "new" ? "" : (numbers.find(n => n.id === showQR)?.phone || "")}
+          />
         </Modal>
       )}
 

@@ -24,6 +24,8 @@ Em modo `redis`, só **um processo** carrega o Baileys: o `worker`. O `server` s
 
 Cada sessão é a chave `${userId}::${numberId}` num `Map` em memória. Status pode ser: `connecting`, `awaiting_qr`, `connected`, `disconnected`, `logged_out`.
 
+Sessão esperando **código de pareamento** também fica em `awaiting_qr`, de propósito: os dois modos rodam no mesmo socket, então não há status novo — `LIVE_STATUSES` do `infra/session-status.js` e as telas de admin ficam intactas.
+
 Quando a sessão desconecta sem ser logout, o `local.js` agenda um restart automático com backoff (1.5s × tentativa + jitter, máx 30s). Em logout real, ele apaga as credenciais (linhas do PG) — usuário vai precisar escanear o QR de novo. O snapshot `logged_out` fica mais tempo no Redis (7 dias) só pra tela seguir mostrando "Desconectado (relogar)".
 
 ### Um socket por número
@@ -36,7 +38,7 @@ Os timers de reconexão são rastreados e cancelados em `deleteSession`, na cano
 
 ### 401: logout de verdade ou eco de conflito?
 
-O WhatsApp responde 401 tanto pra logout real quanto pra conflito, e a reconexão logo após um conflito costuma voltar um 401 **seco** (sem tag). `classifyClose` só chama de logout o 401 que estiver fora de uma janela de 60s desde o último conflito (com teto de tentativas) e numa sessão já registrada.
+O WhatsApp responde 401 tanto pra logout real quanto pra conflito, e a reconexão logo após um conflito costuma voltar um 401 **seco** (sem tag). `classifyClose` só chama de logout o 401 que estiver fora de uma janela de 60s desde o último conflito (com teto de tentativas) e numa sessão já registrada — "já registrada" agora quer dizer `isPairedCreds`, não um `creds.me` cru (ver a seção do código de pareamento).
 
 ### O status no Redis pode mentir
 
@@ -46,7 +48,87 @@ Se o worker morre sem passar pelo `closeAll` (OOM do `max_memory_restart`, SIGKI
 
 O frontend abre o QR sob um id provisório (`Date.now()`) antes de saber o telefone. Se o usuário fechar a aba, o frontend avisa o servidor (DELETE com `keepalive`), mas isso é best-effort — a garantia é uma varredura de 5 em 5 minutos no `local.js` (`isOrphanQrSession`) que descarta sessão nunca pareada esperando QR há mais de 10 min.
 
+A varredura também cobre tentativa de **código de pareamento** abandonada — e só cobre por causa do `isPairedCreds`: um pedido de código grava `creds.me` antes de parear, e o teste antigo (`creds.me` existe → não é órfã) deixaria essa sessão viva pra sempre.
+
 `scripts/kill-pending-session.js` continua existindo, mas virou ferramenta de emergência: com as travas acima não deveria mais ser rotina.
+
+### Código de pareamento (8 dígitos)
+
+Alternativa ao QR: o usuário digita o telefone no site, recebe 8 caracteres e os
+digita no celular (Dispositivos vinculados › Vincular dispositivo › **Vincular com
+número de telefone**). Pedir um código **reabre o socket** (ver o item 0), mas o QR
+segue valendo no socket novo: o Baileys aceita o scan com um código pendente.
+
+Cinco coisas não são óbvias:
+
+**0. O `browser` tem que ser plausível — é a causa mais provável de "código
+inválido".** A tupla é `[SO, navegador, versão]`, e nós usamos a posição 0 pro
+rótulo do aparelho (`deviceLabel()`, "Nimbus"/"Teste") porque é o que o celular
+mostra em Aparelhos conectados. O README do Baileys autoriza isso **só pro QR**
+("You can customize browser name if you connect with QR-CODE"), e a doc é
+categórica sobre o outro caminho: *"When logging in using pairing code, you should
+only set a valid/logical browser config, otherwise the pair will fail."* Com
+`["Nimbus", "Chrome", "1.0"]` o código sai normalmente e **nenhum telefone
+funciona** — a falha é silenciosa, porque o IQ é fire-and-forget.
+
+Por isso o socket de pareamento usa `PAIRING_BROWSER` (`["Ubuntu", "Chrome",
+"22.04.4"]`, o default do próprio Baileys, que é o que o exemplo de pairing code
+da doc usa ao não passar `browser`). Como `browser` é opção de **construção**,
+isso implica: pedir código reabre o socket se o atual foi aberto pro QR
+(`startSession` recusa reaproveitar socket do modo errado), e `session.pairingMode`
+é herdado nas reaberturas por backoff — senão o primeiro reconnect voltaria pro
+rótulo e derrubaria o pareamento em andamento. Ao conectar, o flag é limpo ("Once
+you are fully paired, you can switch the browser config back to normal").
+
+Custo aceito: número pareado por código aparece no celular como Ubuntu, **sem** o
+rótulo Nimbus/Teste que separa a máquina de teste da produção no mesmo aparelho.
+Quem precisa dessa separação pareia por QR.
+
+**1. `requestPairingCode` envenena as credenciais.** Ele grava `creds.me` (montado
+a partir do telefone digitado) e `creds.pairingCode` **antes** de qualquer
+pareamento, e emite `creds.update` — que o nosso handler persiste no Postgres. O
+veneno sobrevive a restart do worker e ao `restoreSessions`. Por isso `creds.me`
+deixou de ser prova de pareamento e existe o `isPairedCreds`: sem ele, uma
+tentativa abandonada passa por "sessão boa", desliga os dois caminhos de limpeza
+(401 de handshake e 408 de QR esgotado) e reconecta pra sempre — a cada boot.
+
+**2. `creds.account` é o marcador durável dos dois fluxos.** `creds.registered`
+sozinho continua proibido (é o parágrafo ATENÇÃO do `classifyClose`: ele é sempre
+false em quem pareou por QR). Quem pareou de verdade tem `creds.account`, o
+`ADVSignedDeviceIdentity` que o `configureSuccessfulPairing` grava no handler
+`CB:iq,,pair-success` — o mesmo para QR e para código. É isso que faz "pedi o
+código, desisti, escaneei o QR" não apagar auth boa. Para toda sessão que existe
+hoje (sem `pairingCode`), `isPairedCreds` é idêntico a `!!creds.me?.id`.
+
+**3. O relógio do código é a lista de refs do QR.** `requestPairingCode` **não**
+cancela o `qrTimer`: as refs continuam girando por baixo e, ao esgotarem, o
+Baileys mata o socket (~2 min) — e o código morre com ele. Daí `PAIRING_CODE_TTL_MS`
+(110s) ser deliberadamente menor: a tela oferece "gerar novo código" antes de o
+backend derrubar a sessão. Aumentar `qrTimeout` resolveria, mas é opção de
+construção do socket — forçaria um socket dedicado e mataria a propriedade de um
+socket servir os dois modos.
+
+**4. O código sai só na resposta do RPC, nunca no snapshot do Redis.** Ele só é
+resgatável contra o socket exato que o emitiu, enquanto o snapshot vive 24h — um
+código que sobrevive ao socket é pior que nenhum (o WhatsApp diz "inválido" e a
+culpa parece nossa). Pelo mesmo motivo, erro esperado volta como **valor**
+(`{ ok: false, reason }`) e não como exceção: o RPC do BullMQ só carrega a
+`message` de um `Error`, então `err.code` não atravessaria server↔worker.
+
+**5. O telefone é o que a conta usa, e aceitamos 8 ou 9 dígitos.** A rota valida com
+`toWhatsappPhone` (55 + DDD + **8 ou 9** dígitos), não com o `toStoredPhone` que o
+cadastro usa. Aquele exige o nono dígito, e há contas antigas de 8 ativas —
+`555596168060` é uma delas. Cuidado com a leitura desse JID: no Brasil o WhatsApp
+guarda o endereço de contas antigas **sem o nono dígito** mesmo quando o telefone
+real o tem — o JID é endereçamento, não o número que se digita. Como não dá pra
+saber qual forma a conta usa (o IQ não valida nada), aceitamos as duas e a tela
+mostra, embaixo do código, qual número ele endereça. Mesma regra do
+`looksLikePhoneUser` de `scripts/fix-lid-sessions.js`.
+
+Aviso que a UI dá e o backend não pode dar: o IQ de pareamento é `sendNode`,
+fire-and-forget. Telefone errado gera um código perfeitamente válido que
+simplesmente nunca funciona — não há resposta do servidor pra validar contra. Por
+isso a tela mostra, embaixo do código, o número que ele endereça.
 
 ### "Aguardando mensagem" no celular do destinatário
 

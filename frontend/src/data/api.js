@@ -459,6 +459,12 @@ export function deleteWASessionKeepalive(id) {
   } catch { return Promise.resolve(); }
 }
 export async function listWASessions()   { return http("GET",  `/api/whatsapp/sessions`); }
+// Código de pareamento (alternativa ao QR). Timeout maior que o padrão: o backend
+// espera o handshake do socket (até 20s) antes de conseguir pedir o código, e o
+// RPC pro worker tem teto de 35s — o cliente precisa ser o último a desistir.
+export async function requestWAPairingCode(id, phone) {
+  return http("POST", `/api/whatsapp/sessions/${id}/pairing-code`, { phone }, { timeoutMs: 45_000 });
+}
 
 // ─── WhatsApp / grupos ─────────────────────────────────────────────────
 export async function listWAGroups(id)   { return http("GET",  `/api/whatsapp/sessions/${id}/groups`); }

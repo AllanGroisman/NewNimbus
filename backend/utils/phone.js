@@ -59,4 +59,43 @@ function formatPhone(value) {
   return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
 }
 
-module.exports = { normalizePhone, toStoredPhone, isValidPhone, formatPhone };
+// ── Telefone de uma conta de WhatsApp (≠ telefone de cadastro) ──────────────
+//
+// Mais frouxo que o toStoredPhone acima, DE PROPÓSITO. Aquele existe pro cadastro
+// ("todo cliente tem um celular") e exige o nono dígito. Aqui o número precisa
+// bater EXATAMENTE com a conta que o WhatsApp conhece, e existem contas antigas
+// com 8 dígitos ativas até hoje — 555596168060 é uma delas, é a que quebrou o
+// primeiro teste do código de pareamento. Acrescentar um 9 que a conta não tem
+// gera um código perfeitamente válido para um número que não existe.
+//
+// Mesma regra do looksLikePhoneUser de scripts/fix-lid-sessions.js (55 + DDD +
+// 8|9 dígitos), aqui aplicada ao que a pessoa digita.
+function toWhatsappPhone(value) {
+  let d = normalizePhone(value);
+  if ((d.length === 13 || d.length === 12) && d.startsWith("55")) d = d.slice(2);
+  if (d.length !== 10 && d.length !== 11) return "";
+  if (!DDDS.has(Number(d.slice(0, 2)))) return "";
+  // Celular de 9 dígitos começa com 9; o de 8 começa em 6-9 (as faixas móveis).
+  // Fixo continua recusado: não vira conversa de WhatsApp.
+  if (d.length === 11 && d[2] !== "9") return "";
+  if (d.length === 10 && !"6789".includes(d[2])) return "";
+  return `55${d}`;
+}
+
+function isWhatsappPhone(value) {
+  return toWhatsappPhone(value) !== "";
+}
+
+// 555596168060 → (55) 9616-8060 | 5511999999999 → (11) 99999-9999
+function formatWhatsappPhone(value) {
+  const stored = toWhatsappPhone(value);
+  if (!stored) return normalizePhone(value);
+  const d = stored.slice(2);
+  const meio = d.length === 11 ? 7 : 6;
+  return `(${d.slice(0, 2)}) ${d.slice(2, meio)}-${d.slice(meio)}`;
+}
+
+module.exports = {
+  normalizePhone, toStoredPhone, isValidPhone, formatPhone,
+  toWhatsappPhone, isWhatsappPhone, formatWhatsappPhone,
+};

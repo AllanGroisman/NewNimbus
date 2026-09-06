@@ -3566,32 +3566,79 @@ app.get("/api/whatsapp/sessions", auth.requireAuth, async (req, res) => {
   }
 });
 
+// Plan-gating — número novo conta contra limite `numbers`. Sessão já existente
+// (reconect) passa direto pq não estoura contagem. Números pausados pelo plano
+// continuam conectados, mas não contam aqui — o que vale é quantos estão ativos.
+//
+// Devolve o objeto de recusa (pra virar 402) ou null quando pode seguir. Vale pras
+// DUAS portas de entrada de sessão (QR e código de pareamento): as duas chamam
+// startSession por dentro, e sem a checagem nas duas um curl com ids novos criava
+// sessão sem limite pela porta que ficasse de fora.
+async function checkNumberSlot(req) {
+  if (req.user.role === "admin") return null;
+  const existing = await wa.listSessions?.(req.user.id);
+  const isNew = !(existing || []).some(s => s.numberId === req.params.id || s.id === req.params.id);
+  if (!isNew) return null;
+  const sub = await billing.getByUserId(req.user.id);
+  const planPaused = await storage.loadPlanPaused(req.user.id);
+  const activeExisting = (existing || []).filter(
+    s => !billing.enforce.isNumberPlanPaused(planPaused, s.numberId || s.id),
+  );
+  const count = activeExisting.length + 1;
+  const check = billing.limits.checkLimit(sub, "numbers", count, req.user.role);
+  return check.ok ? null : check;
+}
+
 app.post("/api/whatsapp/sessions/:id", auth.requireAuth, async (req, res) => {
   try {
-    // Plan-gating — número novo conta contra limite `numbers`. Sessão já
-    // existente (reconect) passa direto pq não estoura contagem. Números
-    // pausados pelo plano continuam conectados, mas não contam aqui — o que
-    // vale é quantos estão ativos.
-    if (req.user.role !== "admin") {
-      const existing = await wa.listSessions?.(req.user.id);
-      const isNew = !(existing || []).some(s => s.numberId === req.params.id || s.id === req.params.id);
-      if (isNew) {
-        const sub = await billing.getByUserId(req.user.id);
-        const planPaused = await storage.loadPlanPaused(req.user.id);
-        const activeExisting = (existing || []).filter(
-          s => !billing.enforce.isNumberPlanPaused(planPaused, s.numberId || s.id),
-        );
-        const count = activeExisting.length + 1;
-        const check = billing.limits.checkLimit(sub, "numbers", count, req.user.role);
-        if (!check.ok) return res.status(402).json(check);
-      }
-    }
+    const denied = await checkNumberSlot(req);
+    if (denied) return res.status(402).json(denied);
     await wa.startSession(req.user.id, req.params.id);
     const s = await wa.getSession(req.user.id, req.params.id);
     res.json({ ok: true, id: req.params.id, status: s?.status });
   } catch (err) {
     console.error("[whatsapp] startSession:", err);
     httpErrors.serverError(res, err, { req, ctx: "POST /api/whatsapp/sessions/:id" });
+  }
+});
+
+// Código de pareamento: alternativa ao QR (o usuário digita o telefone no site e
+// o código de 8 caracteres no celular). O código sai SÓ aqui, na resposta — nunca
+// no snapshot do Redis: ele só é resgatável contra o socket exato que o emitiu, e
+// um código sobrevivendo ao socket seria pior que nenhum (o WhatsApp diria
+// "inválido" e a culpa pareceria nossa).
+//
+// Recusa esperada volta do wa como { ok: false, reason } — o RPC do BullMQ não
+// carrega `err.code`, então erro previsto trafega como valor.
+const PAIRING_HTTP_STATUS = {
+  BAD_PHONE: 400,
+  ALREADY_CONNECTED: 409,
+  ALREADY_PAIRED: 409,
+  SOCKET_GONE: 503,
+  PAIRING_TIMEOUT: 503,
+};
+
+app.post("/api/whatsapp/sessions/:id/pairing-code", auth.requireAuth, async (req, res) => {
+  try {
+    // toWhatsappPhone, NÃO toStoredPhone: aqui o número tem que bater com a conta
+    // que o WhatsApp conhece, e há contas antigas de 8 dígitos. Forçar o nono
+    // dígito gerava um código válido pra um número inexistente (foi o que
+    // aconteceu no primeiro teste, com um número de 8 dígitos).
+    const phone = phoneUtil.toWhatsappPhone(req.body?.phone);
+    if (!phone) return res.status(400).json({ error: "Informe um celular válido com DDD." });
+
+    const denied = await checkNumberSlot(req);
+    if (denied) return res.status(402).json(denied);
+
+    const result = await wa.requestPairingCode(req.user.id, req.params.id, phone);
+    if (!result?.ok) {
+      const status = PAIRING_HTTP_STATUS[result?.reason] || 503;
+      return res.status(status).json({ error: result?.message || "Não foi possível gerar o código.", code: result?.reason });
+    }
+    res.json(result);
+  } catch (err) {
+    console.error("[whatsapp] requestPairingCode:", err);
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/whatsapp/sessions/:id/pairing-code" });
   }
 });
 

@@ -22,6 +22,13 @@ async function startSession(userId, numberId) {
   return queue.callControl("startSession", [String(userId), String(numberId)], { timeoutMs: 30000 });
 }
 
+// Timeout maior que o dos outros comandos: o worker espera o handshake do socket
+// (waitPairingReady, 20s) antes de conseguir pedir o código. Precisa caber nele
+// com folga, senão o server desiste de um pedido que o worker vai concluir.
+async function requestPairingCode(userId, numberId, phone) {
+  return queue.callControl("requestPairingCode", [String(userId), String(numberId), String(phone)], { timeoutMs: 35000 });
+}
+
 async function getSession(userId, numberId) {
   const s = await sessionStatus.read(userId, numberId);
   if (!s) return null;
@@ -121,7 +128,7 @@ async function status() {
 }
 
 module.exports = {
-  startSession, getSession, listSessions, listAllSessions, deleteSession,
+  startSession, requestPairingCode, getSession, listSessions, listAllSessions, deleteSession,
   sendText, sendImage, msgStats,
   createGroup, getInviteLink, revokeInvite, listGroups, leaveGroup, getGroupMetadata,
   restoreSessions, closeAll, status,

@@ -50,3 +50,39 @@ export function maskPhoneInput(value) {
   if (d.length <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
   return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
 }
+
+// ── Telefone de uma conta de WhatsApp ───────────────────────────────────────
+// Espelho de toWhatsappPhone/formatWhatsappPhone de backend/utils/phone.js. Mais
+// frouxo que o toStoredPhone acima de propósito: o número precisa bater com a
+// conta que o WhatsApp conhece, e contas antigas de 8 dígitos seguem ativas. Se
+// mudar lá, mude aqui.
+export function toWhatsappPhone(value) {
+  let d = normalizePhone(value);
+  if ((d.length === 13 || d.length === 12) && d.startsWith("55")) d = d.slice(2);
+  if (d.length !== 10 && d.length !== 11) return "";
+  if (!DDDS.has(Number(d.slice(0, 2)))) return "";
+  if (d.length === 11 && d[2] !== "9") return "";
+  if (d.length === 10 && !"6789".includes(d[2])) return "";
+  return `55${d}`;
+}
+
+export function formatWhatsappPhone(value) {
+  const stored = toWhatsappPhone(value);
+  if (!stored) return normalizePhone(value);
+  const d = stored.slice(2);
+  const meio = d.length === 11 ? 7 : 6;
+  return `(${d.slice(0, 2)}) ${d.slice(2, meio)}-${d.slice(meio)}`;
+}
+
+// Máscara do campo de pareamento. A maskPhoneInput acima assume 9 dígitos (é do
+// cadastro) e renderizaria "(55) 96168-060" para um número de 8.
+export function maskWhatsappPhoneInput(value) {
+  let d = normalizePhone(value);
+  if (d.length > 11 && d.startsWith("55")) d = d.slice(2);
+  d = d.slice(0, 11);
+  if (d.length <= 2) return d;
+  if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+  // Só passa a 5 dígitos no primeiro bloco quando o número de fato tem 11.
+  const meio = d.length > 10 ? 7 : 6;
+  return `(${d.slice(0, 2)}) ${d.slice(2, meio)}-${d.slice(meio)}`;
+}

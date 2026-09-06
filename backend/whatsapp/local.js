@@ -246,6 +246,60 @@ async function cachedBaileysVersion() {
 const CONFLICT_GRACE_MS = 60_000;
 const CONFLICT_MAX_RETRIES = 3;
 
+// ── Código de pareamento (8 dígitos) ────────────────────────────────────────
+// Espera pelo handshake antes de pedir o código (ver waitPairingReady).
+const PAIRING_READY_TIMEOUT_MS = 20_000;
+// Vida útil que MOSTRAMOS pro usuário. O relógio de verdade é a lista de refs do
+// QR, que o requestPairingCode não cancela: quando ela esgota o socket morre
+// (~2 min). Ficamos deliberadamente ABAIXO disso pra oferecer "gerar novo código"
+// antes do backend derrubar a sessão por baixo da tela.
+const PAIRING_CODE_TTL_MS = 110_000;
+// O `browser` que o socket de PAREAMENTO precisa usar.
+//
+// O deviceLabel() vive na posição 0 da tupla, que é o SISTEMA OPERACIONAL — é um
+// abuso deliberado, pra o celular mostrar "Nimbus"/"Teste" em Aparelhos
+// conectados. O README do Baileys autoriza isso explicitamente só pro QR ("You
+// can customize browser name if you connect with QR-CODE"), e a doc é categórica
+// sobre o outro caminho: "When logging in using pairing code, you should only set
+// a valid/logical browser config, otherwise the pair will fail."
+//
+// E falha em silêncio: o IQ de pareamento é fire-and-forget, então o código sai
+// normalmente e só o celular recusa. Foi o que aconteceu no primeiro teste real —
+// com "Nimbus" de SO e "1.0" de versão, nenhum telefone servia.
+//
+// Este é o default do próprio Baileys (Browsers.ubuntu("Chrome")), que é o que o
+// exemplo de pairing code da doc usa ao não passar `browser` nenhum.
+//
+// Custo aceito: número pareado por código aparece no celular como Ubuntu, sem o
+// rótulo Nimbus/Teste. Vale só pro pareamento — o rótulo viaja no registro do
+// device, e sessão já pareada reconecta por generateLoginNode, que não o reenvia.
+const PAIRING_BROWSER = ["Ubuntu", "Chrome", "22.04.4"];
+
+// Clique duplo / retry humano devolve o código vigente. Cada requestPairingCode
+// INVALIDA o anterior (sobrescreve creds.pairingCode), então emitir dois seguidos
+// deixaria na tela um código que o WhatsApp já não aceita.
+const PAIRING_MIN_INTERVAL_MS = 5_000;
+
+// Prova DURÁVEL de que a sessão pareou algum dia.
+//
+// `requestPairingCode` grava `creds.me` e `creds.pairingCode` ANTES de qualquer
+// pareamento, e o nosso handler de `creds.update` persiste isso no Postgres — o
+// veneno sobrevive a restart e ao restoreSessions. Por isso `creds.me` sozinho
+// deixou de ser prova: uma tentativa de código abandonada passaria por "pareada"
+// e desligaria os dois caminhos de limpeza (401 de handshake e 408 de QR
+// esgotado), deixando a sessão em loop de reconexão pra sempre.
+//
+// Quem pareou de verdade tem `creds.account` — o ADVSignedDeviceIdentity que o
+// configureSuccessfulPairing grava, e que vale pros DOIS fluxos (é o mesmo
+// handler `CB:iq,,pair-success`) — ou `creds.registered`, que só o fluxo de
+// código seta. Para toda sessão que existe hoje (sem `pairingCode`) isto é
+// idêntico a `!!creds.me?.id`: nenhuma mudança de comportamento no caminho do QR.
+function isPairedCreds(creds) {
+  if (!creds?.me?.id) return false;
+  if (creds.pairingCode && !creds.registered && !creds.account) return false;
+  return true;
+}
+
 // Classifica um `connection: "close"` do Baileys num resultado puro e testável.
 // Regra central da Task 1: só é estado terminal (mostra "Reconectar"/erro na tela)
 // o logout real e o desligamento do worker. Todo o resto — restartRequired (515,
@@ -257,7 +311,8 @@ const CONFLICT_MAX_RETRIES = 3;
 // (mesma conta em outro lugar, ou overlap de processos num restart). No conflito as
 // credenciais continuam VÁLIDAS — apagá-las forçava re-scan a cada restart. Então
 // só é logout definitivo o 401 que NÃO seja conflito nem eco de um conflito recente.
-// `paired` = a sessão JÁ pareou algum dia (creds.me existe).
+// `paired` = a sessão JÁ pareou algum dia. Quem responde isso é `isPairedCreds`,
+// NÃO um `!!creds.me?.id` cru — ver o comentário lá em cima.
 //
 // ATENÇÃO: NÃO use `creds.registered` pra isso. No Baileys 6.7.23 esse campo só
 // é setado no fluxo de PAIRING CODE (Socket/messages-recv.js, link_code_pairing);
@@ -268,9 +323,18 @@ const CONFLICT_MAX_RETRIES = 3;
 // queima um slot de aparelho conectado (os devices :47, :59, :61 do mesmo número
 // no log). Aparelho antigo evicted = sessão Signal morta em todos os contatos =
 // "Aguardando mensagem" pra todo lado.
+//
+// (O `registered` deixou de ser inútil quando entrou o código de pareamento: ele
+// é um dos dois marcadores que o `isPairedCreds` aceita. O que continua proibido
+// é usá-lo SOZINHO, que é o que quebrava toda sessão pareada por QR.)
+//
+// `pairingAttempt`: esta sessão pediu um código e ainda não pareou. Só troca a
+// CÓPIA das duas mensagens de falha — quem lê "QR não escaneado a tempo" depois
+// de digitar um código não entende do que a tela está falando.
 function classifyClose(err, {
   shuttingDown = false,
   paired = true,
+  pairingAttempt = false,
   now = Date.now(),
   lastConflictAt = null,
   conflictRetries = 0,
@@ -298,7 +362,14 @@ function classifyClose(err, {
     // handshake. Reconectar só geraria QR novo em loop, então encerra e limpa a
     // auth parcial — o usuário reabre o QR quando quiser tentar de novo.
     if (!paired) {
-      return { status: "disconnected", lastError: "Falha ao parear. Tente ler o QR de novo.", reconnect: false, cleanup: true };
+      return {
+        status: "disconnected",
+        lastError: pairingAttempt
+          ? "Falha ao parear. Confira o número e gere um código novo."
+          : "Falha ao parear. Tente ler o QR de novo.",
+        reconnect: false,
+        cleanup: true,
+      };
     }
     return { status: "logged_out", lastError: err?.message || null, reconnect: false, terminal: true };
   }
@@ -313,7 +384,14 @@ function classifyClose(err, {
   // autenticada, 408 é timeout de rede normal e deve reconectar como antes.
   const qrExpired = code === DisconnectReason.timedOut && /QR refs attempts ended/i.test(err?.message || "");
   if (qrExpired && !paired) {
-    return { status: "disconnected", lastError: "QR não escaneado a tempo.", reconnect: false, cleanup: true };
+    return {
+      status: "disconnected",
+      lastError: pairingAttempt
+        ? "O código não foi usado a tempo. Gere um novo."
+        : "QR não escaneado a tempo.",
+      reconnect: false,
+      cleanup: true,
+    };
   }
 
   return { status: "connecting", lastError: null, reconnect: true };
@@ -341,11 +419,12 @@ function isStuckReconnecting(reconnectingSince, now, thresholdMs = STUCK_RECONNE
 const ORPHAN_QR_MAX_AGE_MS = 10 * 60 * 1000;
 function isOrphanQrSession(session, now, maxAgeMs = ORPHAN_QR_MAX_AGE_MS) {
   if (!session) return false;
-  // Mesmo motivo do classifyClose: `creds.registered` é sempre false em sessão
-  // pareada por QR. `creds.me` é o que de fato só existe depois do pareamento —
-  // sem esta guarda, uma sessão real presa em "connecting" por 10 min (internet
-  // fora, Postgres fora) era varrida daqui com a auth apagada junto.
-  if (session.sock?.authState?.creds?.me?.id) return false;
+  // Sem esta guarda, uma sessão real presa em "connecting" por 10 min (internet
+  // fora, Postgres fora) era varrida daqui com a auth apagada junto. É
+  // `isPairedCreds` e não `creds.me` porque um pedido de código de pareamento
+  // grava `creds.me` sem ter pareado nada — a tentativa abandonada PRECISA ser
+  // varrida (ver o comentário do isPairedCreds).
+  if (isPairedCreds(session.sock?.authState?.creds)) return false;
   if (session.status !== "awaiting_qr" && session.status !== "connecting") return false;
   return (now - (session.createdAt || now)) >= maxAgeMs;
 }
@@ -353,8 +432,134 @@ function isOrphanQrSession(session, now, maxAgeMs = ORPHAN_QR_MAX_AGE_MS) {
 function normalizePhone(p) { return String(p).replace(/\D/g, ""); }
 function jidFromPhone(phone) { return `${normalizePhone(phone)}@s.whatsapp.net`; }
 
+// ── Código de pareamento ────────────────────────────────────────────────────
+// Alternativa ao QR: o usuário digita o telefone, recebe 8 caracteres e os digita
+// no celular (Dispositivos vinculados › Vincular com número de telefone).
+//
+// Roda no MESMO socket do QR de propósito. O Baileys aceita o scan do QR mesmo
+// com um código pendente, então trocar de modo na tela não reinicia nada — e um
+// socket dedicado exigiria mexer no qrTimeout, que é opção de construção.
+//
+// Erro esperado volta como VALOR ({ ok: false, reason }), não como exceção: o RPC
+// do BullMQ só carrega `message` de um Error, então `err.code` não sobreviveria à
+// travessia server↔worker. Throw fica pra falha genuína (Sentry).
+const pairingInflight = new Map();
+
+// Bookkeeping de UI. Nada de correção depende destes campos — quem responde
+// "pareou?" é o isPairedCreds, que lê as creds.
+function clearPairing(session) {
+  if (!session) return;
+  session.pairingCode = null;
+  session.pairingPhone = null;
+  session.pairingRequestedAt = null;
+}
+
+function pairingFail(reason, message) {
+  return { ok: false, reason, message };
+}
+
+function pairingPayload(s) {
+  return {
+    ok: true,
+    code: s.pairingCode,
+    // O celular mostra o código em dois blocos de 4.
+    formatted: `${s.pairingCode.slice(0, 4)}-${s.pairingCode.slice(4)}`,
+    phone: s.pairingPhone,
+    expiresAt: s.pairingRequestedAt + PAIRING_CODE_TTL_MS,
+  };
+}
+
+// O socket precisa estar ALÉM do handshake noise pra receber o IQ do
+// link_code_companion_reg — `ws.isOpen` não serve, é anterior a isso e um sendNode
+// ali vira frame que o servidor não lê. O sinal certo é o primeiro `qr` da geração
+// atual (o WhatsApp só o manda depois do handshake, no mesmo pair-device que
+// habilita o pareamento), e o handler de connection.update já o grava em
+// `session.qr`. Poll em vez de listener: um listener precisaria do próprio cleanup
+// na troca de geração, no close e no deleteSession.
+async function waitPairingReady(k, session, gen, timeoutMs = PAIRING_READY_TIMEOUT_MS) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const s = sessions.get(k);
+    if (s !== session || !isCurrentGen(s, gen)) {
+      return pairingFail("SOCKET_GONE", "A conexão reiniciou. Tente de novo.");
+    }
+    if (s.status === "connected") {
+      return pairingFail("ALREADY_CONNECTED", "Este número já está conectado.");
+    }
+    if (!s.socketAlive) {
+      return pairingFail("SOCKET_GONE", "A conexão com o WhatsApp caiu. Tente de novo.");
+    }
+    if (s.qr) return null;
+    if (Date.now() >= deadline) {
+      return pairingFail("PAIRING_TIMEOUT", "O WhatsApp não respondeu a tempo. Tente de novo.");
+    }
+    await new Promise(r => { const t = setTimeout(r, 200); t.unref?.(); });
+  }
+}
+
+// Gate: validação + idempotência + single-flight, igual ao startSession.
+async function requestPairingCode(userId, numberId, phone) {
+  userId = String(userId);
+  numberId = String(numberId);
+  const digits = normalizePhone(phone);
+  // Faixa E.164 (o servidor já validou o formato BR; aqui é a rede de segurança
+  // de quem chama pelo RPC).
+  if (digits.length < 10 || digits.length > 15) {
+    return pairingFail("BAD_PHONE", "Telefone inválido.");
+  }
+
+  const k = key(userId, numberId);
+  const cur = sessions.get(k);
+  if (cur?.status === "connected") {
+    return pairingFail("ALREADY_CONNECTED", "Este número já está conectado.");
+  }
+  // Sessão com credencial boa não recebe pair-device: ela loga direto e o
+  // waitPairingReady esperaria os 20s inteiros à toa.
+  if (isPairedCreds(cur?.sock?.authState?.creds)) {
+    return pairingFail("ALREADY_PAIRED", "Este número já está pareado. Use Reconectar.");
+  }
+  if (cur?.pairingCode && cur.pairingPhone === digits && cur.socketAlive
+      && (Date.now() - (cur.pairingRequestedAt || 0)) < PAIRING_MIN_INTERVAL_MS) {
+    return pairingPayload(cur);
+  }
+
+  const inflight = pairingInflight.get(k);
+  if (inflight) return inflight;
+
+  const p = _requestPairingCode(userId, numberId, k, digits)
+    .finally(() => { if (pairingInflight.get(k) === p) pairingInflight.delete(k); });
+  pairingInflight.set(k, p);
+  return p;
+}
+
+async function _requestPairingCode(userId, numberId, k, digits) {
+  // startSession já é idempotente e single-flight: cobre os três estados
+  // possíveis (sem sessão / socket morto esperando backoff / socket vivo). O
+  // `pairing` garante o browser válido — e reabre o socket se o que existe foi
+  // aberto pro QR.
+  const session = await startSession(userId, numberId, { pairing: true });
+  const gen = session.gen;
+
+  const notReady = await waitPairingReady(k, session, gen);
+  if (notReady) return notReady;
+
+  const code = await session.sock.requestPairingCode(digits);
+  // O socket pode ter sido trocado durante o await: o código emitido pertence a
+  // um socket que já não existe.
+  if (!isCurrentGen(sessions.get(k), gen)) {
+    return pairingFail("SOCKET_GONE", "A conexão reiniciou. Gere um código novo.");
+  }
+
+  session.pairingCode = code;
+  session.pairingPhone = digits;
+  session.pairingRequestedAt = Date.now();
+  // NUNCA logar o código: é credencial de vinculação enquanto vale.
+  console.log(`[whatsapp] código de pareamento emitido ${userId}/${numberId} (tel ${digits})`);
+  return pairingPayload(session);
+}
+
 // Gate fino: idempotência + single-flight. O trabalho de verdade fica em _openSocket.
-async function startSession(userId, numberId) {
+async function startSession(userId, numberId, opts = {}) {
   userId = String(userId);
   numberId = String(numberId);
   const k = key(userId, numberId);
@@ -364,20 +569,31 @@ async function startSession(userId, numberId) {
   // socket VIVO (connecting/awaiting_qr/connected). Sessão cujo socket já caiu e
   // só espera o backoff NÃO curto-circuita: a ação explícita do usuário
   // ("Reconectar") deve tentar na hora.
+  // Um socket vivo só serve se estiver no modo certo: pedir código de pareamento
+  // num socket aberto com o browser do QR é exatamente o que faz o celular
+  // recusar o código (ver PAIRING_BROWSER).
   const existing = sessions.get(k);
-  if (existing?.sock && existing.socketAlive) return existing;
+  if (existing?.sock && existing.socketAlive && (!opts.pairing || existing.pairingMode)) return existing;
 
   const inflight = starting.get(k);
-  if (inflight) return inflight;
+  if (inflight && !opts.pairing) return inflight;
+  // Abertura em curso no modo errado: espera terminar e reabre no modo certo.
+  if (inflight) await inflight.catch(() => {});
 
-  const p = _openSocket(userId, numberId, k)
+  const p = _openSocket(userId, numberId, k, opts)
     .finally(() => { if (starting.get(k) === p) starting.delete(k); });
   starting.set(k, p);
   return p;
 }
 
-async function _openSocket(userId, numberId, k) {
+async function _openSocket(userId, numberId, k, opts = {}) {
   cancelReconnect(k);
+
+  // `browser` é opção de CONSTRUÇÃO do socket: não dá pra trocar depois. Quando o
+  // chamador não diz nada (reconexão por backoff, restore), herdamos a intenção
+  // que a sessão já tinha — senão o primeiro reconnect voltaria pro rótulo
+  // customizado e derrubaria o pareamento em andamento.
+  const pairing = opts.pairing ?? (sessions.get(k)?.pairingMode ?? false);
 
   // Encerra o socket anterior ANTES de abrir outro e desliga os listeners: um
   // socket zumbi continua recebendo eventos e gravando auth por baixo.
@@ -415,7 +631,7 @@ async function _openSocket(userId, numberId, k) {
       keys: makeCacheableSignalKeyStore(state.keys, log),
     },
     printQRInTerminal: false,
-    browser: [deviceLabel(), "Chrome", "1.0"],
+    browser: pairing ? PAIRING_BROWSER : [deviceLabel(), "Chrome", "1.0"],
     logger: log,
     syncFullHistory: false,
     markOnlineOnConnect: false,
@@ -461,6 +677,10 @@ async function _openSocket(userId, numberId, k) {
   session.gen = gen;
   session.socketAlive = true;
   session.terminal = false; // um start explícito sempre tira do estado terminal
+  session.pairingMode = pairing;
+  // Socket novo invalida qualquer código pendente: o link_code_companion_reg vale
+  // só pra conexão que o emitiu.
+  clearPairing(session);
   session.status = session.status && session.status !== "logged_out" ? session.status : "connecting";
   session.lastError = null;
   sessions.set(k, session);
@@ -510,6 +730,10 @@ async function _openSocket(userId, numberId, k) {
       session.status = "connected";
       session.qr = null;
       session.qrDataUrl = null;
+      clearPairing(session);
+      // "Once you are fully paired, you can switch the browser config back to
+      // normal" — daqui em diante o socket pode voltar ao rótulo customizado.
+      session.pairingMode = false;
       session.info = sock.user ? {
         id: sock.user.id,
         name: sock.user.name || sock.user.verifiedName || null,
@@ -543,10 +767,12 @@ async function _openSocket(userId, numberId, k) {
       if (session.migrating) return;
 
       const err = lastDisconnect?.error;
-      const paired = !!sock.authState?.creds?.me?.id;
+      const creds = sock.authState?.creds;
+      const paired = isPairedCreds(creds);
       const result = classifyClose(err, {
         shuttingDown,
         paired,
+        pairingAttempt: !paired && !!creds?.pairingCode,
         lastConflictAt: session.lastConflictAt || null,
         conflictRetries: session.conflictRetries || 0,
       });
@@ -569,6 +795,7 @@ async function _openSocket(userId, numberId, k) {
       session.lastError = lastError;
       session.qr = null;
       session.qrDataUrl = null;
+      clearPairing(session);
 
       // Estado terminal (logout real do usuário, ou worker encerrando): não
       // reconecta sozinho.
@@ -1024,6 +1251,7 @@ function msgStats(id) {
 
 module.exports = {
   startSession,
+  requestPairingCode,
   getSession,
   listSessions,
   listAllSessions,
@@ -1046,12 +1274,14 @@ module.exports = {
   isStuckReconnecting,
   isCurrentGen,
   isOrphanQrSession,
+  isPairedCreds,
 };
 
 function makeStub() {
   const fail = () => Promise.reject(new Error("Baileys não instalado. Rode: cd backend && npm install"));
   return {
     startSession: fail,
+    requestPairingCode: fail,
     getSession: () => null,
     listSessions: () => [],
     listAllSessions: () => ({}),
