@@ -205,22 +205,18 @@ aparelho** (`555596168060.47` e `4269197504618.47` lado a lado em
 `baileys_auth`): dois ratchets independentes que divergem — `Bad MAC` aqui,
 placeholder lá.
 
-Correção em duas partes:
+A correção foi, por um tempo, um patch nosso em cima do 6.7.23
+(`patches/@whiskeysockets+baileys+6.7.23.patch`), que ensinava o Baileys que
+`creds.me.lid` e `creds.me.id` são a mesma conta e adivinhava o mapeamento PN↔LID
+a partir do metadata do grupo. **Esse patch não existe mais** — foi removido na
+migração para o `7.0.0-rc14`, que tem `LIDMappingStore` nativo (ver *"O mapa
+PN↔LID nativo"*, abaixo).
 
-1. **`patches/@whiskeysockets+baileys+6.7.23.patch`** — ensina o Baileys que
-   `creds.me.lid` e `creds.me.id` são a mesma conta. Aplicado pelo `postinstall`
-   (`patch-package`, que por isso é dependência de **produção**: o deploy roda
-   `npm install --omit=dev`). `tests/unit/whatsapp-lid-patch.test.js` falha se o
-   patch sumir do `node_modules` — sem esse alarme, um deploy desfaria a
-   correção em silêncio.
-2. **`scripts/fix-lid-sessions.js`** — apaga os pares PN×LID que já divergiram,
-   para o libsignal refazer a sessão do zero (o patch impede novos casos, não
-   desfaz os antigos). Dry-run por padrão; só apaga com `--apply`. Nunca toca em
-   `creds` — apagar creds é que forçaria reler o QR.
-
-A correção definitiva é o `baileys` 7.x, que tem `LIDMappingStore` nativo. Está
-em release candidate (7.0.0-rc14), muda o nome do pacote e exige adaptar o
-auth-state — fica para quando sair a versão estável.
+O que sobreviveu ao patch é `scripts/fix-lid-sessions.js`: apaga os pares PN×LID
+que já divergiram, para o libsignal refazer a sessão do zero. Dry-run por padrão;
+só apaga com `--apply`. Nunca toca em `creds` — apagar creds é que forçaria reler
+o QR. Continua útil, e é a primeira ferramenta a usar se aparecer `Bad MAC` em
+massa.
 
 ### O mesmo defeito no fanout de GRUPO
 
@@ -239,15 +235,18 @@ própria conta por `creds.me.lid`, o único par que conhecemos.
 
 O que atrasou o diagnóstico foi a falta de sinal: o `logger.debug('sending new
 sender key')` do Baileys sumia na configuração normal, então um fanout **vazio**
-ficava indistinguível de um envio bom (`envio ok` no log dos dois jeitos). Por
-isso o patch registra o fanout em `info`:
+ficava indistinguível de um envio bom (`envio ok` no log dos dois jeitos).
+
+Por isso o filtro de log de `local.js` (`KEEP_LINES` / `keepLogLine`) deixa passar
+essa linha mesmo em `debug`:
 
 ```
-grep "fanout da sender key do grupo" logs/worker-out.log
+grep -E "sending new sender key|Own LID session|retry" logs/worker-out.log
 ```
 
-`senderKeyJids: 0` num grupo com participantes é o bug acontecendo;
-`pnInLidGroup` > 0 é a usync devolvendo PN num grupo LID.
+`senderKeyJids` vazio num grupo com participantes é o bug acontecendo.
+`tests/unit/whatsapp-log-filter.test.js` é o alarme que impede alguém de apertar
+o regex e devolver o sistema à cegueira.
 
 Duas ferramentas acompanham:
 
@@ -263,6 +262,47 @@ E o pool do Prisma subiu para 10 (`db.js`): o default é `num_cpus * 2 + 1`, que
 nesta VPS de 1 core dava **três** conexões — uma rajada de reenvios esgotava o
 pool, e falha de gravação de chave derruba o socket de propósito
 (`onPersistError`), realimentando o problema.
+
+### O mapa PN↔LID nativo (Baileys 7)
+
+Desde `@whiskeysockets/baileys@7.0.0-rc14` o mapa PN↔LID é da própria biblioteca
+(`LIDMappingStore`), e não mais um chute a partir do metadata do grupo. Ele
+persiste pelo nosso adapter sem nenhum código novo: `auth/baileys-pg.js` trata
+`keyType` como string opaca, então os quatro tipos que o 7 acrescentou —
+`lid-mapping`, `device-list`, `tctoken`, `identity-key` — gravam em
+`baileys_auth` como qualquer outro.
+
+Como conferir que está funcionando:
+
+```
+grep "Own LID session created successfully" logs/worker-out.log
+```
+```sql
+select "keyType", count(*) from baileys_auth group by 1;
+select "keyId" from baileys_auth where "keyType" = 'lid-mapping';
+```
+
+`lid-mapping` vem **aos pares**: uma linha `keyId = <pnUser>` e outra
+`keyId = <lidUser>_reverse`. `device-list` traz um `keyId` por participante
+conhecido. Nenhum dos dois existe numa sessão criada pelo 6.x — se eles não
+aparecerem depois de conectar e enviar, o mapa nativo não está entrando.
+
+`tests/unit/whatsapp-lid-mapping.test.js` prova a cadeia inteira (LIDMappingStore
+→ addTransactionCapability → nosso auth-state → AES/BufferJSON → banco) sem rede
+nem Postgres, incluindo a conta que o 6.7.23 errava: `555596168060:47@…net` tem
+que virar `4269197504618:47@lid`, e não `555596168060:47@lid`.
+
+**Duas crenças que circulavam e são falsas** (estavam no `plano_sete.md` e numa
+versão anterior deste arquivo):
+
+- *"o pacote muda de nome no 7"* — não muda. `@whiskeysockets/baileys` e `baileys`
+  publicam as mesmas versões; ficamos no nome com escopo porque
+  `tests/unit/whatsapp-close.test.js` e `whatsapp-pairing-code.test.js` importam
+  pelo caminho físico em `node_modules`.
+- *"o 7 acrescentou `pairingEphemeralKeyPair` às creds, e sessão antiga pode não
+  sobreviver"* — o campo já existia no 6.5.0. Nenhuma credencial em uso está sem
+  ele, e o upgrade foi verificado numa sessão criada pelo 6.7.23: reconectou sem
+  QR. Não é preciso backfill.
 
 ## Onde as credenciais ficam
 

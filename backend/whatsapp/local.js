@@ -60,14 +60,38 @@ function pgAuth() {
 // "warn" no dia a dia. WA_LOG_LEVEL=debug/trace liga o log de protocolo do
 // Baileys — necessário pra diagnosticar sessão que não conecta e não fecha.
 //
-// Fora isso, rodamos em `debug` com um destino que FILTRA: as linhas do caminho de
-// retry (`recv retry request`, `message not available`, `forced new session for
-// retry recp`, `fetching sessions`) nascem em debug/info no Baileys e eram a única
-// evidência de por que o placeholder "Aguardando mensagem" não some — mas subir o
-// nível inteiro despejaria os ~6.700 `Bad MAC`/dia no log. Então deixamos passar
-// warn/error como sempre e, abaixo disso, só o que casa com RETRY_LINES.
+// Fora isso, rodamos em `debug` com um destino que FILTRA. Subir o nível inteiro
+// despejaria os ~6.700 `Bad MAC`/dia no log, então deixamos passar warn/error
+// como sempre e, abaixo disso, só o que casa com KEEP_LINES. Duas famílias de
+// linha importam:
+//
+//   1. o caminho de RETRY (`recv retry request`, `message not available`,
+//      `forced new session for retry recp`, `fetching sessions`) — a única
+//      evidência de por que o placeholder "Aguardando mensagem" não some;
+//   2. o FANOUT da sender key de grupo (`sending new sender key`, `sending
+//      message to N devices`). No Baileys 6 esse sinal só existia porque o nosso
+//      patch o promovia a `info`; no 7 ele nasce em `debug`
+//      (Socket/messages-send.ts, `logger.debug({ senderKeyJids }, 'sending new
+//      sender key')`). Sem deixá-lo passar, um fanout VAZIO volta a ser
+//      indistinguível de um envio bom — foi exatamente essa cegueira que
+//      escondeu por dias o bug que deixou um grupo inteiro sem ver a promoção.
+//      `senderKeyJids` vazio num grupo com participantes é o bug acontecendo;
+//   3. o mapa PN<->LID nativo do 7 (`Own LID session created successfully`, em
+//      Socket/socket.ts). Nasce em `info` — que é 30, ABAIXO do nosso corte de
+//      40 — então também precisa estar aqui. É a confirmação, no connect, de que
+//      o LIDMappingStore assumiu o trabalho que o patch do 6.x fazia no chute.
+//
 // WA_RETRY_DEBUG=0 desliga sem deploy.
-const RETRY_LINES = /retry|fetching sessions|not available|forced new session/i;
+const KEEP_LINES = /retry|fetching sessions|not available|forced new session|sender key|sending message to|lid session|lid mapping/i;
+
+// Separado do destino pra poder ser testado sem montar um pino inteiro
+// (tests/unit/whatsapp-log-filter.test.js). Linha sem `level` numérico passa:
+// preferimos ruído a engolir algo que não sabemos classificar.
+function keepLogLine(rec) {
+  if (!rec || typeof rec.level !== "number") return true;
+  // 40 = warn no pino. Abaixo disso, só o que casa com KEEP_LINES.
+  return rec.level >= 40 || KEEP_LINES.test(rec.msg || "");
+}
 
 function makeLogger() {
   const explicit = process.env.WA_LOG_LEVEL;
@@ -76,9 +100,7 @@ function makeLogger() {
   const dest = {
     write(line) {
       try {
-        const rec = JSON.parse(line);
-        // 40 = warn no pino. Abaixo disso, só o caminho de retry.
-        if (rec.level >= 40 || RETRY_LINES.test(rec.msg || "")) process.stdout.write(line);
+        if (keepLogLine(JSON.parse(line))) process.stdout.write(line);
       } catch {
         process.stdout.write(line);
       }
@@ -1395,6 +1417,7 @@ module.exports = {
   isCurrentGen,
   isOrphanQrSession,
   isPairedCreds,
+  keepLogLine,
   setAlias,
   getAlias,
   clearAlias,

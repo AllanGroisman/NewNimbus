@@ -273,7 +273,15 @@ model WhatsappNumber {
 // PK composta serializa por sessão+chave; valores codificados com BufferJSON.
 model BaileysAuth {
   sessionId String // formato: "<userId>::<numberId>"
-  keyType   String // "creds" | "pre-key" | "session" | "sender-key" | "app-state-sync-key" | "app-state-sync-version" | "sender-key-memory"
+  // Tipos gravados pelo Baileys 7 (SignalDataTypeMap, src/Types/Auth.ts), mais
+  // "creds", que é a linha da credencial e não passa pelo key store:
+  //   "creds" | "pre-key" | "session" | "sender-key" | "sender-key-memory" |
+  //   "app-state-sync-key" | "app-state-sync-version" | "lid-mapping" |
+  //   "device-list" | "tctoken" | "identity-key"
+  // Os quatro últimos nasceram no 7. "lid-mapping" é o mapa PN<->LID nativo:
+  // ver linhas dele aqui é a prova de que o LIDMappingStore está funcionando.
+  // É só documentação — a coluna é String livre, sem enum nem check.
+  keyType   String
   keyId     String // "" para creds; ID específico pras outras
   value     String // JSON.stringify(v, BufferJSON.replacer) — Bytea seria ainda melhor mas complica migração
   updatedAt DateTime @default(now()) @updatedAt
