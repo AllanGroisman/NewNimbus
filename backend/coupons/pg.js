@@ -378,10 +378,9 @@ async function couponProducts(campaignId, { page = 1, pageSize = 50, origem = nu
 
 // Este produto está na vitrine DESTA campanha?
 //
-// Existe separado do `couponsForKeys` porque as duas perguntas são diferentes: o
-// `couponsForKeys` devolve o MELHOR cupom de cada produto, então um produto
-// coberto por duas campanhas responde por só uma delas — e o teste de cupom
-// pergunta por uma campanha específica.
+// Existe separado do `couponsListForKeys` porque as duas perguntas são diferentes:
+// aquele devolve os cupons DE um produto, sem saber qual campanha interessa — e o
+// teste de cupom pergunta por uma campanha específica.
 async function hasCouponProduct(campaignId, productKey) {
   return !!(await couponProductOrigem(campaignId, productKey));
 }
@@ -410,23 +409,43 @@ async function hasVitrine(campaignId) {
   return n > 0;
 }
 
-// Os cupons que cobrem um lote de produtos, para a tela do catálogo e para a fila
-// do repasse. Devolve Map<productKey, cupom>. Só cupom que ainda vale.
-async function couponsForKeys(keys) {
+// TODOS os cupons vigentes que cobrem um lote de produtos — Map<productKey, cupom[]>.
+//
+// Existiu aqui uma irmã, `couponsForKeys`, que devolvia só o MELHOR cupom de cada
+// produto (um `DISTINCT ON` ordenado por desconto). Ela saiu junto com a trava da
+// palavra: ordenava por desconto sem olhar o `code`, então elegia o cupom de 20%
+// sem palavra e escondia o de 10% com palavra — que é o único que o cliente
+// conseguiria usar. Mantê-la exportada era deixar a armadilha à mão.
+//
+// A ordem daqui é a resposta a "qual deles eu consigo anunciar?": cupom COM palavra
+// primeiro, e só dentro de cada grupo o maior desconto. Quem só quer um cupom pega
+// o primeiro da lista; quem quer mostrar todos (a tela do catálogo) usa a lista
+// inteira. O carimbo de `catalog_products.couponCampaignId` não passa por aqui — ele
+// tem SQL próprio em `syncCatalogCoupons`.
+async function couponsListForKeys(keys) {
   const lista = [...new Set((keys || []).filter(Boolean))];
   if (!lista.length) return new Map();
 
   const rows = await prisma().$queryRaw`
-    SELECT DISTINCT ON (p."productKey")
-           p."productKey", c."campaign_id" AS "campaignId", c."title", c."kind", c."value",
-           c."minPurchase", c."maxDiscount", c."code", c."expiresAt", c."scope", c."sellerName"
+    SELECT p."productKey", c."campaign_id" AS "campaignId", c."title", c."kind", c."value",
+           c."minPurchase", c."maxDiscount", c."code", c."startsAt", c."expiresAt",
+           c."scope", c."sellerName"
       FROM "ml_coupon_products" p
       JOIN "ml_coupons" c ON c."campaign_id" = p."campaign_id"
      WHERE p."productKey" = ANY(${lista})
        AND (c."expiresAt" IS NULL OR c."expiresAt" > NOW())
-     ORDER BY p."productKey", (CASE WHEN c."kind" = 'percent' THEN c."value" ELSE 0 END) DESC NULLS LAST, c."value" DESC NULLS LAST
+     ORDER BY p."productKey",
+              (c."code" IS NOT NULL) DESC,
+              (CASE WHEN c."kind" = 'percent' THEN c."value" ELSE 0 END) DESC NULLS LAST,
+              c."value" DESC NULLS LAST
   `;
-  return new Map(rows.map(r => [r.productKey, r]));
+
+  const mapa = new Map();
+  for (const r of rows) {
+    if (!mapa.has(r.productKey)) mapa.set(r.productKey, []);
+    mapa.get(r.productKey).push(r);
+  }
+  return mapa;
 }
 
 async function getCoupon(campaignId) {
@@ -660,7 +679,7 @@ module.exports = {
   couponProducts,
   hasCouponProduct,
   couponProductOrigem,
-  couponsForKeys,
+  couponsListForKeys,
   getCoupon,
   listCodeChecks,
   findCodeCheck,

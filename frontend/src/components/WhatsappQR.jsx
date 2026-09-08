@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { PRIMARY, PRIMARY_DARK } from "../data/constants";
-import { startWASession, getWASession, deleteWASession, requestWAPairingCode, errText } from "../data/api";
+import { startWASession, getWASession, deleteWASession, requestWAPairingCode, listWASessions, errText } from "../data/api";
 import { maskWhatsappPhoneInput, toWhatsappPhone, formatWhatsappPhone } from "../data/phone";
 import Spinner from "./ui/Spinner";
 
@@ -38,7 +38,7 @@ function mmss(seconds) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-export default function WhatsappQR({ sessionId, onConnected, onError, autoStart = true, defaultPhone = "" }) {
+export default function WhatsappQR({ sessionId, onConnected, onError, autoStart = true, defaultPhone = "", knownNumberIds = [] }) {
   const [state, setState] = useState({ status: "starting", qr: null, info: null, error: null });
   const [mode, setMode] = useState("qr");
   // phase: form (pedindo o telefone) → loading → code (mostrando) → expired.
@@ -67,6 +67,12 @@ export default function WhatsappQR({ sessionId, onConnected, onError, autoStart 
   const onErrorRef = useRef(onError);
   useEffect(() => { onConnectedRef.current = onConnected; }, [onConnected]);
   useEffect(() => { onErrorRef.current = onError; }, [onError]);
+  // Ids já no painel, em ref pela mesma razão das callbacks: o polling vive num
+  // useEffect que não reinicia a cada render.
+  const knownIdsRef = useRef(knownNumberIds);
+  useEffect(() => { knownIdsRef.current = knownNumberIds; }, [knownNumberIds]);
+  // Dispara um tick imediato (usado pelo visibilitychange). Preenchido pelo efeito.
+  const tickNowRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -82,8 +88,22 @@ export default function WhatsappQR({ sessionId, onConnected, onError, autoStart 
         return;
       }
 
+      // A sessão provisória some quando o backend a renomeia pro id-telefone. O
+      // backend deixa um alias no lugar (10 min), mas se até ele expirou o GET dá
+      // 404 e ficaríamos polando um id morto pra sempre. Neste caso perguntamos a
+      // lista de sessões: uma sessão conectada que o painel ainda não conhece é,
+      // necessariamente, a que acabamos de vincular.
+      const recoverFrom404 = async () => {
+        const rows = await listWASessions();
+        const known = new Set((knownIdsRef.current || []).map(String));
+        return (rows || []).find(
+          r => r.status === "connected" && r.info?.phone && !known.has(String(r.numberId)),
+        ) || null;
+      };
+
       const tick = async () => {
         if (stoppedRef.current || cancelled) return;
+        if (pollRef.current) { clearTimeout(pollRef.current); pollRef.current = null; }
         if (busyRef.current) {
           pollRef.current = setTimeout(tick, 1500);
           return;
@@ -98,10 +118,24 @@ export default function WhatsappQR({ sessionId, onConnected, onError, autoStart 
             return;
           }
         } catch (err) {
-          if (!cancelled) setState(s => ({ ...s, error: errText(err, "Não foi possível conectar o WhatsApp.") }));
+          if (cancelled) return;
+          if (err?.status === 404) {
+            try {
+              const found = await recoverFrom404();
+              if (cancelled) return;
+              if (found) {
+                setState({ status: "connected", qr: null, info: found.info, error: null });
+                stoppedRef.current = true;
+                onConnectedRef.current?.(found.info);
+                return;
+              }
+            } catch { /* segue pro erro genérico abaixo */ }
+          }
+          setState(s => ({ ...s, error: errText(err, "Não foi possível conectar o WhatsApp.") }));
         }
         pollRef.current = setTimeout(tick, 1500);
       };
+      tickNowRef.current = tick;
       tick();
     }
 
@@ -109,9 +143,24 @@ export default function WhatsappQR({ sessionId, onConnected, onError, autoStart 
     return () => {
       cancelled = true;
       stoppedRef.current = true;
+      tickNowRef.current = null;
       if (pollRef.current) clearTimeout(pollRef.current);
     };
   }, [sessionId, autoStart, restartNonce]);
+
+  // Vincular pelo código de 8 dígitos obriga a sair do navegador pra digitar no
+  // celular, e o navegador do celular congela o polling da aba em segundo plano —
+  // foi assim que a confirmação de "conectado" era perdida. Ao voltar, consulta na
+  // hora em vez de esperar o próximo intervalo de 1,5s.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      if (stoppedRef.current || busyRef.current) return;
+      tickNowRef.current?.();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
 
   // Contagem regressiva do código. O prazo que mostramos é menor que a vida real
   // do socket de propósito (ver PAIRING_CODE_TTL_MS no backend): queremos

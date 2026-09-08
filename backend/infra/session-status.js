@@ -19,6 +19,10 @@ const TTL_SECONDS = 86400; // 24h. Re-published a cada evento + refresh de 60s.
 // é a única coisa que faz a tela seguir mostrando "Desconectado (relogar)" em vez
 // de um "Desconectado" genérico — por isso vive mais.
 const TERMINAL_TTL_SECONDS = 7 * 86400;
+// Redirecionamento deixado pela canonicalização (id provisório → telefone). Vive
+// só o bastante pro painel que ficou em segundo plano voltar e descobrir que
+// conectou — ver publishAlias.
+const ALIAS_TTL_SECONDS = 600; // 10 min
 
 let _redis = null;
 
@@ -49,6 +53,10 @@ const WORKER_DEAD_SECONDS = 30;
 // nunca escreveu / expirou; undefined = não foi possível apurar → fail-open
 // (não rebaixa, pra uma falha de leitura do Redis não pintar tudo de vermelho).
 function decaySnapshot(s, { now = Date.now(), workerAgeSeconds, staleMs = STALE_SNAPSHOT_MS } = {}) {
+  // Alias é fato histórico ("este id provisório virou aquele telefone e conectou"),
+  // não alegação de liveness: ninguém o republica, então o decaimento por idade o
+  // rebaixaria em 180s e voltaríamos ao 404 que ele existe pra evitar.
+  if (s?.alias) return s;
   if (!s || !LIVE_STATUSES.has(s.status)) return s;
   const workerDead = workerAgeSeconds === null
     || (typeof workerAgeSeconds === "number" && workerAgeSeconds > WORKER_DEAD_SECONDS);
@@ -96,6 +104,28 @@ async function publish(userId, numberId, data) {
   await client().setex(KEY(userId, numberId), ttl, JSON.stringify(payload));
 }
 
+// Redirecionamento do id provisório para o canônico, gravado pela canonicalização
+// no lugar de um DEL. Sem isso o GET da sessão provisória responde 404 assim que a
+// sessão é renomeada, e o painel que estava em segundo plano (típico do código de
+// pareamento, em que o usuário sai do navegador pra digitar no celular) nunca
+// descobre que deu certo — o número fica conectado no worker e ausente do banco.
+async function publishAlias(userId, tmpId, { info = null, canonicalNumberId = null } = {}) {
+  const payload = {
+    userId: String(userId),
+    numberId: String(tmpId),
+    status: "connected",
+    qr: null,
+    info,
+    lastError: null,
+    stuck: false,
+    terminal: false,
+    alias: true,
+    canonicalNumberId: canonicalNumberId ? String(canonicalNumberId) : null,
+    updatedAt: new Date().toISOString(),
+  };
+  await client().setex(KEY(userId, tmpId), ALIAS_TTL_SECONDS, JSON.stringify(payload));
+}
+
 async function read(userId, numberId) {
   const json = await client().get(KEY(userId, numberId));
   if (!json) return null;
@@ -138,7 +168,9 @@ async function listAllRaw() {
 async function listForUser(userId) {
   const age = await workerAge();
   const rows = await readAll(USER_PATTERN(userId));
-  return rows.map(s => decaySnapshot(s, { workerAgeSeconds: age }));
+  // Aliases ficam de fora das LISTAS: são o mesmo número sob o id velho e virariam
+  // um card fantasma no painel. Só o read() direto por id os enxerga.
+  return rows.filter(s => !s?.alias).map(s => decaySnapshot(s, { workerAgeSeconds: age }));
 }
 
 // Tudo agrupado por usuário. Uma varredura serve a lista inteira do admin.
@@ -146,7 +178,7 @@ async function listAllByUser() {
   const age = await workerAge();
   const out = {};
   for (const raw of await readAll(ALL_PATTERN)) {
-    if (!raw?.userId) continue;
+    if (!raw?.userId || raw.alias) continue;
     const s = decaySnapshot(raw, { workerAgeSeconds: age });
     (out[s.userId] ||= []).push({
       numberId: s.numberId,
@@ -169,6 +201,7 @@ async function aggregateStatus() {
   const rows = await readAll(ALL_PATTERN);
   let total = 0, connected = 0;
   for (const raw of rows) {
+    if (raw?.alias) continue; // mesmo número sob o id velho — contaria em dobro
     total++;
     if (decaySnapshot(raw, { workerAgeSeconds: age }).status === "connected") connected++;
   }
@@ -180,6 +213,7 @@ async function countsByStatus() {
   const age = await workerAge();
   const out = {};
   for (const raw of await readAll(ALL_PATTERN)) {
+    if (raw?.alias) continue; // idem aggregateStatus: não é uma sessão a mais
     const st = decaySnapshot(raw, { workerAgeSeconds: age }).status || "unknown";
     out[st] = (out[st] || 0) + 1;
   }
@@ -194,7 +228,7 @@ async function close() {
 }
 
 module.exports = {
-  publish, read, listForUser, listAllByUser, listAllRaw,
+  publish, publishAlias, read, listForUser, listAllByUser, listAllRaw,
   clear, aggregateStatus, countsByStatus, close,
   decaySnapshot, STALE_SNAPSHOT_MS, WORKER_DEAD_SECONDS,
 };

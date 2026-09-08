@@ -92,3 +92,33 @@ describe("shopeeNodeToProduct", () => {
     expect(p.link).toBe("https://shopee.com.br/x-i.1.2");
   });
 });
+
+// O repasse depende disso: sem os IDs, o caminho pela Affiliate API é pulado e
+// sobra o navegador — que na PDP da Shopee não enxerga preço.
+describe("extractShopeeIds", () => {
+  it("lê o formato antigo -i.<shopId>.<itemId>", () => {
+    expect(scraper.extractShopeeIds("https://shopee.com.br/calca-wide-i.306423459.20046202534"))
+      .toEqual({ shopId: "306423459", itemId: "20046202534" });
+  });
+
+  it("lê o destino do link curto (/opaanlp/<shopId>/<itemId>), com query atrás", () => {
+    expect(scraper.extractShopeeIds("https://shopee.com.br/opaanlp/306423459/20046202534?__mobile__=1&utm_source=x"))
+      .toEqual({ shopId: "306423459", itemId: "20046202534" });
+  });
+
+  it("lê o permalink /product/<shopId>/<itemId> que a própria API devolve", () => {
+    expect(scraper.extractShopeeIds("https://shopee.com.br/product/306423459/20046202534"))
+      .toEqual({ shopId: "306423459", itemId: "20046202534" });
+  });
+
+  it("ignora barra sobrando no fim", () => {
+    expect(scraper.extractShopeeIds("https://shopee.com.br/product/306423459/20046202534/"))
+      .toEqual({ shopId: "306423459", itemId: "20046202534" });
+  });
+
+  it("null quando não é página de produto", () => {
+    expect(scraper.extractShopeeIds("https://shopee.com.br/search?keyword=fone")).toBeNull();
+    expect(scraper.extractShopeeIds("https://shopee.com.br/mall/12/34")).toBeNull(); // números curtos demais
+    expect(scraper.extractShopeeIds("não é url")).toBeNull();
+  });
+});

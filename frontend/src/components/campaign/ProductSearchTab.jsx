@@ -53,7 +53,7 @@ const AUTOSAVE_MS = 800;
 const SECTIONS_KEY = "nimbus.searchTab.sections";
 const VIEW_KEY = "nimbus.searchTab.view";
 
-const EMPTY_FILTERS = { keywords: "", minPrice: 0, maxPrice: null, minDiscount: 0, minRating: 0, minSales: 0 };
+const EMPTY_FILTERS = { keywords: "", minPrice: 0, maxPrice: null, minDiscount: 0, minRating: 0, minSales: 0, hasCoupon: false };
 
 // Só o que o catálogo entende dos filtros. Serve pra duas coisas ao mesmo tempo:
 // é o que vai na request, e é o que se compara pra saber se o que está escrito
@@ -65,6 +65,7 @@ const filterSig = (f = {}) => JSON.stringify({
   minDiscount: Number(f.minDiscount) || 0,
   minRating: Number(f.minRating) || 0,
   minSales: Number(f.minSales) || 0,
+  hasCoupon: !!f.hasCoupon,
 });
 
 // Chaves de comparação com fila/pendentes/histórico.
@@ -447,6 +448,9 @@ export default function ProductSearchTab({
   }
   if (Number(filters.minSales) > 0) {
     activeChips.push({ label: `${filters.minSales}+ vendas`, clear: () => applyFilter("minSales", 0) });
+  }
+  if (filters.hasCoupon) {
+    activeChips.push({ label: "só com cupom do ML", clear: () => applyFilter("hasCoupon", false) });
   }
 
   // A palavra-chave já aparece no campo de busca — o resumo abaixo dele mostra
@@ -971,6 +975,24 @@ export default function ProductSearchTab({
             />
           </div>
         </div>
+
+        {/* Fora da grade dos campos numéricos de propósito: é uma chave, não um
+            valor a digitar, e vale na hora (`applyFilter`) como os chips. */}
+        <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, cursor: "pointer", fontSize: 13 }}>
+          <input
+            type="checkbox"
+            checked={!!filters.hasCoupon}
+            onChange={e => applyFilter("hasCoupon", e.target.checked)}
+          />
+          <span>Só produtos com cupom do Mercado Livre</span>
+        </label>
+        {filters.hasCoupon && (
+          <div style={{ ...noteStyle("warn"), marginTop: 8 }}>
+            Só entram produtos que o sistema já viu na vitrine de algum cupom. O selo roxo no card é
+            cupom com palavra — só esse desconta na mensagem. O selo cinza é cupom cuja palavra ainda
+            não foi descoberta: sem ela o cliente não teria o que digitar no checkout.
+          </div>
+        )}
 
         {priceInverted && (
           <div style={{ ...noteStyle("warn"), marginTop: 12 }}>

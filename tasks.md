@@ -18,6 +18,8 @@
 
 10. [] Consigo entrar no PC da VPS que tem linux, instalar o chrome com a extensão e fazer o captcha manualmente quando necessario? Para automatizar a busca por cupom ou as coisas que precisam de captcha
 
-11. [] Além do QRCode, da pra entrar no whats com codigo tb, certo?  Quero acrescentar esta opção.
+11. [x] Além do QRCode, da pra entrar no whats com codigo tb, certo?  Quero acrescentar esta opção.
 
-12. [] Quero que tenha desconto_cupom, preco_pos_cupom, etc... Quero tb que  
+12. [] Quero que os produtos do sistema tenham os cupons os quais é possível aplicar. O que falta? Qual a forma mais facil de descobrir qual cupom funciona nos produtos? Da uma olhada no que o sistema ja faz e no que é possivel
+
+13. [] Quero que na hora de enviar esses produtos seja possivel dar o preço com cupom, desconto do cupom, a palavra do cupom (cupom só vale se tiver palavra).

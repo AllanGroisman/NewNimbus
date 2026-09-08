@@ -187,6 +187,30 @@ function handlePersistError(session, gen, err) {
 
 function key(userId, numberId) { return `${userId}::${numberId}`; }
 
+// ── Aliases de canonicalização ──────────────────────────────────────────────
+// Quando a sessão do id provisório vira o id-telefone, o id provisório deixa de
+// existir e o GET da rota responderia 404 pra sempre. Guardamos aqui um
+// redirecionamento de vida curta para o painel que só voltar a consultar depois
+// (aba em segundo plano no fluxo de código de pareamento) ainda ver "connected"
+// com o `info` do telefone. Em modo redis quem serve o painel é o snapshot do
+// session-status (publishAlias); este Map cobre o modo memória e o próprio worker.
+const aliases = new Map(); // key(userId, tmpId) → { info, canonicalNumberId, expiresAt }
+const ALIAS_TTL_MS = 600_000; // 10 min — mesmo TTL do snapshot no Redis
+
+function setAlias(userId, tmpId, { info = null, canonicalNumberId = null } = {}) {
+  aliases.set(key(userId, tmpId), { info, canonicalNumberId, expiresAt: Date.now() + ALIAS_TTL_MS });
+}
+
+function getAlias(userId, tmpId) {
+  const k = key(userId, tmpId);
+  const a = aliases.get(k);
+  if (!a) return null;
+  if (a.expiresAt <= Date.now()) { aliases.delete(k); return null; }
+  return a;
+}
+
+function clearAlias(userId, tmpId) { aliases.delete(key(userId, tmpId)); }
+
 // Puro/testável: o handler pertence ao socket vigente desta sessão?
 function isCurrentGen(session, gen) { return !!session && session.gen === gen; }
 
@@ -936,10 +960,23 @@ async function canonicalizeSession(userId, tmpId, canonicalId) {
   // 2. Move a auth (creds recém-escaneadas + keys) do id tmp pro canônico.
   await pgAuth().renameSession(`${userId}::${tmpId}`, `${userId}::${canonicalId}`);
 
-  // 3. Limpa a sessão tmp do Map e do Redis.
+  // 3. Tira a sessão tmp do Map e deixa no lugar dela um REDIRECIONAMENTO.
+  // Apagar o snapshot (o que se fazia antes) fazia o GET /api/whatsapp/sessions/<tmpId>
+  // responder 404 pra sempre a partir daqui, e o modal do painel só tinha os 3s
+  // agendados no connection.open pra ver "connected". Quem vincula pelo código de 8
+  // dígitos PRECISA sair do navegador pra digitar no celular — a aba fica suspensa,
+  // perde a janela, e o número acabava conectado no worker e ausente do banco.
   sessions.delete(tmpKey);
   starting.delete(tmpKey);
-  if (PUBLISH_STATUS) { try { await sessionStatus().clear(userId, tmpId); } catch {} }
+  setAlias(userId, tmpId, { info: session.info, canonicalNumberId: canonicalId });
+  if (PUBLISH_STATUS) {
+    try {
+      await sessionStatus().publishAlias(userId, tmpId, {
+        info: session.info,
+        canonicalNumberId: canonicalId,
+      });
+    } catch {}
+  }
 
   // 4. Descarta qualquer sessão canônica anterior (será substituída pela auth nova).
   const canonKey = key(userId, canonicalId);
@@ -958,8 +995,26 @@ async function canonicalizeSession(userId, tmpId, canonicalId) {
   console.log(`[whatsapp] sessão canonicalizada ${userId}: ${tmpId} -> ${canonicalId}`);
 }
 
+// Só leitura de status (a rota GET da sessão, o snapshot do worker). Quem vai
+// USAR o socket passa por ensureConnected, que lê o Map direto e portanto nunca
+// enxerga um alias — o alias não tem sock.
 function getSession(userId, numberId) {
-  return sessions.get(key(userId, numberId));
+  const s = sessions.get(key(userId, numberId));
+  if (s) return s;
+  const a = getAlias(userId, numberId);
+  if (!a) return undefined;
+  return {
+    userId: String(userId),
+    numberId: String(numberId),
+    status: "connected",
+    info: a.info || null,
+    qr: null,
+    qrDataUrl: null,
+    lastError: null,
+    stuck: false,
+    alias: true,
+    canonicalNumberId: a.canonicalNumberId || null,
+  };
 }
 
 function snapshotOf(s) {
@@ -1000,6 +1055,10 @@ async function deleteSession(userId, numberId) {
   // remoção recriava a sessão logo depois de apagada (a conexão fantasma clássica).
   cancelReconnect(k);
   starting.delete(k);
+  // O painel dispara DELETE no id provisório ao fechar o modal. Se ficasse um
+  // alias pra trás, uma tentativa seguinte com o mesmo id leria "connected" de
+  // uma vinculação que o usuário acabou de descartar.
+  clearAlias(userId, numberId);
   const s = sessions.get(k);
   sessions.delete(k);
   if (s) {
@@ -1227,7 +1286,10 @@ async function restoreSessions() {
       const snaps = await sessionStatus().listAllRaw();
       for (const snap of snaps) {
         const sk = `${snap.userId}::${snap.numberId}`;
-        if (owned.has(sk) || snap.terminal) continue;
+        // Alias (id provisório → canônico) não é sessão nossa e não deve ser
+        // rebaixado: ele existe justamente pra um painel que voltou do segundo
+        // plano ainda ler "connected". Ele expira sozinho pelo TTL.
+        if (owned.has(sk) || snap.terminal || snap.alias) continue;
         await sessionStatus().publish(snap.userId, snap.numberId, {
           status: "disconnected", info: snap.info || null, lastError: null,
         }).catch(() => {});
@@ -1333,6 +1395,9 @@ module.exports = {
   isCurrentGen,
   isOrphanQrSession,
   isPairedCreds,
+  setAlias,
+  getAlias,
+  clearAlias,
 };
 
 function makeStub() {

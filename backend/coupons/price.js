@@ -9,8 +9,8 @@
 // Livre não daria: cupom vencido, compra mínima não atingida, cupom sem valor
 // conhecido. Prometer errado aqui vira cliente clicando e pagando mais caro.
 
-// Cupom sem data de validade vale (é a mesma regra do `couponsForKeys`: o filtro
-// lá é `expiresAt IS NULL OR expiresAt > NOW()`). Data quebrada não derruba a
+// Cupom sem data de validade vale (é a mesma regra do `couponsListForKeys`: o
+// filtro lá é `expiresAt IS NULL OR expiresAt > NOW()`). Data quebrada não derruba a
 // conta — só uma data legível E no passado invalida.
 function venceu(v) {
   if (!v) return false;
@@ -64,4 +64,33 @@ function precoComCupom(price, rule) {
   return final;
 }
 
-module.exports = { precoComCupom };
+// O mesmo desconto, mas contado: o que a mensagem precisa para dizer QUANTO o
+// cupom tira, e não só quanto sobra.
+//
+// Construída sobre o `precoComCupom` de propósito — as regras que recusam o cupom
+// (vencido, não começou, compra mínima, teto, tipo desconhecido) moram lá e só lá.
+// Se ele diz `null`, aqui também é `null`: nunca existe um rótulo "15% OFF" para um
+// cupom que o cálculo recusou.
+//
+// `rotulo` é a REGRA do cupom ("15% OFF"), `economia` é o que ela vale neste preço
+// ("R$ 284,85"). São coisas diferentes e a mensagem usa as duas em lugares
+// diferentes — daí não haver um campo só.
+function detalheDoCupom(price, rule) {
+  const final = precoComCupom(price, rule);
+  if (final === null) return null;
+
+  const p = Number(price);
+  const economia = Math.round((p - final) * 100) / 100;
+
+  // O rótulo sai do `kind`, não da economia: um cupom de 15% com teto desconta
+  // menos que 15% num produto caro, e escrever "12% OFF" ali seria descrever o
+  // produto, não o cupom que o cliente vai usar no próximo.
+  const value = Number(rule.value);
+  const rotulo = String(rule.kind || "") === "percent"
+    ? `${value}% OFF`
+    : `R$ ${value.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} OFF`;
+
+  return { final, economia, rotulo };
+}
+
+module.exports = { precoComCupom, detalheDoCupom };

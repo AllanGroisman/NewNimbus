@@ -324,6 +324,34 @@ describe("scheduler.renderTemplate — mensagem do envio", () => {
     expect(scheduler.renderTemplate("{preco}|{preco_com_cupom}", {})).toBe("—|—");
   });
 
+  // {desconto_cupom} e {economia_cupom}: quem calcula é o sendItem (detalheDoCupom
+  // contra o cupom no banco na hora do envio) — aqui só chegam prontos, ou nulos.
+  it("{desconto_cupom} e {economia_cupom} entram quando o cupom vale", () => {
+    const out = scheduler.renderTemplate(
+      "{produto}\n🏷️ {desconto_cupom}\n💸 Economize {economia_cupom}",
+      { ...produto, coupon: "JBL20", couponLabel: "15% OFF", couponSaving: 284.85 },
+    );
+    expect(out).toBe("Mouse Pro\n🏷️ 15% OFF\n💸 Economize R$ 284,85");
+  });
+
+  it("sem cupom válido, as linhas de {desconto_cupom} e {economia_cupom} somem", () => {
+    const tpl = "🔥 {produto}\n🏷️ Cupom: {desconto_cupom}\n💸 Economize {economia_cupom}\n{link}";
+    expect(scheduler.renderTemplate(tpl, produto))
+      .toBe("🔥 Mouse Pro\nhttps://amzn.to/x");
+  });
+
+  // Economia 0 não existe (precoComCupom recusa desconto que não muda o preço),
+  // mas o guard é por `== null` e não por falsy — se um dia chegar, a linha fica.
+  it("{economia_cupom} distingue nulo de zero", () => {
+    expect(scheduler.renderTemplate("E: {economia_cupom}", { ...produto, couponSaving: 0 }))
+      .toBe("E: R$ 0,00");
+  });
+
+  it("{desconto} não come o {desconto_cupom} na substituição", () => {
+    expect(scheduler.renderTemplate("{desconto_cupom}", { ...produto, couponLabel: "10% OFF" }))
+      .toBe("10% OFF");
+  });
+
   it("{preco} não come o {preco_com_cupom} na substituição", () => {
     expect(scheduler.renderTemplate("{preco_com_cupom}", { price: 10, priceWithCoupon: 8 })).toBe("R$ 8,00");
   });

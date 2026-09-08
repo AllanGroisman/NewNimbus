@@ -43,7 +43,9 @@ const TEMPLATE_VARS = [
   { token: "{desconto}", desc: "% de desconto (a linha some quando não houver promoção)" },
   { token: "{loja}", desc: "Nome da loja" },
   { token: "{vendas}", desc: "Nº de vendas (quando houver)" },
-  { token: "{cupom}", desc: "Cupom capturado no repasse (a linha some quando não houver)" },
+  { token: "{cupom}", desc: "A palavra do cupom, pra o cliente digitar no checkout (a linha some quando não houver)" },
+  { token: "{desconto_cupom}", desc: "O que o cupom tira: \"15% OFF\" ou \"R$ 30,00 OFF\" (a linha some quando não houver)" },
+  { token: "{economia_cupom}", desc: "Quanto o cupom economiza neste produto, em reais (a linha some quando não houver)" },
   { token: "{link}", desc: "Link de compra" },
 ];
 
@@ -56,6 +58,8 @@ const TEMPLATE_PREVIEW_DATA = {
   loja: "Mercado Livre",
   vendas: "1,2 mil vendidos",
   cupom: "GALAXY10",
+  desconto_cupom: "10% OFF",
+  economia_cupom: "R$ 190,00",
   link: "https://merc.li/abc123",
 };
 
@@ -71,6 +75,13 @@ const renderTemplate = (tpl, { cupom, promo = true } = {}) => {
   // Sem cupom o {preco_com_cupom} vira o preço normal — a linha NÃO some. Espelha
   // o fallback do scheduler.js, pra prévia não prometer desconto que não sai.
   if (!data.cupom) data.preco_com_cupom = data.preco;
+  // Já o desconto e a economia do cupom SOMEM por linha inteira, como o {cupom} —
+  // e é sempre a palavra que decide: sem ela o envio não desconta nada
+  // (scheduler.js:couponRuleForItem), então a prévia também não pode mostrar valor.
+  if (!data.cupom) {
+    t = t.replace(/^[^\n]*\{desconto_cupom\}[^\n]*\n?/gm, "");
+    t = t.replace(/^[^\n]*\{economia_cupom\}[^\n]*\n?/gm, "");
+  }
   // Sem promoção: apaga as linhas de {preco_antigo} e {desconto} — espelha o scheduler.js.
   if (!promo) {
     t = t.replace(/^[^\n]*\{preco_antigo\}[^\n]*\n?/gm, "");
@@ -358,6 +369,12 @@ function QueueItemCard({ item, idx, eta, onRemove, onMoveToTop, onSaveCoupon, on
           <QueueField label="Preço antigo" value={fmtBR(item.originalPrice)} />
           <QueueField label="Desconto" value={discountStr} />
           <CouponField value={item.coupon} onSave={onSaveCoupon} />
+          {/* O que o cupom tira, do jeito que o preenchimento leu no catálogo. Só o
+              RÓTULO da regra ("15% OFF"), nunca o preço final: esse é calculado no
+              envio, contra o cupom daquele instante (scheduler.js:sendItem), porque
+              o item fica dias na fila e o cupom vence nesse meio-tempo. Um número
+              congelado aqui viraria promessa velha. */}
+          <QueueField label="Desconto do cupom" value={item.couponLabel} />
           <QueueField label="Vendidos" value={soldText(item)} />
           <QueueField label="Avaliação" value={item.rating ? `★ ${item.rating}${item.reviewsCount ? ` (${item.reviewsCount})` : ""}` : null} />
           <QueueField label="Frete grátis" value={item.freeShipping ? "Sim" : null} />

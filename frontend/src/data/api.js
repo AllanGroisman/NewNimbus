@@ -410,7 +410,8 @@ export async function fetchOfertas({ category, minDiscount = 0, minPrice = 0, ma
 // o preenchimento automático faz.
 export async function browseCatalog({
   categories, sources, q = "", minPrice = 0, maxPrice, minDiscount = 0,
-  minRating = 0, minSales = 0, sortBy = "discount_desc", page = 1, pageSize = 24,
+  minRating = 0, minSales = 0, hasCoupon = false,
+  sortBy = "discount_desc", page = 1, pageSize = 24,
   groupId, hideQueued = true, hideRecent = true,
 } = {}, { signal } = {}) {
   const params = new URLSearchParams();
@@ -428,6 +429,9 @@ export async function browseCatalog({
   if (minDiscount > 0) params.set("minDiscount", minDiscount);
   if (minRating > 0) params.set("minRating", minRating);
   if (minSales > 0) params.set("minSales", minSales);
+  // Só quando ligado: o backend lê "1"/"true" e ignora o resto, e mandar
+  // "hasCoupon=false" à toa só sujaria a URL (e a chave de cache do navegador).
+  if (hasCoupon) params.set("hasCoupon", "1");
   params.set("sortBy", sortBy);
   params.set("page", page);
   params.set("pageSize", pageSize);

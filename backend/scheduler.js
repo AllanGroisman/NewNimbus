@@ -106,6 +106,12 @@ function renderTemplate(template, p) {
     t = t.replace(/^[^\n]*\{preco_antigo\}[^\n]*\n?/gm, "");
     t = t.replace(/^[^\n]*\{desconto\}[^\n]*\n?/gm, "");
   }
+  // O que o cupom TIRA — a regra ("15% OFF") e o quanto ela vale neste preço.
+  // Somem por linha inteira como o {cupom}, e não viram "—" como o {preco}: uma
+  // linha "🏷️ Desconto do cupom: —" é pior que linha nenhuma. Quem calcula é o
+  // sendItem; sem cupom válido os dois chegam nulos.
+  if (!p.couponLabel) t = t.replace(/^[^\n]*\{desconto_cupom\}[^\n]*\n?/gm, "");
+  if (p.couponSaving == null) t = t.replace(/^[^\n]*\{economia_cupom\}[^\n]*\n?/gm, "");
   return t
     .replace(/\{produto\}/g, p.name || "")
     .replace(/\{preco\}/g, fmt(p.price))
@@ -118,6 +124,8 @@ function renderTemplate(template, p) {
     .replace(/\{loja\}/g, p.store || "")
     .replace(/\{vendas\}/g, formatVendas(p))
     .replace(/\{cupom\}/g, cupom)
+    .replace(/\{desconto_cupom\}/g, p.couponLabel || "")
+    .replace(/\{economia_cupom\}/g, fmt(p.couponSaving))
     .replace(/\{link\}/g, p.link || "");
 }
 
@@ -469,8 +477,14 @@ async function refillQueue(userId, group) {
   // com cupom" da aba — o seletor saiu da tela, e com ele o filtro e a reordenação
   // (que a prévia da aba nunca aplicou, então a lista prometia uma coisa e o
   // preenchimento fazia outra). O enriquecimento fica.
-  const cupons = await coupons.couponsForKeys(candidates.map(p => p.key));
+  const cupons = await coupons.couponsListForKeys(candidates.map(p => p.key));
   const escolhidos = candidates.slice(0, vagas);
+
+  // O cupom que este produto consegue ANUNCIAR: o primeiro com palavra. A lista já
+  // vem ordenada com os que têm `code` na frente (couponsListForKeys), então é só
+  // pegar o primeiro — e é o mesmo critério que o envio usa em couponRuleForItem,
+  // que é o que faz a prévia da tela e a mensagem enviada contarem a mesma história.
+  const cupomDe = key => (cupons.get(key) || []).find(c => c.code) || null;
 
   const rawItems = escolhidos.map(p => ({
     id: p.key,    // a UI de pending busca por `id`
@@ -489,15 +503,13 @@ async function refillQueue(userId, group) {
     soldCount: p.soldCount ?? null,   // Shopee guarda o nº de vendas aqui (ML usa `sold`)
     freeShipping: p.freeShipping ?? false,
     seller: p.seller ?? null,
-    // O cupom do ML que cobre o produto. `coupon` é a PALAVRA e só existe quando
-    // alguém já descobriu qual é (ml_coupons.code) — sem ela, renderTemplate
-    // apaga a linha do {cupom}, que é o certo: não há o que o cliente digitar.
-    // O resto vai junto pra tela saber que o cupom existe mesmo sem palavra.
-    coupon: cupons.get(p.key)?.code || null,
-    couponCampaignId: cupons.get(p.key)?.campaignId || null,
-    couponLabel: cupons.get(p.key)
-      ? (cupons.get(p.key).kind === "percent" ? `${cupons.get(p.key).value}% OFF` : `R$ ${cupons.get(p.key).value} OFF`)
-      : null,
+    // O cupom do ML que cobre o produto, já filtrado pelos que têm PALAVRA — sem
+    // ela não há o que o cliente digite no checkout, e o envio não desconta
+    // (couponRuleForItem). O rótulo sai do detalheDoCupom em vez de ser montado à
+    // mão aqui: a regra do "15% OFF" fica num lugar só.
+    coupon: cupomDe(p.key)?.code || null,
+    couponCampaignId: cupomDe(p.key)?.campaignId || null,
+    couponLabel: coupons.detalheDoCupom(p.price, cupomDe(p.key))?.rotulo || null,
     addedAt: new Date().toISOString(),
   }));
 
@@ -572,14 +584,16 @@ function bumpMetrics(group, ok) {
 // verdade. Custa uma consulta por envio, contra os 4s de espera que já existem
 // entre um grupo e outro.
 //
-// Ordem: a PALAVRA primeiro. É ela que a mensagem manda o cliente digitar (no
-// repasse vem da legenda do grupo líder, ou digitada à mão na fila), então é o
-// desconto dela que o cliente vai ver no checkout. Só depois o vínculo de campanha.
+// A REGRA QUE MANDA AQUI: sem PALAVRA não há desconto a anunciar. A palavra é o que
+// o cliente digita no checkout do ML — sem ela a mensagem estaria prometendo um
+// preço que ninguém consegue chegar. Foi assim que o fallback por campanha (e o por
+// chave de produto, que devolvia o cupom de maior desconto com ou sem palavra)
+// saiu daqui: os dois descontavam calados em cupom que o cliente não tinha como usar.
 //
-// O terceiro passo não é redundância: o refill preenche `couponCampaignId` com o
-// que o catálogo sabia na hora, e o item pode ficar dias na fila — item antigo
-// (ou de repasse, que não passa pelo refill) chega aqui sem campanha nenhuma
-// mesmo tendo cupom no catálogo hoje.
+// Ordem: a palavra do próprio item primeiro (no repasse vem da legenda do grupo
+// líder, ou digitada à mão na fila) — é a que o usuário escolheu. Só depois o
+// catálogo, e ali também só cupom COM palavra; `couponsListForKeys` já entrega a
+// lista nessa ordem, com os que têm `code` na frente.
 //
 // Só Mercado Livre: `ml_coupons` é a aba de cupons do ML, e o desconto de lá não
 // vale num produto da Amazon ou da Shopee. Sem essa trava, um produto da Amazon com
@@ -594,13 +608,9 @@ async function couponRuleForItem(item) {
     const c = await coupons.findCouponByCode(word).catch(() => null);
     if (c) return c;
   }
-  if (item?.couponCampaignId) {
-    const c = await coupons.getCoupon(item.couponCampaignId).catch(() => null);
-    if (c) return c;
-  }
   if (item?.key) {
-    const mapa = await coupons.couponsForKeys([item.key]).catch(() => null);
-    const c = mapa && mapa.get(item.key);
+    const mapa = await coupons.couponsListForKeys([item.key]).catch(() => null);
+    const c = (mapa?.get(item.key) || []).find(x => x.code);
     if (c) return c;
   }
   return null;
@@ -689,15 +699,27 @@ async function sendItem(userId, group, whatsappGroups, item) {
     if (upgraded !== itemForSend.img) itemForSend = { ...itemForSend, img: upgraded };
   }
 
-  // Cupom: só o do próprio item, que hoje vem da legenda do grupo líder no
-  // repasse (capture.js). Não existe mais cupom fixo por campanha — sem cupom no
-  // item, renderTemplate apaga a linha inteira que contém {cupom}.
+  // Cupom: o do próprio item (que vem da legenda do grupo líder no repasse, ou
+  // digitado à mão na fila) ou, na falta dele, o que o catálogo conhece.
   const coupon = (itemForSend.coupon || "").toString().trim();
-  // O preço com o desconto do cupom, calculado agora contra o que o banco diz do
-  // cupom neste instante. `null` = não deu pra calcular, e aí o {preco_com_cupom}
-  // sai igual ao {preco}.
+  // A regra do cupom lida AGORA — e ela sempre tem palavra (couponRuleForItem não
+  // devolve cupom sem `code`).
   const regraCupom = await couponRuleForItem(itemForSend);
-  itemForSend = { ...itemForSend, coupon, priceWithCoupon: coupons.precoComCupom(itemForSend.price, regraCupom) };
+  // Quando o item não trazia palavra e o catálogo tinha uma, ela é HERDADA aqui.
+  // Sem isso, o {preco_com_cupom} descontava e o {cupom} sumia da mesma mensagem:
+  // preço de cupom sem dizer qual cupom. Os dois falam do mesmo cupom ou nenhum.
+  const palavra = coupon || (regraCupom?.code || "").toString().trim();
+  // O preço com o desconto e o quanto ele vale, contra o que o banco diz do cupom
+  // neste instante. `null` = não deu pra calcular, e aí o {preco_com_cupom} sai
+  // igual ao {preco} e as linhas de {desconto_cupom}/{economia_cupom} somem.
+  const detalhe = coupons.detalheDoCupom(itemForSend.price, regraCupom);
+  itemForSend = {
+    ...itemForSend,
+    coupon: palavra,
+    priceWithCoupon: detalhe ? detalhe.final : null,
+    couponLabel: detalhe ? detalhe.rotulo : null,
+    couponSaving: detalhe ? detalhe.economia : null,
+  };
 
   const text = renderTemplate(group.messageTemplate, itemForSend);
 

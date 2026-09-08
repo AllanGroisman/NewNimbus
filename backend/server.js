@@ -1871,7 +1871,11 @@ app.get("/api/ofertas", auth.requireAuth, async (req, res) => {
     const minRating = parseFloat(req.query.minRating) || 0;
     const minSales = parseInt(req.query.minSales) || 0;
     const keywords = String(req.query.q || req.query.keywords || "").trim();
-    const filters = { minDiscount, minPrice, maxPrice, minRating, minSales, keywords };
+    // "só produtos com cupom". O catalog/pg.js:buildWhere já sabia filtrar por isso
+    // desde que a coluna `couponCampaignId` existe — o que faltava era esta linha,
+    // que é o que liga o filtro à tela.
+    const hasCoupon = req.query.hasCoupon === "1" || req.query.hasCoupon === "true";
+    const filters = { minDiscount, minPrice, maxPrice, minRating, minSales, keywords, hasCoupon };
 
     const sortBy = OFERTAS_SORTS.has(req.query.sortBy) ? req.query.sortBy : "discount_desc";
 
@@ -1909,6 +1913,37 @@ app.get("/api/ofertas", auth.requireAuth, async (req, res) => {
       paginated ? null : catalog.getStats(),
     ]);
 
+    // Os cupons de cada produto da PÁGINA — uma consulta indexada sobre no máximo
+    // 60 chaves, e não a tabela inteira. Vai com a conta já feita (`precoComCupom`
+    // via `detalheDoCupom`): a regra de quando o cupom vale é do backend, e repetir
+    // isso em JavaScript de tela é como as duas sairiam de sincronia.
+    //
+    // A lista inteira, não só o melhor: um produto coberto por dois cupons mostra os
+    // dois. O que o envio vai usar é o primeiro COM palavra — a mesma ordem que o
+    // `couponsListForKeys` devolve.
+    const mapaCupons = await couponsStore.couponsListForKeys(products.map(p => p.key)).catch(() => new Map());
+    const itemsComCupons = products.map(p => {
+      const lista = mapaCupons.get(p.key) || [];
+      if (!lista.length) return p;
+      return {
+        ...p,
+        coupons: lista.map(c => {
+          const d = couponsStore.detalheDoCupom(p.price, c);
+          return {
+            campaignId: c.campaignId, code: c.code, title: c.title,
+            kind: c.kind, value: c.value,
+            minPurchase: c.minPurchase, maxDiscount: c.maxDiscount,
+            expiresAt: c.expiresAt,
+            // Nulos quando o cupom não vale para ESTE preço (compra mínima não
+            // atingida, por exemplo): a tela mostra o cupom, mas sem prometer valor.
+            priceWithCoupon: d ? d.final : null,
+            economia: d ? d.economia : null,
+            rotulo: d ? d.rotulo : null,
+          };
+        }),
+      };
+    });
+
     res.json({
       // `total` no modo paginado é o total de matches; no legado mantém o
       // comportamento antigo (tamanho da página) pra não quebrar quem já usa.
@@ -1919,8 +1954,8 @@ app.get("/api/ofertas", auth.requireAuth, async (req, res) => {
       categories,
       sources,
       sortBy,
-      items: products,
-      products,   // alias legado
+      items: itemsComCupons,
+      products: itemsComCupons,   // alias legado
       ...(catalogStats ? { catalogStats } : {}),
     });
   } catch (err) {

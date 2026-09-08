@@ -454,6 +454,7 @@ export default function PageWhatsApp({
           <WhatsappQR
             sessionId={pendingNumberId}
             onConnected={handleConnected}
+            knownNumberIds={numbers.map(n => n.id)}
             defaultPhone={showQR === "new" ? "" : (numbers.find(n => n.id === showQR)?.phone || "")}
           />
         </Modal>

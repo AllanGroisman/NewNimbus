@@ -1688,14 +1688,25 @@ function normalizeSoldText(raw) {
   return /[\d]/.test(out) ? out : null;
 }
 
-// Extrai shopId/itemId do formato padrão de URL de produto Shopee
-// (".../<slug>-i.<shopId>.<itemId>", com ou sem query string atrás).
+// Extrai shopId/itemId de uma URL de produto Shopee. Dois formatos convivem:
+//   1. ".../<slug>-i.<shopId>.<itemId>"     — o antigo, ainda usado em links colados à mão
+//   2. ".../<algo>/<shopId>/<itemId>"       — o atual: é onde o link curto s.shopee.com.br
+//      cai hoje (".../opaanlp/306423459/20046202534?…") e também o formato do
+//      `productLink` que a própria Affiliate API devolve (".../product/<shopId>/<itemId>").
+// Reconhecer só o (1) era o que quebrava o repasse de quem recebe link curto: sem IDs,
+// o caminho pela API oficial era pulado e sobrava o navegador, que na PDP da Shopee não
+// enxerga preço nenhum. A ordem é sempre shopId, itemId (invertida a API devolve vazio).
 function extractShopeeIds(url) {
   try {
     const u = new URL(url);
-    const m = u.pathname.match(/-i\.(\d+)\.(\d+)$/i);
-    if (!m) return null;
-    return { shopId: m[1], itemId: m[2] };
+    const legacy = u.pathname.match(/-i\.(\d+)\.(\d+)$/i);
+    if (legacy) return { shopId: legacy[1], itemId: legacy[2] };
+    // \d{4,} nos dois segmentos: IDs da Shopee são longos, e a exigência evita
+    // confundir caminhos numéricos curtos (paginação, categoria) com produto.
+    const path = u.pathname.replace(/\/+$/, "");
+    const modern = path.match(/\/[^/]+\/(\d{4,})\/(\d{4,})$/);
+    if (modern) return { shopId: modern[1], itemId: modern[2] };
+    return null;
   } catch {
     return null;
   }
@@ -1739,10 +1750,16 @@ async function scrapeShopeeSingleViaApi(cleanUrl, userId) {
   if (!node) return null;
   const mapped = shopeeNodeToProduct(node, null);
   if (!mapped.name) return null;
+  // O `finalUrl` resolvido carrega o rastreio de QUEM postou o link no grupo líder
+  // (utm_content/mmp_pid de outro afiliado). Guardar aquilo faria a reafiliação do
+  // envio empilhar em cima do rastreio de terceiro — então preferimos o permalink
+  // limpo que a própria API devolve. Não é o `offerLink`: aquele já é o link curto
+  // de afiliado, e quem gera o do usuário é o envio.
+  const cleanLink = node.productLink || finalUrl;
   return {
     name: mapped.name,
-    link: finalUrl,
-    finalUrl,
+    link: cleanLink,
+    finalUrl: cleanLink,
     price: mapped.price,
     originalPrice: mapped.originalPrice,
     discount: mapped.discount,

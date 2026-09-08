@@ -22,6 +22,48 @@ const savings = (product) => {
   return diff > 0 ? diff : null;
 };
 
+// O cupom que o produto consegue ANUNCIAR: o primeiro com palavra. O backend já
+// manda a lista nessa ordem (coupons/pg.js:couponsListForKeys) e é o mesmo critério
+// que o envio usa (scheduler.js:couponRuleForItem) — sem palavra não há o que o
+// cliente digite no checkout, então o desconto não sai na mensagem.
+//
+// `coupons` só vem de /api/ofertas; nas telas que ainda não passam por lá o card
+// simplesmente não desenha selo nenhum.
+const cupomAnunciavel = (product) => (product?.coupons || []).find(c => c.code) || null;
+
+// O selo do cupom, em dois estados que dizem coisas diferentes:
+//
+//   roxo  — tem PALAVRA: "🎟️ GALAXY10 · 15% OFF". É o que o envio vai anunciar.
+//   cinza — o produto está na vitrine de um cupom, mas ninguém descobriu a palavra
+//           ainda. O cupom existe; o cliente é que não teria o que digitar.
+//
+// O segundo estado existe porque calar ali seria esconder trabalho: hoje a maior
+// parte dos cupons raspados está sem palavra, e é justamente na aba Admin › Cupom
+// que se descobre uma. Um selo cinza é o que mostra onde está a fila.
+//
+// O rótulo só entra quando o cupom vale PARA ESTE PREÇO — sem ele (compra mínima
+// não atingida, por exemplo) o selo diz que o cupom existe e cala sobre o valor.
+function CouponBadge({ product }) {
+  const lista = product?.coupons || [];
+  if (!lista.length) return null;
+  const c = cupomAnunciavel(product);
+  // O <span> em volta é só pelo `title`: o Badge não aceita atributos soltos, e o
+  // nome da campanha ("Cupom Casa & Decoração") não cabe no selo mas ajuda no hover.
+  if (!c) {
+    const n = lista.length;
+    return (
+      <span title={lista.map(x => x.title).filter(Boolean).join(" · ") || undefined} style={{ display: "inline-flex" }}>
+        <Badge color="gray">🎟️ {n > 1 ? `${n} cupons` : "cupom"} sem palavra</Badge>
+      </span>
+    );
+  }
+  return (
+    <span title={c.title || undefined} style={{ display: "inline-flex" }}>
+      <Badge color="purple">🎟️ {c.code}{c.rotulo ? ` · ${c.rotulo}` : ""}</Badge>
+    </span>
+  );
+}
+
 function reviewsText(product) {
   if (product.reviewsCount == null) return null;
   const raw = String(product.reviewsCount).replace(/[^\d]/g, "");
@@ -89,6 +131,7 @@ export function ProductRow({ product, actions, index, extra }) {
           {product.rating && <Badge color="amber">★ {product.rating}</Badge>}
           {product.discount && <Badge color="green">-{typeof product.discount === "number" ? `${product.discount}%` : product.discount}</Badge>}
           {product.freeShipping && <Badge color="teal">Frete grátis</Badge>}
+          <CouponBadge product={product} />
           {extra}
         </div>
       </div>
@@ -197,6 +240,7 @@ export function ProductGridCard({ product, footer, badge, showStore = false, emp
         })()}
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {product.freeShipping && <Badge color="teal">Frete grátis</Badge>}
+          <CouponBadge product={product} />
         </div>
         <div style={{ marginTop: "auto" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -212,6 +256,14 @@ export function ProductGridCard({ product, footer, badge, showStore = false, emp
               {saved != null && (
                 <div style={{ fontSize: 11, fontWeight: 500, color: "#2F7A18", marginTop: 1 }}>
                   Economize {formatPrice(saved)}
+                </div>
+              )}
+              {/* O preço final com o cupom aplicado. Só quando o backend calculou:
+                  cupom que existe mas não pega neste preço aparece no selo lá em
+                  cima, sem número — melhor calar que prometer errado. */}
+              {cupomAnunciavel(product)?.priceWithCoupon != null && (
+                <div style={{ fontSize: 11, fontWeight: 500, color: PRIMARY_DARK, marginTop: 1 }}>
+                  Com cupom: {formatPrice(cupomAnunciavel(product).priceWithCoupon)}
                 </div>
               )}
             </div>
