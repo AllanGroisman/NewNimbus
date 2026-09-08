@@ -478,6 +478,29 @@ async function notifyError(context, err) {
   await send(lines.join("\n"));
 }
 
+// Uma mensagem NOSSA que o destinatário pediu de volta muitas vezes: cada pedido
+// é a prova de que alguém está vendo "Aguardando mensagem. Essa ação pode levar
+// alguns instantes". Num grupo isso escala pelo número de participantes e passa
+// despercebido — o envio some como "ok" e o problema só chega por reclamação.
+// Quem conta e segura o gatilho é o whatsapp/msg-store.js; aqui é só o envio.
+async function notifyRetryStorm({ id, retries, jid } = {}) {
+  const cfg = readConfig();
+  if (!cfg.events.errors) return;
+
+  const lines = [
+    "*[Nimbus] ⏳ Mensagem presa em \"Aguardando mensagem\"*",
+    `📅 ${formatDate(new Date().toISOString())}`,
+    `Destino: ${jid || "—"}`,
+    `Mensagem: ${id}`,
+    `Pedidos de reenvio: ${retries}`,
+    "",
+    "Cada pedido é um aparelho que não conseguiu abrir a mensagem.",
+    "Ver backend/whatsapp/README.md → \"Aguardando mensagem\".",
+  ];
+
+  await send(lines.join("\n"));
+}
+
 async function notifySystemOnline() {
   const cfg = readConfig();
   if (!cfg.events.systemOnline) return;
@@ -605,6 +628,6 @@ function renderPreview(key, text) {
 }
 
 module.exports = {
-  readConfig, writeConfig, notifyMLCookieExpired, notifyMLCookieRecovered, notifyBlockDetected, notifyBlockRecovered, notifyScrapingResult, notifyScrapTesterResult, notifyError, notifySystemOnline, sendTest,
+  readConfig, writeConfig, notifyMLCookieExpired, notifyMLCookieRecovered, notifyBlockDetected, notifyBlockRecovered, notifyScrapingResult, notifyScrapTesterResult, notifyError, notifySystemOnline, notifyRetryStorm, sendTest,
   getTemplates, saveTemplates, renderPreview,
 };

@@ -70,7 +70,17 @@ function put(sent) {
   const message = sent && sent.message;
   if (!id || !message) return;
   store.delete(id); // reinsere no fim: mantém a ordem FIFO honesta
-  store.set(String(id), { message, at: Date.now(), retries: 0, lastRetryAt: null, source: null });
+  // `jid` não serve pro reenvio (o Baileys traz o dele no receipt) — é só pro
+  // alerta poder dizer PARA ONDE a mensagem presa tinha ido. Fica só em memória:
+  // o Redis guarda o proto puro, que é o que o getMessage precisa.
+  store.set(String(id), {
+    message,
+    jid: (sent.key && sent.key.remoteJid) || null,
+    at: Date.now(),
+    retries: 0,
+    lastRetryAt: null,
+    source: null,
+  });
   while (store.size > MAX) store.delete(store.keys().next().value);
 
   if (!USE_REDIS) return;
@@ -101,7 +111,10 @@ async function get(id) {
   if (fromRedis) {
     // Reidrata a memória pra um segundo retry do mesmo aparelho (é comum vir em
     // rajada) não voltar à rede.
-    const revived = { message: fromRedis, at: Date.now(), retries: 0, lastRetryAt: null, source: "redis" };
+    // Sem `jid`: o Redis guarda só o proto. O alerta sai com destino "—", que é
+    // honesto — melhor que inventar um jid a partir da key do receipt, que pode
+    // vir em LID enquanto gravamos PN.
+    const revived = { message: fromRedis, jid: null, at: Date.now(), retries: 0, lastRetryAt: null, source: "redis" };
     store.set(key, revived);
     while (store.size > MAX) store.delete(store.keys().next().value);
     return hit(key, revived, "redis");
@@ -116,7 +129,32 @@ function hit(key, entry, source) {
   entry.lastRetryAt = Date.now();
   entry.source = source;
   logRetry(key, `hit #${entry.retries} (${source})`);
+  maybeAlert(key, entry);
   return entry.message;
+}
+
+// Alguns reenvios são normais — sessão Signal nova com um contato, aparelho que
+// ficou offline. O que NÃO é normal é a mesma mensagem voltar dezenas de vezes:
+// isso é um grupo inteiro que não conseguiu abrir o que mandamos, e nada no
+// sistema percebia — o envio já tinha sido registrado como "envio ok" e o
+// problema só chegava por reclamação do usuário, dias depois.
+//
+// Dispara UMA vez por mensagem, ao cruzar o teto. Um alerta por aparelho seria
+// exatamente a enxurrada que estamos tentando denunciar.
+const ALERT_AT = Number(process.env.WA_RETRY_ALERT_AT) || 15;
+
+function maybeAlert(id, entry) {
+  if (entry.alerted || entry.retries < ALERT_AT) return;
+  entry.alerted = true;
+  // Lazy-require e fire-and-forget: isto roda no meio do atendimento de um retry
+  // receipt do Baileys. Um notifier fora do ar não pode atrapalhar o reenvio.
+  try {
+    require("../notifications/admin-notifier")
+      .notifyRetryStorm({ id, retries: entry.retries, jid: entry.jid || null })
+      .catch((err) => console.error(`[wa] msg-store: alerta de reenvio falhou: ${err.message}`));
+  } catch (err) {
+    console.error(`[wa] msg-store: alerta de reenvio falhou: ${err.message}`);
+  }
 }
 
 async function readRedis(key) {

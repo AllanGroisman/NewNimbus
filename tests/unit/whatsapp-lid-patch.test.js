@@ -63,4 +63,27 @@ describe("patch de LID no Baileys", () => {
     // Original: `authState.creds?.me?.lid.split(':')[0]` — lança se lid for undefined.
     expect(src()).not.toContain("authState.creds?.me?.lid.split(':')[0]");
   });
+
+  it("o fanout da sender key não monta <telefone>@lid num grupo LID", () => {
+    // Original: `jidEncode(user, addressingMode === 'lid' ? 'lid' : ..., device)` —
+    // quando a usync devolve o aparelho em PN, isso vira `<telefone>@lid`, um
+    // endereço que não existe: a chave do grupo não chega a ninguém e o grupo
+    // inteiro fica em "Aguardando mensagem".
+    expect(src()).not.toMatch(
+      /const jid = jidEncode\(user, groupData\?\.addressingMode === 'lid' \? 'lid' : 's\.whatsapp\.net', device\);/,
+    );
+    // Só vai em LID quem o metadata do grupo confirma que é LID...
+    expect(src()).toMatch(/let asLid = groupIsLid && lidUsers\.has\(user\);/);
+    // ...e a nossa própria conta, cujo par PN↔LID nós conhecemos.
+    expect(src()).toMatch(/if \(isSelfUser\(user\) && meLid\)/);
+    expect(src()).toMatch(/const jid = jidEncode\(outUser, asLid \? 'lid' : 's\.whatsapp\.net', device\);/);
+  });
+
+  it("registra o fanout do grupo em nível info", () => {
+    // O `logger.debug('sending new sender key')` do Baileys some na configuração
+    // normal: um fanout VAZIO ficava indistinguível de um envio bom, que foi o que
+    // escondeu este bug por dias. Este log é o sinal de que a chave saiu.
+    expect(src()).toContain("'fanout da sender key do grupo'");
+    expect(src()).toMatch(/logger\.info\(\{[\s\S]*?senderKeyJids: senderKeyJids\.length/);
+  });
 });

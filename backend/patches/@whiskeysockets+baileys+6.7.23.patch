@@ -1,5 +1,5 @@
 diff --git a/node_modules/@whiskeysockets/baileys/lib/Socket/messages-send.js b/node_modules/@whiskeysockets/baileys/lib/Socket/messages-send.js
-index 38bb9e0..c75aa12 100644
+index 38bb9e0..88b1fa4 100644
 --- a/node_modules/@whiskeysockets/baileys/lib/Socket/messages-send.js
 +++ b/node_modules/@whiskeysockets/baileys/lib/Socket/messages-send.js
 @@ -108,6 +108,20 @@ export const makeMessagesSocket = (config) => {
@@ -37,7 +37,64 @@ index 38bb9e0..c75aa12 100644
              const deviceMap = {};
              for (const item of extracted) {
                  deviceMap[item.user] = deviceMap[item.user] || [];
-@@ -396,8 +415,11 @@ export const makeMessagesSocket = (config) => {
+@@ -360,16 +379,55 @@ export const makeMessagesSocket = (config) => {
+                     data: bytes,
+                     meId
+                 });
++                // ── Fanout de grupo em modo LID ──────────────────────────────
++                // Num grupo `addressingMode: 'lid'` os participantes vêm em LID, mas a
++                // usync pode devolver o MESMO aparelho em PN (telefone). Encodar esse PN
++                // como `<telefone>@lid` monta um endereço que NÃO EXISTE: a sender key não
++                // chega, ninguém no grupo abre a mensagem e todos pedem reenvio — o
++                // "Aguardando mensagem. Essa ação pode levar alguns instantes" que nunca
++                // some. Sem o mapa PN↔LID (só existe no Baileys 7.x) há dois casos:
++                //   - é a NOSSA conta: sabemos o par, `creds.me.lid` resolve;
++                //   - é outra pessoa: mandamos pro endereço PN, que ao menos é real.
++                const groupIsLid = groupData?.addressingMode === 'lid';
++                const lidUsers = new Set(groupIsLid
++                    ? (groupData?.participants || []).map(p => jidDecode(p.id)?.user).filter(Boolean)
++                    : []);
+                 const senderKeyJids = [];
++                const pnInLidGroup = [];
+                 // ensure a connection is established with every device
+                 for (const { user, device } of devices) {
+-                    const jid = jidEncode(user, groupData?.addressingMode === 'lid' ? 'lid' : 's.whatsapp.net', device);
++                    let outUser = user;
++                    let asLid = groupIsLid && lidUsers.has(user);
++                    if (groupIsLid && !asLid) {
++                        const meLid = selfLidUser();
++                        if (isSelfUser(user) && meLid) {
++                            outUser = meLid;
++                            asLid = true;
++                        }
++                        else {
++                            pnInLidGroup.push(user);
++                        }
++                    }
++                    const jid = jidEncode(outUser, asLid ? 'lid' : 's.whatsapp.net', device);
+                     if (!senderKeyMap[jid] || !!participant) {
+                         senderKeyJids.push(jid);
+                         // store that this person has had the sender keys sent to them
+                         senderKeyMap[jid] = true;
+                     }
+                 }
++                // Em `info` de propósito: este é o único sinal de que a chave do grupo saiu
++                // de fato. O `logger.debug` logo abaixo some na configuração normal, e sem
++                // ele um fanout VAZIO (devices=0) fica indistinguível de um envio bom — foi
++                // exatamente o que travou o diagnóstico deste bug.
++                logger.info({
++                    jid: destinationJid,
++                    addressingMode: groupData?.addressingMode || 'pn',
++                    participants: groupData?.participants?.length || 0,
++                    devices: devices.length,
++                    senderKeyJids: senderKeyJids.length,
++                    pnInLidGroup: pnInLidGroup.length,
++                    retryFor: participant?.jid
++                }, 'fanout da sender key do grupo');
+                 // if there are some participants with whom the session has not been established
+                 // if there are, we re-send the senderkey
+                 if (senderKeyJids.length) {
+@@ -396,8 +454,11 @@ export const makeMessagesSocket = (config) => {
                  const { user: meUser } = jidDecode(meId);
                  if (!participant) {
                      devices.push({ user });
@@ -51,7 +108,7 @@ index 38bb9e0..c75aa12 100644
                      }
                      if (additionalAttributes?.['category'] !== 'peer') {
                          const additionalDevices = await getUSyncDevices([meId, jid], !!useUserDevicesCache, true);
-@@ -408,8 +430,8 @@ export const makeMessagesSocket = (config) => {
+@@ -408,8 +469,8 @@ export const makeMessagesSocket = (config) => {
                  const meJids = [];
                  const otherJids = [];
                  for (const { user, device } of devices) {
@@ -62,7 +119,7 @@ index 38bb9e0..c75aa12 100644
                      if (isMe) {
                          meJids.push(jid);
                      }
-@@ -459,7 +481,8 @@ export const makeMessagesSocket = (config) => {
+@@ -459,7 +520,8 @@ export const makeMessagesSocket = (config) => {
                      stanza.attrs.to = destinationJid;
                      stanza.attrs.participant = participant.jid;
                  }

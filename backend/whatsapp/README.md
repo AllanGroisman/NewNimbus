@@ -222,6 +222,48 @@ A correção definitiva é o `baileys` 7.x, que tem `LIDMappingStore` nativo. Es
 em release candidate (7.0.0-rc14), muda o nome do pacote e exige adaptar o
 auth-state — fica para quando sair a versão estável.
 
+### O mesmo defeito no fanout de GRUPO
+
+O patch acima cobria só a conversa 1-a-1. Em 07/09/2026 um grupo sozinho gerou
+**3.013 pedidos de reenvio num dia** — o grupo inteiro em "Aguardando mensagem",
+não só o celular de quem enviou.
+
+Numa mensagem de grupo o conteúdo vai cifrado com uma **sender key**, que precisa
+ter sido entregue antes a cada participante. Em grupo `addressingMode: 'lid'` os
+participantes vêm em LID, mas a usync pode devolver o mesmo aparelho em PN; o
+Baileys 6.7.23 encodava esse PN como `<telefone>@lid` (`messages-send.js:385`),
+um endereço que não existe. A chave não chega a ninguém, ninguém abre nada, todos
+pedem reenvio até o teto (`maxMsgRetryCount: 5`) e desistem. O patch agora só
+manda em LID quem o metadata do grupo confirma ser LID — e resolve a nossa
+própria conta por `creds.me.lid`, o único par que conhecemos.
+
+O que atrasou o diagnóstico foi a falta de sinal: o `logger.debug('sending new
+sender key')` do Baileys sumia na configuração normal, então um fanout **vazio**
+ficava indistinguível de um envio bom (`envio ok` no log dos dois jeitos). Por
+isso o patch registra o fanout em `info`:
+
+```
+grep "fanout da sender key do grupo" logs/worker-out.log
+```
+
+`senderKeyJids: 0` num grupo com participantes é o bug acontecendo;
+`pnInLidGroup` > 0 é a usync devolvendo PN num grupo LID.
+
+Duas ferramentas acompanham:
+
+- **`scripts/reset-group-sender-key.js`** — o `sender-key-memory` é a anotação de
+  "pra quem eu já mandei a chave", e é uma promessa, não um fato: se a entrega
+  falhou, o mapa segue dizendo "já mandei" e a chave nunca mais sai. Apagar a
+  linha força a redistribuição no próximo envio. Dry-run por padrão.
+- **alerta automático** — `msg-store.js` já contava os pedidos de reenvio por
+  mensagem, mas ninguém lia. Ao cruzar `WA_RETRY_ALERT_AT` (15) sai um aviso no
+  grupo admin, uma vez por mensagem.
+
+E o pool do Prisma subiu para 10 (`db.js`): o default é `num_cpus * 2 + 1`, que
+nesta VPS de 1 core dava **três** conexões — uma rajada de reenvios esgotava o
+pool, e falha de gravação de chave derruba o socket de propósito
+(`onPersistError`), realimentando o problema.
+
 ## Onde as credenciais ficam
 
 Tabela `baileys_auth` no Postgres (ver `backend/auth/baileys-pg.js`). Trocar de máquina não perde sessão.
