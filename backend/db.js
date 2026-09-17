@@ -45,6 +45,55 @@ function prisma() {
   return _prisma;
 }
 
+// Espera o Postgres aceitar query antes de o boot seguir.
+//
+// Sem isso, `docker compose up` + PM2 viravam um crash-loop: o Postgres leva
+// alguns segundos pra sair do "the database system is starting up", o warmup do
+// auth estourava PrismaClientInitializationError, o processo morria com exit 1 e
+// o PM2 subia outro — que relia `node_modules` inteiro do disco e falhava de
+// novo. Foram 14 reinícios do server e 16 do worker num boot só, o que num HD
+// mecânico é o que mais pesa na inicialização da máquina.
+//
+// Erro de credencial/URL não fica retentando pra sempre: o número de tentativas
+// é limitado, então uma DATABASE_URL errada ainda falha o boot — só que depois
+// da janela, com a última mensagem do banco preservada.
+const DB_READY_ATTEMPTS = Number(process.env.DB_READY_ATTEMPTS) || 20;
+const DB_READY_INTERVAL_MS = Number(process.env.DB_READY_INTERVAL_MS) || 1500;
+
+// A mensagem do Prisma vem multi-linha e a primeira linha é só o boilerplate
+// ("Invalid `prisma.$queryRaw()` invocation:"). A causa útil — "the database
+// system is starting up", "Can't reach database server", "password
+// authentication failed" — está mais abaixo.
+function dbErrorSummary(err) {
+  const raw = String((err && err.message) || err || "");
+  const lines = raw.split("\n").map(l => l.trim()).filter(Boolean);
+  const useful = lines.find(l => /Error querying|Can't reach|FATAL|ECONNREFUSED|ETIMEDOUT|authentication/i.test(l));
+  return useful || lines[lines.length - 1] || raw;
+}
+
+async function waitForReady({
+  attempts = DB_READY_ATTEMPTS,
+  intervalMs = DB_READY_INTERVAL_MS,
+} = {}) {
+  // Nos testes o banco já está de pé (ou é mockado) — esperar só atrasaria a suíte.
+  if (process.env.NODE_ENV === "test") return;
+
+  let lastErr = null;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      await prisma().$queryRaw`SELECT 1`;
+      if (i > 1) console.log(`[db] Postgres pronto (tentativa ${i}/${attempts})`);
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (i === attempts) break;
+      console.warn(`[db] Postgres indisponível (${i}/${attempts}), aguardando ${intervalMs}ms — ${dbErrorSummary(err)}`);
+      await new Promise(r => setTimeout(r, intervalMs));
+    }
+  }
+  throw lastErr;
+}
+
 async function disconnect() {
   if (_prisma) {
     await _prisma.$disconnect();
@@ -52,4 +101,4 @@ async function disconnect() {
   }
 }
 
-module.exports = { prisma, disconnect, urlWithPool };
+module.exports = { prisma, disconnect, urlWithPool, waitForReady };

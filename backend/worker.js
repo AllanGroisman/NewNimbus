@@ -93,6 +93,11 @@ async function main() {
     process.exit(1);
   }
 
+  // Mesmo motivo do server.js: esperar o Postgres em vez de morrer e deixar o
+  // PM2 reiniciar em loop até o banco aceitar conexão.
+  const { waitForReady } = require("./db");
+  await waitForReady();
+
   await appConfig.warmup();
   // Cache de config é por processo: sem esse refresh o worker só veria uma trava
   // de loja (ou filtro) alterada pelo admin depois de ser reiniciado.

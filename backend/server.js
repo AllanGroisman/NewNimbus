@@ -3972,6 +3972,10 @@ httpErrors.install(app);
 // ────────────────────────────────────────────────────────────────────────
 
 async function boot() {
+  // Postgres do compose pode ainda estar subindo quando o PM2 nos inicia; sem
+  // esperar, o warmup abaixo estoura e o processo entra em crash-loop.
+  const { waitForReady } = require("./db");
+  await waitForReady();
   // Pré-aquece JWT secret (Postgres / env) + cache de config (scraper-config +
   // afiliado per-user) — necessário pra auth e pra affiliate.status() /
   // adminScraper.readConfig() funcionarem sync.
