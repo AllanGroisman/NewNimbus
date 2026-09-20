@@ -9,14 +9,17 @@
 // Esta aba junta as duas metades: de um lado o que o repasse viu (quantas vezes,
 // desde quando, em quantas campanhas), do outro o que o sistema sabe da palavra
 // (`ml_coupon_codes` + `ml_coupons`, o dicionário da aba "Descobrir palavra").
-// O teste é SOB DEMANDA, pelo botão da linha: cada um abre um Chrome com a conta
-// do ML, e disparar isso sozinho a cada mensagem recebida é pedir CAPTCHA.
+// O teste acontece de dois jeitos, e os dois vivem nesta tela: o botão da linha
+// (sob demanda) e o robô do card do topo (repasse/coupon-autotest.js), que roda em
+// rodadas espaçadas. O que nunca pode acontecer é testar a cada mensagem recebida —
+// cada teste abre um Chrome com a conta do ML, e rajada de Chrome é pedir CAPTCHA.
 import { useState, useEffect, useCallback } from "react";
 import { PRIMARY_DARK } from "../data/constants";
 import {
   adminRepasseCoupons, adminRepasseLogs,
   adminMlCuponsSyncProducts, adminRepasseCouponForget, adminRepasseCouponsClear, errText,
 } from "../data/api";
+import CouponAutotest from "../components/admin/CouponAutotest";
 import Pagination from "../components/ui/Pagination";
 import Modal from "../components/ui/Modal";
 import { ImportarCampanhaModal } from "./AdminCupomPalavra";
@@ -29,6 +32,14 @@ import {
 // O semáforo da aba "Descobrir palavra" mais o estado que só existe aqui: a
 // palavra que nunca foi ao ML. É o caso da esmagadora maioria das linhas, e
 // mostrá-lo como "o ML não reconheceu" seria dizer o oposto da verdade.
+// Quem pediu o teste. `repasse-auto` é o robô do coupon-autotest.js; sem
+// distinguir os dois, a tela diria "testado 14h32" sem dizer se alguém clicou ou
+// se aquilo aconteceu sozinho — e é essa a diferença que o admin vem conferir.
+const ORIGEM_DO_TESTE = {
+  repasse: " (por aqui)",
+  "repasse-auto": " (automático)",
+};
+
 const SEMAFORO = {
   ...VERDICT,
   "nao-testado": { label: "⏳ nunca testado", color: "var(--color-text-secondary)" },
@@ -137,14 +148,16 @@ export default function CuponsDoRepasse() {
 
   return (
     <div>
+      <CouponAutotest />
       <div style={cardStyle}>
         <div style={{ fontWeight: 500, marginBottom: 4 }}>Cupons capturados pelo repasse</div>
         <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14, lineHeight: 1.5 }}>
           Um por código, com quantas vezes ele apareceu nas legendas dos grupos líderes.
           O <b>Testar</b> pergunta ao ML a que campanha a palavra pertence — abre um Chrome
-          com a conta do sistema e leva alguns segundos, por isso não roda sozinho.
-          Quando a palavra vale mas a campanha nunca foi raspada, o <b>Trazer campanha</b>
-          busca ela e os produtos dela.
+          com a conta do sistema e leva alguns segundos. Quando a palavra vale mas a campanha
+          nunca foi raspada, o <b>Trazer campanha</b> busca ela e os produtos dela.
+          O card acima faz esses dois passos sozinho, em rodadas espaçadas; os botões da linha
+          continuam aqui pra quando você não quer esperar a próxima.
         </div>
 
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
@@ -390,7 +403,7 @@ function Linha({ cupom, aberto, onToggle, onPatch, onImportar, onExcluir }) {
           {cupom.checkedAt && (
             <div style={{ color: "var(--color-text-secondary)" }}>
               testado {dataHora(cupom.checkedAt)}
-              {cupom.source === "repasse" && " (por aqui)"}
+              {ORIGEM_DO_TESTE[cupom.source] || ""}
             </div>
           )}
           {cupom.message && (

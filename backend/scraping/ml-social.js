@@ -180,6 +180,9 @@ function parseSocialLanding(html, url = "") {
       reviewsCount: p.reviewsCount,
       img: p.img,
       store: "Mercado Livre",
+      // O número do anúncio que o card diz ser. Quem pediu o produto por MLB
+      // (coupons/enrich-samples.js) confere com ele que a landing não trouxe outro.
+      mlItemId: p.mlItemId || null,
       scrapedAt: new Date().toISOString(),
     },
   };

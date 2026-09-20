@@ -19,6 +19,7 @@ const KIND = {
   LOGIN_WALL: "login-wall",
   LANDING_EXPIRADA: "landing-expirada",
   NAO_E_PRODUTO: "nao-e-produto",
+  SEM_OFERTA: "sem-oferta",
   TIMEOUT: "timeout",
   LOJA_NAO_SUPORTADA: "loja-nao-suportada",
   AFILIADO_AUSENTE: "afiliado-ausente",
@@ -53,6 +54,12 @@ const ERROR_KINDS = {
     what: "A página abriu, mas sem nome, foto ou preço — é busca, categoria ou link quebrado.",
     action: "Nada a corrigir no sistema: o link postado não era de um produto.",
     transient: null,
+  },
+  [KIND.SEM_OFERTA]: {
+    label: "Sem oferta na loja",
+    what: "A página do produto abriu certinho (nome e foto vieram), mas a loja não está vendendo o item agora — não há preço nenhum no bloco de compra. Na Amazon é o caso de item só disponível em \"Outras opções de compra\" (vendedores terceiros) ou de buybox escondido por \"preço mais alto do que o habitual\".",
+    action: "Passageiro e do lado da loja — o item volta a ter preço quando a oferta voltar. Anunciar sem preço não é opção.",
+    transient: true,
   },
   [KIND.TIMEOUT]: {
     label: "Tempo esgotado",
@@ -130,6 +137,7 @@ function classifyFromText(text) {
   if (/loja n[ãa]o suportada|link n[ãa]o reconhecido/i.test(s)) return KIND.LOJA_NAO_SUPORTADA;
   if (/n[ãa]o configurado/i.test(s)) return KIND.AFILIADO_AUSENTE;
   if (/timeout|ETIMEDOUT/i.test(s)) return KIND.TIMEOUT;
+  if (/sem oferta|sem pre[çc]o dispon[íi]vel/i.test(s)) return KIND.SEM_OFERTA;
   if (/dados insuficientes|n[ãa]o foi poss[íi]vel encontrar|produto n[ãa]o encontrado/i.test(s)) return KIND.NAO_E_PRODUTO;
   return KIND.DESCONHECIDO;
 }

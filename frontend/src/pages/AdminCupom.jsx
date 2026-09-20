@@ -15,6 +15,7 @@ import CuponsDoML from "./AdminCupomML";
 import ConfigTest from "./AdminCupomConfig";
 import DescobrirPalavra from "./AdminCupomPalavra";
 import CuponsDoRepasse from "./AdminCupomRepasse";
+import CuponsDoProduto from "./AdminCupomProduto";
 
 // Semáforo por desfecho. Os "cupom existe mas não serve" ficam em amarelo de
 // propósito: são respostas úteis do ML, não falha da ferramenta.
@@ -88,6 +89,7 @@ export default function PageAdminCupom() {
       <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
         {[
           ["teste", "Testar cupom"],
+          ["produto", "Cupons do produto"],
           ["ml", "Cupons do ML"],
           ["repasse", "Repasse"],
           ["palavra", "Descobrir palavra"],
@@ -110,6 +112,7 @@ export default function PageAdminCupom() {
       </div>
 
       {aba === "teste" && <TestarNoCheckout />}
+      {aba === "produto" && <CuponsDoProduto />}
       {aba === "ml" && <CuponsDoML buscaInicial={verCupom} />}
       {aba === "repasse" && <CuponsDoRepasse />}
       {aba === "palavra" && (

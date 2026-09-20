@@ -4,7 +4,7 @@ import Pagination from "../components/ui/Pagination";
 import Badge from "../components/ui/Badge";
 import RepasseSummary from "../components/admin/RepasseSummary";
 import CouponDetection from "../components/admin/CouponDetection";
-import { OUTCOME_LABEL } from "../data/cupomRotulos";
+import { OUTCOME_LABEL, VERDICT_CURTO } from "../data/cupomRotulos";
 
 const POLL_MS = 5000;
 
@@ -206,6 +206,21 @@ export default function PageAdminRepasse() {
                     <span>cupom: {r.coupon
                       ? <strong style={{ fontFamily: "monospace" }}>{r.coupon}</strong>
                       : <span style={{ color: "var(--color-text-secondary)" }}>—</span>}</span>
+                    {/* O veredito do código que foi junto na mensagem. O cupom é
+                        enviado de qualquer forma — este selo é o que diz se alguém
+                        já conferiu com o ML, e "não testado" não é a mesma coisa
+                        que "o ML não reconheceu". */}
+                    {r.coupon && (() => {
+                      const v = VERDICT_CURTO[r.couponVerdict || "nao-testado"];
+                      return (
+                        <span
+                          style={{ color: v.color, fontWeight: 500 }}
+                          title={r.couponCheckedAt
+                            ? `Testado em ${new Date(r.couponCheckedAt).toLocaleString("pt-BR")}${r.couponSource === "repasse-auto" ? " pelo teste automático" : ""}`
+                            : "Esta palavra nunca foi testada no Mercado Livre."}
+                        >{v.label}</span>
+                      );
+                    })()}
                     <span style={{ color: outcome.color, fontWeight: 500 }}>
                       {outcome.label}{r.stage === "send" ? " no envio" : ""}
                     </span>

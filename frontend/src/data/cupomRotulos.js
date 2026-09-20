@@ -16,6 +16,18 @@ export const VERDICT = {
   indeterminado: { label: "❓ o ML não respondeu", color: "var(--warn-text)" },
 };
 
+// O mesmo veredito, curto, pra caber na faixa de metadados do card do log de
+// captura (Admin › Repasse), onde ele fica ao lado de "cupom: JBL20". Ali o que se
+// pergunta não é o que o ML respondeu, é se aquele código que FOI EMBORA na
+// mensagem do cliente tinha sido validado — por isso `null` (nunca testado) é um
+// estado de primeira classe aqui, e não a ausência de selo.
+export const VERDICT_CURTO = {
+  valid: { label: "✅ validado", color: PRIMARY_DARK },
+  invalid: { label: "⚠ não validado", color: "var(--danger-text)" },
+  indeterminado: { label: "❓ sem resposta do ML", color: "var(--warn-text)" },
+  "nao-testado": { label: "⏳ não testado", color: "var(--color-text-secondary)" },
+};
+
 // Onde um link visto num grupo líder foi parar (`repasse_capture_log.outcome`).
 export const OUTCOME_LABEL = {
   queued: { label: "→ fila", color: "#1B7A43" },

@@ -17,7 +17,7 @@ import { raspar } from "./vitrine.js";
 import { props } from "./props.js";
 import { lista, fecharAba } from "./lista.js";
 import { palavra } from "./palavra.js";
-import { checkout } from "./checkout.js";
+import { checkout, cuponsNoCheckout } from "./checkout.js";
 
 // Cada comando recebe (payload, progresso) e devolve um objeto serializável.
 // A tela consulta esta lista pelo anúncio da ponte: é assim que ela sabe se a
@@ -28,6 +28,7 @@ const COMANDOS = {
   lista,
   palavra,
   checkout,
+  "cupons-checkout": cuponsNoCheckout,
   "fechar-aba": fecharAba,
 };
 

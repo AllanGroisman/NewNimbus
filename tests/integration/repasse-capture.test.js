@@ -393,6 +393,26 @@ describe("repasse capture — motivo e etapa do descarte", () => {
     expect(logs[0].stage).toBe("validate");
   });
 
+  it("Amazon sem oferta é caso próprio, não 'não é produto'", async () => {
+    // A PDP abriu certinho (nome e foto vieram) e só o preço não existe: a Amazon
+    // não está vendendo o item agora. Dizer "não é página de produto" aqui mandava
+    // o usuário conferir um link que estava correto.
+    vi.spyOn(scraper, "scrapeSingleProduct").mockImplementation(async (url) => ({
+      name: "Box Pokémon", link: url, finalUrl: "https://www.amazon.com.br/dp/B0HFNZP4JX",
+      price: null, img: "https://img/x.jpg", store: "Amazon",
+      priceVerified: false, priceSource: "pdp-sem-oferta",
+    }));
+    const { user } = await createTestUser({ plan: "pro" });
+    affiliate.writeAmazonConfig(user.id, { tag: "nimbus-20" });
+    await storage.saveState(user.id, { groups: [repasseGroup(5027, { auto: true })] });
+    await capture.rebuildLeaderIndex();
+    await capture.onUpsert(user.id, NUMBER_ID, [msgWithText("https://www.amazon.com.br/dp/B0HFNZP4JX")]);
+    const logs = await waitForLogs(user.id, 1);
+    expect(logs[0].errorKind).toBe("sem-oferta");
+    expect(logs[0].stage).toBe("validate");
+    expect(logs[0].reason).toMatch(/sem oferta/i);
+  });
+
   it("página que não é produto continua sendo nao-e-produto", async () => {
     vi.spyOn(scraper, "scrapeSingleProduct").mockImplementation(async (url) => ({
       name: null, link: url, finalUrl: "https://www.mercadolivre.com.br/ofertas",

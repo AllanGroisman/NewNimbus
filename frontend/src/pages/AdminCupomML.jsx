@@ -37,6 +37,7 @@ import Modal from "../components/ui/Modal";
 import ColheitaLog from "../components/admin/ColheitaLog";
 import ExtensaoAusente from "../components/admin/ExtensaoAusente";
 import Numero from "../components/admin/Numero";
+import CouponLandingSweep from "../components/admin/CouponLandingSweep";
 import {
   segundos, brl, dia, desconto, cardStyle, inputStyle, labelStyle, th, td,
   botaoPrimario, botaoSecundario, botaoPerigo, botaoLink,
@@ -567,6 +568,11 @@ export default function CuponsDoML({ buscaInicial = null }) {
 
   return (
     <div>
+      {/* A varredura sem navegador vem primeiro: é ela que põe os produtos dos cupons
+          no catálogo sozinha. Quando termina, relê a página — o botão 2 passa a
+          começar pelos cupons que ela não conseguiu ler. */}
+      <CouponLandingSweep onRodou={recarregar} />
+
       <div style={cardStyle}>
         <div style={{ fontWeight: 500, marginBottom: 4 }}>Puxar os cupons do Mercado Livre</div>
         <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12, lineHeight: 1.5 }}>
@@ -1088,16 +1094,21 @@ export function Config({ config, labels, onSaved }) {
           dica="A lista traz 30 cupons por página. 40 páginas = 1.200 cupons." />
         <Numerico cfg={cfg} setCfg={setCfg} chave="limiteCupons" label="Teto de cupons (0 = todos)" min={0} max={20000} largura={140} />
         <Marcador cfg={cfg} setCfg={setCfg} chave="carimbarCategorias" label="carimbar a categoria (passada por vertical)" />
-        <Numerico cfg={cfg} setCfg={setCfg} chave="maxPaginasPorCategoria" label="Páginas por categoria" min={1} max={40} />
+        <Numerico cfg={cfg} setCfg={setCfg} chave="maxPaginasPorCategoria" label="Páginas por categoria" min={1} max={200}
+          dica="Também 30 por página. A maior vertical da conta tem ~1.170 cupons: 40 páginas cobrem 1.200. Cupom além deste teto fica sem categoria." />
         <Marcador cfg={cfg} setCfg={setCfg} chave="skipStoreCoupons" label="ignorar cupom de loja" />
       </div>
       <div style={nota}>
         A coleta é a <b>lista geral</b> (<code>?all=true</code>), que traz todos os cupons da conta.
         As passadas por categoria vêm depois e servem só para <b>carimbar</b> a vertical em quem já
         entrou: a lista do ML não diz a que categoria cada cupom pertence — quem diz é o filtro que
-        a gente pede na URL. Sem elas a coluna Categoria fica vazia. Cupom de <b>loja</b> agora entra
-        por padrão e aparece separado na tabela; ligar o último marcador volta ao comportamento antigo,
-        em que ele era descartado.
+        a gente pede na URL. Sem elas a coluna Categoria fica vazia. <b>Quais</b> categorias existem
+        a rodada descobre sozinha, na primeira página: o ML manda a lista delas em toda página da
+        lista de cupons, e é por isso que a caixa abaixo pode ficar em branco sem prejuízo.
+        Cupom de <b>loja</b> agora entra por padrão e aparece separado na tabela; ligar o último
+        marcador volta ao comportamento antigo, em que ele era descartado. Cupom de loja não entra
+        em vertical nenhuma no ML — a Categoria dele é “—” por natureza, e quem o identifica é a
+        coluna Tipo.
       </div>
 
       {verticais.length > 0 && (

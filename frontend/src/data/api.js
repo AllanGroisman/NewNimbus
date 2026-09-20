@@ -729,6 +729,64 @@ export async function adminRepasseCouponsClear({ days = 90, status = "todos", q 
   return http("DELETE", `/api/admin/repasse/coupons?${params}`);
 }
 
+// ─── Admin / Cupons (varredura pela landing — task 12) ─────────────────
+// Traz para o catálogo os produtos de cada cupom (a prévia da landing de afiliado,
+// sem navegador) e as amostras dos cards. GET devolve config + status + a
+// cobertura (quantos produtos já têm cupom) juntos, pelo mesmo motivo do autotest.
+export async function adminCuponsLandingSweep() {
+  return http("GET", "/api/admin/ml-cupons/landing-sweep");
+}
+
+export async function adminCuponsLandingSweepSave(config) {
+  return http("PUT", "/api/admin/ml-cupons/landing-sweep", config);
+}
+
+// 202: a rodada segue solta no servidor e a tela acompanha pelo status.
+export async function adminCuponsLandingSweepRun() {
+  return http("POST", "/api/admin/ml-cupons/landing-sweep/run", {});
+}
+
+// "Quais cupons valem neste produto?" — só o que o sistema já sabe, sem rede.
+export async function adminProdutoCupons({ url = "", key = "" } = {}) {
+  const params = new URLSearchParams();
+  if (url) params.set("url", url);
+  if (key) params.set("key", key);
+  return http("GET", `/api/admin/produtos/cupons?${params}`);
+}
+
+// A sonda do checkout: manda pro servidor guardar o que a extensão fotografou.
+export async function adminSondaCheckoutCupons({ url, material }) {
+  return http("POST", "/api/admin/ml-cupons/sonda-checkout", { url, material });
+}
+
+// ─── Admin / Repasse (teste automático de cupom) ───────────────────────
+// O robô que testa no ML a palavra pescada na legenda e traz a campanha pro
+// sistema. GET devolve config + defaults + o status da última rodada juntos —
+// a tela mostra os três no mesmo card, e separá-los em duas chamadas só daria
+// chance de o painel abrir com a config nova e o status velho.
+export async function adminRepasseAutotest() {
+  return http("GET", "/api/admin/repasse/coupon-autotest");
+}
+
+export async function adminRepasseAutotestSave(config) {
+  return http("PUT", "/api/admin/repasse/coupon-autotest", config);
+}
+
+// "Rodar agora": responde 202 e a rodada segue solta (é Chrome por palavra, passa
+// do timeout do proxy). Quem acompanha é o status + o log.
+export async function adminRepasseAutotestRun() {
+  return http("POST", "/api/admin/repasse/coupon-autotest/run", {});
+}
+
+// O diário do robô: uma linha por tentativa. `code` filtra o histórico de um cupom.
+export async function adminRepasseAutotestLog({ page = 1, pageSize = 20, code = "" } = {}) {
+  const params = new URLSearchParams();
+  params.set("page", page);
+  params.set("pageSize", pageSize);
+  if (code) params.set("code", code);
+  return http("GET", `/api/admin/repasse/coupon-autotest/log?${params}`);
+}
+
 // Resumo da janela (1h/24h/7d): totais por resultado, por motivo e taxa por loja.
 export async function adminRepasseSummary({ hours = 24, userId, groupId, store } = {}) {
   const params = new URLSearchParams();

@@ -11,6 +11,7 @@ tela de admin pedir:
 | `raspar` | “no meu Chrome” de cada linha, e “Colher todas as vitrines” | Abre a vitrine do cupom, percorre as páginas e devolve os produtos. |
 | `palavra` | Admin › Cupom › Descobrir palavra e Repasse | Digita a palavra no “Inserir código do cupom” e devolve o que o ML respondeu. |
 | `checkout` | Admin › Cupom › Testar cupom (modo checkout) | Leva o produto ao checkout e aplica o código. **Nunca finaliza compra.** |
+| `cupons-checkout` | Admin › Cupom › Cupons do produto (sonda) | Leva o produto até a tela dos cupons do checkout e **só fotografa** — não digita nem clica em cupom. O servidor guarda em `backend/logs/ml-checkout-cupons/`. Desde a 2.2.0; desde a **2.2.5** ela também busca a página `/cupons/cho` direto da aba (o deeplink está no modelo do checkout), que é o caminho que responde mesmo quando nenhum cupom está em uso e o popup não abre. |
 | `props` | diagnóstico | Lê o modelo (JSON) de uma página do ML. |
 
 ## Por que ela existe

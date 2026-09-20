@@ -225,10 +225,42 @@ function sampleIdsFromTracking(bloco) {
   return mapa;
 }
 
+// A REGRA de cada cupom, do mesmo bloco de telemetria das amostras
+// (`coupons_list[].segmentations`, irmão do `item_ids`). Guardada em `raw.regra`
+// só para diagnóstico — conferido na fixture em 19/09/2026 (task 12):
+//
+//   - `containers[]` são ids INTERNOS de marketing do ML ("CBT M6ALL", "M6 NP
+//     bidding"), não categorias públicas: não dá pra casar com produto nenhum;
+//   - `collectors[]` é o id do vendedor, que o `_CustId_` da vitrine já dá.
+//
+// Por isso isto NÃO vira vínculo cupom ↔ produto: seria inferência ("o vendedor
+// bate, então o cupom deve valer"), e o sistema só grava vínculo quando é o ML que
+// diz que o produto está coberto. Fica aqui pra responder, meses depois, "que
+// cupom era esse?" sem precisar de um dump.
+function regrasFromTracking(bloco) {
+  const lista = bloco?.tracking?.view?.eventData?.coupons_list;
+  const mapa = new Map();
+  if (!Array.isArray(lista)) return mapa;
+  for (const c of lista) {
+    if (!c?.campaign_id) continue;
+    const seg = c.segmentations && typeof c.segmentations === "object" ? c.segmentations : {};
+    const lista_ = (v) => (Array.isArray(v) ? v : []);
+    mapa.set(String(c.campaign_id), {
+      createdBy: c.created_by || null,
+      discountType: c.discount_type || null,
+      collectors: lista_(seg.collectors).map(String),
+      containers: lista_(seg.containers).map(x => ({ id: x?.id ?? null, name: x?.name ?? null })),
+      categories: lista_(seg.categories).map(String),
+      storeIds: lista_(seg.store_ids).map(String),
+    });
+  }
+  return mapa;
+}
+
 // Um cupom do modelo do ML → a linha que o sistema guarda.
 // `raw` é o item de `groupings[].rawCoupons[]` (snake_case, que é o formato do ML;
 // o camelCase da mesma lista é conversão do front deles e pode sumir sem aviso).
-function parseCoupon(raw, groupings = [], sampleItemIds = []) {
+function parseCoupon(raw, groupings = [], sampleItemIds = [], regra = null) {
   if (!raw || !raw.campaign_id) return null;
 
   const titulo = raw.title?.text || "";
@@ -295,6 +327,8 @@ function parseCoupon(raw, groupings = [], sampleItemIds = []) {
     raw: {
       icon: raw.icon ?? null,
       isNewFollowerCoupon: raw.is_new_follower_coupon ?? null,
+      // A regra do ML para este cupom (ver regrasFromTracking). Só diagnóstico.
+      regra: regra || null,
       // De onde saiu a palavra deste cupom. "Do título" e "testada no ML" têm peso
       // diferente, e meses depois ninguém lembra qual foi.
       codeFromTitle: !!palavraDoTitulo(titulo),
@@ -315,6 +349,7 @@ function parseLanding(landing) {
 
   const evt = landing.tracking?.view?.eventData || {};
   const amostras = sampleIdsFromTracking(landing);
+  const regras = regrasFromTracking(landing);
   const porId = new Map();
   const grupos = [];
 
@@ -325,7 +360,7 @@ function parseLanding(landing) {
       // O camelCase (`coupons[]`) e o snake_case (`rawCoupons[]`) descrevem o mesmo
       // cupom; parseCoupon lê o snake, então normaliza o camelCase que sobrar.
       const item = raw.campaign_id ? raw : camelToRaw(raw);
-      const c = parseCoupon(item, g.key ? [g.key] : [], amostras.get(String(item.campaign_id)) || []);
+      const c = parseCoupon(item, g.key ? [g.key] : [], amostras.get(String(item.campaign_id)) || [], regras.get(String(item.campaign_id)) || null);
       if (!c) continue;
       const anterior = porId.get(c.campaignId);
       if (anterior) {
@@ -386,24 +421,34 @@ function filterUrl({ grouping = null, page = 1 } = {}) {
   return u.href;
 }
 
-// Uma página da lista cheia → { total, page, pages, coupons }. Pura.
+// Uma página da lista cheia →
+// { total, page, pages, coupons, availableGroupings, appliedFilters }. Pura.
 //
 // `filteredCouponsData` é o que o ML monta com os filtros aplicados;
 // `activeCouponsData` é a listinha "seus cupons ativos" do topo — os dois trazem
 // cupom, e o segundo costuma repetir o primeiro, então entram juntos e a
 // desduplicação por campaignId resolve.
+//
+// Os dois últimos campos não são sobre os cupons desta página: são o que o ML
+// declara sobre SI MESMO nela. `availableGroupingsKeys` é a lista completa das
+// verticais que a conta tem, e `appliedFilters` traz o nome bonito da que foi
+// pedida na URL. Vinham sendo jogados fora, e sem eles a rodada não tinha de onde
+// aprender que existem dez categorias — ficava presa nas que já conhecia (task 14).
 function parseFilterProps(props, grouping = null) {
   const d = props?.filteredCouponsData;
-  if (!d) return { total: null, page: 1, pages: 1, coupons: [] };
+  // Os campos novos entram VAZIOS aqui também: quem consome faz `.filter`/`for…of`
+  // neles, e `undefined` viraria TypeError na página que veio pela metade.
+  if (!d) return { total: null, page: 1, pages: 1, coupons: [], availableGroupings: [], appliedFilters: [] };
 
   const porId = new Map();
   for (const bloco of [d, props.activeCouponsData]) {
     // Cada bloco tem o SEU tracking: o cupom que só aparece em `activeCouponsData`
     // tem os ids dele lá, e não no `filteredCouponsData`.
     const amostras = sampleIdsFromTracking(bloco);
+    const regras = regrasFromTracking(bloco);
     for (const c of bloco?.coupons || []) {
       const cru = c.campaign_id ? c : camelToRaw(c);
-      const item = parseCoupon(cru, grouping ? [grouping] : [], amostras.get(String(cru.campaign_id)) || []);
+      const item = parseCoupon(cru, grouping ? [grouping] : [], amostras.get(String(cru.campaign_id)) || [], regras.get(String(cru.campaign_id)) || null);
       if (!item || porId.has(item.campaignId)) continue;
       porId.set(item.campaignId, item);
     }
@@ -414,6 +459,13 @@ function parseFilterProps(props, grouping = null) {
     page: d.pagination?.page ?? 1,
     pages: d.pagination?.total ?? 1,
     coupons: [...porId.values()],
+    // As chaves que o ML declara na própria página (`as_vertical`, `hi_vertical`…,
+    // e também `price`/`percentage`, que não são categoria — quem separa os dois é
+    // o `verticaisConhecidas` do coupons/sync.js).
+    availableGroupings: Array.isArray(props?.availableGroupingsKeys) ? props.availableGroupingsKeys : [],
+    // `[{ key, title }]` do filtro aplicado: é a única vez que o ML diz o NOME da
+    // vertical fora da aba /cupons, que a rodada local não abre.
+    appliedFilters: Array.isArray(d.appliedFilters) ? d.appliedFilters : [],
   };
 }
 
@@ -1221,6 +1273,7 @@ module.exports = {
   palavraDoTitulo,
   camelToRaw,
   sampleIdsFromTracking,
+  regrasFromTracking,
   parseCoupon,
   parseLanding,
   parseFilterProps,

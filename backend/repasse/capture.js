@@ -14,6 +14,7 @@ const scraper = require("../scraping/scraper");
 const urlGuard = require("../scraping/urlGuard");
 const affiliate = require("../scraping/affiliate");
 const mlSocial = require("../scraping/ml-social");
+const { canonicalAmazonUrl } = require("../scraping/amazon-url");
 const storage = require("../storage");
 const userNotifier = require("../notifications/user-notifier");
 const { leadersOf } = require("./leaders");
@@ -154,12 +155,15 @@ function extractCoupon(text, cfg) {
   return null;
 }
 
-// Resolve redirects (amzn.to, merc.li, mlb.li, links /sec/ de afiliado alheio)
-// pra chegar na URL canônica — necessário pra extractASIN/createLink funcionarem.
-// Best-effort: em qualquer falha devolve a URL original.
+// Resolve redirects (amzn.to, link.amazon, merc.li, mlb.li, links /sec/ de afiliado
+// alheio) pra chegar na URL canônica — necessário pra extractASIN/createLink
+// funcionarem. Best-effort: em qualquer falha devolve a URL original.
+//
 // A URL aqui vem de mensagem de WhatsApp, ou seja, de qualquer pessoa num grupo
-// monitorado — sem login. safeFetchFollow valida a cada salto do redirect que o
-// destino é domínio de loja conhecida e resolve pra IP público (ver urlGuard.js).
+// monitorado — sem login. O safeFetchFollow confere em TODO salto que o host
+// resolve pra IP público, e exige domínio de loja conhecida na entrada e no
+// destino final; o meio do caminho pode ser encurtador de terceiro, que é o
+// normal em link de afiliado (ver urlGuard.js).
 async function resolveUrl(url) {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), 8000);
@@ -314,19 +318,26 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null) {
         continue;
       }
 
-      // Raspa a URL ORIGINAL (não a resolvida): o Puppeteer segue o redirect ele
-      // mesmo, com stealth + cookie de afiliado — igual ao "Adicionar link" manual.
-      // O link ARMAZENADO (usado na reafiliação no envio) prefere o finalUrl que o
-      // scrape devolveu — que é o permalink do produto —, caindo pro `resolved`
-      // (a landing de OUTRO afiliado) só quando o scrape falha.
+      // Regra geral: raspa a URL ORIGINAL (não a resolvida). O Puppeteer segue o
+      // redirect ele mesmo, com stealth + cookie de afiliado — igual ao "Adicionar
+      // link" manual. O link ARMAZENADO (usado na reafiliação no envio) prefere o
+      // finalUrl que o scrape devolveu — que é o permalink do produto —, caindo pro
+      // `resolved` (a landing de OUTRO afiliado) só quando o scrape falha.
       // Obs.: para a landing /social/ do ML o scrapeSingleProduct já tenta ler por
       // HTTP simples antes do navegador; ali o fetch passa e o Chrome é que apanha.
+      //
+      // Amazon é a exceção: quando o resolved já entregou o ASIN, vale mais raspar
+      // o canônico. A URL que sai do encurtador vem com /ref= de campanha e a tag de
+      // OUTRO afiliado grudados (o /ref= às vezes força uma oferta específica), e o
+      // caminho até ela passa por interstitial de encurtador — o navegador não
+      // precisa refazer esse trajeto se o destino já é conhecido.
+      const scrapeUrl = (store === "Amazon" && canonicalAmazonUrl(resolved)) || rawUrl;
       let scraped = null, scrapeErr = null;
       try {
-        scraped = await scraper.scrapeSingleProduct(rawUrl, { userId });
+        scraped = await scraper.scrapeSingleProduct(scrapeUrl, { userId });
       } catch (err) {
         scrapeErr = err;
-        console.warn(`[repasse] scrape falhou pra ${rawUrl}: ${err.message}`);
+        console.warn(`[repasse] scrape falhou pra ${scrapeUrl}: ${err.message}`);
       }
 
       // Alimenta o aviso de bloqueio do admin com o desfecho deste scrape. Fica ANTES
@@ -391,13 +402,20 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null) {
         // "não é produto": ali o link é de produto, só está velho ou é de outro
         // afiliado. Misturar os dois esconderia o que precisa de ação.
         const onLanding = /\/social\//i.test(scraped.finalUrl || "");
+        // Idem pro produto que a loja não está vendendo agora: a PDP abriu e trouxe
+        // nome e foto, só o preço não existe na página (Amazon com o item apenas em
+        // "Outras opções de compra", ou buybox escondido). Chamar isso de "não é
+        // página de produto" mandava o usuário conferir um link que estava certo.
+        const semOferta = scraped.priceSource === "pdp-sem-oferta";
         const reason = onLanding
           ? `landing de afiliado não abriu a página do produto (sem ${missing.join("/")})`
+          : semOferta
+          ? `${store} está sem oferta para este produto agora — a página abriu, mas não há preço no bloco de compra`
           : `dados insuficientes (sem ${missing.join("/")}) — provavelmente não é uma página de produto`;
         console.log(`[repasse] ${store}: ${reason} → descartado`);
         discarded.push({
           rawUrl, resolved, store, affiliateConfigured, reason,
-          errorKind: onLanding ? KIND.LANDING_EXPIRADA : KIND.NAO_E_PRODUTO,
+          errorKind: onLanding ? KIND.LANDING_EXPIRADA : semOferta ? KIND.SEM_OFERTA : KIND.NAO_E_PRODUTO,
           stage: STAGE.VALIDATE,
         });
         continue;

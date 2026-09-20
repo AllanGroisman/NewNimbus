@@ -4,6 +4,10 @@
 // links seguidos e o painel mostrou dez linhas parecidas: a loja parada precisa
 // aparecer numa frase única em cima, "esperar" precisa ficar visualmente separado
 // de "agir", e uma etapa que não chegou a rodar não pode parecer defeito.
+//
+// Depois disso entrou o selo do cupom: o código pescado na legenda vai na mensagem
+// do cliente de qualquer forma, então o que o painel precisa dizer é se alguém já
+// conferiu com o ML — e "nunca testado" não é a mesma coisa que "o ML recusou".
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
@@ -46,7 +50,8 @@ function linha(over = {}) {
     waJid: "1@g.us", rawUrl: "https://ml.com/p/1", resolvedUrl: null, store: "Mercado Livre",
     sourceAllowed: null, affiliateConfigured: null, scrapeOk: null,
     productName: null, productImg: null, price: null, originalPrice: null, discount: null,
-    sold: null, coupon: null, outcome: "discarded", errorKind: "captcha", stage: "scrape",
+    sold: null, coupon: null, couponVerdict: null, couponCheckedAt: null, couponSource: null,
+    outcome: "discarded", errorKind: "captcha", stage: "scrape",
     reason: "Mercado Livre pediu verificação (CAPTCHA).", createdAt: "2026-08-25T17:52:00.000Z",
     ...over,
   };
@@ -143,5 +148,40 @@ describe("Admin › Repasse", () => {
     mockLista([linha({ errorKind: "motivo-do-futuro", reason: "algo novo" })]);
     render(<PageAdminRepasse />);
     expect(await screen.findByText("motivo-do-futuro")).toBeTruthy();
+  });
+});
+
+describe("Admin › Repasse — o selo do cupom", () => {
+  it("diz que o cupom enviado nunca foi testado", async () => {
+    // Este é o caso da esmagadora maioria das linhas. Mostrá-lo como "não validado"
+    // seria acusar o cupom de algo que ninguém verificou.
+    mockLista([linha({ coupon: "JBL20", couponVerdict: null })]);
+    render(<PageAdminRepasse />);
+    expect(await screen.findByText(/não testado/)).toBeTruthy();
+  });
+
+  it("marca o cupom que o ML recusou — ele foi embora na mensagem mesmo assim", async () => {
+    mockLista([linha({ coupon: "NAOEXISTE", couponVerdict: "invalid", couponCheckedAt: "2026-08-25T18:00:00.000Z" })]);
+    render(<PageAdminRepasse />);
+    expect(await screen.findByText(/não validado/)).toBeTruthy();
+  });
+
+  it("marca o cupom validado e diz quando o robô testou", async () => {
+    mockLista([linha({
+      coupon: "VALE10", couponVerdict: "valid",
+      couponCheckedAt: "2026-08-25T18:00:00.000Z", couponSource: "repasse-auto",
+    })]);
+    render(<PageAdminRepasse />);
+    const selo = await screen.findByText(/validado/);
+    expect(selo.title).toMatch(/teste automático/);
+  });
+
+  it("mensagem sem cupom não ganha selo nenhum", async () => {
+    mockLista([linha({ coupon: null })]);
+    render(<PageAdminRepasse />);
+    // Espera o card da linha, e não o "CAPTCHA" — esse texto também aparece no
+    // resumo do topo, que é outra coisa.
+    await screen.findByText("https://ml.com/p/1");
+    expect(screen.queryByText(/validado|não testado/)).toBeNull();
   });
 });

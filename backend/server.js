@@ -28,6 +28,7 @@ const cpfUtil = require("./utils/cpf");
 const phoneUtil = require("./utils/phone");
 const repasseLeaders = require("./repasse/leaders");
 const couponWords = require("./repasse/coupon-words");
+const couponAutotestConfig = require("./repasse/coupon-autotest-config");
 const queueMod = require("./infra/queue");
 const logger = require("./infra/logger");
 const metrics = require("./infra/metrics");
@@ -3157,6 +3158,133 @@ app.post("/api/admin/repasse/coupon-config/test", auth.requireAuth, auth.require
   }
 });
 
+// ── Teste automático dos cupons do repasse ───────────────────────────────
+// O robô que testa no ML a palavra que a captura pescou e traz a campanha pro
+// sistema (backend/repasse/coupon-autotest.js). Até aqui isso era o botão da linha
+// na aba, e o filtro padrão dela era "nunca testados" porque era o estado de quase
+// todas as linhas.
+//
+// A config é o freio: cada teste abre um Chrome com a conta do ML, e o número certo
+// de palavras por rodada só se descobre olhando o ML reagir.
+app.get("/api/admin/repasse/coupon-autotest", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  const autotest = require("./repasse/coupon-autotest");
+  res.json({
+    config: couponAutotestConfig.readConfig(),
+    defaults: couponAutotestConfig.DEFAULTS,
+    status: autotest.status(),
+  });
+});
+
+app.put("/api/admin/repasse/coupon-autotest", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const config = couponAutotestConfig.writeConfig(req.body || {});
+    if (!await confirmConfigSaved(res)) return;
+    // O intervalo virou outro: reagenda, senão o número novo só valeria no próximo
+    // restart e a tela mostraria uma cadência que não é a que está rodando.
+    const autotest = require("./repasse/coupon-autotest");
+    autotest.stop();
+    autotest.start();
+    res.json({ config, status: autotest.status() });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// "Rodar agora": dispara SOLTA e responde na hora. A rodada abre um Chrome por
+// palavra e passa dos 90s do proxy_read_timeout do nginx — segurar a conexão é o
+// caminho mais curto pro timeout. A tela acompanha pelo status e pelo log.
+app.post("/api/admin/repasse/coupon-autotest/run", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  const autotest = require("./repasse/coupon-autotest");
+  // `manual` passa por cima do `enabled: false` — é um pedido explícito de quem
+  // está olhando a tela, e serve justamente pra testar a config antes de ligar.
+  autotest.runOnce({ manual: true }).catch(err =>
+    console.error("[repasse.coupon-autotest] rodada manual:", err.message));
+  res.status(202).json({ started: true, status: autotest.status() });
+});
+
+// O diário: uma linha por tentativa do robô. `code` filtra o histórico de um cupom.
+app.get("/api/admin/repasse/coupon-autotest/log", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const { listAutotestLog } = require("./repasse/coupon-autotest-log");
+    res.json(await listAutotestLog({
+      page: req.query.page,
+      pageSize: req.query.pageSize,
+      code: req.query.code,
+    }));
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/repasse/coupon-autotest/log" });
+  }
+});
+
+// ── Varredura dos cupons pela landing (task 12) ──────────────────────────
+// Traz para o catálogo os produtos de cada cupom, sem navegador, e as amostras dos
+// cards (backend/coupons/landing-sweep.js). É o que faz o produto do sistema
+// aparecer com o cupom que vale nele — antes disso eram 4.035 produtos e UM com cupom.
+app.get("/api/admin/ml-cupons/landing-sweep", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const sweep = require("./coupons/landing-sweep");
+    const sweepConfig = require("./coupons/landing-sweep-config");
+    res.json({
+      config: sweepConfig.readConfig(),
+      defaults: sweepConfig.DEFAULTS,
+      status: sweep.status(),
+      cobertura: await couponsStore.coberturaStats(),
+    });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/ml-cupons/landing-sweep" });
+  }
+});
+
+app.put("/api/admin/ml-cupons/landing-sweep", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const sweepConfig = require("./coupons/landing-sweep-config");
+    const config = sweepConfig.writeConfig(req.body || {});
+    if (!await confirmConfigSaved(res)) return;
+    // Intervalo novo só vale reagendando — senão a tela mostraria uma cadência que
+    // não é a que está rodando.
+    const sweep = require("./coupons/landing-sweep");
+    sweep.stop();
+    sweep.start();
+    res.json({ config, status: sweep.status() });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// "Rodar agora": SOLTA, responde na hora. 60 cupons a ~2 s mais as pausas passam
+// dos 90 s do nginx; a tela acompanha pelo status.
+app.post("/api/admin/ml-cupons/landing-sweep/run", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  const sweep = require("./coupons/landing-sweep");
+  sweep.runOnce({ manual: true }).catch(err =>
+    console.error("[cupons.landing-sweep] rodada manual:", err.message));
+  res.status(202).json({ started: true, status: sweep.status() });
+});
+
+// "Quais cupons valem neste produto?" — pelo link (ou pela chave do catálogo).
+// Só o que o sistema já sabe, sem rede: cada cupom vem com a ORIGEM do vínculo,
+// porque "está na prévia" e "está na vitrine completa" não são a mesma garantia.
+app.get("/api/admin/produtos/cupons", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const { paraProduto } = require("./coupons/product-coupons");
+    res.json(await paraProduto({ url: req.query.url ? String(req.query.url) : null, key: req.query.key ? String(req.query.key) : null }));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// A sonda do checkout (extensão, comando "cupons-checkout"): guarda em
+// backend/logs/ml-checkout-cupons/ o que a tela de cupons mostrou. Não interpreta
+// nada — o parser só é escrito depois de alguém olhar isto.
+app.post("/api/admin/ml-cupons/sonda-checkout", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const { gravarSonda } = require("./coupons/product-coupons");
+    const r = await gravarSonda({ url: req.body?.url ? String(req.body.url) : null, material: req.body?.material });
+    res.json({ pasta: require("path").relative(__dirname, r.pasta), resumo: r.resumo });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // Os cupons que o repasse pescou, um por linha (Admin › Cupom › Repasse).
 // Agrega o log de captura por código e cruza com o dicionário palavra → campanha
 // da aba "Descobrir palavra", pra dizer de cada um se já foi testado, de que
@@ -3260,12 +3388,22 @@ app.get("/api/admin/repasse/logs", auth.requireAuth, auth.requireAdmin, async (r
 
     const groupIds = [...new Set(rows.map(r => r.groupId))];
     const userIds = [...new Set(rows.map(r => r.userId))];
-    const [groups, users] = await Promise.all([
+    // O veredito do cupom de cada linha. Uma consulta pra página inteira, no mesmo
+    // molde do nome do grupo e do e-mail: o card já mostra "cupom: JBL20" e sem
+    // isso não haveria como dizer ao lado se aquele código foi validado — que é a
+    // única pergunta que importa quando o cupom sai na mensagem do cliente.
+    const codes = [...new Set(rows.map(r => r.coupon).filter(Boolean))];
+    const [groups, users, checks] = await Promise.all([
       groupIds.length ? prisma().group.findMany({ where: { id: { in: groupIds } }, select: { id: true, name: true } }) : [],
       userIds.length ? prisma().user.findMany({ where: { id: { in: userIds } }, select: { id: true, email: true, name: true } }) : [],
+      codes.length ? prisma().mlCouponCode.findMany({
+        where: { code: { in: codes } },
+        select: { code: true, verdict: true, checkedAt: true, source: true },
+      }) : [],
     ]);
     const groupById = new Map(groups.map(g => [g.id.toString(), g.name]));
     const userById = new Map(users.map(u => [u.id, u]));
+    const checkByCode = new Map(checks.map(c => [c.code, c]));
 
     const items = rows.map(r => ({
       id: r.id.toString(),
@@ -3287,6 +3425,11 @@ app.get("/api/admin/repasse/logs", auth.requireAuth, auth.requireAdmin, async (r
       discount: r.discount,
       sold: r.sold,
       coupon: r.coupon,
+      // null = a palavra nunca foi ao ML. É diferente de "invalid" (o ML não
+      // reconheceu), e a tela não pode passar um pelo outro.
+      couponVerdict: r.coupon ? (checkByCode.get(r.coupon)?.verdict ?? null) : null,
+      couponCheckedAt: r.coupon ? (checkByCode.get(r.coupon)?.checkedAt ?? null) : null,
+      couponSource: r.coupon ? (checkByCode.get(r.coupon)?.source ?? null) : null,
       outcome: r.outcome,
       errorKind: r.errorKind,
       stage: r.stage,
@@ -4016,10 +4159,18 @@ async function boot() {
     scheduler.start();
     adminScraper.start();
     scrapTester.start();
-    // Cupons do ML não têm agenda ainda (a rodada é o botão do admin), mas o
+    // A rodada GERAL de cupons do ML continua sendo o botão do admin, mas o
     // resultado da última precisa sobreviver ao reboot — senão a tela abre dizendo
     // que nunca rodou.
     mlCupons.loadPersistedStatus();
+    // O que tem agenda é o teste dos cupons que o repasse pesca nas legendas: ele
+    // roda aqui, e não no worker onde o cupom nasce, porque os mutex do
+    // coupons/sync.js são por processo — no worker o robô abriria um segundo Chrome
+    // na conta do ML no meio de uma rodada do admin, sem aparecer em tela nenhuma.
+    require("./repasse/coupon-autotest").start();
+    // A varredura dos cupons pela landing (sem navegador) — mesmo motivo de morar
+    // aqui: respeitar os mutex do coupons/sync.js, que são por processo.
+    require("./coupons/landing-sweep").start();
     backupMonitor.start();
     billingReminders.start();
     // Fire-and-forget — falha silenciosa se sessão WA ainda não estiver conectada

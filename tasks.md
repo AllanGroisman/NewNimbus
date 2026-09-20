@@ -21,5 +21,25 @@
 11. [x] Além do QRCode, da pra entrar no whats com codigo tb, certo?  Quero acrescentar esta opção.
 
 12. [] Quero que os produtos do sistema tenham os cupons os quais é possível aplicar. O que falta? Qual a forma mais facil de descobrir qual cupom funciona nos produtos? Da uma olhada no que o sistema ja faz e no que é possivel
+   Faltava DADO, não código: 4.035 produtos e UM com cupom. Agora uma varredura sem
+   navegador (card no topo de Cupom › Cupons do ML) traz os produtos de cada cupom e as
+   amostras dos cards pro catálogo, já carimbados — 1ª rodada: 1 → 270. Aba nova
+   "Cupons do produto" responde quais cupons valem num link, e a sonda do checkout
+   (extensão 2.2.5) já lê a lista que o ML oferece PARA AQUELE carrinho — inclusive o
+   desconto que ele calculou — e grava como origem "checkout". FALTA: rodar isso em
+   LOTE, produto a produto (é a task 15), e concluir "este cupom não vale aqui" pela
+   ausência, que só depois de mais sondas. E cupom sem palavra ainda não sai na
+   mensagem (task 13).
 
-13. [] Quero que na hora de enviar esses produtos seja possivel dar o preço com cupom, desconto do cupom, a palavra do cupom (cupom só vale se tiver palavra).
+
+13. [] Quero adicionar o desconto_cupom como possivel de mandar na mensagem e também o desconto_total que junta o desconto da promoção + o desconto do cupom, assim consigo mostrar o preço original e o preço final a ser pago depois de todos os descontos.
+
+14. [x] Os cupons estão sendo puxados somente de Brinquedos, Hobbies e Bebês
+Eletrônicos, Áudio e Vídeo, moda e acessorios? Somente essas 3 categorias?
+   Eram essas 3 porque a fila de categorias saía de um dicionário no banco que nada
+   em produção escrevia desde o commit 37a81d0 — e como só se aprende uma categoria
+   visitando-a, a rodada nunca sairia dali sozinha. Agora ela lê a lista completa que
+   o ML manda em toda página (`availableGroupingsKeys`), carimba até o fim de cada
+   vertical (o carimbo passou a contar como progresso) e grava a cada categoria.
+
+15. [] Quero um botão para testar os cupons disponiveis nos produtos que estão no sistema. Faça um plano de como implementar isso.

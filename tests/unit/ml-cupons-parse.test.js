@@ -123,6 +123,31 @@ describe("parseFilterProps (a lista cheia, paginada)", () => {
     expect(ml.parseFilterProps(null).coupons).toEqual([]);
     expect(ml.parseFilterProps({}).pages).toBe(1);
   });
+
+  // O que a página diz sobre as CATEGORIAS do ML, e não sobre os cupons dela.
+  // É a única fonte que a rodada local tem: ela nunca abre a aba /cupons, e sem
+  // isto o dicionário de verticais ficava congelado em três (task 14).
+  it("entrega a lista completa de verticais que o ML declara na página", () => {
+    expect(r.availableGroupings).toContain("hi_vertical");
+    expect(r.availableGroupings).toContain("as_vertical");
+    // Filtro vem na mesma lista que categoria — separá-los é trabalho do
+    // `verticaisConhecidas` (coupons/sync.js), não deste parse.
+    expect(r.availableGroupings).toContain("percentage");
+    expect(r.availableGroupings.length).toBeGreaterThan(10);
+  });
+
+  it("entrega o NOME da vertical filtrada, que só aparece aqui", () => {
+    expect(r.appliedFilters).toEqual([{ key: "ce_vertical", title: "Eletrônicos, Áudio e Vídeo" }]);
+  });
+
+  it("página sem esses campos devolve array vazio, não undefined", () => {
+    // Quem consome faz `for…of` neles; `undefined` seria TypeError na página que
+    // veio pela metade.
+    expect(ml.parseFilterProps(null).availableGroupings).toEqual([]);
+    expect(ml.parseFilterProps(null).appliedFilters).toEqual([]);
+    expect(ml.parseFilterProps({ filteredCouponsData: { coupons: [] } }).availableGroupings).toEqual([]);
+    expect(ml.parseFilterProps({ filteredCouponsData: { coupons: [] } }).appliedFilters).toEqual([]);
+  });
 });
 
 // Loja × campanha: a decisão que faz a rodada PULAR o cupom, então errar aqui é
@@ -633,5 +658,29 @@ describe("parseCoupon — o rótulo que liga o modelo ao botão", () => {
     const comVitrine = cupons.filter(c => c.containerUrl);
     expect(comVitrine.length).toBeGreaterThan(0);
     expect(comVitrine.every(c => c.activationLabel === null)).toBe(true);
+  });
+});
+
+describe("regrasFromTracking (a regra do cupom, só diagnóstico)", () => {
+  // Task 12: `segmentations` vinha no mesmo bloco das amostras e ninguém lia. Ela é
+  // guardada em `raw.regra`, mas NÃO vira vínculo — os `containers` são ids internos
+  // de marketing do ML, e casar produto por vendedor seria inferência.
+  it("lê o vendedor do cupom de loja e os containers do cupom de campanha", () => {
+    const mapa = ml.regrasFromTracking(filterProps.filteredCouponsData);
+    expect(mapa.get("13422085")).toMatchObject({ createdBy: "seller", discountType: "PERCENT", collectors: ["69438105"] });
+    expect(mapa.get("13907402").containers).toContainEqual({ id: "MLB1681616", name: "CBT M6ALL" });
+    expect(mapa.get("13907402").collectors).toEqual([]);
+  });
+
+  it("chega em raw.regra pelo parseFilterProps", () => {
+    const { coupons } = ml.parseFilterProps(filterProps, "ce_vertical");
+    const loja = coupons.find(c => c.campaignId === "13422085");
+    expect(loja.raw.regra).toMatchObject({ collectors: ["69438105"] });
+  });
+
+  it("modelo sem telemetria não quebra nada", () => {
+    expect(ml.regrasFromTracking(null).size).toBe(0);
+    expect(ml.regrasFromTracking({ tracking: { view: { eventData: { coupons_list: [{ campaign_id: 1 }] } } } }).get("1"))
+      .toMatchObject({ collectors: [], containers: [] });
   });
 });

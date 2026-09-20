@@ -8,8 +8,15 @@
 // (http://127.0.0.1:3001, metadata de nuvem em 169.254.169.254, Redis, Postgres)
 // e ler o resultado — o servidor vira um proxy pra rede interna (SSRF).
 //
-// Regra adotada: só http/https, só domínios de loja conhecidos, e o host precisa
-// resolver pra IP público. Em redirect, cada salto é validado de novo.
+// Regra adotada: só http/https e o host precisa resolver pra IP público — sempre.
+// Ser de loja conhecida é cobrado na URL de ENTRADA e no DESTINO FINAL.
+//
+// Os saltos do MEIO de um redirect só precisam do mínimo anti-SSRF. Antes eles
+// também tinham que ser de loja, e isso quebrava encurtador encadeado — que é o
+// normal em link de afiliado: link.amazon → amzlinks.in → amazon.com.br morria no
+// salto do meio e voltava a URL curta, sem ASIN pra reafiliar. O que a checagem de
+// loja no meio protegia (o servidor buscar um endereço qualquer) continua coberto
+// pelo assertPublicHost em todo salto, e o destino ainda tem que ser uma loja.
 
 const dns = require("dns").promises;
 const net = require("net");
@@ -29,6 +36,7 @@ const STORE_DOMAINS = {
   "amzn.to": "Amazon",
   "amzn.eu": "Amazon",
   "a.co": "Amazon",
+  "link.amazon": "Amazon",
   "shopee.com.br": "Shopee",
   "shopee.com": "Shopee",
   "shp.ee": "Shopee",
@@ -104,9 +112,12 @@ async function assertPublicHost(hostname) {
   }
 }
 
-// Validação completa. Lança Error com mensagem amigável, ou devolve
-// { url, store } com a URL já normalizada.
-async function assertStoreUrl(rawUrl) {
+const UNKNOWN_STORE_MSG =
+  "Link não reconhecido. Aceito links de Mercado Livre, Amazon, Shopee, Americanas e Magazine Luiza.";
+
+// Forma da URL, sem tocar na rede: só http(s) e sem credencial embutida
+// (user:senha@host confunde a leitura do host — não há caso legítimo aqui).
+function parseFetchableUrl(rawUrl) {
   let u;
   try {
     u = new URL(String(rawUrl || "").trim());
@@ -116,15 +127,28 @@ async function assertStoreUrl(rawUrl) {
   if (u.protocol !== "http:" && u.protocol !== "https:") {
     throw new Error("Só aceito links http ou https");
   }
-  // user:senha@host confunde a leitura do host — não há caso legítimo aqui.
   if (u.username || u.password) {
     throw new Error("URL inválida");
   }
+  return u;
+}
+
+// O mínimo pra o servidor poder buscar a URL: forma válida e host público.
+// Não exige loja — é o que vale pros saltos do meio de um redirect.
+async function assertPublicUrl(rawUrl) {
+  const u = parseFetchableUrl(rawUrl);
+  await assertPublicHost(u.hostname);
+  return { url: u.href };
+}
+
+// Validação completa. Lança Error com mensagem amigável, ou devolve
+// { url, store } com a URL já normalizada. A loja é conferida ANTES do DNS:
+// link de fora de loja é o caso comum e não merece uma consulta de rede.
+async function assertStoreUrl(rawUrl) {
+  const u = parseFetchableUrl(rawUrl);
   const store = detectStore(u.href);
   if (!store) {
-    throw new Error(
-      "Link não reconhecido. Aceito links de Mercado Livre, Amazon, Shopee, Americanas e Magazine Luiza."
-    );
+    throw new Error(UNKNOWN_STORE_MSG);
   }
   await assertPublicHost(u.hostname);
   return { url: u.href, store };
@@ -132,6 +156,8 @@ async function assertStoreUrl(rawUrl) {
 
 // fetch que segue redirect manualmente, validando cada salto. Necessário porque
 // encurtador de loja pode redirecionar pra qualquer lugar — inclusive interno.
+// Entrada e destino final: loja conhecida. Saltos do meio: só host público
+// (ver o cabeçalho do arquivo pra o porquê da diferença).
 async function safeFetchFollow(rawUrl, { headers = {}, signal, maxHops = 5 } = {}) {
   let current = (await assertStoreUrl(rawUrl)).url;
 
@@ -139,11 +165,17 @@ async function safeFetchFollow(rawUrl, { headers = {}, signal, maxHops = 5 } = {
     const res = await fetch(current, { method: "GET", redirect: "manual", headers, signal });
     const location = res.headers.get("location");
     if (!location || res.status < 300 || res.status >= 400) {
+      // Parou de redirecionar: aqui a exigência volta a ser a da entrada. Um
+      // encurtador que termine fora das lojas não vira produto nenhum.
+      if (!detectStore(current)) {
+        try { await res.body?.cancel?.(); } catch { /* ignore */ }
+        throw new Error(UNKNOWN_STORE_MSG);
+      }
       return { res, finalUrl: current };
     }
     try { await res.body?.cancel?.(); } catch { /* ignore */ }
     const next = new URL(location, current).href;
-    current = (await assertStoreUrl(next)).url;
+    current = (await assertPublicUrl(next)).url;
   }
   throw new Error("Link com redirecionamentos demais");
 }
@@ -153,6 +185,7 @@ module.exports = {
   detectStore,
   isPrivateAddress,
   assertPublicHost,
+  assertPublicUrl,
   assertStoreUrl,
   safeFetchFollow,
 };

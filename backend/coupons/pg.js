@@ -623,10 +623,15 @@ async function couponsSemVitrine({ limit = 500, campaignIds = null } = {}) {
   };
 
   const [prontos, precisamAtivar, total] = await Promise.all([
+    // A ordem gasta o tempo do admin (a extensão abre uma aba por cupom) onde ele
+    // rende mais: primeiro quem a varredura pela landing NÃO conseguiu ler
+    // (coupons/landing-sweep.js) — esses não têm produto nenhum —, e só depois
+    // quem já tem a prévia e só ganharia a lista fechada. Dentro de cada grupo,
+    // campanha antes de loja ("campaign" < "store").
     prisma().mlCoupon.findMany({
       where: { ...base, containerUrl: { not: null } },
-      select: { campaignId: true, title: true, containerUrl: true },
-      orderBy: { lastSeenAt: "desc" },
+      select: { campaignId: true, title: true, containerUrl: true, landingOk: true },
+      orderBy: [{ landingOk: { sort: "asc", nulls: "first" } }, { scope: "asc" }, { lastSeenAt: "desc" }],
       take: teto,
     }),
     // Cupom de LOJA fica de fora: ele é AUTOMATIC, ou seja, já chega ativado. Um de
@@ -642,6 +647,165 @@ async function couponsSemVitrine({ limit = 500, campaignIds = null } = {}) {
   ]);
 
   return { prontos, precisamAtivar, total };
+}
+
+// A fila da varredura pela landing (coupons/landing-sweep.js): cupom válido, com
+// URL de vitrine, sem a vitrine fechada, e que a landing não tentou nas últimas
+// `refazerHoras`. Cupom sem `containerUrl` não entra — sem ela não há link curto a
+// gerar, e ativar ("Eu quero") é escrita na conta, que esta varredura não faz.
+//
+// A ordem é a de quem rende mais produto para o catálogo por requisição:
+//   1. nunca tentado antes de retentativa — cupom novo é o que falta de tudo;
+//   2. cupom de CAMPANHA antes de cupom de loja: é o do ML, cobre muitas lojas;
+//   3. cupom de loja cuja loja já aparece no catálogo — esses casam com produto
+//      que o sistema já tem, e não só com o que a landing trouxer;
+//   4. o visto por último na aba primeiro.
+async function alvosDaLanding({ limit = 60, refazerHoras = 24 } = {}) {
+  const teto = Math.min(5000, Math.max(1, Number(limit) || 60));
+  const corte = new Date(Date.now() - Math.max(0, Number(refazerHoras) || 0) * 3600_000);
+  return prisma().$queryRaw`
+    SELECT c."campaign_id" AS "campaignId", c."title", c."scope", c."sellerName",
+           c."containerUrl", c."sampleItemIds", c."landingTriedAt"
+      FROM "ml_coupons" c
+     WHERE c."containerUrl" IS NOT NULL
+       AND c."productsSyncedAt" IS NULL
+       AND (c."expiresAt" IS NULL OR c."expiresAt" > NOW())
+       AND (c."landingTriedAt" IS NULL OR c."landingTriedAt" < ${corte})
+     ORDER BY (c."landingTriedAt" IS NULL) DESC,
+              (c."scope" = 'campaign') DESC,
+              EXISTS (SELECT 1 FROM "catalog_products" cp
+                       WHERE cp."store" = 'Mercado Livre'
+                         AND cp."payload"->>'seller' = c."sellerName") DESC,
+              c."lastSeenAt" DESC
+     LIMIT ${teto}`;
+}
+
+// O carimbo de "a landing foi tentada". `ok` é "trouxe produto"; a mensagem é a do
+// ML (ou do nosso classificador), e é o que a tela mostra no cupom.
+async function marcarLanding(campaignId, { ok, message = null } = {}) {
+  return prisma().mlCoupon.update({
+    where: { campaignId: String(campaignId) },
+    data: { landingTriedAt: nowish(), landingOk: !!ok, landingMessage: message ? String(message).slice(0, 500) : null },
+  }).catch(() => null);
+}
+
+// As amostras que ainda não viraram produto de catálogo (coupons/enrich-samples.js).
+// A amostra chega só com o MLB; sem uma linha no catálogo com essa chave, o vínculo
+// existe mas não aparece em busca nenhuma — que era o estado de quase todas.
+//
+// Uma linha por PRODUTO (o mesmo MLB pode ser amostra de dois cupons), e só de
+// cupom que ainda vale: buscar produto para cupom vencido é requisição à toa.
+async function amostrasSemCatalogo({ limit = 60, refazerDias = 7 } = {}) {
+  const teto = Math.min(5000, Math.max(1, Number(limit) || 60));
+  const corte = new Date(Date.now() - Math.max(0, Number(refazerDias) || 0) * 864e5);
+  return prisma().$queryRaw`
+    SELECT DISTINCT ON (p."productKey") p."productKey", p."productUrl"
+      FROM "ml_coupon_products" p
+      JOIN "ml_coupons" c ON c."campaign_id" = p."campaign_id"
+     WHERE p."origem" = 'amostra'
+       AND (c."expiresAt" IS NULL OR c."expiresAt" > NOW())
+       AND (p."enrichTriedAt" IS NULL OR p."enrichTriedAt" < ${corte})
+       AND NOT EXISTS (SELECT 1 FROM "catalog_products" cp WHERE cp."key" = p."productKey")
+     ORDER BY p."productKey", p."enrichTriedAt" NULLS FIRST
+     LIMIT ${teto}`;
+}
+
+// Carimba a tentativa em TODAS as linhas daquele produto — é o mesmo MLB, e a
+// resposta do ML sobre ele não muda de cupom pra cupom.
+async function marcarEnriquecimento(productKeys) {
+  const chaves = [...new Set((productKeys || []).filter(Boolean))];
+  if (!chaves.length) return 0;
+  const { count } = await prisma().mlCouponProduct.updateMany({
+    where: { productKey: { in: chaves }, origem: "amostra" },
+    data: { enrichTriedAt: nowish() },
+  });
+  return count;
+}
+
+// O que o CHECKOUT do ML disse sobre UM produto (coupons/checkout-list.js): os
+// cupons que ele aplicou ou calculou desconto pra este carrinho. É o vínculo mais
+// forte que existe — o ML testou ESTE produto —, e entra com `origem: "checkout"`.
+//
+// Diferente do `replaceCouponProducts`, que é por CUPOM e apaga o que não veio: aqui
+// a pergunta foi sobre um produto, então nada de outros produtos é tocado, e o que
+// não veio neste checkout também não é apagado (não prova ausência — ainda).
+//
+// Vínculo `vitrine` já existente fica `vitrine` (as duas são fortes, e a vitrine é a
+// que autoriza o "fora" do quick-check); `landing`/`amostra` são promovidos.
+//
+// Cupom que o sistema ainda não tinha (a aba /cupons não o listou) é CRIADO com o
+// que o checkout disse dele — e só criado: cupom que já existe não é reescrito,
+// porque a linha da aba sabe coisas (vitrine, amostras) que o checkout não traz.
+async function vincularPorCheckout({ productKeys, productUrl, cupons }) {
+  const chaves = [...new Set((productKeys || []).filter(Boolean))];
+  const lista = (cupons || []).filter(c => c?.campaignId);
+  if (!chaves.length || !lista.length || !productUrl) return { vinculados: 0, cuponsNovos: 0 };
+  const agora = nowish();
+
+  const { count: cuponsNovos } = await prisma().mlCoupon.createMany({
+    data: lista.map(c => ({
+      campaignId: String(c.campaignId),
+      title: c.titulo || "(sem título)",
+      kind: c.kind || "unknown",
+      value: c.value ?? null,
+      minPurchase: c.minPurchase ?? null,
+      maxDiscount: c.maxDiscount ?? null,
+      scope: c.grupo && c.grupo !== "meli" ? "store" : "campaign",
+      activated: true,
+      expiresAt: c.expiresAt ? new Date(c.expiresAt) : null,
+      iconUrl: c.iconUrl || null,
+      origin: "checkout",
+      raw: { viaCheckout: true, categoria: c.categoria || null, grupo: c.grupo || null },
+      firstSeenAt: agora,
+      lastSeenAt: agora,
+    })),
+    skipDuplicates: true,
+  });
+
+  let vinculados = 0;
+  for (const c of lista) {
+    const campaignId = String(c.campaignId);
+    for (const productKey of chaves) {
+      const atual = await prisma().mlCouponProduct.findUnique({ where: { campaignId_productKey: { campaignId, productKey } } });
+      if (!atual) {
+        await prisma().mlCouponProduct.create({ data: { campaignId, productKey, productUrl, origem: "checkout", firstSeenAt: agora, lastSeenAt: agora } });
+      } else {
+        await prisma().mlCouponProduct.update({
+          where: { id: atual.id },
+          data: { lastSeenAt: agora, ...(atual.origem === "vitrine" ? {} : { origem: "checkout" }) },
+        });
+      }
+      vinculados += 1;
+    }
+  }
+  await syncCatalogCoupons();
+  return { vinculados, cuponsNovos };
+}
+
+// Quanto da cobertura veio de cada caminho — o painel da varredura. Separado do
+// `stats()` porque aquele roda a cada abertura da aba e este só no card.
+async function coberturaStats() {
+  const [landing, porOrigem, amostrasSemProduto] = await Promise.all([
+    prisma().$queryRaw`
+      SELECT COUNT(*) FILTER (WHERE "containerUrl" IS NOT NULL AND "productsSyncedAt" IS NULL
+                                AND ("expiresAt" IS NULL OR "expiresAt" > NOW()))::int AS "comUrl",
+             COUNT(*) FILTER (WHERE "landingTriedAt" IS NOT NULL)::int AS "tentados",
+             COUNT(*) FILTER (WHERE "landingOk" = true)::int AS "comPrevia"
+        FROM "ml_coupons"`,
+    prisma().mlCouponProduct.groupBy({ by: ["origem"], _count: { _all: true } }),
+    prisma().$queryRaw`
+      SELECT COUNT(DISTINCT p."productKey")::int AS n
+        FROM "ml_coupon_products" p
+       WHERE p."origem" = 'amostra'
+         AND NOT EXISTS (SELECT 1 FROM "catalog_products" cp WHERE cp."key" = p."productKey")`,
+  ]);
+  const catalogo = await prisma().catalogProduct.count({ where: { couponCampaignId: { not: null } } });
+  return {
+    ...(landing[0] || {}),
+    vinculos: Object.fromEntries(porOrigem.map(r => [r.origem, r._count._all])),
+    amostrasSemProduto: amostrasSemProduto[0]?.n || 0,
+    produtosComCupom: catalogo,
+  };
 }
 
 // Apaga UM cupom. Mesma ordem do `clearAll`, e pelo mesmo motivo: o carimbo do
@@ -666,6 +830,12 @@ module.exports = {
   clearAll,
   deleteCoupon,
   couponsSemVitrine,
+  alvosDaLanding,
+  marcarLanding,
+  amostrasSemCatalogo,
+  marcarEnriquecimento,
+  coberturaStats,
+  vincularPorCheckout,
   restampCodesFromChecks,
   findCouponByCode,
   recoverCodesFromCoupons,

@@ -28,6 +28,11 @@ const require = createRequire(import.meta.url);
 const backendDir = path.resolve(__dirname, "..", "..", "backend");
 const sync = require(path.join(backendDir, "coupons", "sync.js"));
 const coupons = require(path.join(backendDir, "coupons"));
+// O `app_config` é cache write-through em memória (backend/config/pg.js): o
+// truncate entre testes limpa a TABELA, não o cache. E desde a task 14 a própria
+// rodada aprende categorias e as grava aí — então um teste que não zera o
+// dicionário herda o que o anterior descobriu.
+const appConfig = require(path.join(backendDir, "config"));
 
 const PROPS = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "fixtures", "ml-cupons-filter.json"), "utf8"));
 
@@ -228,8 +233,11 @@ describe("fimLocalRun", () => {
 // categoria que o sistema grava é o filtro que a varredura pediu na URL.
 describe("startLocalRun: a lista geral e o carimbo por categoria", () => {
   beforeEach(() => {
-    // O dicionário de nomes é o que diz quais categorias existem. Junto das
-    // verticais vêm três chaves que NÃO são categoria — são filtros do ML.
+    appConfig.del("ml-cupons-groupings");
+    // O dicionário de nomes é o que diz quais categorias existem NO COMEÇO da
+    // rodada. Junto das verticais vêm duas chaves que NÃO são categoria — são
+    // filtros do ML. A fixture traz o `availableGroupingsKeys` completo, então a
+    // rodada descobre as outras sete na primeira página (ver o teste da descoberta).
     sync.mergeGroupingLabels([
       { key: "ce_vertical", title: "Eletrônicos, Áudio e Vídeo" },
       { key: "fa_vertical", title: "Moda e acessórios" },
@@ -269,12 +277,147 @@ describe("startLocalRun: a lista geral e o carimbo por categoria", () => {
 
   it("o cupom entra carimbado com a UNIÃO das verticais em que apareceu", async () => {
     sync.startLocalRun({ categorias: [], maxPaginasLista: 1, maxPaginasPorCategoria: 1 });
-    // A mesma fixture na geral e nas três verticais: o cupom aparece em todas, e a
-    // varredura tem de guardar a união delas, não a última.
+    // A mesma fixture na geral e em cada vertical: o cupom aparece em todas, e a
+    // varredura tem de guardar a união delas, não a última. São dez porque a
+    // rodada descobriu as sete que faltavam na primeira página (task 14).
     let r = null;
     while (!r || r.proxima) r = await sync.paginaLocal({ grouping: r ? r.proxima.grouping : null, props: PROPS });
     const guardado = await coupons.getCoupon("13491809");
-    expect(guardado.groupings.sort()).toEqual(["ce_vertical", "fa_vertical", "tb_vertical"]);
+    expect(guardado.groupings.sort()).toEqual([
+      "acc_vertical", "as_vertical", "bh_vertical", "ce_vertical", "cpg_vertical",
+      "et_vertical", "fa_vertical", "hi_vertical", "ot_vertical", "tb_vertical",
+    ]);
+  });
+});
+
+// Task 14: a fila de categorias era montada só com o que o dicionário já sabia, e
+// nada em produção escrevia nesse dicionário desde o commit 37a81d0 — ele estava
+// congelado em três verticais havia meses, e como só se aprende uma vertical
+// VISITANDO-A, a rodada nunca sairia dali sozinha. O ML manda a lista completa em
+// toda página de `/cupons/filter`; é de lá que ela sai agora.
+describe("a rodada descobre as categorias que o ML mostra", () => {
+  beforeEach(() => { appConfig.del("ml-cupons-groupings"); });
+
+  it("a fila cresce na primeira página da lista geral, não na rodada seguinte", async () => {
+    // O dicionário congelado da conta real: três verticais e dois filtros.
+    sync.mergeGroupingLabels([
+      { key: "ce_vertical", title: "Eletrônicos, Áudio e Vídeo" },
+      { key: "fa_vertical", title: "Moda e acessórios" },
+      { key: "tb_vertical", title: "Brinquedos, Hobbies e Bebês" },
+      { key: "price", title: "Mais de R$100" },
+      { key: "percentage", title: "Mais de 10%" },
+    ]);
+    const inicio = sync.startLocalRun({ categorias: [], maxPaginasLista: 1 });
+    expect(inicio.categorias).toEqual([null, "ce_vertical", "fa_vertical", "tb_vertical"]);
+
+    await sync.paginaLocal({ grouping: null, props: PROPS });
+
+    // As sete que faltavam entraram na fila DESTA rodada.
+    const dicionario = sync.readGroupingLabels();
+    for (const k of ["hi_vertical", "as_vertical", "bh_vertical", "acc_vertical", "cpg_vertical", "et_vertical", "ot_vertical"]) {
+      expect(dicionario).toHaveProperty(k);
+    }
+    expect(sync.verticaisConhecidas()).toHaveLength(10);
+  });
+
+  it("filtro não vira categoria: price e percentage entram no dicionário e ficam fora da fila", async () => {
+    sync.startLocalRun({ categorias: [], maxPaginasLista: 1 });
+    await sync.paginaLocal({ grouping: null, props: PROPS });
+    // Eles vêm na mesma lista do ML e são guardados (a tela mostra o nome deles em
+    // cupom antigo), mas varrer por eles carimbaria "Mais de 10%" na coluna
+    // Categoria — que não é categoria nenhuma.
+    expect(sync.readGroupingLabels()).toHaveProperty("percentage");
+    expect(sync.verticaisConhecidas()).not.toContain("percentage");
+    expect(sync.verticaisConhecidas()).not.toContain("price");
+  });
+
+  it("categoria escolhida na tela manda: a descoberta não atropela a escolha", async () => {
+    sync.startLocalRun({ categorias: ["fa_vertical"], maxPaginasLista: 1 });
+    const r = await sync.paginaLocal({ grouping: null, props: PROPS });
+    // O dicionário aprende do mesmo jeito (a tela precisa das caixas), mas a fila
+    // continua sendo a que o Allan pediu.
+    expect(sync.verticaisConhecidas().length).toBeGreaterThan(1);
+    expect(r.proxima.grouping).toBe("fa_vertical");
+    let ultimo = r;
+    while (ultimo.proxima) ultimo = await sync.paginaLocal({ grouping: ultimo.proxima.grouping, props: PROPS });
+    const guardado = await coupons.getCoupon("13491809");
+    expect(guardado.groupings).toEqual(["fa_vertical"]);
+  });
+
+  it("buscar UMA campanha não vira dez varreduras", async () => {
+    sync.startLocalRun({ procurar: "99999999", activateCoupons: false, maxPaginasLista: 1 });
+    const r = await sync.paginaLocal({ grouping: null, props: PROPS });
+    // A lista geral já contém tudo: descobrir categoria aqui só custaria navegação
+    // com a conta do sistema atrás do mesmo cupom.
+    expect(r.proxima).toBeNull();
+  });
+});
+
+// A outra metade da task 14: mesmo varrendo as dez verticais, o carimbo morria na
+// quinta página de cada uma. `juntarCupom` devolvia "não é novo" para o cupom que
+// tinha ACABADO de ganhar categoria, o contador de páginas sem novidade enchia e a
+// vertical era cortada — independente do `maxPaginasPorCategoria`.
+describe("o carimbo vai fundo na vertical", () => {
+  beforeEach(() => {
+    appConfig.del("ml-cupons-groupings");
+    sync.mergeGroupingLabels([{ key: "ce_vertical", title: "Eletrônicos" }]);
+  });
+
+  it("carimbar conta como novidade: a vertical não morre na quinta página", async () => {
+    sync.startLocalRun({ categorias: ["ce_vertical"], maxPaginasLista: 1, maxPaginasPorCategoria: 10 });
+    let r = await sync.paginaLocal({ grouping: null, props: PROPS });
+    expect(r.proxima.grouping).toBe("ce_vertical");
+
+    // A MESMA página, repetida: nenhum cupom é novo, mas a primeira volta carimba
+    // `ce_vertical` em todos. Antes, cinco páginas assim encerravam a vertical.
+    const primeira = await sync.paginaLocal({ grouping: "ce_vertical", props: PROPS });
+    expect(primeira.novos).toBe(0);
+    expect(primeira.carimbados).toBeGreaterThan(0);
+    expect(primeira.proxima.pagina).toBe(2);
+  });
+
+  it("sem carimbo novo por cinco páginas, aí sim a vertical acaba", async () => {
+    // O freio continua existindo — o que mudou é o que conta como progresso.
+    sync.startLocalRun({ categorias: ["ce_vertical"], maxPaginasLista: 1, maxPaginasPorCategoria: 50 });
+    await sync.paginaLocal({ grouping: null, props: PROPS });
+    let r = null;
+    let voltas = 0;
+    do {
+      r = await sync.paginaLocal({ grouping: "ce_vertical", props: PROPS });
+      voltas++;
+    } while (r.proxima?.grouping === "ce_vertical" && voltas < 20);
+    // 1 página que carimba + 5 sem novidade nenhuma.
+    expect(voltas).toBe(6);
+  });
+
+  it("o teto de páginas por categoria agora faz o que promete", async () => {
+    sync.startLocalRun({ categorias: ["ce_vertical"], maxPaginasLista: 1, maxPaginasPorCategoria: 2 });
+    await sync.paginaLocal({ grouping: null, props: PROPS });
+    const p1 = await sync.paginaLocal({ grouping: "ce_vertical", props: PROPS });
+    expect(p1.proxima.pagina).toBe(2);
+    const p2 = await sync.paginaLocal({ grouping: "ce_vertical", props: PROPS });
+    expect(p2.proxima).toBeNull();
+  });
+});
+
+// A terceira: a rodada passou de quatro entradas na fila para onze, e nada ia pro
+// banco antes da última página da última vertical. Um muro do ML, uma aba fechada
+// ou o watchdog no meio jogavam a rodada inteira fora.
+describe("a rodada grava a cada categoria, não só no fim", () => {
+  beforeEach(() => {
+    appConfig.del("ml-cupons-groupings");
+    sync.mergeGroupingLabels([{ key: "ce_vertical", title: "Eletrônicos" }]);
+  });
+
+  it("acabada a lista geral, os cupons já estão no banco", async () => {
+    sync.startLocalRun({ categorias: ["ce_vertical"], maxPaginasLista: 1, maxPaginasPorCategoria: 1 });
+    const r = await sync.paginaLocal({ grouping: null, props: PROPS });
+    // Ainda tem fila pela frente...
+    expect(r.proxima.grouping).toBe("ce_vertical");
+    // ...e o que já foi colhido sobrevive a uma interrupção daqui pra frente.
+    expect(await coupons.getCoupon("13491809")).toBeTruthy();
+    sync.fimLocalRun({ cancelada: true });
+    expect(await coupons.getCoupon("13491809")).toBeTruthy();
   });
 });
 

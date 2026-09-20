@@ -1213,5 +1213,23 @@
         }
       }
     ]
-  }
+  },
+  "availableGroupingsKeys": [
+    "as_vertical",
+    "fa_vertical",
+    "ot_vertical",
+    "cpg_vertical",
+    "et_vertical",
+    "future_coupons",
+    "recommended",
+    "shop_a_gift",
+    "bh_vertical",
+    "my_page",
+    "acc_vertical",
+    "price",
+    "tb_vertical",
+    "ce_vertical",
+    "percentage",
+    "hi_vertical"
+  ]
 }

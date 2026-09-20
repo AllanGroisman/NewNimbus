@@ -6,6 +6,10 @@
 // ao ML, e mostrar isso como veredito negativo faria o admin descartar cupom bom.
 // Depois disso, que cada ação apareça só onde ela resolve alguma coisa — e que o
 // teste disparado daqui marque a origem "repasse" na palavra.
+//
+// E, desde que o robô existe, que a tela diga QUEM testou: "por aqui" (alguém
+// clicou) e "automático" (o coupon-autotest.js) são a mesma data com significados
+// diferentes, e é essa diferença que o admin vem conferir.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
@@ -20,6 +24,10 @@ vi.mock("../data/api", () => ({
   adminMlCuponsImportStatus: vi.fn(),
   adminRepasseCouponForget: vi.fn(),
   adminRepasseCouponsClear: vi.fn(),
+  adminRepasseAutotest: vi.fn(),
+  adminRepasseAutotestSave: vi.fn(),
+  adminRepasseAutotestRun: vi.fn(),
+  adminRepasseAutotestLog: vi.fn(),
 }));
 
 // A extensão do Chrome (extension/ na raiz). O teste de palavra prefere ela quando
@@ -35,6 +43,7 @@ import {
   adminRepasseCoupons, adminRepasseLogs, adminMlCuponsTestWord,
   adminMlCuponsSyncProducts, adminMlCuponsImportCampaign, adminMlCuponsImportStatus,
   adminRepasseCouponForget, adminRepasseCouponsClear,
+  adminRepasseAutotest, adminRepasseAutotestSave, adminRepasseAutotestRun, adminRepasseAutotestLog,
 } from "../data/api";
 
 const cupom = (extra = {}) => ({
@@ -60,11 +69,36 @@ function linhaDe(code) {
   return screen.getByText(code).closest("tr");
 }
 
+const statusRobo = (extra = {}) => ({
+  enabled: true, running: false, agendado: true,
+  lastRunAt: "2026-09-19T11:00:00Z", lastDuration: 42000,
+  testados: 3, importados: 1, vitrines: 0,
+  pulada: null, bloqueadoAte: null, lastError: null,
+  nextRunAt: "2026-09-19T11:15:00Z", intervaloMs: 900000,
+  ...extra,
+});
+
+const configRobo = {
+  enabled: true, intervaloMs: 900000, maxPorRodada: 5, pausaEntrePalavrasMs: 20000,
+  diasDeBusca: 90, minCapturas: 1, importarCampanha: true, rasparVitrine: true,
+  maxImportsPorRodada: 1, maxTentativas: 3, esperaAposIndeterminadoHoras: 6,
+  pausaAposBloqueioMin: 60,
+};
+
+// Abre o card do robô (ele nasce fechado: a config muda uma vez por mês e a aba
+// já faz a sua própria consulta ao abrir).
+async function abrirCardDoRobo() {
+  fireEvent.click(screen.getByText(/Teste automático dos cupons/));
+  await waitFor(() => expect(adminRepasseAutotest).toHaveBeenCalled());
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   // Sem extensão é o padrão: o teste de palavra cai no caminho do servidor.
   coletorEntende.mockResolvedValue(false);
   adminRepasseLogs.mockResolvedValue({ items: [] });
+  adminRepasseAutotest.mockResolvedValue({ config: configRobo, defaults: configRobo, status: statusRobo() });
+  adminRepasseAutotestLog.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 });
 });
 
 describe("Admin › Cupom › Repasse", () => {
@@ -235,5 +269,119 @@ describe("Admin › Cupom › Repasse — excluir", () => {
     render(<CuponsDoRepasse />);
     await waitFor(() => expect(screen.getByText(/Nenhum cupom capturado/)).toBeTruthy());
     expect(screen.getByText("🗑 Limpar lista (0)").disabled).toBe(true);
+  });
+});
+
+describe("Admin › Cupom › Repasse — quem testou a palavra", () => {
+  it("separa o teste pedido na tela do que o robô fez sozinho", async () => {
+    // A mesma data com origens diferentes. Sem o rótulo, a tela diria "testado
+    // 14h32" e deixaria no ar se alguém clicou ou se aquilo aconteceu sozinho.
+    await abrir([
+      cupom({ code: "JBL20", verdict: "valid", checkedAt: "2026-09-01T14:32:00Z", source: "repasse" }),
+      cupom({ code: "AUTO10", verdict: "valid", checkedAt: "2026-09-02T09:10:00Z", source: "repasse-auto" }),
+    ]);
+
+    expect(within(linhaDe("JBL20")).getByText(/\(por aqui\)/)).toBeTruthy();
+    expect(within(linhaDe("AUTO10")).getByText(/\(automático\)/)).toBeTruthy();
+  });
+
+  it("palavra testada pelo admin em outra aba não ganha rótulo de origem", async () => {
+    await abrir([cupom({ verdict: "valid", checkedAt: "2026-09-01T14:32:00Z", source: "admin" })]);
+    const linha = within(linhaDe("JBL20"));
+    expect(linha.getByText(/testado/)).toBeTruthy();
+    expect(linha.queryByText(/\(por aqui\)|\(automático\)/)).toBeNull();
+  });
+});
+
+describe("Admin › Cupom › Repasse — o card do robô", () => {
+  it("nasce fechado e não consulta nada até ser aberto", async () => {
+    await abrir([cupom()]);
+    expect(adminRepasseAutotest).not.toHaveBeenCalled();
+
+    await abrirCardDoRobo();
+    expect(adminRepasseAutotestLog).toHaveBeenCalled();
+  });
+
+  it("mostra o que a última rodada fez", async () => {
+    await abrir([cupom()]);
+    await abrirCardDoRobo();
+
+    expect(await screen.findByText(/3 testada\(s\).*1 campanha\(s\)/)).toBeTruthy();
+    expect(screen.getByText("ligado")).toBeTruthy();
+  });
+
+  it("explica a rodada que desistiu, em vez de mostrar só zero", async () => {
+    adminRepasseAutotest.mockResolvedValue({
+      config: configRobo, defaults: configRobo,
+      status: statusRobo({ testados: 0, pulada: "Tem uma rodada de cupons do admin rodando — a rodada automática ficou pra próxima." }),
+    });
+    await abrir([cupom()]);
+    await abrirCardDoRobo();
+
+    expect(await screen.findByText(/rodada de cupons do admin rodando/)).toBeTruthy();
+  });
+
+  it("avisa quando o ML barrou e quando ele volta a tentar", async () => {
+    const amanha = new Date(Date.now() + 3600_000).toISOString();
+    adminRepasseAutotest.mockResolvedValue({
+      config: configRobo, defaults: configRobo,
+      status: statusRobo({ bloqueadoAte: amanha }),
+    });
+    await abrir([cupom()]);
+    await abrirCardDoRobo();
+
+    expect(await screen.findByText(/o ML barrou/)).toBeTruthy();
+  });
+
+  it("o diário lista o que o robô fez em cada cupom", async () => {
+    adminRepasseAutotestLog.mockResolvedValue({
+      total: 2, page: 1, pageSize: 20,
+      items: [
+        { id: "2", code: "JBL20", action: "import", ok: true, verdict: null, campaignId: "42", produtos: 34, errorKind: null, message: null, durationMs: 120000, createdAt: "2026-09-19T11:02:00Z" },
+        { id: "1", code: "NAOEXISTE", action: "test", ok: false, verdict: "invalid", campaignId: null, produtos: null, errorKind: null, message: "Confira se o cupom está correto", durationMs: 30000, createdAt: "2026-09-19T11:00:00Z" },
+      ],
+    });
+    await abrir([cupom()]);
+    await abrirCardDoRobo();
+
+    expect(await screen.findByText("trouxe a campanha")).toBeTruthy();
+    expect(screen.getByText(/34 produto\(s\)/)).toBeTruthy();
+    expect(screen.getByText(/o ML não reconheceu/)).toBeTruthy();
+    expect(screen.getByText(/Confira se o cupom/)).toBeTruthy();
+  });
+
+  it("converte minutos e segundos pra ms ao salvar — a config guardada fala em ms", async () => {
+    adminRepasseAutotestSave.mockResolvedValue({ config: configRobo, status: statusRobo() });
+    await abrir([cupom()]);
+    await abrirCardDoRobo();
+
+    const campo = await screen.findByLabelText("A cada quantos minutos");
+    expect(campo.value).toBe("15");
+    fireEvent.change(campo, { target: { value: "30" } });
+    fireEvent.click(screen.getByText("Salvar"));
+
+    await waitFor(() => expect(adminRepasseAutotestSave).toHaveBeenCalled());
+    expect(adminRepasseAutotestSave.mock.calls[0][0]).toMatchObject({ intervaloMs: 30 * 60_000 });
+    // O campo de formulário não pode viajar junto: o servidor só conhece os ms.
+    expect(adminRepasseAutotestSave.mock.calls[0][0]).not.toHaveProperty("intervaloMinutos");
+  });
+
+  it("avisa que trazer a campanha escreve na conta do ML", async () => {
+    // É a única escrita que o sistema faz lá; quem liga o robô precisa saber.
+    await abrir([cupom()]);
+    await abrirCardDoRobo();
+    expect(await screen.findByText(/ativa o cupom na conta do Mercado Livre/)).toBeTruthy();
+  });
+
+  it("o 'Rodar agora' dispara e relê o diário", async () => {
+    adminRepasseAutotestRun.mockResolvedValue({ started: true, status: statusRobo() });
+    await abrir([cupom()]);
+    await abrirCardDoRobo();
+
+    fireEvent.click(screen.getByText("Rodar agora"));
+    await waitFor(() => expect(adminRepasseAutotestRun).toHaveBeenCalled());
+    // A rodada segue solta no servidor; o card espera um instante antes de reler
+    // pra primeira linha do diário já aparecer no clique. Daí o timeout folgado.
+    await waitFor(() => expect(adminRepasseAutotest).toHaveBeenCalledTimes(2), { timeout: 4000 });
   });
 });

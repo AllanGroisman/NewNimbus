@@ -5,6 +5,11 @@ import { getAffiliateStatus, saveAmazonAffiliate, clearAmazonAffiliate, testAmaz
 import AlertBanner from "../components/ui/AlertBanner";
 import { TUTORIAL_IDS } from "./Tutoriais";
 
+// Checagem local antes de gastar uma chamada no backend. Espelha os domínios
+// "Amazon" de backend/scraping/urlGuard.js — os encurtadores incluídos, senão um
+// link.amazon/a.co colado aqui era recusado na tela e aceito no repasse.
+const AMAZON_URL_RE = /^https?:\/\/([^/@]*\.)?(amazon\.com(\.br)?|amzn\.to|amzn\.eu|a\.co|link\.amazon)(\/|$)/i;
+
 export default function PageAffiliateAmazon({ onAffiliateChange, onOpenTutorial }) {
   const [affStatus, setAffStatus] = useState(null);
   const [amzTag, setAmzTag] = useState("");
@@ -51,8 +56,8 @@ export default function PageAffiliateAmazon({ onAffiliateChange, onOpenTutorial 
         setAmzTesting(false);
         return;
       }
-      if (!/amazon\.com/i.test(url) && !/amzn\./i.test(url)) {
-        setAmzMsg({ type: "err", text: "URL inválida — precisa ser de amazon.com.br (ou link curto amzn.to)." });
+      if (!AMAZON_URL_RE.test(url)) {
+        setAmzMsg({ type: "err", text: "URL inválida — precisa ser de amazon.com.br ou de um link curto da Amazon (amzn.to, a.co, link.amazon)." });
         setAmzTesting(false);
         return;
       }

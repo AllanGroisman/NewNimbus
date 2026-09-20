@@ -1,0 +1,102 @@
+// Admin › Cupom › Cupons do produto (task 12): a resposta pelo lado do produto e a
+// sonda do checkout. O que a tela não pode fazer é dizer "nenhum cupom vale" quando
+// o que ela sabe é "nenhuma vitrine lida trouxe este produto".
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+
+vi.mock("../data/api", () => ({
+  errText: (err, fallback) => err?.message || fallback,
+  adminProdutoCupons: vi.fn(),
+  adminSondaCheckoutCupons: vi.fn(),
+}));
+vi.mock("../data/coletor", () => ({
+  coletorEntende: vi.fn(),
+  sondarCuponsNoCheckout: vi.fn(),
+}));
+
+import CuponsDoProduto from "../pages/AdminCupomProduto.jsx";
+import { adminProdutoCupons, adminSondaCheckoutCupons } from "../data/api";
+import { coletorEntende, sondarCuponsNoCheckout } from "../data/coletor";
+
+const LINK = "https://www.mercadolivre.com.br/fone/p/MLB22222222";
+
+function buscar() {
+  fireEvent.change(screen.getByLabelText(/Link do produto/), { target: { value: LINK } });
+  fireEvent.click(screen.getByRole("button", { name: "Ver cupons" }));
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  coletorEntende.mockResolvedValue(false);
+});
+
+describe("Cupons do produto", () => {
+  it("mostra cada cupom com o preço neste produto e de onde o sistema sabe", async () => {
+    adminProdutoCupons.mockResolvedValue({
+      produto: { name: "Fone Bluetooth", price: 200 },
+      semVinculo: false,
+      cupons: [{ campaignId: "B", title: "25% OFF Áudio", kind: "percent", value: 25, code: null,
+        priceWithCoupon: 150, economia: 50, origemRotulo: "miniatura do card do cupom", expiresAt: null }],
+    });
+    render(<CuponsDoProduto />);
+    buscar();
+    expect(await screen.findByText("25% OFF Áudio")).toBeTruthy();
+    expect(adminProdutoCupons).toHaveBeenCalledWith({ url: LINK });
+    expect(screen.getByText("miniatura do card do cupom")).toBeTruthy();
+    expect(screen.getByText(/R\$ 150,00/)).toBeTruthy();
+    expect(screen.getByText(/sem palavra/)).toBeTruthy();
+  });
+
+  it("sem vínculo, diz que isso NÃO quer dizer que nenhum cupom vale", async () => {
+    adminProdutoCupons.mockResolvedValue({ produto: { name: "Fone", price: 200 }, semVinculo: true, cupons: [] });
+    render(<CuponsDoProduto />);
+    buscar();
+    expect(await screen.findByText(/Nenhuma vitrine lida até agora trouxe este produto/)).toBeTruthy();
+  });
+
+  it("sem a extensão nova, avisa a versão em vez de oferecer a sonda", async () => {
+    render(<CuponsDoProduto />);
+    expect(await screen.findByText(/precisa da versão 2.2.5/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Sondar/ })).toBeNull();
+  });
+
+  it("a sonda manda o material pro servidor e mostra onde ficou", async () => {
+    coletorEntende.mockResolvedValue(true);
+    sondarCuponsNoCheckout.mockResolvedValue({ checkout: { reached: true }, capturaDosCupons: { texto: "x", html: "<p/>", respostas: [] } });
+    adminSondaCheckoutCupons.mockResolvedValue({
+      pasta: "logs/ml-checkout-cupons/2026-09-19T16-00-00-000Z",
+      resumo: { chegouNosCupons: true, viuAtivos: true, passos: 3, respostasDeApi: 2, muro: null, carrinhoLimpo: null,
+        cupomAplicado: { emUso: 1, disponiveis: 1, desconto: 10.59 },
+        checkout: { ok: true, economia: 20, valem: ["14167118"], gravado: { vinculados: 2, cuponsNovos: 0 },
+          cupons: [{ campaignId: "14167118", titulo: "25% OFF em Itens para Casa", aplicado: true, descontoNoCarrinho: 20, minPurchase: 25, maxDiscount: 20 }] } },
+    });
+    render(<CuponsDoProduto />);
+    fireEvent.change(screen.getByLabelText(/Link do produto/), { target: { value: LINK } });
+    fireEvent.click(await screen.findByRole("button", { name: "Sondar o checkout deste produto" }));
+    expect(await screen.findByText(/chegou na tela dos cupons/)).toBeTruthy();
+    expect(screen.getByText(/O ML aplicou sozinho 1 de 1 cupom\(ns\) — R\$ 10,59 de desconto/)).toBeTruthy();
+    expect(sondarCuponsNoCheckout).toHaveBeenCalledWith(LINK, expect.any(Object));
+    await waitFor(() => expect(adminSondaCheckoutCupons).toHaveBeenCalledWith(expect.objectContaining({ url: LINK })));
+    expect(screen.getByText(/backend\/logs\/ml-checkout-cupons/)).toBeTruthy();
+    expect(screen.getByText("25% OFF em Itens para Casa")).toBeTruthy();
+    expect(screen.getByText(/aplicado pelo ML · −R\$ 20,00 neste carrinho/)).toBeTruthy();
+    expect(screen.getByText(/passa a carregar 1 cupom\(ns\) com origem “checkout”/)).toBeTruthy();
+  });
+
+  it("popup que não abriu não é falha quando a página de cupons foi lida direto", async () => {
+    coletorEntende.mockResolvedValue(true);
+    sondarCuponsNoCheckout.mockResolvedValue({ checkout: { reached: true }, paginaDosCupons: { ok: true, html: "<html/>" } });
+    adminSondaCheckoutCupons.mockResolvedValue({
+      pasta: "logs/ml-checkout-cupons/2026-09-19T20-00-00-000Z",
+      resumo: { chegouNosCupons: false, leuPaginaDosCupons: true, viuAtivos: false, passos: 0, respostasDeApi: 0,
+        muro: null, carrinhoLimpo: null, cupomAplicado: null, motivo: null,
+        checkout: { ok: true, economia: null, valem: [], gravado: null, cupons: [] } },
+    });
+    render(<CuponsDoProduto />);
+    fireEvent.change(screen.getByLabelText(/Link do produto/), { target: { value: LINK } });
+    fireEvent.click(await screen.findByRole("button", { name: "Sondar o checkout deste produto" }));
+    expect(await screen.findByText(/leu a lista de cupons do checkout/)).toBeTruthy();
+    expect(screen.getByText(/O checkout não listou cupom nenhum para este produto/)).toBeTruthy();
+    expect(screen.queryByText(/não leu a lista de cupons/)).toBeNull();
+  });
+});

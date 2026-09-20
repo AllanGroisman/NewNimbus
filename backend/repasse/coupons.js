@@ -9,9 +9,12 @@
 // o que o repasse viu (log de captura) e o que o sistema sabe da palavra
 // (`ml_coupon_codes` + `ml_coupons`, o dicionário da aba "Descobrir palavra").
 //
-// Só lê. Testar a palavra e trazer a campanha continua sendo trabalho do
-// coupons/sync.js, disparado pelo botão da tela — cada teste abre um Chrome com
-// a sessão do ML, e isso não pode acontecer sozinho a cada mensagem recebida.
+// Só lê. Testar a palavra e trazer a campanha é trabalho do coupons/sync.js,
+// disparado pelo botão da tela ou pelo job de coupon-autotest.js — cada teste abre
+// um Chrome com a sessão do ML, e isso não pode acontecer a cada mensagem recebida.
+// Por isso o job roda em rodadas espaçadas e usa o `aggregate` daqui como fila de
+// trabalho, em vez de uma consulta própria: a fila dele e a lista da tela têm que
+// ser a mesma coisa, senão "nunca testados: 12" na aba não explica o que o robô fez.
 const { prisma } = require("../db");
 const { Prisma } = require("@prisma/client");
 
@@ -210,4 +213,13 @@ async function forgetFiltered({ days = 90, status = "todos", q = "" } = {}) {
   return forgetCoupons(montadas.filter(l => matchStatus(l, st)).map(l => l.code));
 }
 
-module.exports = { listCapturedCoupons, forgetCoupons, forgetFiltered, STATUS, OUTCOMES_APROVEITADOS };
+module.exports = {
+  listCapturedCoupons,
+  forgetCoupons,
+  forgetFiltered,
+  // A fila de trabalho do coupon-autotest.js. Exportado (e não recriado lá) pra
+  // tela e job lerem exatamente o mesmo cruzamento log × ml_coupon_codes.
+  aggregate,
+  STATUS,
+  OUTCOMES_APROVEITADOS,
+};

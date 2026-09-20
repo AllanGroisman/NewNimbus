@@ -98,6 +98,26 @@ describe("parseAmazonPdpPricing", () => {
     expect(r.price).toBe(50);
     expect(r.priceSource).toBe("pdp-unscoped");
   });
+
+  // Página sem NENHUM .a-price: a Amazon não está vendendo o item (só "Outras
+  // opções de compra", ou buybox escondido por "preço mais alto do que o
+  // habitual"). Não é layout novo — separar os dois é o que impede o repasse de
+  // acusar "não é página de produto" num link que está certo, e o log de pedir
+  // que alguém revise seletores que não mudaram.
+  it("separa produto sem oferta de layout mudado", () => {
+    const semOferta = parseAmazonPdpPricing({ container: null, noOffer: true, priceText: null });
+    expect(semOferta.price).toBeNull();
+    expect(semOferta.priceSource).toBe("pdp-sem-oferta");
+
+    const layoutNovo = parseAmazonPdpPricing({ container: null, noOffer: false, priceText: "R$ 50,00" });
+    expect(layoutNovo.priceSource).toBe("pdp-unscoped");
+  });
+
+  it("achar o bloco de compra manda sobre o noOffer", () => {
+    const r = parseAmazonPdpPricing({ container: "#buybox", noOffer: false, priceText: "R$ 12,00" });
+    expect(r.price).toBe(12);
+    expect(r.priceSource).toBe("pdp:#buybox");
+  });
 });
 
 describe("selectVerifiedAmazonProducts", () => {

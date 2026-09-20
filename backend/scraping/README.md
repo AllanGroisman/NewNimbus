@@ -435,6 +435,74 @@ O `deleteMany` do `replaceCouponProducts` é escopado por origem, e produto que
 estava numa coleção fraca e apareceu na vitrine é **promovido**, não duplicado: a
 chave é a mesma.
 
+### A varredura em lote (task 12, 19/09/2026)
+
+Medido antes: ~2.800 cupons, 4.035 produtos no catálogo e **um** com cupom. Os
+produtos dos cupons não estavam no catálogo, e ir do produto pro cupom bate no
+CAPTCHA. O caminho que funciona é o inverso — trazer os produtos DE CADA CUPOM:
+
+- `coupons/landing-sweep.js` — roda sozinho no server (config em `app_config`
+  `ml-cupons-landing-sweep`, card no topo de Admin › Cupom › Cupons do ML). Lê a
+  landing (abaixo) de cada cupom com `containerUrl` e sem vitrine fechada, grava pelo
+  `sync.gravarVitrine` com `origem: "landing"` e carimba o catálogo uma vez no fim.
+  **Nunca** abre Chrome nem ativa cupom. Para no primeiro muro e arma um breaker.
+  `ml_coupons.landingTriedAt/landingOk` tiram da fila quem já foi tentado.
+- `coupons/enrich-samples.js` — as AMOSTRAS viram produto de catálogo: o MLB passa
+  pelo link curto do sistema e a landing de afiliado dá nome/preço. O MLB da amostra
+  é número de **anúncio**: com `/p/MLB…` o ML recusa o link, com
+  `produto.mercadolivre.com.br/MLB-…` aceita. E o produto é gravado com essa URL, não
+  com o `/up/MLBU…` que a landing devolve — senão a chave não bate com a da amostra.
+  Landing que devolve outro anúncio (`mlItemId` diferente) é descartada.
+- Primeira rodada real (40 cupons + 40 amostras): 34 prévias, 216 produtos, 40/40
+  amostras, nenhum muro. Produtos com cupom: 1 → 270.
+- `segmentations` do bloco de telemetria vai pra `ml_coupons.raw.regra`, **só
+  diagnóstico**: `containers` são ids internos de marketing, não categorias, e casar
+  produto por vendedor seria inferência — o sistema só grava vínculo quando o ML diz.
+
+O botão "2 · Buscar produtos dos que faltam" (extensão) continua sendo a vitrine
+FECHADA, e agora começa pelos cupons que a landing não conseguiu ler.
+
+### A sonda do checkout: "quais cupons pegam NESTE produto?"
+
+O outro lado da pergunta (Admin › Cupom › Cupons do produto, comando
+`cupons-checkout` da extensão). Os cupons da conta são de **ativação**, sem palavra,
+e já estão ativados — então o ML chega no checkout com o melhor deles **já
+aplicado**. Um checkout por produto responde por todos os cupons de uma vez.
+
+O checkout virou **página única** (`/checkout/review/onestep`). A lista dos cupons
+daquele carrinho é uma página à parte, `/cupons/cho?context_id=…`, e ela traz o
+modelo inteiro (`_n.ctx.r=` → `buyingFlowData.groupings[].rawCoupons[]` cruzado com
+`tracking.view.eventData.coupons_list[]`, que tem o `given_discount` — o desconto que
+o ML calculou para AQUELE carrinho). Quem lê é `coupons/checkout-list.js`; o que vale
+vira vínculo `origem: "checkout"` (o mais forte que existe, porque foi o ML testando
+aquele produto), sem nunca rebaixar um `vitrine` nem reescrever cupom já conhecido.
+
+A extensão chega nessa página por dois caminhos, e o segundo é o que sempre
+responde:
+
+- clicando na linha do resumo e fotografando o popup (ele carrega a mesma página num
+  iframe do mesmo domínio, então dá pra ler o documento dele);
+- **buscando a página direto** (`fetch` de dentro da aba, mesma sessão). O deeplink
+  está no modelo do checkout, com as barras escapadas (`\u002F`).
+
+O segundo existe porque o clique **só funciona quando já há cupom em uso**: nesse
+caso a linha diz "Cupons (1/1 em uso)" e o popup abre; sem cupom aplicado ela diz
+"Inserir código do cupom", o clique só troca a URL por `#` e nenhum `[role=dialog]`
+aparece — a sonda parava ali sem resposta nenhuma (19/09/2026, maquininha Point).
+
+No caminho pode aparecer a oferta de **seguro** (`/protections/hub/attach`): a saída
+é clicar em "Agora não" (o botão fica numa barra fixa — `offsetParent` é nulo nela,
+por isso a visibilidade é por `getClientRects`, e o texto é normalizado em NFC), com
+o `callback_url` da própria URL como plano B.
+
+Tudo que a sonda vê é gravado em `backend/logs/ml-checkout-cupons/<ts>/`
+**mascarado** (CPF, CEP, final de cartão — inclusive dentro do JSON embutido no
+HTML). Ela nunca digita cupom, nunca clica em cupom e nunca finaliza compra.
+
+O que ainda **não** existe, de propósito: concluir "este cupom NÃO vale aqui" pela
+ausência na lista. Com uma sonda só não dá pra saber se a lista é completa, e a
+regra de "fora" errada descarta cupom bom.
+
 ### A landing de afiliado da vitrine (o caminho que funciona hoje)
 
 É o truque do repasse aplicado à vitrine: a `containerUrl` passa pela API de link

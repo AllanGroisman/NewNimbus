@@ -15,6 +15,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const backendDir = path.resolve(__dirname, "..", "..", "backend");
 const coupons = require(path.join(backendDir, "coupons"));
+// O `app_config` é cache write-through em memória (backend/config/pg.js): o
+// truncate entre testes limpa a TABELA, não o cache. Quem precisa do dicionário de
+// categorias zerado apaga a chave à mão.
+const appConfig = require(path.join(backendDir, "config"));
+const semDicionario = () => appConfig.del("ml-cupons-groupings");
 
 const base = { kind: "percent", value: 20, scope: "campaign" };
 
@@ -84,6 +89,7 @@ describe("dicionário de nomes das categorias", () => {
   const sync = require(path.join(backendDir, "coupons", "sync"));
 
   it("mescla o que cada rodada viu, sem apagar o que já sabia", async () => {
+    semDicionario();
     sync.mergeGroupingLabels([{ key: "ce_vertical", title: "Eletrônicos", count: 12 }]);
     sync.mergeGroupingLabels([{ key: "tb_vertical", title: "Moda", count: 3 }]);
 
@@ -93,6 +99,30 @@ describe("dicionário de nomes das categorias", () => {
     // Grupo sem título (o ML às vezes manda a chave sozinha) não apaga o nome.
     sync.mergeGroupingLabels([{ key: "ce_vertical", title: null }]);
     expect(sync.readGroupingLabels().ce_vertical).toBe("Eletrônicos");
+  });
+
+  // A chave crua é o formato do `availableGroupingsKeys` — a ÚNICA fonte que lista
+  // todas as verticais na rodada local, e a que vinha sendo descartada (task 14).
+  it("a chave sem nome entra mesmo assim, porque é ela que põe a vertical na fila", () => {
+    semDicionario();
+    sync.mergeGroupingLabels(["hi_vertical", "as_vertical"]);
+    expect(sync.readGroupingLabels()).toEqual({ hi_vertical: null, as_vertical: null });
+    // Sem isto a vertical nunca entrava na fila, e como só se aprende o nome dela
+    // VISITANDO-A, ela nunca sairia de lá sozinha.
+    expect(sync.verticaisConhecidas()).toEqual(["as_vertical", "hi_vertical"]);
+
+    // O nome chega depois, na passada que filtra por ela.
+    sync.mergeGroupingLabels([{ key: "hi_vertical", title: "Casa, Móveis e Decoração" }]);
+    expect(sync.readGroupingLabels().hi_vertical).toBe("Casa, Móveis e Decoração");
+    // E uma chave crua que venha DEPOIS não apaga o nome já aprendido.
+    sync.mergeGroupingLabels(["hi_vertical"]);
+    expect(sync.readGroupingLabels().hi_vertical).toBe("Casa, Móveis e Decoração");
+  });
+
+  it("aceita também o { value, text } do seletor de categorias da aba", () => {
+    semDicionario();
+    sync.mergeGroupingLabels([{ value: "acc_vertical", text: "Acessórios para Veículos" }]);
+    expect(sync.readGroupingLabels().acc_vertical).toBe("Acessórios para Veículos");
   });
 });
 

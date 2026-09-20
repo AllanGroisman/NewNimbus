@@ -484,6 +484,11 @@ model MlCoupon {
   productsSyncedAt DateTime?
   code             String?
   origin           String    @default("page")
+  // A varredura pela landing (coupons/landing-sweep.js): quando tentou, se deu, e
+  // o que o ML respondeu. É o que tira da fila o cupom que a landing não lê.
+  landingTriedAt   DateTime?
+  landingOk        Boolean?
+  landingMessage   String?
 
   products MlCouponProduct[]
 
@@ -498,21 +503,26 @@ model MlCoupon {
 // `productKey` é o mesmo hash do catálogo (catalog/product-key.js), então dá pra
 // cruzar com catalog_products sem depender da URL — que vem cheia de tracking.
 model MlCouponProduct {
-  id          BigInt   @id @default(autoincrement())
-  campaignId  String   @map("campaign_id")
-  productKey  String
-  productUrl  String
+  id            BigInt    @id @default(autoincrement())
+  campaignId    String    @map("campaign_id")
+  productKey    String
+  productUrl    String
   // De onde veio o vínculo, e é o que decide o peso dele:
   //   "vitrine" — raspado da vitrine (_Container_) no navegador: a lista COMPLETA.
   //   "landing" — a prévia (3-8 itens) que a landing de afiliado entrega sem
   //               navegador (scraping/ml-vitrine-landing.js).
   //   "amostra" — as 4 miniaturas do card do cupom (ml_coupons.sampleItemIds).
+  //   "checkout"— o checkout do ML aplicou/calculou o cupom NESTE produto (sonda da
+  //               extensão, coupons/checkout-list.js). O mais forte de todos.
   // Os três provam que o produto ESTÁ coberto. Só "vitrine" é lista fechada, e
   // por isso só ele autoriza um "fora da vitrine" (coupons/quick-check.js).
   // As três são coleções separadas: cada uma só apaga a si mesma.
-  origem      String   @default("vitrine")
-  firstSeenAt DateTime @default(now())
-  lastSeenAt  DateTime @default(now())
+  origem        String    @default("vitrine")
+  firstSeenAt   DateTime  @default(now())
+  lastSeenAt    DateTime  @default(now())
+  // Só para `amostra`: quando coupons/enrich-samples.js tentou trazer este MLB pro
+  // catálogo (a amostra chega sem nome nem preço).
+  enrichTriedAt DateTime?
 
   coupon MlCoupon @relation(fields: [campaignId], references: [campaignId], onDelete: Cascade)
 
@@ -530,7 +540,7 @@ model MlCouponCode {
   campaignId   String?  @map("campaign_id")
   message      String?
   responseCode String?  @map("response_code")
-  source       String? // admin | repasse
+  source       String? // admin | repasse | repasse-auto (o job de repasse/coupon-autotest.js)
   checkedAt    DateTime @map("checked_at")
   checkCount   Int      @default(1) @map("check_count")
   firstSeenAt  DateTime @default(now()) @map("first_seen_at")
@@ -539,6 +549,37 @@ model MlCouponCode {
   @@index([campaignId])
   @@index([checkedAt])
   @@map("ml_coupon_codes")
+}
+
+// O diário do teste automático de cupom do repasse: uma linha por TENTATIVA
+// (backend/repasse/coupon-autotest.js). É o "quando isso aconteceu" da tela.
+//
+// Fica FORA de `repasse_capture_log` porque lá as colunas de captura (groupId,
+// userId, waJid, rawUrl) são NOT NULL e um teste de palavra não tem nenhuma delas
+// de verdade — e porque `repasse/coupons.js:aggregate` conta linhas por cupom, então
+// cada teste viraria uma "captura" na coluna da própria aba.
+//
+// E fora de `ml_coupon_codes` porque lá é upsert por código: existe o ÚLTIMO
+// veredito e um contador, nunca o histórico. Sem histórico não há como responder
+// "quando o robô trouxe essa campanha", que é justamente o que se pede aqui.
+model RepasseCouponAutotest {
+  id         BigInt   @id @default(autoincrement())
+  code       String
+  // test | import | vitrine | skip — uma linha por passo, e `skip` é o que explica
+  // a rodada que não fez nada (rodada do admin em curso, sem sessão do ML, breaker).
+  action     String
+  ok         Boolean
+  verdict    String? // valid | invalid | indeterminado (só em action=test)
+  campaignId String?  @map("campaign_id")
+  produtos   Int? // vínculos de vitrine gravados (action=import|vitrine)
+  errorKind  String?  @map("error_kind") // lista fechada de repasse/error-kinds.js
+  message    String?
+  durationMs Int?     @map("duration_ms")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt(sort: Desc)])
+  @@index([code, createdAt(sort: Desc)])
+  @@map("repasse_coupon_autotest")
 }
 
 // ────────────────────────────────────────────────────────────────────────

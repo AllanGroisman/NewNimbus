@@ -136,6 +136,12 @@ export function testarCupomNoChrome({ url, code, mode = "checkout" }, { onProgre
   return pedirAoColetor("checkout", { url, code, mode }, { onProgresso, timeoutMs });
 }
 
+// A SONDA da task 12: leva o produto até a tela dos cupons do checkout e fotografa,
+// sem digitar nada. Devolve o material cru — o servidor só guarda.
+export function sondarCuponsNoCheckout(url, { onProgresso, timeoutMs } = {}) {
+  return pedirAoColetor("cupons-checkout", { url }, { onProgresso, timeoutMs });
+}
+
 // Lê o modelo (JSON do nordic) de uma página do ML. Devolve { props, landing, url, muro }.
 export function lerPropsDaPagina(url, { chaves, onProgresso, timeoutMs } = {}) {
   return pedirAoColetor("props", { url, chaves }, { onProgresso, timeoutMs });

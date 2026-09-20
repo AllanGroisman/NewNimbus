@@ -799,9 +799,16 @@ function readAmazonPdpPricing() {
   // Sem nenhum container conhecido (layout novo): repete no documento inteiro, mas
   // avisa via container:null — o Node marca priceSource "pdp-unscoped" e o log
   // denuncia a mudança de layout antes de o preço errado chegar no cliente.
+  //
+  // Antes disso, porém, separa o caso em que NÃO HÁ preço nenhum na página. Sem um
+  // único .a-price no documento, não é layout novo: é a Amazon sem oferta principal
+  // pro item — só vendedores em "Outras opções de compra", ou buybox escondido por
+  // "Preço mais alto do que o habitual". A diferença importa: um pede que alguém
+  // olhe os seletores, o outro é a loja não estar vendendo e só passar com o tempo.
   const scope = root || document;
   return {
     container: containerId,
+    noOffer: document.querySelectorAll(".a-price").length === 0,
     priceText: pick(scope, PRICE_SELS),
     originalText: pick(scope, ORIGINAL_SELS),
     // Só o selo. Sem varrer o texto do bloco: "Economize 5% com cupom" e
@@ -812,11 +819,18 @@ function readAmazonPdpPricing() {
   };
 }
 
-// Interpreta o retorno cru de readAmazonPdpPricing. Produto indisponível sai sem
-// preço (não tem "o preço que o cliente paga"). Pura → testável.
+// Interpreta o retorno cru de readAmazonPdpPricing. Produto indisponível ou sem
+// oferta sai sem preço (não tem "o preço que o cliente paga"). Pura → testável.
+//
+// priceSource distingue três desfechos sem preço escopado:
+//   pdp:<id>        — achou o bloco de compra (caminho normal)
+//   pdp-sem-oferta  — não há preço NENHUM na página: a loja não está vendendo
+//   pdp-unscoped    — há preço na página mas fora dos blocos conhecidos: layout mudou
 function parseAmazonPdpPricing(raw = {}) {
-  const priceSource = raw.container ? `pdp:${raw.container}` : "pdp-unscoped";
-  if (raw.unavailable) return { price: null, originalPrice: null, discount: null, priceSource };
+  const priceSource = raw.container ? `pdp:${raw.container}`
+                    : raw.noOffer ? "pdp-sem-oferta"
+                    : "pdp-unscoped";
+  if (raw.unavailable || raw.noOffer) return { price: null, originalPrice: null, discount: null, priceSource };
   const pricing = reconcilePricing({
     price: parseBrlPrice(raw.priceText),
     originalPrice: parseBrlPrice(raw.originalText),

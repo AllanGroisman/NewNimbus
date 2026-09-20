@@ -29,7 +29,21 @@ const CHECKOUT_ERROR_RE = /(ocorreu um problema|algo deu errado|tivemos um probl
 const CHECKOUT_ERROR_TITLE_RE = /^\s*(ocorreu um problema|algo deu errado|tivemos um problema)/i;
 const CHECKOUT_ERROR_CODE_RE = /\b[A-Z]{2,6}\d{0,3}-[A-Z0-9]{6,}\b/;
 const PAYMENT_STEP_RE = /forma de pagamento|formas de pagamento|como (voc[êe] )?quer pagar|escolha como pagar|meios de pagamento|escolha o meio de pagamento/i;
-const COUPON_OPEN_SRC = "(inserir|adicionar|usar|tenho|aplicar).{0,12}(cupom|cupons|c[óo]digo)|c[óo]digos? de desconto|cupom de desconto|cupons de desconto|^cupons?$";
+// A última alternativa é a linha do resumo no checkout de página única (sonda de
+// 19/09/2026): "Cupons (1/1 em uso)". O `^cupons?$` sozinho não casava com ela, e a
+// caminhada parava na primeira tela sem nunca abrir o popup.
+const COUPON_OPEN_SRC = "(inserir|adicionar|usar|tenho|aplicar).{0,12}(cupom|cupons|c[óo]digo)|c[óo]digos? de desconto|cupom de desconto|cupons de desconto|^cupons?$|^cupons?\\s*\\(\\s*\\d+\\s*/\\s*\\d+";
+// A oferta de seguro que o ML põe ENTRE o "Comprar agora" e o checkout em alguns
+// produtos (sonda de 19/09/2026, porteiro Intelbras): `/protections/hub/attach`. A
+// saída é recusar — "Agora não" —, e a URL do checkout vem no `callback_url` dela,
+// que é o plano B quando o botão não aparece.
+const PROTECTIONS_URL_RE = /\/protections\//i;
+const RECUSAR_SEGURO_SRC = "^agora n[ãa]o\\b";
+const SEGURO_WAIT_MS = 8000;
+const IFRAME_WAIT_MS = 12000;
+
+// Dentro do popup: o caminho para a lista dos cupons que a conta já tem ativos.
+const VER_ATIVOS_SRC = "^(ver|mostrar|conferir)( os| seus| meus)? cupons( ativos| dispon[íi]veis)?|^cupons ativos|^meus cupons";
 const API_RE = "(coupon|cupon|discount|promotion|promocao|promo)";
 const BUY_NOW_SRC = "^comprar agora";
 const ADD_TO_CART_SRC = "^adicionar ao carrinho$";
@@ -92,6 +106,171 @@ function naPagina_foto() {
     digital: `${location.pathname}|${texto.slice(0, 400)}`,
     respostas: (window.__nimbusCupomEspiao || []).slice(),
   };
+}
+
+// A tela dos cupons, crua, para a SONDA (modo "listar"). Nada é interpretado aqui:
+// o parser só vai ser escrito depois de alguém olhar isto (task 12, etapa D) — os
+// seletores do popup de cupom nunca foram conferidos contra a tela de hoje.
+// Tetos de tamanho porque tudo viaja até o servidor, que aceita 2 MB por pedido
+// (express.json e o nginx). `comHtml: false` na captura ao entrar: o HTML que
+// importa é o da tela dos cupons.
+//
+// Com um popup aberto (`[role=dialog]`), o HTML guardado é SÓ o do popup — é ele que
+// interessa, e é muito menor que a página inteira. `tetoHtml` 0 = sem HTML.
+function naPagina_capturaDosCupons(tetoHtml) {
+  const dialogos = Array.from(document.querySelectorAll("[role='dialog'], [aria-modal='true']"))
+    .filter(el => el.offsetParent !== null || el.getClientRects().length);
+  const fonte = dialogos.length ? dialogos.map(d => d.outerHTML).join("\n<!-- dialogo -->\n") : (document.documentElement?.outerHTML || "");
+  const teto = Number(tetoHtml) || 0;
+  // O conteúdo do popup de cupons mora num IFRAME (`/cupons/cho?context_id=…`),
+  // do mesmo domínio — então dá pra ler o documento dele daqui. Iframe de outro
+  // domínio (ou ainda carregando) vem só com o `src`.
+  const iframes = dialogos.flatMap(d => Array.from(d.querySelectorAll("iframe"))).map(f => {
+    let doc = null;
+    try { doc = f.contentDocument; } catch { doc = null; }
+    const html = doc?.documentElement?.outerHTML || "";
+    return {
+      src: f.src || null,
+      legivel: !!doc,
+      texto: (doc?.body?.innerText || "").slice(0, 20000),
+      html: teto ? html.slice(0, teto) : "",
+    };
+  });
+  return {
+    url: location.href,
+    tituloDaAba: document.title || "",
+    texto: (document.body?.innerText || "").slice(0, 40000),
+    textoDoPopup: [...dialogos.map(d => d.innerText || ""), ...iframes.map(f => f.texto)].join("\n---\n").slice(0, 30000),
+    popupAberto: dialogos.length > 0,
+    iframes,
+    html: teto ? fonte.slice(0, teto) : "",
+    htmlCortado: teto ? fonte.length > teto : false,
+    respostas: (window.__nimbusCupomEspiao || []).slice(-15).map(r => String(r).slice(0, 20_000)),
+  };
+}
+
+// O "Agora não" da oferta de seguro. Função própria, e não o `clicarPorTexto`,
+// porque a sonda de 19/09 mostrou o botão numa BARRA FIXA no rodapé — e elemento
+// `position: fixed` tem `offsetParent === null`, que o `clicarPorTexto` lê como
+// "invisível". Aqui a visibilidade é por `getClientRects`, o rótulo vale pelo texto
+// OU pelo `aria-label`, e os iframes do mesmo domínio entram na busca.
+// Sem achar, devolve os rótulos clicáveis da tela — é o que explica o porquê.
+function naPagina_recusarSeguro(padrao) {
+  const re = new RegExp(padrao, "i");
+  const docs = [document];
+  for (const f of document.querySelectorAll("iframe")) {
+    try { if (f.contentDocument) docs.push(f.contentDocument); } catch { /* outro domínio */ }
+  }
+  const rotulos = [];
+  for (const doc of docs) {
+    for (const el of doc.querySelectorAll("button, a, [role='button'], input[type='button'], input[type='submit']")) {
+      // NFC: "NÃO" pode vir com o til como caractere separado, e aí não casa.
+      const txt = (el.textContent || el.value || "").normalize("NFC").replace(/\s+/g, " ").trim();
+      const aria = (el.getAttribute("aria-label") || "").normalize("NFC").trim();
+      if (txt || aria) rotulos.push((txt || aria).slice(0, 50));
+      if (!el.getClientRects().length) continue;
+      if (el.disabled === true || el.getAttribute("aria-disabled") === "true") continue;
+      if ((txt && txt.length <= 40 && re.test(txt)) || (aria && re.test(aria))) {
+        el.click();
+        return { clicou: txt || aria, noIframe: doc !== document };
+      }
+    }
+  }
+  return { clicou: null, rotulos: [...new Set(rotulos)].slice(0, 40), iframes: docs.length - 1 };
+}
+
+// Quanto texto o iframe do popup já pintou (0 = ainda carregando ou ilegível).
+function naPagina_textoDoIframeDoPopup() {
+  const f = document.querySelector("[role='dialog'] iframe, [aria-modal='true'] iframe");
+  try { return (f?.contentDocument?.body?.innerText || "").trim().length; } catch { return 0; }
+}
+
+// A página dos cupons do checkout, sem depender de o popup abrir. A linha do
+// resumo ("Cupons (1/1 em uso)" quando há cupom em uso, "Inserir código do cupom"
+// quando não há) é um DEEPLINK no modelo da página, para
+// `https://www.mercadolivre.com.br/cupons/cho?context_id=…` — exatamente o
+// documento que o popup carrega dentro de um iframe. Ele está no HTML do checkout
+// com as barras escapadas (`/`), por isso o replace antes do casamento.
+//
+// Isto existe porque a sonda de 19/09/2026 mostrou o clique falhando justamente no
+// caso comum: sem cupom em uso, clicar em "Inserir código do cupom" só trocava a
+// URL por "#" e nenhum `[role=dialog]` era montado — a caminhada parava ali e a
+// sonda voltava sem resposta nenhuma.
+function naPagina_paginaDosCupons() {
+  const cru = document.documentElement?.outerHTML || "";
+  const m = cru.replace(/\\u002F/gi, "/")
+    .match(/https?:\/\/[a-z0-9.-]*mercadolivre\.com\.br\/cupons\/cho\?context_id=[A-Za-z0-9]+/i);
+  if (m) return m[0];
+  // Popup já aberto: o iframe dele serve igual.
+  const f = document.querySelector("iframe[src*='/cupons/cho']");
+  return f?.src || null;
+}
+
+// Busca uma página do próprio ML de dentro da aba: mesma origem, mesmos cookies,
+// mesma sessão de checkout. Só a sonda usa, e só para LER.
+async function naPagina_buscarPagina(endereco, tetoHtml) {
+  const teto = Number(tetoHtml) || 0;
+  try {
+    const res = await fetch(endereco, { credentials: "include", headers: { Accept: "text/html" } });
+    const html = await res.text();
+    return {
+      ok: res.ok, status: res.status, url: res.url, endereco,
+      tamanho: html.length, html: html.slice(0, teto), cortado: html.length > teto,
+    };
+  } catch (e) {
+    return { ok: false, status: 0, url: null, endereco, erro: String((e && e.message) || e), html: "" };
+  }
+}
+
+// O espião, instalado TAMBÉM dentro do iframe do popup: é lá que a lista dos cupons
+// busca os dados. Guarda no mesmo array da página de cima.
+function naPagina_espiaoNoIframe(apiRe) {
+  const f = document.querySelector("[role='dialog'] iframe, [aria-modal='true'] iframe");
+  let w = null;
+  try { w = f?.contentWindow; if (!w?.document) return false; } catch { return false; }
+  if (w.__nimbusCupomEspiao) return true;
+  const re = new RegExp(apiRe, "i");
+  const guardados = window.__nimbusCupomEspiao || (window.__nimbusCupomEspiao = []);
+  w.__nimbusCupomEspiao = guardados;
+  const fetchOriginal = w.fetch;
+  w.fetch = function (...args) {
+    return fetchOriginal.apply(this, args).then((res) => {
+      try { if (re.test(res.url)) res.clone().text().then(t => guardados.push(t)).catch(() => {}); } catch { /* opaca */ }
+      return res;
+    });
+  };
+  const abrirOriginal = w.XMLHttpRequest.prototype.open;
+  w.XMLHttpRequest.prototype.open = function (metodo, url, ...resto) {
+    this.addEventListener("load", () => {
+      try { if (re.test(String(url))) guardados.push(this.responseText); } catch { /* binário */ }
+    });
+    return abrirOriginal.call(this, metodo, url, ...resto);
+  };
+  return true;
+}
+
+// Clica por texto DENTRO do popup, iframe incluído. Só na sonda, e só no link que
+// mostra a lista dos cupons ativos — nunca num cupom.
+function naPagina_clicarNoPopup(padrao, maxLen) {
+  const rx = new RegExp(padrao, "i");
+  const docs = [];
+  for (const d of document.querySelectorAll("[role='dialog'], [aria-modal='true']")) {
+    docs.push(d);
+    for (const f of d.querySelectorAll("iframe")) {
+      try { if (f.contentDocument?.body) docs.push(f.contentDocument.body); } catch { /* outro domínio */ }
+    }
+  }
+  for (const raiz of docs) {
+    const achados = Array.from(raiz.querySelectorAll("button, [role='button'], a, span, p, div"))
+      .map(el => ({ el, txt: (el.textContent || "").replace(/\s+/g, " ").trim() }))
+      .filter(({ txt }) => txt && txt.length <= maxLen && rx.test(txt));
+    if (!achados.length) continue;
+    const { el, txt } = achados[achados.length - 1];
+    const alvo = el.closest("button, [role='button'], a") || el;
+    alvo.click();
+    return { texto: txt, tag: alvo.tagName.toLowerCase() };
+  }
+  return null;
 }
 
 function naPagina_clicarPorTexto(padrao, maxLen) {
@@ -191,6 +370,13 @@ function naPagina_marcarPrimeiraOpcao() {
   const label = (alvo.id && document.querySelector(`label[for="${CSS.escape(alvo.id)}"]`)) || alvo.closest("label");
   (label || alvo).click();
   return { needed: true, checked: Array.from(document.querySelectorAll("input[type='radio']")).some(el => el.checked) };
+}
+
+// Um popup à mostra. Na sonda, é isto que conta como "abriu": o popup dos cupons
+// pode abrir com botões ("inserir outro", "ver ativos") e sem campo nenhum.
+function naPagina_temPopup() {
+  return Array.from(document.querySelectorAll("[role='dialog'], [aria-modal='true']"))
+    .some(el => el.offsetParent !== null || el.getClientRects().length);
 }
 
 function naPagina_temCampoDeCupom() {
@@ -299,15 +485,39 @@ export async function checkout({ url, code = null, mode = "checkout" }, progress
 
     material.clippedTexts = await avaliar(tabId, naPagina_cuponsDaPagina, [], { mundoDaPagina: true }) || [];
     progresso({ tipo: "pdp", cupons: material.clippedTexts.length });
-    if (mode !== "checkout" || !code) return material;
+    // "listar" (a sonda da task 12) anda o mesmo caminho SEM código: a pergunta é
+    // quais cupons o ML oferece sozinho para este carrinho.
+    const listar = mode === "listar";
+    material.listar = listar;
+    if (!listar && (mode !== "checkout" || !code)) return material;
 
     // ── até o checkout ──────────────────────────────────────────────────
     material.checkout.attempted = true;
     const ida = await irAoCheckout(tabId, { foto, clicar, progresso });
     Object.assign(material.checkout, ida);
-    if (!ida.reached) return material;
+    if (!ida.reached) {
+      // Na sonda, a página onde a caminhada parou vai inteira pro servidor: é ela
+      // que mostra o que o ML pôs no caminho (seguro, variação, aviso novo).
+      if (listar) material.capturaNaParada = await avaliar(tabId, naPagina_capturaDosCupons, [500_000], { mundoDaPagina: true }).catch(() => null);
+      return material;
+    }
 
     material.bodyTextAoEntrar = (await foto()).texto;
+    // O resumo do checkout ao chegar — o ML costuma já mostrar ali o cupom que ele
+    // aplicou sozinho. Vale guardar mesmo que a caminhada até o popup não chegue.
+    if (listar) material.capturaAoEntrar = await avaliar(tabId, naPagina_capturaDosCupons, [300_000], { mundoDaPagina: true });
+
+    // ── a página dos cupons, sem clique nenhum ──────────────────────────
+    // O caminho curto e o que sempre responde: a mesma página que o popup abriria,
+    // buscada direto da aba. O clique continua depois, porque o popup aberto é a
+    // única forma de ver a lista "ativos" — mas ele já não é o único caminho.
+    if (listar) {
+      const endereco = await avaliar(tabId, naPagina_paginaDosCupons, [], { mundoDaPagina: true });
+      material.paginaDosCupons = endereco
+        ? await avaliar(tabId, naPagina_buscarPagina, [endereco, 500_000], { mundoDaPagina: true }).catch(() => null)
+        : null;
+      progresso({ tipo: "pagina-cupons", ok: !!material.paginaDosCupons?.ok });
+    }
 
     // ── caminhando até a tela do cupom ──────────────────────────────────
     const caminho = await andarAteOCupom(tabId, { foto, clicar, progresso, material });
@@ -315,7 +525,35 @@ export async function checkout({ url, code = null, mode = "checkout" }, progress
     material.checkout.trail = caminho.trail;
     material.checkout.couponOpen = caminho.abertura || null;
     material.checkout.stepReached = !!caminho.abertura;
-    if (!caminho.reached) return material;
+    // A caminhada não ter chegado no popup só encerra a sonda se a busca direta
+    // também não trouxe nada — senão a resposta já está na mão.
+    const temPagina = !!(material.paginaDosCupons?.ok && material.paginaDosCupons?.html);
+    if (!caminho.reached && !(listar && temPagina)) return material;
+
+    // ── a sonda: a tela dos cupons, crua, e mais nada ───────────────────
+    // Nunca digita, nunca clica em cupom: só olha. O carrinho é limpo no finally.
+    if (listar && caminho.reached) {
+      // O conteúdo do popup é um iframe que carrega depois: espera ele ter texto.
+      for (let i = 0; i < Math.ceil(IFRAME_WAIT_MS / 500); i++) {
+        if (await avaliar(tabId, naPagina_textoDoIframeDoPopup, [], { mundoDaPagina: true }) > 20) break;
+        await sleep(500);
+      }
+      await avaliar(tabId, naPagina_espiaoNoIframe, [API_RE], { mundoDaPagina: true });
+      await sleep(SETTLE_MS);
+      material.capturaDosCupons = await avaliar(tabId, naPagina_capturaDosCupons, [400_000], { mundoDaPagina: true });
+      // O popup oferece "inserir outro cupom" OU ver os ativos. A lista dos ativos é
+      // a que diz QUAL cupom está em uso — só olhar, nenhum cupom é clicado.
+      const verAtivos = await avaliar(tabId, naPagina_clicarNoPopup, [VER_ATIVOS_SRC, 40], { mundoDaPagina: true });
+      material.checkout.verAtivos = verAtivos || null;
+      if (verAtivos) {
+        await sleep(SETTLE_MS * 2);
+        material.capturaDosAtivos = await avaliar(tabId, naPagina_capturaDosCupons, [600_000], { mundoDaPagina: true });
+      }
+    }
+    if (listar) {
+      progresso({ tipo: "capturado" });
+      return material;
+    }
 
     // ── digitar e aplicar ───────────────────────────────────────────────
     if (!await avaliar(tabId, naPagina_digitarCupom, [code], { mundoDaPagina: true })) return material;
@@ -349,6 +587,14 @@ export async function checkout({ url, code = null, mode = "checkout" }, progress
   }
 }
 
+// O comando da SONDA: quais cupons o ML oferece para ESTE produto no checkout.
+// Comando próprio (e não só um `mode`) para a tela saber se a extensão instalada
+// é nova o bastante — versão velha ignoraria o modo e voltaria da página do
+// produto sem dizer nada.
+export async function cuponsNoCheckout({ url }, progresso) {
+  return checkout({ url, mode: "listar" }, progresso);
+}
+
 // Chegar = a URL virar de checkout E a tela terminar de montar. Só a URL não vale:
 // o interstitial ("Preparando tudo para sua compra") já tem a URL certa.
 async function esperarCheckoutPronto(foto) {
@@ -366,10 +612,33 @@ async function esperarCheckoutPronto(foto) {
 // clique em "Comprar agora" e, por último, o carrinho — que é o único caminho que
 // deixa rastro na conta, e por isso vem depois e obriga a limpeza no fim.
 async function irAoCheckout(tabId, { foto, clicar, progresso }) {
+  let seguro = null;
+  let tentouSeguro = false;
   const esperarSaida = async () => {
     for (let i = 0; i < Math.ceil(NAV_WAIT_MS / 500); i++) {
       await sleep(500);
-      if (CHECKOUT_URL_RE.test((await foto()).url)) return (await esperarCheckoutPronto(foto)).ready;
+      const agora = (await foto()).url;
+      // A oferta de seguro no meio do caminho: recusa e segue. Vem ANTES do teste do
+      // checkout porque o caminho real (sonda de 19/09) é checkout → seguro →
+      // checkout: o ML passa primeiro por uma URL de checkout e só então redireciona
+      // pro seguro. Olhando o checkout primeiro, a espera dele via a URL virar
+      // `/protections/` e desistia — e o "Agora não" nunca era tentado.
+      if (PROTECTIONS_URL_RE.test(agora)) {
+        if (!tentouSeguro) {
+          tentouSeguro = true;
+          seguro = await recusarSeguro(tabId, { foto, url: agora });
+          progresso({ tipo: "seguro", como: seguro.como });
+          await avaliar(tabId, naPagina_espiao, [API_RE], { mundoDaPagina: true }).catch(() => {});
+        }
+        continue;
+      }
+      if (CHECKOUT_URL_RE.test(agora)) {
+        const r = await esperarCheckoutPronto(foto);
+        if (r.ready) return true;
+        // Saiu do checkout pro seguro: a volta do laço trata.
+        if (PROTECTIONS_URL_RE.test(r.tela?.url || "")) continue;
+        return false;
+      }
     }
     return false;
   };
@@ -400,12 +669,12 @@ async function irAoCheckout(tabId, { foto, clicar, progresso }) {
     progresso({ tipo: "checkout", via: "form-compra" });
     await irPara(tabId, alvo.href).catch(() => {});
     await avaliar(tabId, naPagina_espiao, [API_RE], { mundoDaPagina: true });
-    if (await esperarSaida()) return { reached: true, via: "form-compra", url: await url(), blockedReason: null, variacao };
+    if (await esperarSaida()) return { reached: true, via: "form-compra", url: await url(), blockedReason: null, variacao, seguro };
   }
 
   if (await clicar(BUY_NOW_SRC, 60)) {
     progresso({ tipo: "checkout", via: "comprar-agora" });
-    if (await esperarSaida()) return { reached: true, via: "comprar-agora", url: await url(), blockedReason: null, variacao };
+    if (await esperarSaida()) return { reached: true, via: "comprar-agora", url: await url(), blockedReason: null, variacao, seguro };
   }
 
   if (await clicar(ADD_TO_CART_SRC, 60)) {
@@ -415,10 +684,43 @@ async function irAoCheckout(tabId, { foto, clicar, progresso }) {
     await avaliar(tabId, naPagina_espiao, [API_RE], { mundoDaPagina: true });
     await clicar(CONTINUE_SRC, 60);
     const chegou = await esperarSaida();
-    return { reached: chegou, via: "carrinho", url: await url(), blockedReason: null, variacao };
+    return { reached: chegou, via: "carrinho", url: await url(), blockedReason: null, variacao, seguro };
   }
 
-  return { reached: false, via: null, url: await url(), blockedReason: null, variacao };
+  return { reached: false, via: null, url: await url(), blockedReason: null, variacao, seguro };
+}
+
+// Recusa a oferta de seguro: clica em "Agora não"; se o botão não aparecer ou o
+// clique não tirar a aba de lá, vai direto pro `callback_url` — que é para onde o
+// próprio "Agora não" levaria. Devolve como saiu ("recusou" | "callback" | null).
+async function recusarSeguro(tabId, { foto, url }) {
+  const diag = { tentativas: 0, clicou: null, rotulos: null, callback: false, voltouProSeguro: false };
+  for (let i = 0; i < Math.ceil(SEGURO_WAIT_MS / 500); i++) {
+    diag.tentativas += 1;
+    const r = await avaliar(tabId, naPagina_recusarSeguro, [RECUSAR_SEGURO_SRC], { mundoDaPagina: true }) || {};
+    if (r.clicou) {
+      diag.clicou = r.clicou;
+      for (let j = 0; j < Math.ceil(SEGURO_WAIT_MS / 500); j++) {
+        await sleep(500);
+        if (!PROTECTIONS_URL_RE.test((await foto()).url)) return { como: "recusou", ...diag };
+      }
+      break;
+    }
+    diag.rotulos = r.rotulos || null;
+    await sleep(500);
+  }
+  let volta = null;
+  try { volta = new URL(url).searchParams.get("callback_url"); } catch { volta = null; }
+  if (volta && /^https:\/\/www\.mercadolivre\.com\.br\//.test(volta)) {
+    diag.callback = true;
+    await irPara(tabId, volta).catch(() => {});
+    await sleep(SETTLE_MS * 2);
+    // O ML pode mandar de volta pro seguro até alguém escolher — aí o plano B não
+    // serve, e o diagnóstico precisa dizer isso.
+    diag.voltouProSeguro = PROTECTIONS_URL_RE.test((await foto()).url);
+    return { como: diag.voltouProSeguro ? null : "callback", ...diag };
+  }
+  return { como: null, ...diag };
 }
 
 // Caminha pelo checkout até a tela que tem cupom. Só clica em "Continuar" (regex
@@ -446,7 +748,7 @@ async function andarAteOCupom(tabId, { foto, clicar, progresso, material }) {
       // cobrir a tela: o "antes" e o "depois" têm que ser da MESMA tela, senão a
       // diferença é de frete e viraria "cupom válido" sem cupom nenhum.
       material.bodyTextAntes = tela.texto;
-      abertura = await abrirCampoDoCupom(tabId, { foto });
+      abertura = await abrirCampoDoCupom(tabId, { foto, aceitarPopup: !!material.listar });
       if (abertura.found) {
         passo.parou = "achei-o-cupom";
         return { reached: true, steps: passos, trail, motivo: "achei-o-cupom", abertura };
@@ -504,9 +806,10 @@ async function andarAteOCupom(tabId, { foto, clicar, progresso, material }) {
 }
 
 // Abre a tela/campo do cupom e espera ela montar.
-async function abrirCampoDoCupom(tabId, { foto }) {
+async function abrirCampoDoCupom(tabId, { foto, aceitarPopup = false }) {
   const tentativas = [];
-  const temCampo = () => avaliar(tabId, naPagina_temCampoDeCupom, [], { mundoDaPagina: true });
+  const temCampo = async () => (await avaliar(tabId, naPagina_temCampoDeCupom, [], { mundoDaPagina: true }))
+    || (aceitarPopup && await avaliar(tabId, naPagina_temPopup, [], { mundoDaPagina: true }));
 
   for (let nivel = 0; nivel <= 3; nivel++) {
     if (await temCampo()) {

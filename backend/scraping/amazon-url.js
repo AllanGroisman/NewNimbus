@@ -5,8 +5,10 @@
 // storage → ...). Puro → testável.
 
 // Domínios da Amazon BR (e os encurtadores dela). Não inclui .com/.es/etc:
-// o sistema só opera na loja brasileira.
-const AMAZON_HOSTS = /(^|\.)(amazon\.com\.br|amzn\.to|a\.co)$/i;
+// o sistema só opera na loja brasileira. Os encurtadores ficam aqui mesmo sem
+// país no nome — quem diz a loja é o destino do redirect. Mantenha em sincronia
+// com os domínios "Amazon" de scraping/urlGuard.js.
+const AMAZON_HOSTS = /(^|\.)(amazon\.com\.br|amzn\.to|amzn\.eu|a\.co|link\.amazon)$/i;
 
 function isAmazonHost(url) {
   if (!url || typeof url !== "string") return false;

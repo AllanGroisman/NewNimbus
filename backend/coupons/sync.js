@@ -37,8 +37,14 @@ const DEFAULT_CONFIG = {
   // (ver parseFilterProps, scraping/ml-cupons.js). Sem isso, "puxar de tudo"
   // traz tudo sem categoria nenhuma e a coluna Categoria fica vazia.
   carimbarCategorias: true,
-  maxPaginasPorCategoria: 5,    // é carimbo, não coleta: as primeiras páginas bastam
-  categorias: [],               // [] = todas as verticais conhecidas
+  // 40 × 30 = 1.200, o mesmo fôlego da lista geral. Era 5, na ideia de que "as
+  // primeiras páginas bastam" — só que a vertical maior da conta tem ~1.170
+  // cupons, e 5 páginas carimbavam 150 deles: o resto ficava com Categoria "—"
+  // (task 14). Quem encerra uma vertical antes disso é o `pages` do próprio ML.
+  maxPaginasPorCategoria: 40,
+  // [] = todas as verticais que o ML mostrar. A lista não é fixa nem vem da config:
+  // a rodada aprende as chaves na primeira página (ver `aprenderCategorias`).
+  categorias: [],
   // Cupom de UMA loja ("Em produtos de Agrotrator"). Ele agora ENTRA por padrão e
   // é separado na tela — descartá-lo escondia metade da lista do ML. Ligar isto
   // volta ao comportamento antigo.
@@ -152,16 +158,38 @@ function readGroupingLabels() {
   return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
 }
 
-// `grupos` é o `groupings` do parseLanding: [{ key, title, count, more }].
+// Aceita os três formatos em que a chave de uma categoria chega do ML, porque as
+// três fontes são diferentes e nenhuma sozinha basta:
+//
+//   "hi_vertical"                 — `availableGroupingsKeys` da /cupons/filter:
+//                                   a lista COMPLETA, e sem nome nenhum.
+//   { key, title }                — `appliedFilters` da /cupons/filter e os
+//                                   `groupings` da aba /cupons: uma por vez, com nome.
+//   { value, text }               — o seletor de categorias da aba /cupons.
+//
+// Chave SEM nome entra com `null` de propósito (task 14). Antes ela era descartada
+// (`if (!chave || !nome) continue`), e como a rodada local só abre a /cupons/filter
+// — onde o nome só vem da categoria que está sendo filtrada —, as verticais que
+// ainda não tinham sido visitadas nunca entravam no dicionário. Sem entrar no
+// dicionário elas não entram na fila da rodada (`verticaisConhecidas`), e sem
+// entrar na fila nunca seriam visitadas: o dicionário ficou congelado em três
+// categorias. O nome chega depois, na passada que filtra por ela.
+//
+// O que um nome já conhecido NUNCA pode sofrer é ser apagado por uma chave crua
+// que veio depois — daí o `nome === null` não sobrescrever.
 function mergeGroupingLabels(grupos) {
   if (!Array.isArray(grupos) || !grupos.length) return readGroupingLabels();
   const mapa = readGroupingLabels();
   let mudou = false;
   for (const g of grupos) {
-    const chave = typeof g === "string" ? g : g?.key;
-    const nome = typeof g === "string" ? null : g?.title;
-    if (!chave || !nome || mapa[chave] === nome) continue;
-    mapa[chave] = String(nome).slice(0, 80);
+    const chave = typeof g === "string" ? g : (g?.key ?? g?.value);
+    const cru = typeof g === "string" ? null : (g?.title ?? g?.text);
+    if (!chave) continue;
+    const nome = cru ? String(cru).slice(0, 80) : null;
+    // Chave nova sem nome: registra para a fila poder vê-la. Com nome: grava.
+    if (!(chave in mapa)) { mapa[chave] = nome; mudou = true; continue; }
+    if (!nome || mapa[chave] === nome) continue;
+    mapa[chave] = nome;
     mudou = true;
   }
   if (mudou) appConfig.set(GROUPINGS_KEY, mapa);
@@ -201,9 +229,11 @@ function categoriasDaRodada(cfg = {}, { procurar = null, labels = null } = {}) {
   if (!booleano(cfg.carimbarCategorias, DEFAULT_CONFIG.carimbarCategorias)) return [null];
 
   const escolhidas = (cfg.categorias || []).map(g => g?.key ?? g).filter(Boolean);
-  // Instalação que nunca leu a aba do ML não tem dicionário nenhum — e a primeira
-  // rodada da vida é justamente a que o constrói (mergeGroupingLabels). Só a
-  // lista geral, então, e o carimbo entra a partir da segunda.
+  // Instalação que nunca leu a aba do ML não tem dicionário nenhum, e esta função é
+  // chamada ANTES de qualquer página ter sido aberta: aqui a fila sai com o que já
+  // se sabia. Quem a completa com o que o ML mostrar é o `aprenderCategorias`, na
+  // primeira página da lista geral — por isso um dicionário curto (ou vazio) não
+  // condena a rodada a carimbar pouco, como condenou por meses (task 14).
   return [null, ...(escolhidas.length ? escolhidas : verticaisConhecidas(labels))];
 }
 
@@ -251,7 +281,7 @@ function writeConfig(cfg) {
     : [];
   merged.maxPaginasLista = inteiro(merged.maxPaginasLista, { min: 1, max: 200, padrao: DEFAULT_CONFIG.maxPaginasLista });
   merged.limiteCupons = inteiro(merged.limiteCupons, { min: 0, max: 20000, padrao: DEFAULT_CONFIG.limiteCupons });
-  merged.maxPaginasPorCategoria = inteiro(merged.maxPaginasPorCategoria, { min: 1, max: 40, padrao: DEFAULT_CONFIG.maxPaginasPorCategoria });
+  merged.maxPaginasPorCategoria = inteiro(merged.maxPaginasPorCategoria, { min: 1, max: 200, padrao: DEFAULT_CONFIG.maxPaginasPorCategoria });
   merged.maxProductsPerCoupon = inteiro(merged.maxProductsPerCoupon, { min: 10, max: 500, padrao: DEFAULT_CONFIG.maxProductsPerCoupon });
   merged.maxPaginasVitrine = inteiro(merged.maxPaginasVitrine, { min: 1, max: 20, padrao: DEFAULT_CONFIG.maxPaginasVitrine });
   merged.pausaEntreVitrinesMs = inteiro(merged.pausaEntreVitrinesMs, { min: 500, max: 30000, padrao: DEFAULT_CONFIG.pausaEntreVitrinesMs });
@@ -608,7 +638,12 @@ async function paginaLocal({ grouping = null, props = null, ativados = 0, semBot
   // o tamanho da colheita, e a colheita já aconteceu.
   const carimbo = grouping !== null;
 
+  // O que o ML disse sobre as categorias NESTA página. Vem antes de tudo porque é
+  // o que faz a fila desta rodada crescer (task 14).
+  aprenderCategorias(parsed, grouping);
+
   let novos = 0;
+  let carimbados = 0;
   for (const c of parsed.coupons) {
     // A campanha procurada é olhada ANTES de qualquer filtro. Ela é o motivo da
     // varredura existir: escopo de loja, teto e "já vi esse" são regras de
@@ -624,50 +659,112 @@ async function paginaLocal({ grouping = null, props = null, ativados = 0, semBot
     // Cupom de loja: por padrão ele ENTRA (é metade da lista do ML e a tela o
     // separa por `scope`). A config só existe para quem quiser a lista antiga.
     if (pulaLoja && c.scope === "store") { _local.ignoradosLoja++; continue; }
-    if (juntarCupom(c)) {
+    const r = juntarCupom(c);
+    if (r.carimbado) carimbados++;
+    if (r.novo) {
       novos++;
       if (!carimbo && limite && _local.porId.size >= limite) break;
     }
   }
 
   const ondeEstou = carimbo ? ` de ${grouping}` : " da lista geral";
-  logar("info", `cupons: página ${_local.pagina}/${paginas}${ondeEstou} · ${_local.porId.size} cupons${_local.ignoradosLoja ? `, ${_local.ignoradosLoja} de loja ignorados` : ""}`, { dedup: true });
+  logar("info", `cupons: página ${_local.pagina}/${paginas}${ondeEstou} · ${_local.porId.size} cupons${carimbados ? `, ${carimbados} carimbados` : ""}${_local.ignoradosLoja ? `, ${_local.ignoradosLoja} de loja ignorados` : ""}`, { dedup: true });
   _status.progress = { etapa: "cupons", pagina: _local.pagina, de: paginas, cupons: _local.porId.size, ignoradosLoja: _local.ignoradosLoja, grouping };
 
   // As paradas. O teto de páginas é diferente nas duas fases: a lista geral é a
-  // coleta e vai fundo; o carimbo só precisa das primeiras páginas de cada
-  // vertical, porque o cupom que ele carimba já está guardado.
+  // coleta e o carimbo é a volta por cima — mas os dois vão fundo, porque o cupom
+  // que fica de fora do carimbo é o cupom que fica sem categoria na tela. Quem
+  // encerra uma vertical de verdade é o `pages` que o próprio ML declara.
   const tetoDePaginas = carimbo
     ? Number(_local.cfg.maxPaginasPorCategoria) || DEFAULT_CONFIG.maxPaginasPorCategoria
     : Number(_local.cfg.maxPaginasLista) || DEFAULT_CONFIG.maxPaginasLista;
 
-  _local.semNovidade = novos ? 0 : _local.semNovidade + 1;
+  // Carimbar também é novidade: ver `juntarCupom`. Sem isto a passada por vertical
+  // morria na quinta página, porque nela nenhum cupom é novo por definição.
+  _local.semNovidade = (novos || carimbados) ? 0 : _local.semNovidade + 1;
+  const iAntes = _local.iCategoria;
   if (_local.achou) _local.encerrada = true;
   else if (!parsed.coupons.length) proximaCategoria(carimbo ? null : `A lista geral não devolveu cupom nenhum — pode ser a página do ML ter mudado.`);
   else if (!carimbo && limite && _local.porId.size >= limite) proximaCategoria(null);
   else if (_local.semNovidade >= mlCupons.MAX_PAGINAS_SEM_NOVIDADE) proximaCategoria(null);
   else if (_local.pagina >= paginas) proximaCategoria(null);
-  else if (_local.pagina >= tetoDePaginas) proximaCategoria(carimbo ? null : `Parei no teto de ${tetoDePaginas} páginas da lista geral — suba o limite se faltou cupom.`);
+  else if (_local.pagina >= tetoDePaginas) proximaCategoria(carimbo
+    ? `Parei no teto de ${tetoDePaginas} páginas em ${grouping} — os cupons além dele ficam sem categoria.`
+    : `Parei no teto de ${tetoDePaginas} páginas da lista geral — suba o limite se faltou cupom.`);
   else _local.pagina++;
 
   const proxima = proximaPagina();
-  const base = { cupons: _local.porId.size, novos, ignoradosLoja: _local.ignoradosLoja, de: paginas, paginasLidas: _local.paginasLidas, achou: _local.achou };
-  if (proxima) return { ...base, proxima, alvos: null };
-  return { ...base, proxima: null, ...(await gravarCuponsLocais()) };
+  const base = { cupons: _local.porId.size, novos, carimbados, ignoradosLoja: _local.ignoradosLoja, de: paginas, paginasLidas: _local.paginasLidas, achou: _local.achou };
+  if (!proxima) return { ...base, proxima: null, ...(await gravarCuponsLocais()) };
+  // Trocou de categoria e ainda tem fila pela frente: grava o que já tem. A fila
+  // passou de quatro entradas para onze (task 14), e antes NADA ia pro banco antes
+  // da última página da última vertical — um muro do ML, uma aba fechada ou o
+  // watchdog no meio jogavam a rodada inteira fora. `persistRun` é upsert sobre o
+  // mesmo mapa acumulado, então repetir é idempotente.
+  if (_local.iCategoria > iAntes) await gravarCuponsLocais({ parcial: true });
+  return { ...base, proxima, alvos: null };
 }
 
-// Junta um cupom ao que a varredura já tem. Devolve `true` quando ele é novo.
+// O que esta página ensinou sobre as categorias do ML, e o que fazer com isso.
+//
+// Duas coisas, e as duas vêm de graça na resposta que a extensão já manda:
+//
+//   1. O DICIONÁRIO de nomes. `appliedFilters` traz `{ key, title }` da vertical
+//      filtrada, e `availableGroupings` traz a lista completa de chaves (sem nome).
+//      Juntas, elas são a única fonte de categoria que a rodada local tem — ela
+//      nunca abre a aba /cupons, que era de onde isso vinha antes (commit 37a81d0).
+//
+//   2. A FILA desta rodada. Ela é montada no `startLocalRun`, ANTES de qualquer
+//      página ter sido lida, a partir do que o dicionário já sabia. Se ele estava
+//      congelado em três verticais, a rodada carimbava três — e como só se aprende
+//      uma vertical visitando-a, ela nunca sairia dali sozinha. Por isso a fila
+//      cresce aqui, na primeira página da lista geral, e não só na rodada seguinte.
+//
+// Quem escolheu categorias na tela (`cfg.categorias`) manda: descoberta não
+// atropela escolha.
+function aprenderCategorias(parsed, grouping) {
+  const chaves = [...(parsed.availableGroupings || []), ...(parsed.appliedFilters || [])];
+  if (!chaves.length) return;
+  const labels = mergeGroupingLabels(chaves);
+
+  const naPrimeiraPaginaDaGeral = grouping === null && _local.pagina === 1;
+  const escolhidas = (_local.cfg.categorias || []).map(g => g?.key ?? g).filter(Boolean);
+  if (!naPrimeiraPaginaDaGeral || escolhidas.length) return;
+  if (!booleano(_local.cfg.carimbarCategorias, DEFAULT_CONFIG.carimbarCategorias)) return;
+  if (_local.procurar || _local.alvos) return;
+
+  // `verticaisConhecidas` é quem separa categoria de filtro: `price` e `percentage`
+  // vêm na mesma lista do ML e carimbariam na coluna Categoria algo que não é
+  // categoria ("Mais de 10%").
+  const novas = verticaisConhecidas(labels).filter(k => !_local.categorias.includes(k));
+  if (!novas.length) return;
+  _local.categorias.push(...novas);
+  logar("info", `o ML mostrou ${novas.length} categoria(s) que ainda não estavam na fila — agora a rodada é ${textoDasCategorias(_local.categorias, labels)}`);
+}
+
+// Junta um cupom ao que a varredura já tem. Devolve `{ novo, carimbado }`.
 //
 // O merge é o que faz o carimbo de categoria funcionar: o mesmo cupom aparece na
 // lista geral (sem `groupings`) e depois na vertical dele (com), e o que precisa
 // sobreviver é a união dos dois. Fica também a versão que TEM vitrine — é a única
 // que serve pra raspar produto, e o ML repete o card em estados diferentes.
+//
+// `carimbado` é separado de `novo` porque as duas coisas são PROGRESSO, e antes só
+// a primeira contava (task 14): numa passada de carimbo todo cupom já é conhecido,
+// então `novo` era falso em toda página, o contador de "páginas sem novidade"
+// enchia em cinco e a vertical era cortada aí — independente do
+// `maxPaginasPorCategoria`. Ganhar uma categoria É novidade.
 function juntarCupom(c) {
   const anterior = _local.porId.get(c.campaignId);
-  if (!anterior) { _local.porId.set(c.campaignId, c); return true; }
-  for (const g of c.groupings) if (!anterior.groupings.includes(g)) anterior.groupings.push(g);
+  if (!anterior) { _local.porId.set(c.campaignId, c); return { novo: true, carimbado: false }; }
+  let carimbado = false;
+  for (const g of c.groupings) {
+    if (anterior.groupings.includes(g)) continue;
+    anterior.groupings.push(g);
+    carimbado = true;
+  }
   if (!anterior.containerUrl && c.containerUrl) Object.assign(anterior, c, { groupings: anterior.groupings });
-  return false;
+  return { novo: false, carimbado };
 }
 
 // A lista acabou: grava os cupons e diz quais vitrines valem a pena abrir.
@@ -675,13 +772,15 @@ function juntarCupom(c) {
 // Grava ANTES das vitrines porque o `gravarVitrineLocal` exige o cupom no banco —
 // e porque cupom guardado sem vitrine já é melhor que nada se o Chrome fechar no
 // meio da colheita.
-async function gravarCuponsLocais() {
+async function gravarCuponsLocais({ parcial = false } = {}) {
   const cupons = [..._local.porId.values()];
   // `vitrines: []` de propósito: quem grava produto na rodada local é o
   // `gravarVitrineLocal`, cupom a cupom, com o que a extensão colheu.
   const resumo = await persistRun({ cupons, vitrines: [], ativados: _local.ativados, ignoradosLoja: _local.ignoradosLoja, avisos: _local.motivos });
   _local.persistido = resumo;
-  logar("ok", `lista pronta: ${resumo.cupons} cupons (${resumo.novos} novos)${_local.ativados ? `, ${_local.ativados} ativados` : ""}`);
+  logar("ok", parcial
+    ? `gravei o que já tem: ${resumo.cupons} cupons — faltam ${Math.max(0, _local.categorias.length - _local.iCategoria)} categoria(s)`
+    : `lista pronta: ${resumo.cupons} cupons (${resumo.novos} novos)${_local.ativados ? `, ${_local.ativados} ativados` : ""}`);
   // `alvos` só sai numa BUSCA. Na etapa 1 normal ele seria a lista inteira, e a
   // tela sairia raspando vitrine atrás de vitrine — que é exatamente o que a
   // separação em dois botões desfez: os produtos são a etapa 2, e quem decide
@@ -762,7 +861,11 @@ async function syncOneCoupon(campaignId, { maxProducts = null } = {}) {
 // Grava os produtos de uma vitrine (venha ela do navegador ou da landing) e
 // carimba o catálogo. Vive fora do syncOneCoupon porque os dois caminhos de lá
 // terminam aqui, e duplicar isso é como as duas pontas passam a divergir.
-async function gravarVitrine(campaignId, cupom, produtos, { parcial }) {
+//
+// `carimbar: false` é da varredura em lote (coupons/landing-sweep.js): o
+// `syncCatalogCoupons` varre a tabela de vínculos inteira, e fazê-lo a cada um dos
+// milhares de cupons da rodada seria a mesma conta repetida. Ela carimba uma vez no fim.
+async function gravarVitrine(campaignId, cupom, produtos, { parcial, carimbar = true }) {
   const itens = produtos.map(p => ({ ...p, key: productKey(p) }));
   if (itens.length) await catalog.upsertProducts(itens);
   const v = await coupons.replaceCouponProducts(
@@ -775,7 +878,7 @@ async function gravarVitrine(campaignId, cupom, produtos, { parcial }) {
   if ((cupom?.sampleItemIds || []).length) {
     await coupons.replaceCouponSamples(campaignId, cupom.sampleItemIds);
   }
-  await coupons.syncCatalogCoupons();
+  if (carimbar) await coupons.syncCatalogCoupons();
   return { ok: true, produtos: itens.length, parcial, ...v };
 }
 

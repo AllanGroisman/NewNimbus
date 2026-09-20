@@ -12,7 +12,14 @@ import { abrir, fechar, avaliar, esperarHumano, classificarMuro } from "./aba.js
 
 // As chaves do `pageProps` que interessam. O objeto inteiro traz tema, i18n e
 // tracking — mandar tudo para o servidor seria um corpo de megabytes por página.
-export const CHAVES_PADRAO = ["filteredCouponsData", "activeCouponsData"];
+//
+// `availableGroupingsKeys` é a lista das categorias que a conta tem (16 strings,
+// nada de peso) e não fala dos cupons desta página: é o que diz ao servidor QUE
+// verticais existem. Sem ela a rodada só conhecia as categorias que já tinha
+// visitado — e como só se visita o que se conhece, ela ficou presa em três por
+// meses (task 14). O nome bonito de cada uma vem dentro do `filteredCouponsData`
+// (`appliedFilters`), que já vinha.
+export const CHAVES_PADRAO = ["filteredCouponsData", "activeCouponsData", "availableGroupingsKeys"];
 
 // Roda DENTRO da página. Serializada pelo `executeScript`, então é auto-contida:
 // não pode usar nada deste arquivo.
