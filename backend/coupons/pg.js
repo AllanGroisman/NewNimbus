@@ -709,17 +709,21 @@ async function recoverCodesFromCoupons() {
 // `productsSyncedAt` é o carimbo de "a vitrine foi raspada" (replaceCouponProducts
 // só o escreve para `origem: "vitrine"`), e é ele que faz o botão "buscar os que
 // faltam" não repetir o trabalho da rodada anterior.
-async function couponsSemVitrine({ limit = 500, campaignIds = null } = {}) {
+//
+// `soSemProdutos` tira da fila os PARCIAIS — quem já tem algum vínculo (landing,
+// amostra, checkout) mas não a vitrine fechada. É o "começa por quem não tem nada".
+async function couponsSemVitrine({ limit = 500, campaignIds = null, soSemProdutos = false } = {}) {
   const teto = Math.min(2000, Math.max(1, Number(limit) || 500));
   const alvo = Array.isArray(campaignIds) && campaignIds.length
     ? { campaignId: { in: campaignIds.map(String) } }
     : {};
   // Cupom vencido não tem vitrine que valha uma aba aberta com a conta do sistema.
-  const base = {
+  const semVitrine = {
     ...alvo,
     productsSyncedAt: null,
     OR: [{ expiresAt: null }, { expiresAt: { gt: nowish() } }],
   };
+  const base = soSemProdutos ? { ...semVitrine, products: { none: {} } } : semVitrine;
 
   const [prontos, precisamAtivar, total] = await Promise.all([
     // A ordem gasta o tempo do admin (a extensão abre uma aba por cupom) onde ele
@@ -744,8 +748,13 @@ async function couponsSemVitrine({ limit = 500, campaignIds = null } = {}) {
     }),
     prisma().mlCoupon.count({ where: base }),
   ]);
+  // Quantos o filtro deixou de fora — é o número que a tela mostra ao lado do
+  // checkbox, pra ninguém achar que a fila encolheu sozinha.
+  const parciaisFora = soSemProdutos
+    ? await prisma().mlCoupon.count({ where: { ...semVitrine, products: { some: {} } } })
+    : 0;
 
-  return { prontos, precisamAtivar, total };
+  return { prontos, precisamAtivar, total, parciaisFora };
 }
 
 // A fila da varredura pela landing (coupons/landing-sweep.js): cupom válido, com

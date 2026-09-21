@@ -2596,6 +2596,7 @@ app.get("/api/admin/ml-cupons/alvos-produtos", auth.requireAuth, auth.requireAdm
     res.json(await mlCupons.alvosDeProdutos({
       limit: Number(req.query.limit) || 500,
       campaignIds: req.query.campaignId ? [String(req.query.campaignId)] : null,
+      soSemProdutos: req.query.soSemProdutos === "1",
     }));
   } catch (err) {
     httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/ml-cupons/alvos-produtos" });

@@ -125,6 +125,36 @@ describe("alvosDeProdutos — a fila da etapa 2", () => {
   });
 });
 
+describe("soSemProdutos — a fila sem os parciais (task 11)", () => {
+  beforeEach(semear);
+
+  it("o parcial (só prévia) sai da fila, e a contagem diz quantos saíram", async () => {
+    // Uma prévia da landing: vínculo existe, `productsSyncedAt` não.
+    await coupons.replaceCouponProducts(PRONTO, [{ productKey: productKey(produto), productUrl: produto.link }], { origem: "landing" });
+
+    const todos = await sync.alvosDeProdutos({});
+    expect(todos.prontos.map(c => c.campaignId)).toEqual([PRONTO]);
+    expect(todos.parciaisFora).toBe(0);
+
+    const so = await sync.alvosDeProdutos({ soSemProdutos: true });
+    expect(so.prontos).toEqual([]);
+    expect(so.precisamAtivar.map(c => c.campaignId)).toEqual([ATIVAR]);
+    expect(so.total).toBe(1);
+    expect(so.parciaisFora).toBe(1);
+  });
+
+  it("a rota lê o filtro da query", async () => {
+    await coupons.replaceCouponProducts(PRONTO, [{ productKey: productKey(produto), productUrl: produto.link }], { origem: "landing" });
+    const { user, auth } = await createTestUser();
+    await authMod.setUserRole(user.id, "admin");
+
+    const r = await auth("get", "/api/admin/ml-cupons/alvos-produtos?soSemProdutos=1");
+    expect(r.status).toBe(200);
+    expect(r.body.prontos).toEqual([]);
+    expect(r.body.parciaisFora).toBe(1);
+  });
+});
+
 describe("GET /api/admin/ml-cupons/alvos-produtos", () => {
   beforeEach(semear);
 

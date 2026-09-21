@@ -1098,9 +1098,9 @@ async function gravarVitrineLocal(campaignId, lista, { parcial = false } = {}) {
 // clique em "Aplicar" na lista do ML, que é ESCRITA irreversível na conta do
 // sistema. A tela mostra os dois números antes de o Allan apertar o botão, e a
 // config decide se o segundo grupo entra.
-async function alvosDeProdutos({ limit = 500, campaignIds = null } = {}) {
+async function alvosDeProdutos({ limit = 500, campaignIds = null, soSemProdutos = false } = {}) {
   const cfg = readConfig();
-  const r = await coupons.couponsSemVitrine({ limit, campaignIds });
+  const r = await coupons.couponsSemVitrine({ limit, campaignIds, soSemProdutos });
   const ativa = booleano(cfg.activateCoupons, DEFAULT_CONFIG.activateCoupons);
   return {
     ...r,

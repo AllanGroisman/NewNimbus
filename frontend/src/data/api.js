@@ -599,9 +599,10 @@ export async function adminMlCuponsStatus()          { return http("GET",  "/api
 export async function adminMlCuponsSaveConfig(cfg)   { return http("PUT",  "/api/admin/ml-cupons/config", cfg); }
 // A fila da etapa 2: os cupons que ainda não têm vitrine, separados entre os que
 // só precisam ser lidos e os que precisam do "Eu quero" antes.
-export async function adminMlCuponsAlvosProdutos({ limit = 500, campaignId = null } = {}) {
+export async function adminMlCuponsAlvosProdutos({ limit = 500, campaignId = null, soSemProdutos = false } = {}) {
   const params = new URLSearchParams({ limit: String(limit) });
   if (campaignId) params.set("campaignId", campaignId);
+  if (soSemProdutos) params.set("soSemProdutos", "1");
   return http("GET", `/api/admin/ml-cupons/alvos-produtos?${params}`);
 }
 // A varredura, tocada pelo Chrome do admin: a tela abre cada página pela extensão

@@ -40,8 +40,16 @@ import { adminMlCuponsAlvosProdutos, adminMlCuponsImportVitrine, adminMlCuponsLo
 // tentou, separados por ETAPA. Só o `buscarTudo` preenche. Precisam ser dois
 // conjuntos e não um: o cupom recém-ativado tem que entrar na colheita de vitrine
 // do mesmo lote, então marcá-lo na ativação não pode escondê-lo da vitrine.
+//
+// `soSemProdutos` pede ao servidor a fila SEM os parciais (quem já tem algum
+// vínculo). Não vale para o botão de uma linha: ali o cupom foi escolhido a dedo.
+//
+// Além do passo a passo que já existia, o ciclo anuncia `fila` (o tamanho do
+// serviço), `ativando`, `vitrine-feita` (o desfecho de cada cupom) e `pausa` — é o
+// que deixa a tela dizer "cupom 12 de 80" e explicar por que ficou parada.
 export async function umCiclo({
   campaignIds = null,
+  soSemProdutos = false,
   pular = null,
   parou = () => false,
   log = () => {},
@@ -53,7 +61,7 @@ export async function umCiclo({
   let muro = false;
 
   const pedirAlvos = () => adminMlCuponsAlvosProdutos(
-    campaignIds?.length === 1 ? { campaignId: campaignIds[0] } : {},
+    campaignIds?.length === 1 ? { campaignId: campaignIds[0] } : { soSemProdutos },
   );
   const inedito = (etapa) => (c) => !pular || !pular[etapa].has(c.campaignId);
   const pedido = (c) => !campaignIds?.length || campaignIds.includes(c.campaignId);
@@ -85,6 +93,16 @@ export async function umCiclo({
   const lotes = [];
   for (let i = 0; i < fila.length; i += tamanho) lotes.push(fila.slice(i, i + tamanho));
   log("info", `${fila.length} cupom(ns) em ${lotes.length} lote(s) de até ${tamanho} — cada lote é gravado antes do próximo`);
+  onProgresso({
+    tipo: "fila",
+    total: fila.length,
+    prontos: fila.filter(c => !c.ativar).length,
+    aAtivar: fila.filter(c => c.ativar).length,
+    lotes: lotes.length,
+    tamanhoLote: tamanho,
+    maxPaginas: cfg.maxPaginasVitrine ?? null,
+    maxProdutos: cfg.maxProductsPerCoupon ?? null,
+  });
 
   const salvo = { lotes: 0, de: lotes.length, vitrines: 0, produtos: 0 };
 
@@ -99,6 +117,7 @@ export async function umCiclo({
     // A ativação vem primeiro porque é ela que faz a vitrine EXISTIR: sem o "Eu
     // quero" o cupom não tem `containerUrl` e não há o que raspar.
     if (aAtivar.length) {
+      onProgresso({ tipo: "ativando", n: aAtivar.length });
       const r = await ativarLote(aAtivar.map(c => c.campaignId), { cfg, pular, parou, log, onProgresso });
       ativados += r.ativados;
       if (r.parado) { parado = r.parado; break; }
@@ -128,7 +147,11 @@ export async function umCiclo({
 
     if (r.muro) { muro = true; parado = r.parado; break; }
     if (r.parado) { parado = r.parado; break; }
-    if (k < lotes.length - 1) await new Promise(res => setTimeout(res, cfg.pausaEntreVitrinesMs || 4000));
+    if (k < lotes.length - 1) {
+      const ms = cfg.pausaEntreVitrinesMs || 4000;
+      onProgresso({ tipo: "pausa", ms, motivo: "entre lotes" });
+      await new Promise(res => setTimeout(res, ms));
+    }
   }
 
   return { feitos, ativados, parado, muro, lotes: salvo.lotes };
@@ -213,6 +236,7 @@ async function colherVitrines(fila, { cfg, pular, parou, log, onProgresso }) {
       feitos.push({ campaignId: c.campaignId, title: c.title, ok: false, produtos: 0, erro: err.message });
       log("erro", `${c.title}: ${err.message}`);
     }
+    onProgresso({ tipo: "vitrine-feita", ...feitos.at(-1) });
 
     // Muro é estado da CONTA, não daquela vitrine: seguir para o próximo cupom só
     // queima a conta mais rápido, e a conta é a mesma do Hub.
@@ -221,7 +245,11 @@ async function colherVitrines(fila, { cfg, pular, parou, log, onProgresso }) {
       parado = "O Mercado Livre pediu verificação — parei aqui de propósito";
       break;
     }
-    if (i < fila.length - 1) await new Promise(r => setTimeout(r, cfg.pausaEntreVitrinesMs || 4000));
+    if (i < fila.length - 1) {
+      const ms = cfg.pausaEntreVitrinesMs || 4000;
+      onProgresso({ tipo: "pausa", ms, motivo: "entre vitrines" });
+      await new Promise(r => setTimeout(r, ms));
+    }
   }
 
   return { feitos, parado, muro };
@@ -239,6 +267,7 @@ export function buscarProdutos(opcoes = {}) {
 // os ciclos, e `motivo` dizendo por que parou (é o que o resumo da tela mostra:
 // um laço que termina sozinho sem dizer por quê parece que desistiu).
 export async function buscarTudo({
+  soSemProdutos = false,
   parou = () => false,
   log = () => {},
   onProgresso = () => {},
@@ -267,10 +296,10 @@ export async function buscarTudo({
     if (parou()) { parado = "Interrompido por você"; motivo = parado; break; }
 
     ciclos++;
-    onCiclo({ ciclo: ciclos, tentados: tentados.vitrine.size });
+    onCiclo({ ciclo: ciclos, maxCiclos, tentados: tentados.vitrine.size });
     log("info", `— ciclo ${ciclos} —`);
 
-    const r = await umCiclo({ pular: tentados, parou, log, onProgresso });
+    const r = await umCiclo({ soSemProdutos, pular: tentados, parou, log, onProgresso });
     feitos.push(...r.feitos);
     ativados += r.ativados;
     lotes += r.lotes || 0;
@@ -287,12 +316,13 @@ export async function buscarTudo({
 
     // A config vem do servidor a cada `/alvos-produtos`; ler do último ciclo é o
     // suficiente e evita mais uma chamada só para saber a pausa.
-    const cfg = (await adminMlCuponsAlvosProdutos({})).config || {};
+    const cfg = (await adminMlCuponsAlvosProdutos({ soSemProdutos })).config || {};
     maxCiclos = Number(cfg.maxCiclos) || maxCiclos;
     if (ciclos >= maxCiclos) { motivo = `parei no teto de ${maxCiclos} ciclos`; break; }
 
     const pausa = Number(cfg.pausaEntreCiclosMs) || 60000;
     log("info", `pausa de ${Math.round(pausa / 1000)}s antes do próximo ciclo`);
+    onProgresso({ tipo: "pausa", ms: pausa, motivo: "entre ciclos" });
     await new Promise(r => setTimeout(r, pausa));
   }
 

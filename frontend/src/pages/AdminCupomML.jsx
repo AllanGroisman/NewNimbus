@@ -16,7 +16,7 @@
 // CAPTCHA para navegador automatizado, dentro e fora da VPS.
 //
 // O testador de PALAVRA morava aqui e hoje é a aba vizinha (AdminCupomPalavra.jsx).
-import { Fragment, useState, useEffect, useCallback, useRef } from "react";
+import { Fragment, useState, useEffect, useCallback, useRef, useReducer } from "react";
 import { PRIMARY_DARK } from "../data/constants";
 import {
   adminMlCupons, adminMlCuponsStatus, adminMlCuponsSaveConfig,
@@ -35,6 +35,8 @@ import { campanhaDoTexto } from "../data/cupomId";
 import { ImportarCampanhaModal } from "./AdminCupomPalavra";
 import Modal from "../components/ui/Modal";
 import ColheitaLog from "../components/admin/ColheitaLog";
+import ProgressoColheita from "../components/admin/ProgressoColheita";
+import { reduzirAndamento } from "../data/andamentoColheita";
 import ExtensaoAusente from "../components/admin/ExtensaoAusente";
 import Numero from "../components/admin/Numero";
 import CouponLandingSweep from "../components/admin/CouponLandingSweep";
@@ -146,9 +148,20 @@ export default function CuponsDoML({ buscaInicial = null }) {
   // `ref` e não `state`: o laço do lote precisa ler o valor ATUAL a cada volta, e
   // um state ficaria congelado na closure em que o laço começou.
   const pararRef = useRef(false);
-  const [progresso, setProgresso] = useState(null);  // a linha curta do "agora"
-  // O que a busca de produtos JÁ GRAVOU, lote a lote. Separado do `progresso`
-  // porque diz outra coisa: o progresso é o que está sendo feito, isto é o que um
+  // O "agora" da colheita — etapa, fila, lote, cupom da vez, contadores —, montado
+  // evento a evento por `data/andamentoColheita.js`. `null` fora de uma rodada.
+  const [andamento, andar] = useReducer(reduzirAndamento, null);
+  // "Só os que não têm nenhum produto": tira da fila do botão 2 (e do 3) os
+  // PARCIAIS, que já têm prévia. Lembrado por navegador — é preferência de quem
+  // opera, não estado do sistema.
+  const [soSemProdutos, setSoSemProdutos] = useState(() => {
+    try { return localStorage.getItem("cupons.soSemProdutos") === "1"; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("cupons.soSemProdutos", soSemProdutos ? "1" : "0"); } catch { /* sem storage, só não lembra */ }
+  }, [soSemProdutos]);
+  // O que a busca de produtos JÁ GRAVOU, lote a lote. Separado do `andamento`
+  // porque diz outra coisa: o andamento é o que está sendo feito, isto é o que um
   // Parar agora não perde. Fica na tela depois do fim — é a prova do que ficou.
   const [salvo, setSalvo] = useState(null);
   // O passo a passo do lote e o balanço dele. `eventos` é append-only durante a
@@ -264,31 +277,28 @@ export default function CuponsDoML({ buscaInicial = null }) {
     let vivo = true;
     (async () => {
       try {
-        const r = await adminMlCuponsAlvosProdutos({});
+        const r = await adminMlCuponsAlvosProdutos({ soSemProdutos });
         if (vivo) setAlvos(r);
       } catch { /* o botão fica sem o número, e só */ }
     })();
     return () => { vivo = false; };
-  }, [tick]);
+  }, [tick, soSemProdutos]);
 
   // Uma linha no log. `useCallback` não faz falta aqui: quem chama é o laço da
   // varredura, não um efeito.
   const logar = (tipo, texto) => setEventos(ev => [...ev, { at: new Date().toISOString(), tipo, texto }]);
 
-  // O progresso que vem da extensão. O muro é o único que precisa gritar: a aba
-  // veio para a frente e está esperando o humano — sem dizer isso, a tela parece
-  // travada.
+  // O progresso que vem do laço e da extensão. Todo evento vai cru para o
+  // `andamento`; aqui fica só o que mexe em outra coisa da tela — o salvo, a
+  // recarga, e o muro no log (a aba veio para a frente e está esperando o humano).
   const avisarMuro = (p) => {
-    if (p?.tipo === "lote") {
-      setProgresso(`lote ${p.k}/${p.de} · ${p.aAtivar ? `ativando ${p.aAtivar} e ` : ""}colhendo ${p.tamanho} cupom(ns)…`);
-    } else if (p?.tipo === "lote-salvo") {
+    andar(p);
+    if (p?.tipo === "lote-salvo") {
       setSalvo({ lotes: p.lotes, de: p.de, vitrines: p.vitrines, produtos: p.produtos, em: p.em });
       // O contador "Sem produtos ainda" cai ao vivo: é o banco dizendo que gravou.
       recarregar();
     } else if (p?.tipo === "muro") {
-      const texto = "o Mercado Livre pediu verificação — resolva na aba que abriu";
-      setProgresso(texto);
-      logar("aviso", texto);
+      logar("aviso", "o Mercado Livre pediu verificação — resolva na aba que abriu");
     } else if (p?.tipo === "ativou") {
       logar("ok", `ativei “${p.rotulo}”`);
     }
@@ -311,7 +321,7 @@ export default function CuponsDoML({ buscaInicial = null }) {
     pararRef.current = false;
     setRodandoNoChrome(true);
     setErro(null);
-    if (resumir) { setEventos([]); setResumoColheita(null); }
+    if (resumir) { setEventos([]); setResumoColheita(null); andar({ tipo: "reiniciar" }); }
     const t0 = Date.now();
     let tabId = null;
     let resumoLista;
@@ -322,10 +332,7 @@ export default function CuponsDoML({ buscaInicial = null }) {
         tudo,
         parou: () => pararRef.current,
         log: logar,
-        onProgresso: (p) => {
-          if (p.tipo === "pagina-abrindo") setProgresso(`lista de cupons · página ${p.pagina}${p.grouping ? ` de ${p.grouping}` : " (geral)"}…`);
-          else avisarMuro(p);
-        },
+        onProgresso: avisarMuro,
       });
       tabId = r.tabId;
       resumoLista = r.resumo;
@@ -340,7 +347,7 @@ export default function CuponsDoML({ buscaInicial = null }) {
       // processo reiniciar.
       await adminMlCuponsLocalFim({ cancelada: !!parado }).catch(() => {});
       setRodandoNoChrome(false);
-      setProgresso(null);
+      if (resumir) andar({ tipo: "encerrar" });
       setAberto(null);
       recarregar();
     }
@@ -379,19 +386,18 @@ export default function CuponsDoML({ buscaInicial = null }) {
     setErro(null);
     setEventos([]);
     setResumoColheita(null);
+    andar({ tipo: "reiniciar" });
     const t0 = Date.now();
     let r = { feitos: [], ativados: 0, parado: null };
 
     try {
       r = await buscarProdutos({
         campaignIds,
+        // O botão da linha é pedido explícito por aquele cupom: o filtro não vale.
+        soSemProdutos: campaignIds?.length ? false : soSemProdutos,
         parou: () => pararRef.current,
         log: logar,
-        onProgresso: (p) => {
-          if (p.tipo === "vitrine-abrindo") setProgresso(`${p.i}/${p.de} do lote · abrindo a vitrine de “${p.title}”…`);
-          else if (p.tipo === "pagina") setProgresso(`página ${p.pagina} · ${p.produtos} produto(s)`);
-          else avisarMuro(p);
-        },
+        onProgresso: avisarMuro,
       });
     } catch (err) {
       r.parado = errText(err, "A busca de produtos parou com um erro.");
@@ -399,7 +405,7 @@ export default function CuponsDoML({ buscaInicial = null }) {
     } finally {
       setBuscandoProdutos(false);
       setColhendo(null);
-      setProgresso(null);
+      andar({ tipo: "encerrar" });
       setAberto(null);
       setProdutos({});
       recarregar();
@@ -451,10 +457,12 @@ export default function CuponsDoML({ buscaInicial = null }) {
     setErro(null);
     setEventos([]);
     setResumoColheita(null);
+    andar({ tipo: "reiniciar" });
     const t0 = Date.now();
 
     const lista = await varrerLista({ tudo: true, resumir: false });
     if (lista?.parado || pararRef.current) {
+      andar({ tipo: "encerrar" });
       setResumoColheita({
         titulo: "Interrompido na lista",
         tom: "aviso",
@@ -474,21 +482,18 @@ export default function CuponsDoML({ buscaInicial = null }) {
     let r = { ciclos: 0, feitos: [], ativados: 0, parado: null, motivo: null };
     try {
       r = await buscarTudo({
+        soSemProdutos,
         parou: () => pararRef.current,
         log: logar,
-        onCiclo: ({ ciclo }) => setProgresso(`ciclo ${ciclo}…`),
-        onProgresso: (p) => {
-          if (p.tipo === "vitrine-abrindo") setProgresso(`${p.i}/${p.de} do lote · abrindo a vitrine de “${p.title}”…`);
-          else if (p.tipo === "pagina") setProgresso(`página ${p.pagina} · ${p.produtos} produto(s)`);
-          else avisarMuro(p);
-        },
+        onCiclo: ({ ciclo, maxCiclos }) => andar({ tipo: "ciclo", ciclo, maxCiclos }),
+        onProgresso: avisarMuro,
       });
     } catch (err) {
       r.parado = errText(err, "A busca em ciclos parou com um erro.");
       logar("erro", r.parado);
     } finally {
       setBuscandoProdutos(false);
-      setProgresso(null);
+      andar({ tipo: "encerrar" });
       setAberto(null);
       setProdutos({});
       recarregar();
@@ -680,6 +685,24 @@ export default function CuponsDoML({ buscaInicial = null }) {
           </button>
         </div>
 
+        {/* O filtro da fila dos botões 2 e 3 (task 11). Fica colado nos botões, e
+            não nos filtros da tabela, porque muda o que ELES vão buscar — a tabela
+            continua mostrando todos. */}
+        <label style={{ marginTop: 8, fontSize: 12, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <input
+            type="checkbox"
+            checked={soSemProdutos}
+            disabled={buscandoProdutos || rodandoNoChrome}
+            onChange={e => setSoSemProdutos(e.target.checked)}
+          />
+          só os que não têm nenhum produto (pula os parciais)
+          {soSemProdutos && alvos?.parciaisFora > 0 && (
+            <span style={{ color: "var(--color-text-secondary)" }}>
+              · {alvos.parciaisFora} parcial(is) ficam de fora
+            </span>
+          )}
+        </label>
+
         {/* O aviso do que a etapa 2 vai escrever na conta. Fica FORA do title do
             botão de propósito: "ativar" é irreversível, e um aviso que só aparece
             no hover é um aviso que ninguém leu. */}
@@ -778,11 +801,9 @@ export default function CuponsDoML({ buscaInicial = null }) {
           </div>
         </div>
 
-        {(progresso || salvo || eventos.length > 0 || resumoColheita) && (
+        {(andamento || salvo || eventos.length > 0 || resumoColheita) && (
           <div style={{ marginBottom: 10 }}>
-            {progresso && (
-              <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>⟳ {progresso}</div>
-            )}
+            <ProgressoColheita andamento={andamento} />
             {salvo && (
               <div style={{ fontSize: 12, color: "var(--color-text-primary)", fontWeight: 600, marginTop: 2 }}>
                 💾 salvo: {salvo.lotes}/{salvo.de} lote(s) · {salvo.vitrines} vitrine(s) · {salvo.produtos.toLocaleString("pt-BR")} produto(s)
@@ -841,7 +862,10 @@ export default function CuponsDoML({ buscaInicial = null }) {
                       <td style={td}>{c.minPurchase ? brl(c.minPurchase) : "sem mínimo"}{c.maxDiscount ? ` / ${brl(c.maxDiscount)}` : ""}</td>
                       <td style={td}>{c.scope === "store" ? `loja${c.sellerName ? ` (${c.sellerName})` : ""}` : "campanha"}{!c.activated && " · não ativado"}</td>
                       <td style={td}>{dia(c.expiresAt)}</td>
-                      <td style={td}>{c.products || 0}</td>
+                      <td style={td}>
+                        <div>{c.products || 0}</div>
+                        <EstadoProdutos cupom={c} />
+                      </td>
                       <td style={td}>{c.inCatalog || 0}</td>
                       <td style={td}>
                         <div style={{ fontFamily: "monospace" }}>{c.code || "—"}</div>
@@ -1000,6 +1024,18 @@ const ORIGEM = {
   landing: "prévia (landing)",
   amostra: "miniatura do card",
 };
+// Em que pé está a lista de produtos do cupom. `productsSyncedAt` só é escrito
+// quando a vitrine inteira foi raspada; vínculo sem ele é prévia (landing,
+// miniaturas, checkout) — o "parcial" que o checkbox dos botões 2 e 3 pula.
+function EstadoProdutos({ cupom }) {
+  const [texto, cor] = cupom.productsSyncedAt
+    ? ["completa", "var(--success-text)"]
+    : cupom.products > 0
+      ? ["parcial", "var(--warn-text)"]
+      : ["nenhum", "var(--color-text-secondary)"];
+  return <div style={{ fontSize: 11, color: cor }}>{texto}</div>;
+}
+
 function Produtos({ dados }) {
   if (!dados) return <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>carregando…</span>;
   if (!dados.items.length) {

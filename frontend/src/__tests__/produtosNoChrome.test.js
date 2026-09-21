@@ -100,3 +100,40 @@ describe("umCiclo em lotes", () => {
     expect(lista.percorrerLista.mock.calls[0][0].ativarApenas).toHaveLength(10);
   });
 });
+
+describe("o andamento que o ciclo anuncia (task 7) e o filtro dos parciais (task 11)", () => {
+  it("anuncia a fila, cada desfecho e as pausas", async () => {
+    const prontos = [1, 2, 3].map(i => cupom(i, { containerUrl: `https://ml/${i}` }));
+    api.adminMlCuponsAlvosProdutos.mockResolvedValue({ prontos, precisamAtivar: [], config: { ...config, maxPaginasVitrine: 5 } });
+    coletor.raparVitrine
+      .mockResolvedValueOnce({ produtos: [{}], parcial: true })
+      .mockResolvedValueOnce({ produtos: [], parcial: false, motivo: "sem itens" })
+      .mockResolvedValueOnce({ produtos: [{}, {}], parcial: false });
+    const eventos = [];
+
+    await umCiclo({ onProgresso: (p) => eventos.push(p) });
+
+    expect(eventos.find(e => e.tipo === "fila")).toMatchObject({ total: 3, prontos: 3, aAtivar: 0, lotes: 1, maxPaginas: 5 });
+    const feitos = eventos.filter(e => e.tipo === "vitrine-feita");
+    expect(feitos.map(f => [f.campaignId, f.ok, !!f.parcial, !!f.vazia])).toEqual([
+      ["C1", true, true, false], ["C2", false, false, true], ["C3", true, false, false],
+    ]);
+    expect(eventos.filter(e => e.tipo === "pausa").map(e => e.motivo)).toEqual(["entre vitrines", "entre vitrines"]);
+  });
+
+  it("o filtro vai ao servidor em todas as leituras da fila", async () => {
+    api.adminMlCuponsAlvosProdutos.mockResolvedValue({ prontos: [cupom(1, { containerUrl: "u" })], precisamAtivar: [], config });
+
+    await umCiclo({ soSemProdutos: true });
+
+    expect(api.adminMlCuponsAlvosProdutos).toHaveBeenCalledWith({ soSemProdutos: true });
+  });
+
+  it("o cupom escolhido a dedo ignora o filtro", async () => {
+    api.adminMlCuponsAlvosProdutos.mockResolvedValue({ prontos: [cupom(1, { containerUrl: "u" })], precisamAtivar: [], config });
+
+    await umCiclo({ campaignIds: ["C1"], soSemProdutos: true });
+
+    expect(api.adminMlCuponsAlvosProdutos).toHaveBeenCalledWith({ campaignId: "C1" });
+  });
+});

@@ -107,6 +107,8 @@ async function abrirTela() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // O checkbox dos parciais é lembrado no navegador: sem limpar, um teste herdaria o do outro.
+  localStorage.clear();
   adminMlCuponsStatus.mockResolvedValue({ config: {}, running: false });
   adminMlCupons.mockResolvedValue(VAZIO);
   adminMlCuponsAlvosProdutos.mockResolvedValue(SEM_ALVO);
@@ -139,6 +141,21 @@ describe("as duas etapas são dois botões", () => {
     await abrirTela();
 
     expect(await screen.findByRole("button", { name: /2 · Buscar produtos dos que faltam \(3\)/i })).toBeInTheDocument();
+  });
+
+  it("o checkbox dos parciais refaz a fila e diz quantos ficam de fora", async () => {
+    coletorInfo.mockResolvedValue(EXTENSAO("raspar", "lista"));
+    adminMlCuponsAlvosProdutos.mockImplementation(async ({ soSemProdutos } = {}) => (soSemProdutos
+      ? { ...filaCom([{ campaignId: "1", title: "A", containerUrl: "u1" }]), parciaisFora: 4 }
+      : filaCom([1, 2, 3, 4, 5].map(i => ({ campaignId: String(i), title: `C${i}`, containerUrl: `u${i}` })))));
+    await abrirTela();
+    expect(await screen.findByRole("button", { name: /Buscar produtos dos que faltam \(5\)/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /não têm nenhum produto/i }));
+
+    expect(await screen.findByRole("button", { name: /Buscar produtos dos que faltam \(1\)/i })).toBeInTheDocument();
+    expect(screen.getByText(/4 parcial\(is\) ficam de fora/)).toBeInTheDocument();
+    expect(adminMlCuponsAlvosProdutos).toHaveBeenCalledWith({ soSemProdutos: true });
   });
 
   it("sem nada faltando, o botão dos produtos fica desligado", async () => {
