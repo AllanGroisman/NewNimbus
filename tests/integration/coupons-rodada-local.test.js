@@ -37,8 +37,10 @@ const appConfig = require(path.join(backendDir, "config"));
 const PROPS = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "fixtures", "ml-cupons-filter.json"), "utf8"));
 
 // A rodada é estado de módulo: uma que fica pendurada quebra a próxima.
-beforeEach(() => { if (sync.localAtivo()) sync.fimLocalRun({ cancelada: true }); });
-afterEach(() => { if (sync.localAtivo()) sync.fimLocalRun({ cancelada: true }); });
+// `await` porque o fim grava o que a rodada tinha lido — sem esperar, a gravação
+// cairia no meio do truncate do teste seguinte.
+beforeEach(async () => { if (sync.localAtivo()) await sync.fimLocalRun({ cancelada: true }); });
+afterEach(async () => { if (sync.localAtivo()) await sync.fimLocalRun({ cancelada: true }); });
 
 // Os cupons da fixture venceram em 01/09/2026, e o `aAtivar` recusa cupom vencido
 // — com razão: clicar em "Eu quero" num cupom morto é escrita à toa na conta. Só
@@ -193,7 +195,7 @@ describe("fimLocalRun", () => {
   it("libera a rodada e guarda o balanço", async () => {
     sync.startLocalRun({ limiteCupons: 3, carimbarCategorias: false });
     await sync.paginaLocal({ props: PROPS });
-    const { resumo } = sync.fimLocalRun({ vitrines: 2, produtos: 40 });
+    const { resumo } = await sync.fimLocalRun({ vitrines: 2, produtos: 40 });
     expect(resumo.cupons).toBe(3);
     expect(resumo.cuponsComVitrine).toBe(2);
     expect(resumo.vinculos).toBe(40);
@@ -276,7 +278,7 @@ describe("startLocalRun: a lista geral e o carimbo por categoria", () => {
   });
 
   it("o cupom entra carimbado com a UNIÃO das verticais em que apareceu", async () => {
-    sync.startLocalRun({ categorias: [], maxPaginasLista: 1, maxPaginasPorCategoria: 1 });
+    sync.startLocalRun({ categorias: [], maxPaginasLista: 1, maxPaginasPorCategoria: 1, carimboCompleto: true });
     // A mesma fixture na geral e em cada vertical: o cupom aparece em todas, e a
     // varredura tem de guardar a união delas, não a última. São dez porque a
     // rodada descobriu as sete que faltavam na primeira página (task 14).
@@ -364,7 +366,7 @@ describe("o carimbo vai fundo na vertical", () => {
   });
 
   it("carimbar conta como novidade: a vertical não morre na quinta página", async () => {
-    sync.startLocalRun({ categorias: ["ce_vertical"], maxPaginasLista: 1, maxPaginasPorCategoria: 10 });
+    sync.startLocalRun({ categorias: ["ce_vertical"], maxPaginasLista: 1, maxPaginasPorCategoria: 10, carimboCompleto: true });
     let r = await sync.paginaLocal({ grouping: null, props: PROPS });
     expect(r.proxima.grouping).toBe("ce_vertical");
 
@@ -378,7 +380,7 @@ describe("o carimbo vai fundo na vertical", () => {
 
   it("sem carimbo novo por cinco páginas, aí sim a vertical acaba", async () => {
     // O freio continua existindo — o que mudou é o que conta como progresso.
-    sync.startLocalRun({ categorias: ["ce_vertical"], maxPaginasLista: 1, maxPaginasPorCategoria: 50 });
+    sync.startLocalRun({ categorias: ["ce_vertical"], maxPaginasLista: 1, maxPaginasPorCategoria: 50, carimboCompleto: true });
     await sync.paginaLocal({ grouping: null, props: PROPS });
     let r = null;
     let voltas = 0;
@@ -391,12 +393,63 @@ describe("o carimbo vai fundo na vertical", () => {
   });
 
   it("o teto de páginas por categoria agora faz o que promete", async () => {
-    sync.startLocalRun({ categorias: ["ce_vertical"], maxPaginasLista: 1, maxPaginasPorCategoria: 2 });
+    sync.startLocalRun({ categorias: ["ce_vertical"], maxPaginasLista: 1, maxPaginasPorCategoria: 2, carimboCompleto: true });
     await sync.paginaLocal({ grouping: null, props: PROPS });
     const p1 = await sync.paginaLocal({ grouping: "ce_vertical", props: PROPS });
     expect(p1.proxima.pagina).toBe(2);
     const p2 = await sync.paginaLocal({ grouping: "ce_vertical", props: PROPS });
     expect(p2.proxima).toBeNull();
+  });
+});
+
+// O carimbo incremental. A lista geral é lida inteira em toda rodada (é ela que
+// traz as condições), mas as verticais existem só para descobrir a categoria — e
+// o banco já sabe a de todo cupom carimbado antes. Sem isto a segunda rodada
+// demorava o mesmo que a primeira: a conta inteira relida uma vez por vertical.
+describe("o carimbo só procura o que ainda não tem categoria", () => {
+  beforeEach(() => {
+    appConfig.del("ml-cupons-groupings");
+    sync.mergeGroupingLabels([
+      { key: "ce_vertical", title: "Eletrônicos" },
+      { key: "fa_vertical", title: "Moda e acessórios" },
+    ]);
+  });
+
+  // Uma rodada completa antes: todos os cupons da fixture ficam carimbados no banco.
+  async function rodadaAnterior() {
+    sync.startLocalRun({ categorias: ["ce_vertical"], maxPaginasLista: 1, maxPaginasPorCategoria: 1, carimboCompleto: true });
+    let r = null;
+    while (!r || r.proxima) r = await sync.paginaLocal({ grouping: r ? r.proxima.grouping : null, props: PROPS });
+    await sync.fimLocalRun();
+  }
+
+  it("com tudo carimbado no banco, a rodada acaba na lista geral", async () => {
+    await rodadaAnterior();
+    sync.startLocalRun({ categorias: ["ce_vertical", "fa_vertical"], maxPaginasLista: 1 });
+    const r = await sync.paginaLocal({ grouping: null, props: PROPS });
+    expect(r.proxima).toBeNull();
+    // E a categoria que já estava lá continua lá.
+    expect((await coupons.getCoupon("13491809")).groupings).toEqual(["ce_vertical"]);
+  });
+
+  it("com cupom sem categoria, as verticais param assim que o último é achado", async () => {
+    sync.startLocalRun({ categorias: ["ce_vertical", "fa_vertical"], maxPaginasLista: 1, maxPaginasPorCategoria: 10 });
+    const geral = await sync.paginaLocal({ grouping: null, props: PROPS });
+    expect(geral.proxima.grouping).toBe("ce_vertical");
+    // A primeira página da vertical carimba os oito: nem a página 2, nem fa_vertical.
+    const p1 = await sync.paginaLocal({ grouping: "ce_vertical", props: PROPS });
+    expect(p1.proxima).toBeNull();
+    expect((await coupons.getCoupon("13491809")).groupings).toEqual(["ce_vertical"]);
+  });
+
+  it("\"Buscar TUDO\" refaz o carimbo inteiro mesmo com tudo no banco", async () => {
+    await rodadaAnterior();
+    sync.startLocalRun({ categorias: ["ce_vertical", "fa_vertical"], tudo: true, maxPaginasPorCategoria: 1 });
+    // O `tudo` solta o teto da lista geral; a fixture diz 13 páginas, e a mesma
+    // página repetida esgota o freio de "sem novidade" antes disso.
+    let r = await sync.paginaLocal({ grouping: null, props: PROPS });
+    while (r.proxima?.grouping === null) r = await sync.paginaLocal({ grouping: null, props: PROPS });
+    expect(r.proxima.grouping).toBe("ce_vertical");
   });
 });
 
@@ -416,8 +469,52 @@ describe("a rodada grava a cada categoria, não só no fim", () => {
     expect(r.proxima.grouping).toBe("ce_vertical");
     // ...e o que já foi colhido sobrevive a uma interrupção daqui pra frente.
     expect(await coupons.getCoupon("13491809")).toBeTruthy();
-    sync.fimLocalRun({ cancelada: true });
+    await sync.fimLocalRun({ cancelada: true });
     expect(await coupons.getCoupon("13491809")).toBeTruthy();
+  });
+});
+
+// A etapa 2 em LOTES. A última varredura de verdade (21/09/2026) foi interrompida
+// na ativação e não deixou NADA no banco: a lista de alvos é uma categoria só, a
+// gravação só acontecia na última página, e o cancelamento só soltava a rodada.
+describe("interromper não joga fora o que foi lido", () => {
+  comORelogioDaFixture();
+
+  it("Parar no meio da lista geral grava os cupons já lidos", async () => {
+    sync.startLocalRun({ limiteCupons: 0, carimbarCategorias: false });
+    const r = await sync.paginaLocal({ grouping: null, props: PROPS });
+    expect(r.proxima).toBeTruthy();
+    expect(await coupons.getCoupon("13491809")).toBeFalsy();
+
+    const fim = await sync.fimLocalRun({ cancelada: true });
+    expect(fim.resumo.salvos).toBe(8);
+    expect(await coupons.getCoupon("13491809")).toBeTruthy();
+    expect(sync.localAtivo()).toBe(false);
+  });
+
+  it("na ativação, os alvos são gravados na página em que aparecem", async () => {
+    // Um alvo desta página e um que não está nela: a varredura segue, mas o que
+    // apareceu já está no banco — um Parar daqui em diante não perde o clique.
+    sync.startLocalRun({ ativarApenas: ["13491809", "999999999"], activateCoupons: true });
+    const r = await sync.paginaLocal({ grouping: null, props: PROPS, ativados: 1 });
+    expect(r.salvosNestaPagina).toBe(1);
+    expect(r.salvosTotal).toBe(1);
+    expect(r.proxima).toBeTruthy();
+    expect(await coupons.getCoupon("13491809")).toBeTruthy();
+  });
+
+  it("vistos todos os alvos do lote, a varredura acaba sem ler o resto da lista", async () => {
+    sync.startLocalRun({ ativarApenas: ["13491809", "14094436"], activateCoupons: true });
+    const r = await sync.paginaLocal({ grouping: null, props: PROPS });
+    expect(r.proxima).toBeNull();
+    expect(r.salvosTotal).toBe(2);
+  });
+
+  it("a config do tamanho do lote é clampada", async () => {
+    expect((await sync.writeConfig({ tamanhoLoteProdutos: 0 })).tamanhoLoteProdutos).toBe(1);
+    expect((await sync.writeConfig({ tamanhoLoteProdutos: 9999 })).tamanhoLoteProdutos).toBe(200);
+    expect((await sync.alvosDeProdutos()).config.tamanhoLoteProdutos).toBe(200);
+    await sync.writeConfig({ tamanhoLoteProdutos: 20 });
   });
 });
 

@@ -16,6 +16,19 @@ const EXPIRA_COM_FOLGA_MIN = 0;
 
 function nowish() { return new Date(); }
 
+// Grava em lotes concorrentes em vez de um `await` por linha.
+//
+// Não é micro-otimização. Em série, cada linha custa uma ida e volta ao Postgres
+// (~5,5ms medidos aqui, com o banco na mesma máquina): os 2.871 cupons de hoje
+// levavam ~40s só de espera, dentro de uma requisição que o nginx corta aos 90s.
+// Em lotes de 50 a mesma gravação leva ~8s. Mesmo remédio e mesmo tamanho de lote
+// do catalog/pg.js:upsertProducts.
+async function emLotes(itens, tamanho, fn) {
+  for (let i = 0; i < itens.length; i += tamanho) {
+    await Promise.all(itens.slice(i, i + tamanho).map(fn));
+  }
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // Gravação
 // ────────────────────────────────────────────────────────────────────────
@@ -29,8 +42,14 @@ async function upsertCoupons(coupons, { origin = "page" } = {}) {
   const agora = nowish();
   let novos = 0, atualizados = 0;
 
-  for (const c of coupons || []) {
-    if (!c || !c.campaignId) continue;
+  // Em lote, o mesmo id duas vezes na lista viraria duas inserções concorrentes
+  // da MESMA linha — e a segunda morre na chave única. Em série isso não existia:
+  // a segunda passada já encontrava a primeira gravada. Fica a última ocorrência,
+  // que é o que o laço sequencial deixava no banco.
+  const porId = new Map();
+  for (const c of coupons || []) if (c?.campaignId) porId.set(c.campaignId, c);
+
+  await emLotes([...porId.values()], 50, async (c) => {
     const row = {
       title: c.title || "(sem título)",
       subtitle: c.subtitle ?? null,
@@ -85,7 +104,7 @@ async function upsertCoupons(coupons, { origin = "page" } = {}) {
         data: { code: c.codeFromTitle },
       });
     }
-  }
+  });
   return { novos, atualizados };
 }
 
@@ -101,32 +120,83 @@ async function upsertCoupons(coupons, { origin = "page" } = {}) {
 // escopo, raspar a vitrine apagaria as amostras (e a rodada seguinte, que só
 // consegue as amostras, apagaria a vitrine inteira) — cada uma zerando a outra.
 async function replaceCouponProducts(campaignId, items, { origem = "vitrine" } = {}) {
-  const agora = nowish();
-  const chaves = [];
+  const pares = (items || [])
+    .filter(it => it?.productKey && it?.productUrl)
+    .map(it => ({ campaignId: String(campaignId), productKey: it.productKey, productUrl: it.productUrl }));
+  const r = await gravarVinculos(pares, [String(campaignId)], origem);
 
-  for (const it of items || []) {
-    if (!it?.productKey || !it?.productUrl) continue;
-    chaves.push(it.productKey);
-    await prisma().mlCouponProduct.upsert({
-      where: { campaignId_productKey: { campaignId, productKey: it.productKey } },
-      // Produto que já estava como amostra e apareceu na vitrine é PROMOVIDO: o
-      // vínculo passa a ser o forte, e some da coleção fraca sozinho.
-      create: { campaignId, productKey: it.productKey, productUrl: it.productUrl, origem, firstSeenAt: agora, lastSeenAt: agora },
-      update: { productUrl: it.productUrl, origem, lastSeenAt: agora },
-    });
-  }
-
-  const { count: removidos } = await prisma().mlCouponProduct.deleteMany({
-    where: { campaignId, origem, productKey: { notIn: chaves.length ? chaves : ["__nenhum__"] } },
-  });
   // `productsSyncedAt` quer dizer "a VITRINE foi raspada" e continua querendo
   // dizer só isso — a amostra não é vitrine e não pode carimbar esse campo, senão
   // a tela pararia de oferecer o botão de raspar justamente onde ele é preciso.
   if (origem === "vitrine") {
-    await prisma().mlCoupon.update({ where: { campaignId }, data: { productsSyncedAt: agora } }).catch(() => {});
+    await prisma().mlCoupon.update({ where: { campaignId }, data: { productsSyncedAt: nowish() } }).catch(() => {});
   }
 
-  return { vinculados: chaves.length, removidos };
+  return r;
+}
+
+// A gravação em si, para um cupom ou para milhares: um INSERT por lote e um
+// DELETE, em vez de uma ida ao banco por vínculo.
+//
+// É o mesmo formato do `syncCatalogCoupons` aqui embaixo (UNNEST de arrays
+// paralelos), e é o que tirou a gravação da rodada dos 90s do nginx: as amostras
+// de 2.871 cupons eram ~17 mil idas em fila indiana (171s medidos) e passaram a
+// ser 7 comandos (1,1s). Só o SQL muda — a semântica das coleções por origem é a
+// mesma de antes.
+//
+// `campanhas` é o escopo do apagamento, e é separado de `pares` de propósito: o
+// cupom cuja lista veio VAZIA precisa ter os vínculos daquela origem apagados, e
+// ele não aparece em par nenhum.
+async function gravarVinculos(pares, campanhas, origem) {
+  const agora = nowish();
+
+  // Deduplicado porque o ML repete anúncio entre páginas da vitrine, e um INSERT
+  // com a mesma chave duas vezes morre em "ON CONFLICT DO UPDATE command cannot
+  // affect row a second time". Fica a última ocorrência, como no laço que existia
+  // aqui antes. A chave é o par, não a chave do produto: o mesmo produto em dois
+  // cupons são dois vínculos legítimos.
+  const porPar = new Map();
+  for (const p of pares || []) porPar.set(`${p.campaignId}\u0000${p.productKey}`, p);
+  const validos = [...porPar.values()];
+
+  const campanhasDoEscopo = [...new Set([...(campanhas || []).map(String), ...validos.map(p => p.campaignId)])];
+  if (!campanhasDoEscopo.length) return { vinculados: 0, removidos: 0 };
+
+  const ids = validos.map(p => p.campaignId);
+  const chaves = validos.map(p => p.productKey);
+  const urls = validos.map(p => p.productUrl);
+
+  // Em lotes porque o Postgres tem teto de parâmetros por comando, e um array de
+  // 50 mil chaves num INSERT só é bala na agulha à toa.
+  const LOTE = 2000;
+  for (let i = 0; i < validos.length; i += LOTE) {
+    await prisma().$executeRaw`
+      INSERT INTO "ml_coupon_products" ("campaign_id", "productKey", "productUrl", "origem", "firstSeenAt", "lastSeenAt")
+      SELECT v."campanha", v."chave", v."url", ${origem}, ${agora}::timestamptz, ${agora}::timestamptz
+        FROM (SELECT UNNEST(${ids.slice(i, i + LOTE)}::text[]) AS "campanha",
+                     UNNEST(${chaves.slice(i, i + LOTE)}::text[]) AS "chave",
+                     UNNEST(${urls.slice(i, i + LOTE)}::text[]) AS "url") v
+      ON CONFLICT ("campaign_id", "productKey") DO UPDATE
+         SET "productUrl" = EXCLUDED."productUrl",
+             "origem"     = EXCLUDED."origem",
+             "lastSeenAt" = EXCLUDED."lastSeenAt"
+    `;
+  }
+
+  // Depois do INSERT, nunca antes: só se apaga quando tudo que vale já está
+  // gravado. `enrichTriedAt` não é tocado em lugar nenhum daqui — quem já tentou
+  // trazer a amostra pro catálogo não volta pra fila por causa de uma regravação.
+  const removidos = Number(await prisma().$executeRaw`
+    DELETE FROM "ml_coupon_products" p
+     WHERE p."origem" = ${origem}
+       AND p."campaign_id" = ANY(${campanhasDoEscopo}::text[])
+       AND NOT EXISTS (
+         SELECT 1 FROM (SELECT UNNEST(${ids}::text[]) AS "campanha",
+                               UNNEST(${chaves}::text[]) AS "chave") v
+          WHERE v."campanha" = p."campaign_id" AND v."chave" = p."productKey")
+  `);
+
+  return { vinculados: validos.length, removidos };
 }
 
 // As 4 miniaturas do card do cupom, gravadas como vínculo parcial.
@@ -142,14 +212,33 @@ function linkSinteticoML(itemId) {
 }
 
 async function replaceCouponSamples(campaignId, itemIds) {
+  return replaceCouponSamplesMany([{ campaignId, sampleItemIds: itemIds }]);
+}
+
+// As amostras de VÁRIOS cupons de uma vez — o que a gravação da rodada usa.
+//
+// Existe porque a rodada tem milhares de cupons e cada um traz 4 miniaturas:
+// chamar o de cima cupom a cupom era ~6 idas ao banco por cupom e foi o que
+// estourou o tempo do nginx no meio da etapa 2. Aqui tudo vira um punhado de
+// comandos, e o escopo do apagamento continua sendo exatamente os cupons
+// recebidos — cupom que não veio nesta chamada não tem amostra mexida.
+async function replaceCouponSamplesMany(cupons) {
   const { productKey } = require("../catalog/product-key");
-  const items = [];
-  for (const id of itemIds || []) {
-    const link = linkSinteticoML(id);
-    if (!link) continue;
-    items.push({ productKey: productKey({ link }), productUrl: link });
+  const pares = [];
+  const campanhas = [];
+
+  for (const c of cupons || []) {
+    if (!c?.campaignId) continue;
+    const campaignId = String(c.campaignId);
+    campanhas.push(campaignId);
+    for (const id of c.sampleItemIds || []) {
+      const link = linkSinteticoML(id);
+      if (!link) continue;
+      pares.push({ campaignId, productKey: productKey({ link }), productUrl: link });
+    }
   }
-  return replaceCouponProducts(String(campaignId), items, { origem: "amostra" });
+
+  return gravarVinculos(pares, campanhas, "amostra");
 }
 
 // Carimba no catálogo qual campanha cobre cada produto — e tira o carimbo do que
@@ -532,6 +621,16 @@ async function countByGrouping() {
   return rows.map(r => ({ chave: r.chave, n: r.n }));
 }
 
+// Os cupons que já têm categoria no banco. É o que deixa a passada de carimbo da
+// etapa 1 ser incremental: o `upsertCoupons` nunca apaga `groupings` (lista vazia é
+// "não sei"), então um cupom carimbado numa rodada anterior não precisa ser
+// procurado de novo nas verticais.
+async function campanhasComCategoria() {
+  const rows = await prisma().$queryRaw`
+    SELECT "campaign_id" AS id FROM "ml_coupons" WHERE jsonb_array_length("groupings") > 0`;
+  return new Set(rows.map(r => r.id));
+}
+
 // Faxina: cupom vencido há mais de `days` dias não interessa a ninguém, e os
 // vínculos dele vão junto (a FK é ON DELETE CASCADE).
 async function pruneExpired(days = 30) {
@@ -841,6 +940,7 @@ module.exports = {
   recoverCodesFromCoupons,
   replaceCouponProducts,
   replaceCouponSamples,
+  replaceCouponSamplesMany,
   linkSinteticoML,
   hasVitrine,
   syncCatalogCoupons,
@@ -855,6 +955,7 @@ module.exports = {
   findCodeCheck,
   stats,
   countByGrouping,
+  campanhasComCategoria,
   pruneExpired,
   EXPIRA_COM_FOLGA_MIN,
 };

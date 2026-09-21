@@ -82,6 +82,12 @@ const DEFAULT_CONFIG = {
   // não move nada. Ele existe para o estado que ninguém previu.
   pausaEntreCiclosMs: 60000,
   maxCiclos: 20,
+  // A etapa 2 anda em LOTES: ativa N cupons, colhe as vitrines deles, grava, e só
+  // então vai para os próximos N. Antes era uma passada de ativação pela lista
+  // inteira e só DEPOIS a colheita — um Parar no meio da ativação jogava tudo fora
+  // e nenhuma vitrine chegava a ser aberta. Com lote, parar perde no máximo o lote
+  // em andamento.
+  tamanhoLoteProdutos: 20,
 };
 
 // Um "false" em TEXTO é o erro clássico — `!!"false"` é true —, e ele chega de
@@ -289,6 +295,7 @@ function writeConfig(cfg) {
   merged.maxActivationsPerRun = inteiro(merged.maxActivationsPerRun, { min: 0, max: 500, padrao: DEFAULT_CONFIG.maxActivationsPerRun });
   merged.pausaEntreCiclosMs = inteiro(merged.pausaEntreCiclosMs, { min: 5000, max: 600000, padrao: DEFAULT_CONFIG.pausaEntreCiclosMs });
   merged.maxCiclos = inteiro(merged.maxCiclos, { min: 1, max: 200, padrao: DEFAULT_CONFIG.maxCiclos });
+  merged.tamanhoLoteProdutos = inteiro(merged.tamanhoLoteProdutos, { min: 1, max: 200, padrao: DEFAULT_CONFIG.tamanhoLoteProdutos });
   merged.carimbarCategorias = booleano(merged.carimbarCategorias, DEFAULT_CONFIG.carimbarCategorias);
   merged.skipStoreCoupons = booleano(merged.skipStoreCoupons, DEFAULT_CONFIG.skipStoreCoupons);
   merged.activateCoupons = booleano(merged.activateCoupons, DEFAULT_CONFIG.activateCoupons);
@@ -351,6 +358,7 @@ function status() {
 // Os produtos da vitrine entram TAMBÉM no catálogo — são produtos de verdade do ML,
 // e sem eles o vínculo apontaria pra uma chave que não existe em lugar nenhum.
 async function persistRun(result) {
+  const t0 = Date.now();
   const { novos, atualizados } = await coupons.upsertCoupons(result.cupons || []);
 
   // As amostras do card entram para TODO cupom, antes das vitrines.
@@ -364,12 +372,14 @@ async function persistRun(result) {
   // nome nem preço, e um produto de catálogo sem nada disso é lixo que a fila do
   // repasse teria que aprender a ignorar. O vínculo aponta para a chave e espera o
   // scraping normal trazer o produto.
-  let amostras = 0;
-  for (const c of result.cupons || []) {
-    if (!c?.campaignId || !(c.sampleItemIds || []).length) continue;
-    const r = await coupons.replaceCouponSamples(c.campaignId, c.sampleItemIds);
-    amostras += r.vinculados;
-  }
+  //
+  // Numa chamada só, e não um cupom por vez: cada cupom custava ~6 idas ao banco
+  // (4 amostras, o apagamento do que saiu, o carimbo), e com milhares de cupons
+  // guardados a fila indiana passava dos 90s que o nginx espera — a tela recebia
+  // o 503 de "Nimbus indisponível" no meio da etapa 2. Medido com os 2.871 cupons
+  // de hoje: 171s cupom a cupom, 1,1s em massa.
+  const comAmostra = (result.cupons || []).filter(c => c?.campaignId && (c.sampleItemIds || []).length);
+  const { vinculados: amostras } = await coupons.replaceCouponSamplesMany(comAmostra);
 
   let produtosNoCatalogo = 0;
   let vinculos = 0;
@@ -406,6 +416,11 @@ async function persistRun(result) {
   // vínculos só cresce — a rodada antiga já tinha deixado 1.122 linhas de 26
   // cupons, e a raspagem de verdade multiplica isso.
   const faxina = await coupons.pruneExpired(30);
+
+  // A duração fica no log da rodada de propósito. Foi ela que faltou quando esta
+  // gravação cresceu até estourar o `proxy_read_timeout` do nginx: a tela só dizia
+  // "Nimbus indisponível", sem nada que apontasse para o tempo daqui.
+  logar("info", `gravação: ${((Date.now() - t0) / 1000).toFixed(1)}s para ${(result.cupons || []).length} cupom(ns)`);
 
   return {
     cupons: (result.cupons || []).length,
@@ -464,7 +479,9 @@ function expirarLocalSeSumiu() {
   if (!_local) return;
   if (Date.now() - (_local.ultimoContato || _local.t0) < LOCAL_SEM_NOTICIA_MS) return;
   logar("aviso", "a rodada no seu Chrome parou de dar notícia — encerrando o que ficou pendurado");
-  fimLocalRun({ cancelada: true });
+  // Sem `await`: quem chama é síncrono (`status`, `startLocalRun`). O `fimLocalRun`
+  // solta o `_local` ANTES da gravação, então a próxima rodada já pode começar.
+  fimLocalRun({ cancelada: true }).catch(err => logar("erro", `não consegui gravar a rodada pendurada: ${err.message}`));
 }
 
 // A URL da próxima página a abrir, ou null quando a varredura acabou. Puro sobre
@@ -543,6 +560,11 @@ function startLocalRun(overrides = {}) {
   // clamps do `writeConfig` — uma tela mandando `maxPaginasLista` cru seria um
   // buraco à toa.
   if (booleano(overrides.tudo, false)) cfg.maxPaginasLista = 200;
+  // O carimbo é INCREMENTAL por padrão: só vai às verticais atrás do cupom que
+  // ainda não tem categoria no banco, e para quando o último for achado (ver
+  // `abrirCarimbo`). "Buscar TUDO" refaz a passada inteira — é o jeito de pegar
+  // o cupom que mudou de vertical ou que está em mais de uma.
+  const carimboCompleto = booleano(overrides.tudo, false) || booleano(overrides.carimboCompleto, false);
 
   // Quem pode receber "Aplicar" nesta varredura. `null` = ninguém — é a etapa 1
   // no seu modo normal, e é o que a torna segura de repetir.
@@ -572,11 +594,23 @@ function startLocalRun(overrides = {}) {
     // funcionam igual nos dois casos.
     restantes: { n: ativa ? (Number(cfg.maxActivationsPerRun) > 0 ? Number(cfg.maxActivationsPerRun) : Infinity) : 0 },
     alvos,
+    // Os alvos da ativação que já apareceram em alguma página, e quantos deles
+    // já foram gravados pelo caminho. Quando todos os alvos foram vistos, a
+    // varredura acaba — sem isto cada LOTE da etapa 2 varreria a lista inteira.
+    vistos: new Set(),
+    salvosTotal: 0,
+    // Tem cupom no `porId` que ainda não foi pro banco. É o que o `fimLocalRun`
+    // olha para saber se precisa gravar antes de soltar a rodada.
+    sujo: false,
     encerrada: false,
     persistido: null,
     ultimoContato: Date.now(),
     procurar,
     achou: false,
+    carimboCompleto,
+    // Os cupons que a passada de carimbo ainda precisa achar. `null` = carimbo
+    // completo (ou ainda na lista geral); é montado no `abrirCarimbo`.
+    semCategoria: null,
   };
 
   _status.running = true;
@@ -682,8 +716,31 @@ async function paginaLocal({ grouping = null, props = null, ativados = 0, semBot
   // Carimbar também é novidade: ver `juntarCupom`. Sem isto a passada por vertical
   // morria na quinta página, porque nela nenhum cupom é novo por definição.
   _local.semNovidade = (novos || carimbados) ? 0 : _local.semNovidade + 1;
+  // Modo ativação (etapa 2): grava AGORA os alvos que esta página mostrou. Eles
+  // são o motivo da varredura, e o `containerUrl` que o "Eu quero" revela só vale
+  // se chegar ao banco — antes ele só era gravado na última página, e um Parar no
+  // meio perdia a ativação inteira (o clique já feito na conta, e nada no sistema).
+  // Grava só os alvos, não o `porId` inteiro: é uma escrita pequena por página.
+  let salvosNestaPagina = 0;
+  if (_local.alvos && !_local.procurar) {
+    const daPagina = parsed.coupons
+      .filter(c => _local.alvos.has(c.campaignId))
+      .map(c => _local.porId.get(c.campaignId) || c);
+    for (const c of daPagina) _local.vistos.add(c.campaignId);
+    if (daPagina.length) {
+      await coupons.upsertCoupons(daPagina);
+      salvosNestaPagina = daPagina.length;
+      _local.salvosTotal += daPagina.length;
+      logar("ok", `💾 gravei ${daPagina.length} cupom(ns) do lote nesta página (${_local.salvosTotal} de ${_local.alvos.size})`);
+    }
+  }
+
   const iAntes = _local.iCategoria;
   if (_local.achou) _local.encerrada = true;
+  // Todos os alvos já passaram por uma página (ativados ou recusados pelo
+  // `aAtivar`), ou o teto de ativações acabou: o resto da lista não tem mais nada
+  // para esta varredura.
+  else if (_local.alvos && !_local.procurar && (_local.vistos.size >= _local.alvos.size || _local.restantes.n <= 0)) _local.encerrada = true;
   else if (!parsed.coupons.length) proximaCategoria(carimbo ? null : `A lista geral não devolveu cupom nenhum — pode ser a página do ML ter mudado.`);
   else if (!carimbo && limite && _local.porId.size >= limite) proximaCategoria(null);
   else if (_local.semNovidade >= mlCupons.MAX_PAGINAS_SEM_NOVIDADE) proximaCategoria(null);
@@ -693,8 +750,17 @@ async function paginaLocal({ grouping = null, props = null, ativados = 0, semBot
     : `Parei no teto de ${tetoDePaginas} páginas da lista geral — suba o limite se faltou cupom.`);
   else _local.pagina++;
 
+  if (carimbo && _local.semCategoria && !_local.encerrada) {
+    for (const c of parsed.coupons) if (c.groupings.length) _local.semCategoria.delete(c.campaignId);
+    if (!_local.semCategoria.size) {
+      _local.encerrada = true;
+      logar("ok", `todos os cupons sem categoria já foram carimbados — pulei o resto das verticais`);
+    }
+  }
+  if (!carimbo && _local.iCategoria > iAntes && !_local.encerrada && proximaPagina()) await abrirCarimbo();
+
   const proxima = proximaPagina();
-  const base = { cupons: _local.porId.size, novos, carimbados, ignoradosLoja: _local.ignoradosLoja, de: paginas, paginasLidas: _local.paginasLidas, achou: _local.achou };
+  const base = { cupons: _local.porId.size, novos, carimbados, ignoradosLoja: _local.ignoradosLoja, de: paginas, paginasLidas: _local.paginasLidas, achou: _local.achou, salvosNestaPagina, salvosTotal: _local.salvosTotal };
   if (!proxima) return { ...base, proxima: null, ...(await gravarCuponsLocais()) };
   // Trocou de categoria e ainda tem fila pela frente: grava o que já tem. A fila
   // passou de quatro entradas para onze (task 14), e antes NADA ia pro banco antes
@@ -703,6 +769,29 @@ async function paginaLocal({ grouping = null, props = null, ativados = 0, semBot
   // mesmo mapa acumulado, então repetir é idempotente.
   if (_local.iCategoria > iAntes) await gravarCuponsLocais({ parcial: true });
   return { ...base, proxima, alvos: null };
+}
+
+// A lista geral acabou e a fila segue para as verticais. Elas existem só para
+// carimbar categoria, e o banco já sabe a de quase todo cupom de uma rodada
+// anterior — o `upsertCoupons` nunca apaga `groupings`. Sem isto, toda rodada
+// relia a conta inteira uma vez por vertical, e era aí que ia quase todo o tempo.
+async function abrirCarimbo() {
+  if (_local.carimboCompleto || _local.procurar || _local.alvos) return;
+  const jaTem = await coupons.campanhasComCategoria();
+  // Cupom vencido fica de fora: a faxina do `persistRun` o apaga do banco, então
+  // ele nunca constaria como carimbado e seguraria o carimbo aberto toda rodada.
+  const agora = Date.now();
+  const faltam = [..._local.porId.values()]
+    .filter(c => !c.groupings.length && !jaTem.has(c.campaignId))
+    .filter(c => !c.expiresAt || new Date(c.expiresAt).getTime() > agora)
+    .map(c => c.campaignId);
+  if (!faltam.length) {
+    _local.encerrada = true;
+    logar("ok", `todos os ${_local.porId.size} cupons já têm categoria no banco — pulei o carimbo por vertical`);
+    return;
+  }
+  _local.semCategoria = new Set(faltam);
+  logar("info", `${faltam.length} cupom(ns) sem categoria — as verticais param assim que o último for achado`);
 }
 
 // O que esta página ensinou sobre as categorias do ML, e o que fazer com isso.
@@ -756,14 +845,16 @@ function aprenderCategorias(parsed, grouping) {
 // `maxPaginasPorCategoria`. Ganhar uma categoria É novidade.
 function juntarCupom(c) {
   const anterior = _local.porId.get(c.campaignId);
-  if (!anterior) { _local.porId.set(c.campaignId, c); return { novo: true, carimbado: false }; }
+  if (!anterior) { _local.porId.set(c.campaignId, c); _local.sujo = true; return { novo: true, carimbado: false }; }
   let carimbado = false;
   for (const g of c.groupings) {
     if (anterior.groupings.includes(g)) continue;
     anterior.groupings.push(g);
     carimbado = true;
   }
-  if (!anterior.containerUrl && c.containerUrl) Object.assign(anterior, c, { groupings: anterior.groupings });
+  const ganhouVitrine = !anterior.containerUrl && !!c.containerUrl;
+  if (ganhouVitrine) Object.assign(anterior, c, { groupings: anterior.groupings });
+  if (carimbado || ganhouVitrine) _local.sujo = true;
   return { novo: false, carimbado };
 }
 
@@ -778,6 +869,7 @@ async function gravarCuponsLocais({ parcial = false } = {}) {
   // `gravarVitrineLocal`, cupom a cupom, com o que a extensão colheu.
   const resumo = await persistRun({ cupons, vitrines: [], ativados: _local.ativados, ignoradosLoja: _local.ignoradosLoja, avisos: _local.motivos });
   _local.persistido = resumo;
+  _local.sujo = false;
   logar("ok", parcial
     ? `gravei o que já tem: ${resumo.cupons} cupons — faltam ${Math.max(0, _local.categorias.length - _local.iCategoria)} categoria(s)`
     : `lista pronta: ${resumo.cupons} cupons (${resumo.novos} novos)${_local.ativados ? `, ${_local.ativados} ativados` : ""}`);
@@ -795,31 +887,55 @@ async function gravarCuponsLocais({ parcial = false } = {}) {
 
 // Fim da rodada. `vitrines` é o que a tela conseguiu colher depois — só contagem,
 // porque os produtos já foram gravados um a um pelo `vitrine-local`.
-function fimLocalRun({ vitrines = [], produtos = 0, cancelada = false } = {}) {
+//
+// Interrompida ou não, o que a varredura já leu VAI pro banco. Antes o cancelamento
+// só soltava o `_local`, e numa rodada de categoria única (a ativação da etapa 2 é
+// sempre assim) isso era perder tudo: a gravação só acontecia na última página.
+// A rodada é solta ANTES de gravar, para o watchdog (que chama isto de dentro do
+// `startLocalRun`) não travar a próxima rodada esperando o banco.
+async function fimLocalRun({ vitrines = [], produtos = 0, cancelada = false } = {}) {
   if (!_local) return { ok: false, reason: "Não tinha rodada no Chrome em andamento." };
-  const base = _local.persistido || { cupons: _local.porId.size, novos: 0, atualizados: 0, avisos: [] };
+  const local = _local;
+  const resumo = resumoDoFim(local, { vitrines, produtos, cancelada });
+  _local = null;
+  _status.running = false;
+  _status.progress = null;
+
+  let salvos = 0;
+  if (local.sujo && local.porId.size) {
+    try {
+      const r = await persistRun({ cupons: [...local.porId.values()], vitrines: [], ativados: local.ativados, ignoradosLoja: local.ignoradosLoja, avisos: local.motivos });
+      salvos = r.cupons;
+      logar("ok", `💾 gravei o que já tinha antes de ${cancelada ? "parar" : "fechar"}: ${r.cupons} cupons (${r.novos} novos)`);
+    } catch (err) {
+      logar("erro", `não consegui gravar o que a rodada tinha lido: ${err.message}`);
+    }
+  }
+  persistStatus();
+  return { ok: true, resumo: { ...resumo, salvos } };
+}
+
+// O resumo que a tela e o `/status` mostram do fim da rodada.
+function resumoDoFim(local, { vitrines, produtos, cancelada }) {
+  const base = local.persistido || { cupons: local.porId.size, novos: 0, atualizados: 0, avisos: [] };
   const resumo = {
     ...base,
-    ativados: _local.ativados,
+    ativados: local.ativados,
     cuponsComVitrine: Number(vitrines) || 0,
     vinculos: Number(produtos) || 0,
-    cuponsDeLojaIgnorados: _local.ignoradosLoja,
-    avisos: [...(base.avisos || []), ..._local.motivos].filter(Boolean),
+    cuponsDeLojaIgnorados: local.ignoradosLoja,
+    avisos: [...(base.avisos || []), ...local.motivos].filter(Boolean),
     cancelada: !!cancelada,
     origem: "extensao",
   };
   _status.lastRun = new Date().toISOString();
-  _status.lastDuration = Date.now() - _local.t0;
+  _status.lastDuration = Date.now() - local.t0;
   _status.lastResult = resumo;
   _status.lastError = resumo.avisos.length ? resumo.avisos.join(" ") : null;
   logar(cancelada ? "aviso" : "ok", cancelada
     ? "rodada no seu Chrome interrompida"
-    : `terminou em ${Math.round((Date.now() - _local.t0) / 1000)}s: ${resumo.cupons} cupons (${resumo.novos} novos), ${resumo.ativados} ativados, ${resumo.cuponsComVitrine} vitrines`);
-  persistStatus();
-  _local = null;
-  _status.running = false;
-  _status.progress = null;
-  return { ok: true, resumo };
+    : `terminou em ${Math.round((Date.now() - local.t0) / 1000)}s: ${resumo.cupons} cupons (${resumo.novos} novos), ${resumo.ativados} ativados, ${resumo.cuponsComVitrine} vitrines`);
+  return resumo;
 }
 
 // A vitrine de UM cupom, sob demanda (o botão "Sincronizar produtos" da linha).
@@ -999,6 +1115,7 @@ async function alvosDeProdutos({ limit = 500, campaignIds = null } = {}) {
       pausaEntreVitrinesMs: Number(cfg.pausaEntreVitrinesMs) || DEFAULT_CONFIG.pausaEntreVitrinesMs,
       pausaEntreCiclosMs: Number(cfg.pausaEntreCiclosMs) || DEFAULT_CONFIG.pausaEntreCiclosMs,
       maxCiclos: Number(cfg.maxCiclos) || DEFAULT_CONFIG.maxCiclos,
+      tamanhoLoteProdutos: Number(cfg.tamanhoLoteProdutos) || DEFAULT_CONFIG.tamanhoLoteProdutos,
       activateCoupons: ativa,
       // Três valores distintos, e a tela precisa dos três separados: `0` é
       // "ativação desligada", `null` é "ligada, sem teto", número é o teto. Antes

@@ -2639,8 +2639,14 @@ app.post("/api/admin/ml-cupons/local/pagina", auth.requireAuth, auth.requireAdmi
   }
 });
 
-app.post("/api/admin/ml-cupons/local/fim", auth.requireAuth, auth.requireAdmin, (req, res) => {
-  res.json(mlCupons.fimLocalRun(req.body || {}));
+// Async porque o fim GRAVA o que a varredura já leu — inclusive quando ela foi
+// interrompida, que é justamente quando mais importa.
+app.post("/api/admin/ml-cupons/local/fim", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    res.json(await mlCupons.fimLocalRun(req.body || {}));
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/admin/ml-cupons/local/fim" });
+  }
 });
 
 // A palavra testada na aba do próprio admin. Chega o material cru — os corpos das

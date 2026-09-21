@@ -147,6 +147,10 @@ export default function CuponsDoML({ buscaInicial = null }) {
   // um state ficaria congelado na closure em que o laço começou.
   const pararRef = useRef(false);
   const [progresso, setProgresso] = useState(null);  // a linha curta do "agora"
+  // O que a busca de produtos JÁ GRAVOU, lote a lote. Separado do `progresso`
+  // porque diz outra coisa: o progresso é o que está sendo feito, isto é o que um
+  // Parar agora não perde. Fica na tela depois do fim — é a prova do que ficou.
+  const [salvo, setSalvo] = useState(null);
   // O passo a passo do lote e o balanço dele. `eventos` é append-only durante a
   // colheita; `resumoColheita` só existe depois que ela termina.
   const [eventos, setEventos] = useState([]);
@@ -275,7 +279,13 @@ export default function CuponsDoML({ buscaInicial = null }) {
   // veio para a frente e está esperando o humano — sem dizer isso, a tela parece
   // travada.
   const avisarMuro = (p) => {
-    if (p?.tipo === "muro") {
+    if (p?.tipo === "lote") {
+      setProgresso(`lote ${p.k}/${p.de} · ${p.aAtivar ? `ativando ${p.aAtivar} e ` : ""}colhendo ${p.tamanho} cupom(ns)…`);
+    } else if (p?.tipo === "lote-salvo") {
+      setSalvo({ lotes: p.lotes, de: p.de, vitrines: p.vitrines, produtos: p.produtos, em: p.em });
+      // O contador "Sem produtos ainda" cai ao vivo: é o banco dizendo que gravou.
+      recarregar();
+    } else if (p?.tipo === "muro") {
       const texto = "o Mercado Livre pediu verificação — resolva na aba que abriu";
       setProgresso(texto);
       logar("aviso", texto);
@@ -365,6 +375,7 @@ export default function CuponsDoML({ buscaInicial = null }) {
     pararRef.current = false;
     setBuscandoProdutos(true);
     if (umSo) setColhendo(campaignIds[0]);
+    setSalvo(null);
     setErro(null);
     setEventos([]);
     setResumoColheita(null);
@@ -377,7 +388,7 @@ export default function CuponsDoML({ buscaInicial = null }) {
         parou: () => pararRef.current,
         log: logar,
         onProgresso: (p) => {
-          if (p.tipo === "vitrine-abrindo") setProgresso(`${p.i}/${p.de} · abrindo a vitrine de “${p.title}”…`);
+          if (p.tipo === "vitrine-abrindo") setProgresso(`${p.i}/${p.de} do lote · abrindo a vitrine de “${p.title}”…`);
           else if (p.tipo === "pagina") setProgresso(`página ${p.pagina} · ${p.produtos} produto(s)`);
           else avisarMuro(p);
         },
@@ -405,11 +416,12 @@ export default function CuponsDoML({ buscaInicial = null }) {
       titulo: r.parado ? "Busca de produtos interrompida" : "Busca de produtos terminada",
       tom: r.parado || falhas ? "aviso" : "ok",
       nota: r.parado
-        ? `${r.parado}. Os cupons que ficaram de fora continuam sem vitrine — é só rodar de novo.`
+        ? `${r.parado}. Ficou gravado: ${ok.length} vitrine(s) e ${produtosTotal} produto(s)${r.lotes ? ` (${r.lotes} lote(s) completos)` : ""}. Os que ficaram de fora continuam na fila — é só rodar de novo.`
         : parciais
           ? `${parciais} vitrine(s) vieram parciais: entram como prévia, não como lista fechada.`
           : null,
       numeros: [
+        { label: "Lotes salvos", valor: r.lotes || 0 },
         { label: "Cupons ativados", valor: r.ativados },
         { label: "Tentados", valor: r.feitos.length },
         { label: "Colhidos", valor: ok.length },
@@ -458,6 +470,7 @@ export default function CuponsDoML({ buscaInicial = null }) {
     const teto = (lista?.resumo?.avisos || []).find(a => /teto de \d+ p[áa]ginas/i.test(a)) || null;
 
     setBuscandoProdutos(true);
+    setSalvo(null);
     let r = { ciclos: 0, feitos: [], ativados: 0, parado: null, motivo: null };
     try {
       r = await buscarTudo({
@@ -465,7 +478,7 @@ export default function CuponsDoML({ buscaInicial = null }) {
         log: logar,
         onCiclo: ({ ciclo }) => setProgresso(`ciclo ${ciclo}…`),
         onProgresso: (p) => {
-          if (p.tipo === "vitrine-abrindo") setProgresso(`${p.i}/${p.de} · abrindo a vitrine de “${p.title}”…`);
+          if (p.tipo === "vitrine-abrindo") setProgresso(`${p.i}/${p.de} do lote · abrindo a vitrine de “${p.title}”…`);
           else if (p.tipo === "pagina") setProgresso(`página ${p.pagina} · ${p.produtos} produto(s)`);
           else avisarMuro(p);
         },
@@ -498,6 +511,7 @@ export default function CuponsDoML({ buscaInicial = null }) {
       numeros: [
         { label: "Cupons na lista", valor: lista?.resumo?.cupons ?? 0 },
         { label: "Ciclos", valor: r.ciclos },
+        { label: "Lotes salvos", valor: r.lotes || 0 },
         { label: "Cupons ativados", valor: r.ativados },
         { label: "Vitrines colhidas", valor: ok.length },
         { label: "Produtos gravados", valor: produtosTotal },
@@ -764,10 +778,16 @@ export default function CuponsDoML({ buscaInicial = null }) {
           </div>
         </div>
 
-        {(progresso || eventos.length > 0 || resumoColheita) && (
+        {(progresso || salvo || eventos.length > 0 || resumoColheita) && (
           <div style={{ marginBottom: 10 }}>
             {progresso && (
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>⟳ {progresso}</div>
+            )}
+            {salvo && (
+              <div style={{ fontSize: 12, color: "var(--color-text-primary)", fontWeight: 600, marginTop: 2 }}>
+                💾 salvo: {salvo.lotes}/{salvo.de} lote(s) · {salvo.vitrines} vitrine(s) · {salvo.produtos.toLocaleString("pt-BR")} produto(s)
+                {salvo.em ? ` · ${new Date(salvo.em).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : ""}
+              </div>
             )}
             <ColheitaLog
               eventos={eventos}
@@ -1141,6 +1161,8 @@ export function Config({ config, labels, onSaved }) {
         <Numerico cfg={cfg} setCfg={setCfg} chave="maxPaginasVitrine" label="Páginas da vitrine" min={1} max={20}
           dica="A vitrine anda de 48 em 48 produtos. 11 páginas = até 528, o suficiente pro teto de 500." />
         <Numerico cfg={cfg} setCfg={setCfg} chave="pausaEntreVitrinesMs" label="Pausa entre vitrines (ms)" min={500} max={30000} largura={140} />
+        <Numerico cfg={cfg} setCfg={setCfg} chave="tamanhoLoteProdutos" label="Cupons por lote" min={1} max={200}
+          dica="Ativa, colhe e grava este tanto de cupons antes de passar aos próximos. Parar no meio perde no máximo o lote em andamento." />
         <Marcador cfg={cfg} setCfg={setCfg} chave="activateCoupons" label="aceitar os cupons automaticamente (“Eu quero”)" />
         <Numerico cfg={cfg} setCfg={setCfg} chave="maxActivationsPerRun" label="Aceites por rodada" min={0} max={500}
           dica="0 = sem teto (aceita todos). Para não aceitar nenhum, desmarque a caixa acima." />

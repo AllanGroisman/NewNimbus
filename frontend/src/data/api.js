@@ -612,7 +612,9 @@ export async function adminMlCuponsLocalAtivar(body) { return http("POST", "/api
 // Uma página da lista traz dezenas de cupons com o `raw` de cada um: é corpo
 // grande e a gravação da última página roda o persistRun inteiro, daí o SLOW.
 export async function adminMlCuponsLocalPagina(body) { return http("POST", "/api/admin/ml-cupons/local/pagina", body, { timeoutMs: SLOW_TIMEOUT_MS }); }
-export async function adminMlCuponsLocalFim(body)    { return http("POST", "/api/admin/ml-cupons/local/fim", body || {}); }
+// SLOW porque o fim GRAVA o que a varredura leu (inclusive ao Parar) — com milhares
+// de cupons na lista, é a mesma gravação da última página.
+export async function adminMlCuponsLocalFim(body)    { return http("POST", "/api/admin/ml-cupons/local/fim", body || {}, { timeoutMs: SLOW_TIMEOUT_MS }); }
 // A palavra testada pela extensão: vai o material cru que a página do ML respondeu,
 // volta o mesmo veredito de sempre. Rápido — quem esperou pelo ML foi o navegador.
 export async function adminMlCuponsLocalPalavra(body) { return http("POST", "/api/admin/ml-cupons/local/palavra", body); }

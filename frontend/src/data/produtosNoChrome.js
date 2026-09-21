@@ -6,11 +6,13 @@
 // da lista (rodadaNoChrome.js) virou leitura pura justamente para poder rodar à
 // vontade; a escrita ficou toda aqui.
 //
-// Um CICLO (`umCiclo`) tem duas partes, e a ordem importa:
-//   1. ATIVAR os que ainda não têm vitrine. Os botões "Aplicar" só existem na
-//      lista do ML, então isso é uma passada pela lista — a mesma do
+// Um CICLO (`umCiclo`) anda em LOTES, e em cada lote a ordem importa:
+//   1. ATIVAR os do lote que ainda não têm vitrine. Os botões "Aplicar" só existem
+//      na lista do ML, então isso é uma passada pela lista — a mesma do
 //      `percorrerLista`, com `ativarApenas` dizendo em quem clicar.
-//   2. RASPAR a vitrine de cada um que já tem `containerUrl`.
+//   2. RASPAR a vitrine de cada um do lote que já tem `containerUrl`.
+// Terminado o lote, tudo dele já está no banco — é isso que faz um Parar no meio
+// não jogar a varredura fora.
 //
 // O `buscarTudo` repete o ciclo até a fila esvaziar. Ele existe porque um ciclo
 // só nunca termina o serviço: a fila vem em lotes e um cupom recém-ativado só
@@ -23,13 +25,21 @@ import { percorrerLista } from "./rodadaNoChrome";
 import { raparVitrine, fecharAbaDoColetor } from "./coletor";
 import { adminMlCuponsAlvosProdutos, adminMlCuponsImportVitrine, adminMlCuponsLocalFim } from "./api";
 
-// Devolve { feitos, ativados, parado, muro }. `feitos` é uma linha por cupom
+// Devolve { feitos, ativados, parado, muro, lotes }. `feitos` é uma linha por cupom
 // tentado: { campaignId, title, ok, produtos, parcial, vazia, erro }.
+//
+// O ciclo anda em LOTES de `cfg.tamanhoLoteProdutos` cupons: ativa os do lote que
+// precisam, colhe as vitrines deles e só então passa ao próximo. Antes era uma
+// passada de ativação pela lista INTEIRA e só depois a colheita — e um Parar (ou
+// uma chamada que falhasse) durante a ativação jogava fora tudo: nenhuma vitrine
+// tinha sido aberta, e os cupons ativados nem chegavam ao banco. Agora parar perde
+// no máximo o lote em andamento, e cada lote terminado é anunciado como SALVO
+// (`onProgresso({ tipo: "lote-salvo" })`) — o que a tela mostra é o que está no banco.
 //
 // `pular` é `{ ativacao: Set, vitrine: Set }` — os campaignIds que esta execução já
 // tentou, separados por ETAPA. Só o `buscarTudo` preenche. Precisam ser dois
 // conjuntos e não um: o cupom recém-ativado tem que entrar na colheita de vitrine
-// do mesmo ciclo, então marcá-lo na ativação não pode escondê-lo da vitrine.
+// do mesmo lote, então marcá-lo na ativação não pode escondê-lo da vitrine.
 export async function umCiclo({
   campaignIds = null,
   pular = null,
@@ -46,49 +56,128 @@ export async function umCiclo({
     campaignIds?.length === 1 ? { campaignId: campaignIds[0] } : {},
   );
   const inedito = (etapa) => (c) => !pular || !pular[etapa].has(c.campaignId);
+  const pedido = (c) => !campaignIds?.length || campaignIds.includes(c.campaignId);
 
-  let alvos = await pedirAlvos();
+  const alvos = await pedirAlvos();
   const cfg = alvos.config || {};
+  const tamanho = Math.max(1, Number(cfg.tamanhoLoteProdutos) || 20);
 
-  // A ativação vem primeiro porque é ela que faz a vitrine EXISTIR: sem o "Eu
-  // quero" o cupom não tem `containerUrl` e não há o que raspar.
-  const paraAtivar = alvos.precisamAtivar.filter(inedito("ativacao"));
-  if (cfg.activateCoupons && paraAtivar.length && !parou()) {
-    const ids = paraAtivar.map(c => c.campaignId);
-    // Marcados ANTES da passada: o que importa é que foram TENTADOS. Quem o
-    // `aAtivar` recusou (vencido, rótulo repetido entre duas campanhas) nunca vai
-    // ganhar `containerUrl`, e sem isto todo ciclo repetiria a varredura inteira
-    // da lista do ML para clicar em zero botões.
-    for (const id of ids) pular?.ativacao.add(id);
-    const teto = cfg.maxActivationsPerRun == null ? "todos eles" : `até ${cfg.maxActivationsPerRun} deles`;
-    log("aviso", `${ids.length} cupom(ns) sem vitrine — vou clicar em "Eu quero" em ${teto} na sua conta do ML`);
-    const r = await percorrerLista({ ativarApenas: ids, parou, log, onProgresso });
-    await fecharAbaDoColetor(r.tabId);
-    // O `local/fim` é obrigatório mesmo aqui: sem ele o servidor fica "running" e
-    // recusa a próxima varredura e o "Apagar todos" até o processo reiniciar.
-    await adminMlCuponsLocalFim({ cancelada: !!r.parado }).catch(() => {});
-    ativados = r.resumo?.ativados || 0;
-    if (r.parado) return { feitos, ativados, parado: r.parado, muro };
-    // Relê: os recém-ativados agora têm `containerUrl`.
-    alvos = await pedirAlvos();
-  }
+  // O teto de ativações continua valendo por CICLO, não por lote: o servidor o
+  // aplica a cada varredura, e cada lote é uma varredura — sem cortar aqui, um teto
+  // de 10 viraria 10 por lote.
+  const aAtivarNoCiclo = cfg.activateCoupons
+    ? alvos.precisamAtivar.filter(pedido).filter(inedito("ativacao"))
+    : [];
+  const tetoAtivacao = cfg.maxActivationsPerRun == null ? Infinity : Number(cfg.maxActivationsPerRun) || 0;
 
-  const fila = (campaignIds?.length
-    ? alvos.prontos.filter(c => campaignIds.includes(c.campaignId))
-    : alvos.prontos).filter(inedito("vitrine"));
+  // Os que já têm vitrine vão na frente: não custam escrita na conta do ML, e são
+  // produto no banco mais cedo.
+  const fila = [
+    ...alvos.prontos.filter(pedido).filter(inedito("vitrine")).map(c => ({ ...c, ativar: false })),
+    ...aAtivarNoCiclo.slice(0, tetoAtivacao).map(c => ({ ...c, ativar: true })),
+  ];
 
   if (!fila.length) {
-    log("aviso", ativados
-      ? "ativei, mas o ML ainda não devolveu vitrine para nenhum deles"
-      : "nenhum cupom com vitrine pendente — todos já têm produtos");
-    return { feitos, ativados, parado, muro };
+    log("aviso", "nenhum cupom com vitrine pendente — todos já têm produtos");
+    return { feitos, ativados, parado, muro, lotes: 0 };
   }
 
-  log("info", `${fila.length} vitrine(s) para colher`);
+  const lotes = [];
+  for (let i = 0; i < fila.length; i += tamanho) lotes.push(fila.slice(i, i + tamanho));
+  log("info", `${fila.length} cupom(ns) em ${lotes.length} lote(s) de até ${tamanho} — cada lote é gravado antes do próximo`);
 
-  // Uma de cada vez, com pausa. Em paralelo seriam N abas do Chrome batendo no ML
-  // com a mesma conta — que é o padrão que acorda o anti-robô, e o muro vale para
-  // a CONTA, não para aquela vitrine.
+  const salvo = { lotes: 0, de: lotes.length, vitrines: 0, produtos: 0 };
+
+  for (let k = 0; k < lotes.length; k++) {
+    if (parou()) { parado = "Interrompido por você"; break; }
+    const lote = lotes[k];
+    const aAtivar = lote.filter(c => c.ativar);
+    const colher = lote.filter(c => !c.ativar);
+    onProgresso({ tipo: "lote", k: k + 1, de: lotes.length, tamanho: lote.length, aAtivar: aAtivar.length });
+    log("info", `— lote ${k + 1}/${lotes.length}: ${lote.length} cupom(ns)${aAtivar.length ? `, ${aAtivar.length} para ativar` : ""} —`);
+
+    // A ativação vem primeiro porque é ela que faz a vitrine EXISTIR: sem o "Eu
+    // quero" o cupom não tem `containerUrl` e não há o que raspar.
+    if (aAtivar.length) {
+      const r = await ativarLote(aAtivar.map(c => c.campaignId), { cfg, pular, parou, log, onProgresso });
+      ativados += r.ativados;
+      if (r.parado) { parado = r.parado; break; }
+      // Relê: os recém-ativados agora têm `containerUrl`. O servidor já os gravou
+      // página a página durante a varredura.
+      const ids = new Set(aAtivar.map(c => c.campaignId));
+      const depois = await pedirAlvos();
+      const ganharam = depois.prontos.filter(c => ids.has(c.campaignId)).filter(inedito("vitrine"));
+      colher.push(...ganharam);
+      if (ganharam.length < aAtivar.length) {
+        log("aviso", `${aAtivar.length - ganharam.length} do lote seguem sem vitrine depois da ativação (o ML não mostrou o botão, ou já venceu)`);
+      }
+    }
+
+    const r = await colherVitrines(colher, { cfg, pular, parou, log, onProgresso });
+    feitos.push(...r.feitos);
+
+    // Cada vitrine já foi gravada no momento em que foi colhida — o lote só
+    // anuncia. Os números vêm do que o servidor aceitou, não do que se tentou.
+    const ok = r.feitos.filter(f => f.ok);
+    salvo.lotes += r.parado ? 0 : 1;
+    salvo.vitrines += ok.length;
+    salvo.produtos += ok.reduce((n, f) => n + (f.produtos || 0), 0);
+    onProgresso({ tipo: "lote-salvo", k: k + 1, de: lotes.length, completo: !r.parado, ...salvo, em: new Date() });
+    const produtosDoLote = ok.reduce((n, f) => n + (f.produtos || 0), 0);
+    log("ok", `💾 lote ${k + 1}/${lotes.length} ${r.parado ? "interrompido — o que foi colhido está salvo" : "salvo"}: ${ok.length} vitrine(s), ${produtosDoLote} produto(s) · acumulado ${salvo.vitrines} vitrine(s), ${salvo.produtos} produto(s)`);
+
+    if (r.muro) { muro = true; parado = r.parado; break; }
+    if (r.parado) { parado = r.parado; break; }
+    if (k < lotes.length - 1) await new Promise(res => setTimeout(res, cfg.pausaEntreVitrinesMs || 4000));
+  }
+
+  return { feitos, ativados, parado, muro, lotes: salvo.lotes };
+}
+
+// Uma passada pela lista do ML clicando "Eu quero" SÓ nos ids do lote. O servidor
+// encerra a varredura assim que todos eles apareceram, e grava cada um na página
+// em que apareceu — um Parar aqui não perde o que já foi ativado.
+async function ativarLote(ids, { cfg, pular, parou, log, onProgresso }) {
+  // Marcados ANTES da passada: o que importa é que foram TENTADOS. Quem o
+  // `aAtivar` recusou (vencido, rótulo repetido entre duas campanhas) nunca vai
+  // ganhar `containerUrl`, e sem isto todo ciclo repetiria a varredura da lista
+  // do ML para clicar em zero botões.
+  for (const id of ids) pular?.ativacao.add(id);
+  const teto = cfg.maxActivationsPerRun == null ? "todos eles" : `até ${cfg.maxActivationsPerRun} deles`;
+  log("aviso", `${ids.length} cupom(ns) sem vitrine — vou clicar em "Eu quero" em ${teto} na sua conta do ML`);
+  let r = null;
+  let tabId = null;
+  let fim = null;
+  try {
+    r = await percorrerLista({ ativarApenas: ids, parou, log, onProgresso });
+    tabId = r.tabId;
+  } finally {
+    // Num `finally`, e não em sequência, porque a varredura PODE lançar: basta
+    // uma das chamadas ao servidor falhar. Quando isso acontecia, nenhuma das
+    // duas linhas abaixo rodava — o servidor ficava com a rodada "running",
+    // recusando a próxima tentativa com 409 até o watchdog de 5 min soltar, e a
+    // aba do ML ficava aberta. Mesmo formato do `varrerLista` da etapa 1.
+    await fecharAbaDoColetor(tabId);
+    // O `local/fim` é obrigatório mesmo aqui: sem ele o servidor fica "running" e
+    // recusa a próxima varredura e o "Apagar todos" até o processo reiniciar. É
+    // também ele que GRAVA o que a varredura leu quando ela foi interrompida.
+    fim = await adminMlCuponsLocalFim({ cancelada: !r || !!r.parado }).catch(() => null);
+    if (fim?.resumo?.salvos) log("ok", `💾 servidor gravou ${fim.resumo.salvos} cupom(ns) lidos na lista`);
+  }
+  return {
+    ativados: fim?.resumo?.ativados ?? r.resumo?.ativados ?? 0,
+    parado: r.parado,
+  };
+}
+
+// As vitrines de uma lista de cupons, uma de cada vez, com pausa. Em paralelo
+// seriam N abas do Chrome batendo no ML com a mesma conta — que é o padrão que
+// acorda o anti-robô, e o muro vale para a CONTA, não para aquela vitrine.
+async function colherVitrines(fila, { cfg, pular, parou, log, onProgresso }) {
+  const feitos = [];
+  let parado = null;
+  let muro = false;
+
   for (let i = 0; i < fila.length; i++) {
     if (parou()) { parado = "Interrompido por você"; break; }
     const c = fila[i];
@@ -118,7 +207,7 @@ export async function umCiclo({
         // da vitrine" para produto que o cupom cobre.
         await adminMlCuponsImportVitrine(c.campaignId, { products: r.produtos, parcial: r.parcial });
         feitos.push({ campaignId: c.campaignId, title: c.title, ok: true, produtos: r.produtos.length, parcial: r.parcial });
-        log("ok", `${c.title}: ${r.produtos.length} produtos${r.parcial ? " (parcial)" : ""}`);
+        log("ok", `💾 ${c.title}: ${r.produtos.length} produtos gravados${r.parcial ? " (parcial)" : ""}`);
       }
     } catch (err) {
       feitos.push({ campaignId: c.campaignId, title: c.title, ok: false, produtos: 0, erro: err.message });
@@ -135,7 +224,7 @@ export async function umCiclo({
     if (i < fila.length - 1) await new Promise(r => setTimeout(r, cfg.pausaEntreVitrinesMs || 4000));
   }
 
-  return { feitos, ativados, parado, muro };
+  return { feitos, parado, muro };
 }
 
 // Um ciclo só, para o botão "2" e para o "buscar produtos" de uma linha. Mantém o
@@ -146,7 +235,7 @@ export function buscarProdutos(opcoes = {}) {
 
 // O "buscar TUDO": cicla até não sobrar cupom sem produtos.
 //
-// Devolve { ciclos, feitos, ativados, parado, motivo } — `feitos` somado de todos
+// Devolve { ciclos, feitos, ativados, parado, motivo, lotes } — `feitos` somado de todos
 // os ciclos, e `motivo` dizendo por que parou (é o que o resumo da tela mostra:
 // um laço que termina sozinho sem dizer por quê parece que desistiu).
 export async function buscarTudo({
@@ -165,6 +254,7 @@ export async function buscarTudo({
   const tentados = { ativacao: new Set(), vitrine: new Set() };
   const feitos = [];
   let ativados = 0;
+  let lotes = 0;
   let ciclos = 0;
   let parado = null;
   // Sem valor inicial de propósito: todo caminho de saída do laço abaixo atribui um
@@ -183,6 +273,7 @@ export async function buscarTudo({
     const r = await umCiclo({ pular: tentados, parou, log, onProgresso });
     feitos.push(...r.feitos);
     ativados += r.ativados;
+    lotes += r.lotes || 0;
 
     // O muro é da CONTA: o próximo ciclo encontraria o mesmo muro, só que uma aba
     // mais tarde.
@@ -206,5 +297,5 @@ export async function buscarTudo({
   }
 
   log(parado ? "aviso" : "ok", `fim: ${ciclos} ciclo(s) — ${motivo}`);
-  return { ciclos, feitos, ativados, parado, motivo };
+  return { ciclos, feitos, ativados, parado, motivo, lotes };
 }

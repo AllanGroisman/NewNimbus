@@ -85,6 +85,12 @@ export async function percorrerLista({
       semBotao: (r.semBotao || []).length,
     });
     log("info", `página ${proxima.pagina}${p.de ? `/${p.de}` : ""}${proxima.grouping ? ` de ${proxima.grouping}` : " da lista geral"} · ${p.cupons} cupom(ns)${p.ignoradosLoja ? `, ${p.ignoradosLoja} de loja ignorados` : ""}`);
+    // Na ativação (etapa 2) o servidor grava os alvos na página em que apareceram.
+    // Dizer isso é o que prova que um Parar daqui pra frente não perde o clique.
+    if (p.salvosNestaPagina) {
+      log("ok", `💾 ${p.salvosNestaPagina} cupom(ns) do lote gravados (${p.salvosTotal} até aqui)`);
+      onProgresso({ tipo: "cupons-salvos", nestaPagina: p.salvosNestaPagina, total: p.salvosTotal });
+    }
     proxima = p.proxima;
     achou = !!p.achou;
     if (Number.isFinite(p.paginasLidas)) paginas = p.paginasLidas;
