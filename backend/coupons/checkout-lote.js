@@ -19,8 +19,8 @@
 const { prisma } = require("../db");
 const { Prisma } = require("@prisma/client");
 const { lerEVincular } = require("./product-coupons");
+const loteConfig = require("./checkout-lote-config");
 
-const PAUSA_MS = 5000;
 const LIMITE_MAX = 200;
 // Produto que não aparece no scraping há mais que isso provavelmente saiu do ar.
 const VISTO_HA_DIAS = 7;
@@ -147,7 +147,8 @@ async function alvos({ categorias = null, limite = 20, pularDias = 7, soSemCupom
     })),
     total,
     porCategoria,
-    cfg: { pausaMs: PAUSA_MS },
+    // O ritmo (abas, pausa, tempos da sonda) vem junto da fila: a tela anda com ele.
+    cfg: loteConfig.readConfig(),
   };
 }
 
@@ -192,4 +193,52 @@ async function gravarResultado({ key, url = null, material = null, erro = null }
   };
 }
 
-module.exports = { alvos, gravarResultado, ordemPorCategoria, rendimento, PAUSA_MS };
+// O histórico das execuções do lote: um resumo por execução, mandado pela tela no
+// fim (frontend/src/data/sondaLote.js). As sondas em si ficam em `ml_checkout_probes`,
+// mas lá é uma linha por PRODUTO, sobrescrita a cada sonda — não dá pra saber quanto
+// uma execução levou nem com que ritmo. Guardado no appConfig (lista curta, só as
+// últimas), porque é para comparar ritmo, não para auditoria.
+const RUNS_KEY = "ml-cupons-sonda-lote-runs";
+const MAX_RUNS = 30;
+const appConfig = require("../config");
+
+const num = (v) => (Number.isFinite(Number(v)) && Number(v) >= 0 ? Math.round(Number(v)) : null);
+const data = (v) => { const d = new Date(v); return Number.isNaN(d.getTime()) ? null : d.toISOString(); };
+
+function ultimasRuns() {
+  const lista = appConfig.get(RUNS_KEY);
+  return Array.isArray(lista) ? lista : [];
+}
+
+// Só os campos conhecidos, e só números e datas: o corpo vem da tela.
+function registrarRun(raw = {}) {
+  const inicio = data(raw.inicio);
+  const fim = data(raw.fim);
+  if (!inicio || !fim) throw new Error("Falta o início ou o fim da execução.");
+  const r = raw.ritmo && typeof raw.ritmo === "object" ? raw.ritmo : {};
+  const run = {
+    inicio,
+    fim,
+    duracaoMs: num(Date.parse(fim) - Date.parse(inicio)),
+    produtos: num(raw.produtos) ?? 0,
+    naFila: num(raw.naFila) ?? 0,
+    ok: num(raw.ok) ?? 0,
+    comCupom: num(raw.comCupom) ?? 0,
+    falhas: num(raw.falhas) ?? 0,
+    // Média do tempo de UMA sonda (abrir a aba até o servidor gravar). Com várias
+    // abas ela não é o ritmo: o ritmo é `duracaoMs / produtos`.
+    mediaSondaMs: num(raw.mediaSondaMs),
+    ritmo: {
+      paralelo: num(r.paralelo),
+      pausaMs: num(r.pausaMs),
+      settleMs: num(r.settleMs),
+      modoRapido: typeof r.modoRapido === "boolean" ? r.modoRapido : null,
+    },
+    parado: raw.parado ? String(raw.parado).slice(0, 200) : null,
+    muro: !!raw.muro,
+  };
+  appConfig.set(RUNS_KEY, [run, ...ultimasRuns()].slice(0, MAX_RUNS));
+  return run;
+}
+
+module.exports = { alvos, gravarResultado, ordemPorCategoria, rendimento, registrarRun, ultimasRuns, RUNS_KEY, MAX_RUNS };

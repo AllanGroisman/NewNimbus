@@ -64,6 +64,24 @@ const CHECKOUT_READY_WAIT_MS = 30000;
 const NAV_WAIT_MS = 20000;
 const MAX_CHECKOUT_STEPS = 6;
 
+// Os tempos que o lote da sonda pode ajustar (backend/coupons/checkout-lote-config.js).
+// Quem não manda nada anda com os de sempre; valor fora da faixa cai no padrão,
+// porque um 0 aqui viraria laço de espera que nunca espera.
+const TEMPOS_PADRAO = {
+  settleMs: SETTLE_MS,
+  esperaCheckoutMs: CHECKOUT_READY_WAIT_MS,
+  esperaNavMs: NAV_WAIT_MS,
+  esperaIframeMs: IFRAME_WAIT_MS,
+};
+function lerTempos(t) {
+  const saida = { ...TEMPOS_PADRAO };
+  for (const k of Object.keys(TEMPOS_PADRAO)) {
+    const n = Number(t?.[k]);
+    if (Number.isFinite(n) && n >= 300 && n <= 120000) saida[k] = n;
+  }
+  return saida;
+}
+
 // ── o que roda DENTRO da página ──────────────────────────────────────────
 // Todas serializadas pelo executeScript: auto-contidas, sem fechar sobre nada.
 
@@ -434,7 +452,12 @@ function ehPaginaDeProduto(finalUrl) {
       || /^produto\./i.test(u.hostname);
 }
 
-export async function checkout({ url, code = null, mode = "checkout" }, progresso) {
+// `rapido` e `semCarrinho` são do lote da sonda (frontend/src/data/sondaLote.js):
+// o primeiro encerra assim que a página dos cupons foi lida, o segundo proíbe o
+// plano B do carrinho — com várias abas ao mesmo tempo, o carrinho da conta é um
+// só, e dois produtos nele dariam os cupons do carrinho COMBINADO.
+export async function checkout({ url, code = null, mode = "checkout", rapido = false, semCarrinho = false, tempos = null }, progresso) {
+  const T = lerTempos(tempos);
   const tabId = await abrir(url);
   const material = {
     t0: Date.now(),
@@ -454,7 +477,7 @@ export async function checkout({ url, code = null, mode = "checkout" }, progress
     // O espião entra antes de tudo: a resposta que dá o veredito é um XHR do
     // checkout, e o texto na tela é só o segundo palpite.
     await avaliar(tabId, naPagina_espiao, [API_RE], { mundoDaPagina: true });
-    await sleep(SETTLE_MS);   // a PDP ainda pinta preço/promoção por JS
+    await sleep(T.settleMs);   // a PDP ainda pinta preço/promoção por JS
 
     let tela = await foto();
     material.finalUrl = tela.url;
@@ -493,7 +516,7 @@ export async function checkout({ url, code = null, mode = "checkout" }, progress
 
     // ── até o checkout ──────────────────────────────────────────────────
     material.checkout.attempted = true;
-    const ida = await irAoCheckout(tabId, { foto, clicar, progresso });
+    const ida = await irAoCheckout(tabId, { foto, clicar, progresso, T, semCarrinho });
     Object.assign(material.checkout, ida);
     if (!ida.reached) {
       // Na sonda, a página onde a caminhada parou vai inteira pro servidor: é ela
@@ -505,7 +528,8 @@ export async function checkout({ url, code = null, mode = "checkout" }, progress
     material.bodyTextAoEntrar = (await foto()).texto;
     // O resumo do checkout ao chegar — o ML costuma já mostrar ali o cupom que ele
     // aplicou sozinho. Vale guardar mesmo que a caminhada até o popup não chegue.
-    if (listar) material.capturaAoEntrar = await avaliar(tabId, naPagina_capturaDosCupons, [300_000], { mundoDaPagina: true });
+    // No lote (`rapido`) ela não serve: o `materialEnxuto` a descarta antes de mandar.
+    if (listar && !rapido) material.capturaAoEntrar = await avaliar(tabId, naPagina_capturaDosCupons, [300_000], { mundoDaPagina: true });
 
     // ── a página dos cupons, sem clique nenhum ──────────────────────────
     // O caminho curto e o que sempre responde: a mesma página que o popup abriria,
@@ -517,10 +541,20 @@ export async function checkout({ url, code = null, mode = "checkout" }, progress
         ? await avaliar(tabId, naPagina_buscarPagina, [endereco, 500_000], { mundoDaPagina: true }).catch(() => null)
         : null;
       progresso({ tipo: "pagina-cupons", ok: !!material.paginaDosCupons?.ok });
+      // O lote para aqui quando a página trouxe o modelo dos cupons — o mesmo
+      // `buyingFlowData` que o servidor exige (coupons/checkout-list.js). A caminhada
+      // até o popup, a espera do iframe e a lista dos "ativos" leem a MESMA página;
+      // no lote eram só segundos a mais por produto. Sem o modelo, segue o caminho
+      // longo como sempre.
+      if (rapido && material.paginaDosCupons?.ok && /buyingFlowData/.test(material.paginaDosCupons.html || "")) {
+        material.checkout.atalho = "pagina-dos-cupons";
+        progresso({ tipo: "capturado" });
+        return material;
+      }
     }
 
     // ── caminhando até a tela do cupom ──────────────────────────────────
-    const caminho = await andarAteOCupom(tabId, { foto, clicar, progresso, material });
+    const caminho = await andarAteOCupom(tabId, { foto, clicar, progresso, material, T });
     material.checkout.steps = caminho.steps;
     material.checkout.trail = caminho.trail;
     material.checkout.couponOpen = caminho.abertura || null;
@@ -534,19 +568,19 @@ export async function checkout({ url, code = null, mode = "checkout" }, progress
     // Nunca digita, nunca clica em cupom: só olha. O carrinho é limpo no finally.
     if (listar && caminho.reached) {
       // O conteúdo do popup é um iframe que carrega depois: espera ele ter texto.
-      for (let i = 0; i < Math.ceil(IFRAME_WAIT_MS / 500); i++) {
+      for (let i = 0; i < Math.ceil(T.esperaIframeMs / 500); i++) {
         if (await avaliar(tabId, naPagina_textoDoIframeDoPopup, [], { mundoDaPagina: true }) > 20) break;
         await sleep(500);
       }
       await avaliar(tabId, naPagina_espiaoNoIframe, [API_RE], { mundoDaPagina: true });
-      await sleep(SETTLE_MS);
+      await sleep(T.settleMs);
       material.capturaDosCupons = await avaliar(tabId, naPagina_capturaDosCupons, [400_000], { mundoDaPagina: true });
       // O popup oferece "inserir outro cupom" OU ver os ativos. A lista dos ativos é
       // a que diz QUAL cupom está em uso — só olhar, nenhum cupom é clicado.
       const verAtivos = await avaliar(tabId, naPagina_clicarNoPopup, [VER_ATIVOS_SRC, 40], { mundoDaPagina: true });
       material.checkout.verAtivos = verAtivos || null;
       if (verAtivos) {
-        await sleep(SETTLE_MS * 2);
+        await sleep(T.settleMs * 2);
         material.capturaDosAtivos = await avaliar(tabId, naPagina_capturaDosCupons, [600_000], { mundoDaPagina: true });
       }
     }
@@ -581,7 +615,7 @@ export async function checkout({ url, code = null, mode = "checkout" }, progress
   } finally {
     // O carrinho da conta não pode ficar sujo por causa de um teste.
     if (material.checkout.via === "carrinho") {
-      material.checkout.cartCleaned = await limparCarrinho(tabId, clicar).catch(() => false);
+      material.checkout.cartCleaned = await limparCarrinho(tabId, clicar, T).catch(() => false);
     }
     await fechar(tabId);
   }
@@ -591,15 +625,17 @@ export async function checkout({ url, code = null, mode = "checkout" }, progress
 // Comando próprio (e não só um `mode`) para a tela saber se a extensão instalada
 // é nova o bastante — versão velha ignoraria o modo e voltaria da página do
 // produto sem dizer nada.
-export async function cuponsNoCheckout({ url }, progresso) {
-  return checkout({ url, mode: "listar" }, progresso);
+export async function cuponsNoCheckout({ url, rapido = false, semCarrinho = false, tempos = null }, progresso) {
+  return checkout({ url, mode: "listar", rapido, semCarrinho, tempos }, progresso);
 }
 
 // Chegar = a URL virar de checkout E a tela terminar de montar. Só a URL não vale:
 // o interstitial ("Preparando tudo para sua compra") já tem a URL certa.
-async function esperarCheckoutPronto(foto) {
-  for (let i = 0; i < Math.ceil(CHECKOUT_READY_WAIT_MS / 1000); i++) {
-    await sleep(1000);
+async function esperarCheckoutPronto(foto, ms = CHECKOUT_READY_WAIT_MS) {
+  // Olha já na entrada e depois a cada meio segundo: a tela costuma estar pronta
+  // antes do primeiro segundo, e esperar ele inteiro era tempo morto em toda sonda.
+  for (let i = 0; i <= Math.ceil(ms / 500); i++) {
+    if (i > 0) await sleep(500);
     const t = await foto();
     if (!CHECKOUT_URL_RE.test(t.url)) return { ready: false, tela: t };
     if (CHECKOUT_LOADING_RE.test(t.texto)) continue;
@@ -611,11 +647,11 @@ async function esperarCheckoutPronto(foto) {
 // Da PDP até a tela de checkout. Ordem: o formulário de compra (firme), depois o
 // clique em "Comprar agora" e, por último, o carrinho — que é o único caminho que
 // deixa rastro na conta, e por isso vem depois e obriga a limpeza no fim.
-async function irAoCheckout(tabId, { foto, clicar, progresso }) {
+async function irAoCheckout(tabId, { foto, clicar, progresso, T = TEMPOS_PADRAO, semCarrinho = false }) {
   let seguro = null;
   let tentouSeguro = false;
   const esperarSaida = async () => {
-    for (let i = 0; i < Math.ceil(NAV_WAIT_MS / 500); i++) {
+    for (let i = 0; i < Math.ceil(T.esperaNavMs / 500); i++) {
       await sleep(500);
       const agora = (await foto()).url;
       // A oferta de seguro no meio do caminho: recusa e segue. Vem ANTES do teste do
@@ -626,14 +662,14 @@ async function irAoCheckout(tabId, { foto, clicar, progresso }) {
       if (PROTECTIONS_URL_RE.test(agora)) {
         if (!tentouSeguro) {
           tentouSeguro = true;
-          seguro = await recusarSeguro(tabId, { foto, url: agora });
+          seguro = await recusarSeguro(tabId, { foto, url: agora, T });
           progresso({ tipo: "seguro", como: seguro.como });
           await avaliar(tabId, naPagina_espiao, [API_RE], { mundoDaPagina: true }).catch(() => {});
         }
         continue;
       }
       if (CHECKOUT_URL_RE.test(agora)) {
-        const r = await esperarCheckoutPronto(foto);
+        const r = await esperarCheckoutPronto(foto, T.esperaCheckoutMs);
         if (r.ready) return true;
         // Saiu do checkout pro seguro: a volta do laço trata.
         if (PROTECTIONS_URL_RE.test(r.tela?.url || "")) continue;
@@ -652,7 +688,7 @@ async function irAoCheckout(tabId, { foto, clicar, progresso }) {
   if (form?.bloqueado) {
     variacao = await avaliar(tabId, naPagina_escolherVariacao, [], { mundoDaPagina: true });
     if (variacao) {
-      await sleep(SETTLE_MS * 2);
+      await sleep(T.settleMs * 2);
       form = await avaliar(tabId, naPagina_formDeCompra, [], { mundoDaPagina: true });
     }
   }
@@ -677,9 +713,14 @@ async function irAoCheckout(tabId, { foto, clicar, progresso }) {
     if (await esperarSaida()) return { reached: true, via: "comprar-agora", url: await url(), blockedReason: null, variacao, seguro };
   }
 
+  if (semCarrinho) {
+    return { reached: false, via: null, url: await url(), variacao, seguro,
+      blockedReason: "Não chegou ao checkout sem passar pelo carrinho (desligado com abas em paralelo)." };
+  }
+
   if (await clicar(ADD_TO_CART_SRC, 60)) {
     progresso({ tipo: "checkout", via: "carrinho" });
-    await sleep(SETTLE_MS);
+    await sleep(T.settleMs);
     if (!CHECKOUT_URL_RE.test(await url())) await irPara(tabId, CART_URL).catch(() => {});
     await avaliar(tabId, naPagina_espiao, [API_RE], { mundoDaPagina: true });
     await clicar(CONTINUE_SRC, 60);
@@ -693,7 +734,7 @@ async function irAoCheckout(tabId, { foto, clicar, progresso }) {
 // Recusa a oferta de seguro: clica em "Agora não"; se o botão não aparecer ou o
 // clique não tirar a aba de lá, vai direto pro `callback_url` — que é para onde o
 // próprio "Agora não" levaria. Devolve como saiu ("recusou" | "callback" | null).
-async function recusarSeguro(tabId, { foto, url }) {
+async function recusarSeguro(tabId, { foto, url, T = TEMPOS_PADRAO }) {
   const diag = { tentativas: 0, clicou: null, rotulos: null, callback: false, voltouProSeguro: false };
   for (let i = 0; i < Math.ceil(SEGURO_WAIT_MS / 500); i++) {
     diag.tentativas += 1;
@@ -714,7 +755,7 @@ async function recusarSeguro(tabId, { foto, url }) {
   if (volta && /^https:\/\/www\.mercadolivre\.com\.br\//.test(volta)) {
     diag.callback = true;
     await irPara(tabId, volta).catch(() => {});
-    await sleep(SETTLE_MS * 2);
+    await sleep(T.settleMs * 2);
     // O ML pode mandar de volta pro seguro até alguém escolher — aí o plano B não
     // serve, e o diagnóstico precisa dizer isso.
     diag.voltouProSeguro = PROTECTIONS_URL_RE.test((await foto()).url);
@@ -725,7 +766,7 @@ async function recusarSeguro(tabId, { foto, url }) {
 
 // Caminha pelo checkout até a tela que tem cupom. Só clica em "Continuar" (regex
 // ancorada) — nunca em pagar/confirmar —, então o pior caso é parar antes da hora.
-async function andarAteOCupom(tabId, { foto, clicar, progresso, material }) {
+async function andarAteOCupom(tabId, { foto, clicar, progresso, material, T = TEMPOS_PADRAO }) {
   const trail = [];
   let passos = 0;
   let motivo = "limite-de-passos";
@@ -767,7 +808,7 @@ async function andarAteOCupom(tabId, { foto, clicar, progresso, material }) {
       passo.parou = "recarreguei";
       await irPara(tabId, tela.url).catch(() => {});
       await avaliar(tabId, naPagina_espiao, [API_RE], { mundoDaPagina: true });
-      await esperarCheckoutPronto(foto);
+      await esperarCheckoutPronto(foto, T.esperaCheckoutMs);
       continue;
     }
 
@@ -787,7 +828,7 @@ async function andarAteOCupom(tabId, { foto, clicar, progresso, material }) {
     for (let tentativa = 0; tentativa < 2 && !mudou; tentativa++) {
       const antes = (await foto()).digital;
       clicou = await clicar(CONTINUE_STEP_SRC, 30);
-      if (!clicou) { await sleep(SETTLE_MS); continue; }   // botão ainda montando
+      if (!clicou) { await sleep(T.settleMs); continue; }   // botão ainda montando
       mudou = await esperarTelaMudar(foto, antes);
     }
     passo.clicou = clicou;
@@ -795,7 +836,7 @@ async function andarAteOCupom(tabId, { foto, clicar, progresso, material }) {
     if (!clicou) { passo.parou = motivo = "sem-botao-continuar"; break; }
     if (!mudou) { passo.parou = motivo = "tela-nao-mudou"; break; }
 
-    await esperarCheckoutPronto(foto);
+    await esperarCheckoutPronto(foto, T.esperaCheckoutMs);
   }
 
   // Se em alguma tela a linha do cupom foi clicada e o campo não abriu, é ISSO que
@@ -858,12 +899,12 @@ async function esperarQuieto(foto, ms = QUIET_WAIT_MS) {
 // Tira o item do carrinho — só faz sentido quando o plano B foi usado. Falhar aqui
 // não pode derrubar o teste, mas deixar lixo no carrinho da conta também não é
 // aceitável, então tenta sempre.
-async function limparCarrinho(tabId, clicar) {
+async function limparCarrinho(tabId, clicar, T = TEMPOS_PADRAO) {
   try {
     await irPara(tabId, CART_URL);
-    await sleep(SETTLE_MS);
+    await sleep(T.settleMs);
     const removeu = await clicar(CART_REMOVE_SRC, 30);
-    await sleep(SETTLE_MS);
+    await sleep(T.settleMs);
     return !!removeu;
   } catch {
     return false;

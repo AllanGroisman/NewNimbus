@@ -14,6 +14,7 @@ import { createRequire } from "module";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const { ordemPorCategoria, rendimento } = require(path.resolve(__dirname, "..", "..", "backend", "coupons", "checkout-lote.js"));
+const { sanitize, DEFAULTS } = require(path.resolve(__dirname, "..", "..", "backend", "coupons", "checkout-lote-config.js"));
 
 const fila = (cat, n) => Array.from({ length: n }, (_, i) => ({ key: `${cat}${i + 1}`, category: cat }));
 const chaves = (xs) => xs.map(x => x.key);
@@ -41,5 +42,22 @@ describe("ordemPorCategoria", () => {
   it("rendimento suavizado: sem histórico é 0,5", () => {
     expect(rendimento()).toBe(0.5);
     expect(rendimento({ sondados: 8, comCupom: 0 })).toBeCloseTo(0.1);
+  });
+});
+
+// O ritmo gravado passa sempre pelo sanitize: abas acima de 4 e tempos que zerariam
+// uma espera são o tipo de valor que derruba a conta ou trava a sonda.
+describe("sanitize do ritmo do lote", () => {
+  it("vazio dá o padrão", () => {
+    expect(sanitize(null)).toEqual(DEFAULTS);
+  });
+
+  it("prende nas faixas, aceita número em texto e booleano em texto", () => {
+    const r = sanitize({ paralelo: "9", pausaMs: -5, settleMs: 10, esperaCheckoutMs: "45000", modoRapido: "false" });
+    expect(r).toMatchObject({ paralelo: 8, pausaMs: 0, settleMs: 300, esperaCheckoutMs: 45000, modoRapido: false });
+  });
+
+  it("chave que o código não conhece some", () => {
+    expect(sanitize({ velha: 1 })).not.toHaveProperty("velha");
   });
 });

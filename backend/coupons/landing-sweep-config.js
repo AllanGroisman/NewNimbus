@@ -93,4 +93,4 @@ function writeConfig(patch) {
   return cfg;
 }
 
-module.exports = { CONFIG_KEY, DEFAULTS, FAIXAS, sanitize, readConfig, writeConfig };
+module.exports = { CONFIG_KEY, DEFAULTS, FAIXAS, sanitize, readConfig, writeConfig, saneiaBooleano, saneiaNumero };

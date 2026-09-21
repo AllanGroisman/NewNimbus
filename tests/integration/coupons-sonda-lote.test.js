@@ -12,7 +12,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
-import { catalog } from "../helpers/app.js";
+import { catalog, createTestUser, auth as authMod } from "../helpers/app.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -20,6 +20,8 @@ const backendDir = path.resolve(__dirname, "..", "..", "backend");
 const coupons = require(path.join(backendDir, "coupons"));
 const lote = require(path.join(backendDir, "coupons", "checkout-lote.js"));
 const { prisma } = require(path.join(backendDir, "db.js"));
+const appConfig = require(path.join(backendDir, "config"));
+const loteConfig = require(path.join(backendDir, "coupons", "checkout-lote-config.js"));
 
 const ml = (n, over = {}) => ({
   name: `Produto ${n}`, price: 200, store: "Mercado Livre", category: "casa",
@@ -48,7 +50,9 @@ describe("alvos", () => {
       { category: "casa", elegiveis: 2, sondados: 0, comCupom: 0 },
       { category: "gamer", elegiveis: 1, sondados: 0, comCupom: 0 },
     ]);
-    expect(r.cfg.pausaMs).toBeGreaterThan(0);
+    // O ritmo vem junto da fila: é com ele que a tela anda.
+    expect(r.cfg).toEqual(loteConfig.readConfig());
+    expect(r.cfg.paralelo).toBe(1);
   });
 
   it("filtra por categoria sem sumir com as outras da contagem", async () => {
@@ -123,5 +127,62 @@ describe("gravarResultado", () => {
 
   it("produto fora do catálogo dá erro claro", async () => {
     await expect(lote.gravarResultado({ key: "nao-existe", erro: "x" })).rejects.toThrow(/catálogo/);
+  });
+});
+
+describe("o ritmo do lote (/sonda-lote/config)", () => {
+  beforeEach(() => appConfig.del(loteConfig.CONFIG_KEY));
+
+  it("GET devolve o padrão; PUT grava só o que veio, dentro das faixas, e a fila passa a andar com ele", async () => {
+    const { user, auth } = await createTestUser();
+    await authMod.setUserRole(user.id, "admin");
+
+    const antes = await auth("get", "/api/admin/ml-cupons/sonda-lote/config");
+    expect(antes.status).toBe(200);
+    expect(antes.body.config).toEqual(loteConfig.DEFAULTS);
+    expect(antes.body.faixas.paralelo).toEqual([1, 8]);
+
+    const put = await auth("put", "/api/admin/ml-cupons/sonda-lote/config").send({ paralelo: 9, pausaMs: 2000, modoRapido: "false" });
+    expect(put.status).toBe(200);
+    expect(put.body.config).toMatchObject({ paralelo: 8, pausaMs: 2000, modoRapido: false, settleMs: 1500 });
+
+    const fila = await lote.alvos({ limite: 5 });
+    expect(fila.cfg).toMatchObject({ paralelo: 8, pausaMs: 2000 });
+  });
+
+  it("não-admin não mexe no ritmo", async () => {
+    const { auth } = await createTestUser();
+    const r = await auth("put", "/api/admin/ml-cupons/sonda-lote/config").send({ paralelo: 4 });
+    expect(r.status).toBe(403);
+  });
+});
+
+describe("o histórico das execuções (/sonda-lote/runs)", () => {
+  beforeEach(() => appConfig.del(lote.RUNS_KEY));
+  const RUN = (min, over = {}) => ({
+    inicio: `2026-09-21T22:${String(min).padStart(2, "0")}:00.000Z`,
+    fim: `2026-09-21T22:${String(min).padStart(2, "0")}:40.000Z`,
+    produtos: 4, naFila: 4, ok: 4, comCupom: 1, falhas: 0, mediaSondaMs: 9000,
+    ritmo: { paralelo: 2, pausaMs: 0, settleMs: 1500, modoRapido: true }, ...over,
+  });
+
+  it("grava o resumo, calcula a duração e devolve a mais nova primeiro", async () => {
+    const { user, auth } = await createTestUser();
+    await authMod.setUserRole(user.id, "admin");
+
+    expect((await auth("post", "/api/admin/ml-cupons/sonda-lote/runs").send(RUN(1))).status).toBe(200);
+    expect((await auth("post", "/api/admin/ml-cupons/sonda-lote/runs").send(RUN(2, { muro: true, parado: "verificação", lixo: "x" }))).status).toBe(200);
+
+    const r = await auth("get", "/api/admin/ml-cupons/sonda-lote/runs");
+    expect(r.status).toBe(200);
+    expect(r.body.runs.map(x => x.inicio)).toEqual([RUN(2).inicio, RUN(1).inicio]);
+    expect(r.body.runs[0]).toMatchObject({ duracaoMs: 40000, muro: true, parado: "verificação", mediaSondaMs: 9000 });
+    expect(r.body.runs[0]).not.toHaveProperty("lixo");
+  });
+
+  it("guarda só as últimas; sem início ou fim é recusado", async () => {
+    for (let i = 0; i < lote.MAX_RUNS + 3; i++) lote.registrarRun(RUN(i % 60));
+    expect(lote.ultimasRuns()).toHaveLength(lote.MAX_RUNS);
+    expect(() => lote.registrarRun({ produtos: 1 })).toThrow(/início ou o fim/);
   });
 });

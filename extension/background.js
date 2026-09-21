@@ -29,6 +29,9 @@ const COMANDOS = {
   palavra,
   checkout,
   "cupons-checkout": cuponsNoCheckout,
+  // O mesmo comando; o nome novo só existe para a tela saber que esta cópia entende
+  // `rapido`, `semCarrinho` e `tempos` (o lote da sonda) — a velha os ignoraria calada.
+  "cupons-checkout-v2": cuponsNoCheckout,
   "fechar-aba": fecharAba,
 };
 

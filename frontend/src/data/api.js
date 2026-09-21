@@ -786,6 +786,26 @@ export async function adminSondaLoteResultado({ key, url, material = null, erro 
   return http("POST", "/api/admin/ml-cupons/sonda-lote/resultado", { key, url, material, erro });
 }
 
+// O ritmo do lote (abas em paralelo, pausa, tempos da sonda). GET devolve
+// { config, defaults, faixas }; PUT grava o que mudou e devolve { config }.
+// O histórico das execuções do lote: GET { runs } (a mais nova primeiro); POST grava
+// o resumo de uma execução que terminou.
+export async function adminSondaLoteRuns() {
+  return http("GET", "/api/admin/ml-cupons/sonda-lote/runs");
+}
+
+export async function adminSondaLoteRegistrarRun(run) {
+  return http("POST", "/api/admin/ml-cupons/sonda-lote/runs", run);
+}
+
+export async function adminSondaLoteConfig() {
+  return http("GET", "/api/admin/ml-cupons/sonda-lote/config");
+}
+
+export async function adminSondaLoteSalvarConfig(patch) {
+  return http("PUT", "/api/admin/ml-cupons/sonda-lote/config", patch);
+}
+
 // ─── Admin / Repasse (teste automático de cupom) ───────────────────────
 // O robô que testa no ML a palavra pescada na legenda e traz a campanha pro
 // sistema. GET devolve config + defaults + o status da última rodada juntos —

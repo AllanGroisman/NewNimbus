@@ -3327,6 +3327,34 @@ app.get("/api/admin/ml-cupons/sonda-lote/alvos", auth.requireAuth, auth.requireA
   }
 });
 
+// O histórico das execuções do lote (as últimas; a tela manda o resumo no fim).
+app.get("/api/admin/ml-cupons/sonda-lote/runs", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json({ runs: require("./coupons/checkout-lote").ultimasRuns() });
+});
+
+app.post("/api/admin/ml-cupons/sonda-lote/runs", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  try {
+    res.json({ run: require("./coupons/checkout-lote").registrarRun(req.body || {}) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// O ritmo do lote: abas em paralelo, pausa e os tempos da sonda na extensão.
+app.get("/api/admin/ml-cupons/sonda-lote/config", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  const loteConfig = require("./coupons/checkout-lote-config");
+  res.json({ config: loteConfig.readConfig(), defaults: loteConfig.DEFAULTS, faixas: loteConfig.FAIXAS });
+});
+
+app.put("/api/admin/ml-cupons/sonda-lote/config", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  try {
+    const loteConfig = require("./coupons/checkout-lote-config");
+    res.json({ config: loteConfig.writeConfig(req.body || {}) });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "PUT /api/admin/ml-cupons/sonda-lote/config" });
+  }
+});
+
 app.post("/api/admin/ml-cupons/sonda-lote/resultado", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
     const lote = require("./coupons/checkout-lote");
