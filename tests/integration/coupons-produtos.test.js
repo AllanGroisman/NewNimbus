@@ -306,3 +306,25 @@ describe("a palavra do título carimbando o cupom", () => {
     expect(linha.campaignId).toBe(null);
   });
 });
+
+// Task 14: as rotas do carimbo adiado da etapa 2.
+describe("POST vitrine-local com carimbar:false + POST /carimbar", () => {
+  beforeEach(semear);
+
+  it("a vitrine grava sem carimbar, e o /carimbar carimba o catálogo", async () => {
+    const { user, auth } = await createTestUser();
+    await authMod.setUserRole(user.id, "admin");
+    const novo = { name: "Produto em paralelo", link: "https://www.mercadolivre.com.br/produto/p/MLB7790099", price: 50 };
+    const { prisma } = require(path.join(backendDir, "db.js"));
+    const carimbo = async () =>
+      (await prisma().catalogProduct.findUnique({ where: { key: productKey(novo) } }))?.couponCampaignId ?? null;
+
+    const g = await auth("post", `/api/admin/ml-cupons/${PRONTO}/vitrine-local`).send({ products: [novo], parcial: false, carimbar: false });
+    expect(g.status).toBe(200);
+    expect(await carimbo()).toBeNull();
+
+    const c = await auth("post", "/api/admin/ml-cupons/carimbar").send({});
+    expect(c.status).toBe(200);
+    expect(await carimbo()).toBe(PRONTO);
+  });
+});

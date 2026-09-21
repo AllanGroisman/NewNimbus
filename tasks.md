@@ -24,4 +24,4 @@
  
 13. [x] Quero um botão para testar todos produtos vindos do scraping para saber se eles tem cupons. Acredito que é só sondar o checout do produto assim como é feito no "Cupons do produto" na aba de cupons dentro da area de admin. Pode deixar o botão dentro desta mesma aba "Cupons do produto" e quero que ao apertar, o progresso seja mostrado. Pense também em formas de otimizar isso, por categorias talvez, para não precisar testar TODOS os produtos com TODOS os cupons, apenas os que fazem mais sentido.
 
-14. [] Quero paralelizar a busca de cupons e seus produtos para ser realizado mais rapido, como pode ser feito?
+14. [x] Quero paralelizar a busca de cupons e seus produtos para ser realizado mais rapido, como pode ser feito?

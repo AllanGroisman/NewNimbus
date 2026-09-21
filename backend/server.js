@@ -2786,11 +2786,22 @@ app.post("/api/admin/ml-cupons/:campaignId/vitrine-local", auth.requireAuth, aut
     const body = req.body || {};
     const r = await mlCupons.gravarVitrineLocal(String(req.params.campaignId), body.products, {
       parcial: body.parcial === true || body.parcial === "true",
+      // Padrão true: só a etapa 2 em lote adia o carimbo, e ela chama o /carimbar.
+      carimbar: !(body.carimbar === false || body.carimbar === "false"),
     });
     res.json(r);
   } catch (err) {
     console.error("[ml-cupons.vitrine-local]", err.message);
     res.status(400).json({ error: err.message });
+  }
+});
+
+// O carimbo do catálogo que a etapa 2 adiou: uma chamada por lote, não por vitrine.
+app.post("/api/admin/ml-cupons/carimbar", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    res.json(await mlCupons.carimbarCatalogo());
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/admin/ml-cupons/carimbar" });
   }
 });
 

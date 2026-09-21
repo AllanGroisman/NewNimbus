@@ -21,6 +21,8 @@ const require = createRequire(import.meta.url);
 const backendDir = path.resolve(__dirname, "..", "..", "backend");
 const coupons = require(path.join(backendDir, "coupons"));
 const sync = require(path.join(backendDir, "coupons", "sync.js"));
+const { productKey } = require(path.join(backendDir, "catalog", "product-key.js"));
+const { prisma } = require(path.join(backendDir, "db.js"));
 
 const CAMPANHA = "9900077";
 const produto = (n) => ({
@@ -168,5 +170,38 @@ describe("config da ativação automática", () => {
     expect((await sync.writeConfig({ activateCoupons: "false" })).activateCoupons).toBe(false);
     expect((await sync.writeConfig({ activateCoupons: "true" })).activateCoupons).toBe(true);
     expect((await sync.writeConfig({ activateCoupons: false })).activateCoupons).toBe(false);
+  });
+});
+
+// Task 14: a etapa 2 grava as vitrines em paralelo com `carimbar: false` e carimba
+// o catálogo uma vez por lote — o `syncCatalogCoupons` varre a tabela inteira.
+describe("carimbo adiado da etapa 2", () => {
+  beforeEach(semearCupom);
+  const cupomDoProduto = async (n) =>
+    (await prisma().catalogProduct.findUnique({ where: { key: productKey(produto(n)) } }))?.couponCampaignId ?? null;
+
+  it("carimbar: false grava o vínculo sem carimbar; carimbarCatalogo() carimba", async () => {
+    const r = await sync.gravarVitrineLocal(CAMPANHA, [produto(1), produto(2)], { parcial: false, carimbar: false });
+    expect(r.ok).toBe(true);
+    expect(await cupomDoProduto(1)).toBeNull();
+
+    const c = await sync.carimbarCatalogo();
+    expect(c.carimbados).toBeGreaterThanOrEqual(2);
+    expect(await cupomDoProduto(1)).toBe(CAMPANHA);
+  });
+
+  it("sem o flag continua carimbando na hora (o botão de uma linha)", async () => {
+    await sync.gravarVitrineLocal(CAMPANHA, [produto(3)], { parcial: false });
+    expect(await cupomDoProduto(3)).toBe(CAMPANHA);
+  });
+});
+
+describe("vitrines em paralelo na config", () => {
+  it("fica entre 1 e 4, e o /alvos-produtos entrega o número à tela", async () => {
+    expect((await sync.writeConfig({ vitrinesEmParalelo: 10 })).vitrinesEmParalelo).toBe(4);
+    expect((await sync.writeConfig({ vitrinesEmParalelo: 0 })).vitrinesEmParalelo).toBe(1);
+    expect((await sync.writeConfig({ vitrinesEmParalelo: "abc" })).vitrinesEmParalelo).toBe(sync.DEFAULT_CONFIG.vitrinesEmParalelo);
+    await sync.writeConfig({ vitrinesEmParalelo: 3 });
+    expect((await sync.alvosDeProdutos()).config.vitrinesEmParalelo).toBe(3);
   });
 });

@@ -47,7 +47,10 @@ export default function ProgressoColheita({ andamento }) {
   }, [ativo]);
   if (!andamento) return null;
 
-  const { etapa, fila, lote, atual, lista, pausa, contagem, ciclo, maxCiclos, maxPaginas, maxProdutos } = andamento;
+  const { etapa, fila, lote, atual, lista, pausa, contagem, ciclo, maxCiclos, maxPaginas, maxProdutos, ativacaoFundo } = andamento;
+  // Várias vitrines ao mesmo tempo (task 14): lista todas as abertas.
+  const abertas = Object.values(andamento.atuais || {});
+  const variasAbertas = abertas.length > 1;
   const muro = etapa === "muro";
   const eta = estimativaMs(andamento, agora);
   const restaPausa = pausa ? Math.max(0, pausa.ate - agora) : 0;
@@ -89,7 +92,19 @@ export default function ProgressoColheita({ andamento }) {
         <Barra valor={lote.k - 1} total={lote.de} rotulo={`Lote ${lote.k} de ${lote.de}`} direita={`${lote.k - 1} gravado(s)`} />
       )}
 
-      {atual && (etapa === "vitrine" || etapa === "pausa" || muro) && (
+      {variasAbertas && (etapa === "vitrine" || muro) && (
+        <div style={{ marginTop: 8, fontSize: 12, lineHeight: 1.5 }}>
+          <div>{abertas.length} vitrines abertas agora:</div>
+          {abertas.map(v => (
+            <div key={v.campaignId} style={{ color: "var(--color-text-secondary)" }}>
+              <b style={{ color: "var(--color-text-primary)" }}>{v.title}</b>
+              {v.de ? ` (${v.i}/${v.de} do lote)` : ""} · página {v.pagina || 0}{maxPaginas ? ` de até ${maxPaginas}` : ""} · {v.produtos || 0} produto(s)
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!variasAbertas && atual && (etapa === "vitrine" || etapa === "pausa" || muro) && (
         <div style={{ marginTop: 8, fontSize: 12, lineHeight: 1.5 }}>
           <div>
             Vitrine agora: <b>{atual.title}</b>
@@ -99,6 +114,14 @@ export default function ProgressoColheita({ andamento }) {
             página {atual.pagina || 0}{maxPaginas ? ` de até ${maxPaginas}` : ""} ·{" "}
             {atual.produtos || 0} produto(s) lidos{maxProdutos ? ` (teto ${maxProdutos})` : ""}
           </div>
+        </div>
+      )}
+
+      {ativacaoFundo && (
+        <div style={{ marginTop: 8, fontSize: 12, color: "var(--color-text-secondary)" }}>
+          ⟳ Em paralelo: clicando em “Eu quero” no lote {ativacaoFundo.lote ?? "seguinte"}
+          {ativacaoFundo.n ? ` (${ativacaoFundo.n} cupom(ns))` : ""}
+          {ativacaoFundo.pagina ? ` · página ${ativacaoFundo.pagina} da lista` : ""}
         </div>
       )}
 

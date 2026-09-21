@@ -23,7 +23,9 @@
 // vêm do `/alvos-produtos`; aqui só se abre página e se devolve o que veio.
 import { percorrerLista } from "./rodadaNoChrome";
 import { raparVitrine, fecharAbaDoColetor } from "./coletor";
-import { adminMlCuponsAlvosProdutos, adminMlCuponsImportVitrine, adminMlCuponsLocalFim } from "./api";
+import {
+  adminMlCuponsAlvosProdutos, adminMlCuponsImportVitrine, adminMlCuponsLocalFim, adminMlCuponsCarimbar,
+} from "./api";
 
 // Devolve { feitos, ativados, parado, muro, lotes }. `feitos` é uma linha por cupom
 // tentado: { campaignId, title, ok, produtos, parcial, vazia, erro }.
@@ -92,7 +94,14 @@ export async function umCiclo({
 
   const lotes = [];
   for (let i = 0; i < fila.length; i += tamanho) lotes.push(fila.slice(i, i + tamanho));
+  // Quantas vitrines ao mesmo tempo (task 14). Sem o número — servidor antigo — é
+  // uma por vez, como sempre foi: paralelismo é opt-in, porque o muro é da CONTA.
+  const paralelo = Math.max(1, Math.min(4, Number(cfg.vitrinesEmParalelo) || 1));
+  const sobrepoe = lotes.length > 1 && lotes.slice(1).some(l => l.some(c => c.ativar));
   log("info", `${fila.length} cupom(ns) em ${lotes.length} lote(s) de até ${tamanho} — cada lote é gravado antes do próximo`);
+  if (paralelo > 1 || sobrepoe) {
+    log("info", `${paralelo} vitrine(s) por vez${sobrepoe ? " + a ativação do próximo lote em paralelo, numa aba à parte" : ""}`);
+  }
   onProgresso({
     tipo: "fila",
     total: fila.length,
@@ -102,56 +111,116 @@ export async function umCiclo({
     tamanhoLote: tamanho,
     maxPaginas: cfg.maxPaginasVitrine ?? null,
     maxProdutos: cfg.maxProductsPerCoupon ?? null,
+    paralelo,
   });
 
   const salvo = { lotes: 0, de: lotes.length, vitrines: 0, produtos: 0 };
+  // O que a ativação EM SEGUNDO PLANO manda parar: o muro que ela viu na lista do
+  // ML vale para a conta inteira, então a colheita em curso também não abre mais
+  // nenhuma vitrine.
+  const freio = { parado: null };
+  // A ativação do PRÓXIMO lote, rodando enquanto este colhe. Uma de cada vez,
+  // sempre: o servidor tem uma varredura local só (`_local`) e recusa a segunda.
+  let fundo = null;   // { k, promessa }
+  // Tem vitrine gravada com `carimbar: false` esperando o carimbo do catálogo.
+  let semCarimbo = false;
 
-  for (let k = 0; k < lotes.length; k++) {
-    if (parou()) { parado = "Interrompido por você"; break; }
-    const lote = lotes[k];
-    const aAtivar = lote.filter(c => c.ativar);
-    const colher = lote.filter(c => !c.ativar);
-    onProgresso({ tipo: "lote", k: k + 1, de: lotes.length, tamanho: lote.length, aAtivar: aAtivar.length });
-    log("info", `— lote ${k + 1}/${lotes.length}: ${lote.length} cupom(ns)${aAtivar.length ? `, ${aAtivar.length} para ativar` : ""} —`);
+  const carimbar = async () => {
+    if (!semCarimbo) return;
+    semCarimbo = false;
+    await adminMlCuponsCarimbar().catch(err => log("erro", `não consegui carimbar o catálogo: ${err.message}`));
+  };
 
-    // A ativação vem primeiro porque é ela que faz a vitrine EXISTIR: sem o "Eu
-    // quero" o cupom não tem `containerUrl` e não há o que raspar.
-    if (aAtivar.length) {
-      onProgresso({ tipo: "ativando", n: aAtivar.length });
-      const r = await ativarLote(aAtivar.map(c => c.campaignId), { cfg, pular, parou, log, onProgresso });
-      ativados += r.ativados;
+  const dispararFundo = (k) => {
+    const ids = lotes[k].filter(c => c.ativar).map(c => c.campaignId);
+    const promessa = ativarLote(ids, {
+      cfg, pular, parou, fundo: true,
+      log: (tipo, texto) => log(tipo, `(lote ${k + 1}, em paralelo) ${texto}`),
+      onProgresso: (ev) => onProgresso({ ...ev, fundo: true, loteFundo: k + 1 }),
+    })
+      .catch(err => ({ ativados: 0, parado: `a ativação do lote ${k + 1} falhou: ${err.message}` }))
+      .then(r => {
+        if (r.parado) freio.parado = r.parado;
+        onProgresso({ tipo: "ativacao-fundo-fim", loteFundo: k + 1, ativados: r.ativados || 0 });
+        return r;
+      });
+    fundo = { k, promessa };
+  };
+
+  try {
+    for (let k = 0; k < lotes.length; k++) {
+      if (parou()) { parado = "Interrompido por você"; break; }
+      if (freio.parado) { parado = freio.parado; break; }
+      const lote = lotes[k];
+      const aAtivar = lote.filter(c => c.ativar);
+      const colher = lote.filter(c => !c.ativar);
+      onProgresso({ tipo: "lote", k: k + 1, de: lotes.length, tamanho: lote.length, aAtivar: aAtivar.length });
+      log("info", `— lote ${k + 1}/${lotes.length}: ${lote.length} cupom(ns)${aAtivar.length ? `, ${aAtivar.length} para ativar` : ""} —`);
+
+      // A ativação vem primeiro porque é ela que faz a vitrine EXISTIR: sem o "Eu
+      // quero" o cupom não tem `containerUrl` e não há o que raspar. Se ela já
+      // correu em segundo plano durante o lote anterior, aqui só se espera o fim.
+      if (aAtivar.length) {
+        let r;
+        if (fundo?.k === k) {
+          r = await fundo.promessa;
+          fundo = null;
+        } else {
+          onProgresso({ tipo: "ativando", n: aAtivar.length });
+          r = await ativarLote(aAtivar.map(c => c.campaignId), { cfg, pular, parou, log, onProgresso });
+        }
+        ativados += r.ativados;
+        if (r.parado) { parado = r.parado; break; }
+        // Relê: os recém-ativados agora têm `containerUrl`. O servidor já os gravou
+        // página a página durante a varredura.
+        const ids = new Set(aAtivar.map(c => c.campaignId));
+        const depois = await pedirAlvos();
+        const ganharam = depois.prontos.filter(c => ids.has(c.campaignId)).filter(inedito("vitrine"));
+        colher.push(...ganharam);
+        if (ganharam.length < aAtivar.length) {
+          log("aviso", `${aAtivar.length - ganharam.length} do lote seguem sem vitrine depois da ativação (o ML não mostrou o botão, ou já venceu)`);
+        }
+      }
+
+      // O próximo lote já começa a ativar enquanto este colhe: são abas diferentes,
+      // e é o tempo da ativação que deixa de somar ao do ciclo.
+      if (k + 1 < lotes.length && lotes[k + 1].some(c => c.ativar)) dispararFundo(k + 1);
+
+      const r = await colherVitrines(colher, { cfg, paralelo, freio, pular, parou, log, onProgresso });
+      feitos.push(...r.feitos);
+
+      // Cada vitrine já foi gravada no momento em que foi colhida — o lote só
+      // carimba o catálogo (uma vez, não uma por vitrine) e anuncia. Os números vêm
+      // do que o servidor aceitou, não do que se tentou.
+      const ok = r.feitos.filter(f => f.ok);
+      if (ok.length) semCarimbo = true;
+      await carimbar();
+      salvo.lotes += r.parado ? 0 : 1;
+      salvo.vitrines += ok.length;
+      salvo.produtos += ok.reduce((n, f) => n + (f.produtos || 0), 0);
+      onProgresso({ tipo: "lote-salvo", k: k + 1, de: lotes.length, completo: !r.parado, ...salvo, em: new Date() });
+      const produtosDoLote = ok.reduce((n, f) => n + (f.produtos || 0), 0);
+      log("ok", `💾 lote ${k + 1}/${lotes.length} ${r.parado ? "interrompido — o que foi colhido está salvo" : "salvo"}: ${ok.length} vitrine(s), ${produtosDoLote} produto(s) · acumulado ${salvo.vitrines} vitrine(s), ${salvo.produtos} produto(s)`);
+
+      if (r.muro) { muro = true; parado = r.parado; break; }
       if (r.parado) { parado = r.parado; break; }
-      // Relê: os recém-ativados agora têm `containerUrl`. O servidor já os gravou
-      // página a página durante a varredura.
-      const ids = new Set(aAtivar.map(c => c.campaignId));
-      const depois = await pedirAlvos();
-      const ganharam = depois.prontos.filter(c => ids.has(c.campaignId)).filter(inedito("vitrine"));
-      colher.push(...ganharam);
-      if (ganharam.length < aAtivar.length) {
-        log("aviso", `${aAtivar.length - ganharam.length} do lote seguem sem vitrine depois da ativação (o ML não mostrou o botão, ou já venceu)`);
+      // A pausa entre lotes só quando nada correu em paralelo: com a ativação em
+      // segundo plano, o lote seguinte já tem as vitrines prontas para abrir.
+      if (k < lotes.length - 1 && fundo?.k !== k + 1) {
+        const ms = cfg.pausaEntreVitrinesMs || 4000;
+        onProgresso({ tipo: "pausa", ms, motivo: "entre lotes" });
+        await new Promise(res => setTimeout(res, ms));
       }
     }
-
-    const r = await colherVitrines(colher, { cfg, pular, parou, log, onProgresso });
-    feitos.push(...r.feitos);
-
-    // Cada vitrine já foi gravada no momento em que foi colhida — o lote só
-    // anuncia. Os números vêm do que o servidor aceitou, não do que se tentou.
-    const ok = r.feitos.filter(f => f.ok);
-    salvo.lotes += r.parado ? 0 : 1;
-    salvo.vitrines += ok.length;
-    salvo.produtos += ok.reduce((n, f) => n + (f.produtos || 0), 0);
-    onProgresso({ tipo: "lote-salvo", k: k + 1, de: lotes.length, completo: !r.parado, ...salvo, em: new Date() });
-    const produtosDoLote = ok.reduce((n, f) => n + (f.produtos || 0), 0);
-    log("ok", `💾 lote ${k + 1}/${lotes.length} ${r.parado ? "interrompido — o que foi colhido está salvo" : "salvo"}: ${ok.length} vitrine(s), ${produtosDoLote} produto(s) · acumulado ${salvo.vitrines} vitrine(s), ${salvo.produtos} produto(s)`);
-
-    if (r.muro) { muro = true; parado = r.parado; break; }
-    if (r.parado) { parado = r.parado; break; }
-    if (k < lotes.length - 1) {
-      const ms = cfg.pausaEntreVitrinesMs || 4000;
-      onProgresso({ tipo: "pausa", ms, motivo: "entre lotes" });
-      await new Promise(res => setTimeout(res, ms));
+  } finally {
+    // A ativação em segundo plano PRECISA terminar antes de o ciclo devolver: é ela
+    // que chama o `local/fim`, e sem ele o servidor fica "rodando" e recusa a
+    // próxima varredura. Ela vê o mesmo `parou()` e para sozinha.
+    if (fundo) {
+      const r = await fundo.promessa;
+      ativados += r.ativados || 0;
     }
+    await carimbar();
   }
 
   return { feitos, ativados, parado, muro, lotes: salvo.lotes };
@@ -160,7 +229,9 @@ export async function umCiclo({
 // Uma passada pela lista do ML clicando "Eu quero" SÓ nos ids do lote. O servidor
 // encerra a varredura assim que todos eles apareceram, e grava cada um na página
 // em que apareceu — um Parar aqui não perde o que já foi ativado.
-async function ativarLote(ids, { cfg, pular, parou, log, onProgresso }) {
+//
+// `fundo` = rodando em segundo plano, enquanto o lote anterior colhe vitrines.
+async function ativarLote(ids, { cfg, pular, parou, log, onProgresso, fundo = false }) {
   // Marcados ANTES da passada: o que importa é que foram TENTADOS. Quem o
   // `aAtivar` recusou (vencido, rótulo repetido entre duas campanhas) nunca vai
   // ganhar `containerUrl`, e sem isto todo ciclo repetiria a varredura da lista
@@ -168,6 +239,7 @@ async function ativarLote(ids, { cfg, pular, parou, log, onProgresso }) {
   for (const id of ids) pular?.ativacao.add(id);
   const teto = cfg.maxActivationsPerRun == null ? "todos eles" : `até ${cfg.maxActivationsPerRun} deles`;
   log("aviso", `${ids.length} cupom(ns) sem vitrine — vou clicar em "Eu quero" em ${teto} na sua conta do ML`);
+  if (fundo) onProgresso({ tipo: "ativando", n: ids.length });
   let r = null;
   let tabId = null;
   let fim = null;
@@ -193,17 +265,33 @@ async function ativarLote(ids, { cfg, pular, parou, log, onProgresso }) {
   };
 }
 
-// As vitrines de uma lista de cupons, uma de cada vez, com pausa. Em paralelo
-// seriam N abas do Chrome batendo no ML com a mesma conta — que é o padrão que
-// acorda o anti-robô, e o muro vale para a CONTA, não para aquela vitrine.
-async function colherVitrines(fila, { cfg, pular, parou, log, onProgresso }) {
+// As vitrines de uma lista de cupons, `paralelo` de cada vez (task 14).
+//
+// Era uma por vez, e o motivo continua valendo: N abas batendo no ML com a mesma
+// conta é o padrão que acorda o anti-robô, e o muro vale para a CONTA, não para
+// aquela vitrine. Por isso o número vem do servidor com teto baixo, os workers
+// entram escalonados (não abrem N abas no mesmo instante), cada um respeita a
+// pausa entre as vitrines dele, e o primeiro muro fecha a porta para todos: quem
+// já está colhendo termina (a extensão não aborta no meio), ninguém começa outra.
+//
+// As vitrines vão com `carimbar: false` — quem carimba o catálogo é o `umCiclo`,
+// uma vez por lote.
+async function colherVitrines(fila, { cfg, paralelo = 1, freio = null, pular, parou, log, onProgresso }) {
   const feitos = [];
   let parado = null;
   let muro = false;
+  let proximo = 0;
+  const pausa = cfg.pausaEntreVitrinesMs || 4000;
+  const dormir = (ms) => new Promise(r => setTimeout(r, ms));
 
-  for (let i = 0; i < fila.length; i++) {
-    if (parou()) { parado = "Interrompido por você"; break; }
-    const c = fila[i];
+  const deveParar = () => {
+    if (parado) return true;
+    if (parou()) { parado = "Interrompido por você"; return true; }
+    if (freio?.parado) { parado = freio.parado; return true; }
+    return false;
+  };
+
+  async function umaVitrine(c, i) {
     pular?.vitrine.add(c.campaignId);
     onProgresso({ tipo: "vitrine-abrindo", campaignId: c.campaignId, title: c.title, i: i + 1, de: fila.length });
 
@@ -212,6 +300,7 @@ async function colherVitrines(fila, { cfg, pular, parou, log, onProgresso }) {
     // do tipo fazia o laço seguir para o próximo cupom depois de a conta já ter
     // sido questionada — que é o oposto do que este freio existe pra fazer.
     let viuMuro = false;
+    let feito;
     try {
       const r = await raparVitrine(c.containerUrl, {
         paginas: cfg.maxPaginasVitrine,
@@ -222,35 +311,48 @@ async function colherVitrines(fila, { cfg, pular, parou, log, onProgresso }) {
         onProgresso: (ev) => { if (ev?.tipo === "muro") viuMuro = true; onProgresso({ ...ev, campaignId: c.campaignId }); },
       });
       if (!r.produtos.length) {
-        feitos.push({ campaignId: c.campaignId, title: c.title, ok: false, vazia: true, produtos: 0, erro: r.motivo || null });
+        feito = { campaignId: c.campaignId, title: c.title, ok: false, vazia: true, produtos: 0, erro: r.motivo || null };
         log("aviso", `${c.title}: a vitrine veio vazia${r.motivo ? ` (${r.motivo})` : ""}`);
       } else {
         // `parcial` viaja intacto: coleta que parou no muro ou no teto de páginas
         // não pode entrar como lista fechada, senão o sistema passa a dizer "fora
         // da vitrine" para produto que o cupom cobre.
-        await adminMlCuponsImportVitrine(c.campaignId, { products: r.produtos, parcial: r.parcial });
-        feitos.push({ campaignId: c.campaignId, title: c.title, ok: true, produtos: r.produtos.length, parcial: r.parcial });
+        await adminMlCuponsImportVitrine(c.campaignId, { products: r.produtos, parcial: r.parcial, carimbar: false });
+        feito = { campaignId: c.campaignId, title: c.title, ok: true, produtos: r.produtos.length, parcial: r.parcial };
         log("ok", `💾 ${c.title}: ${r.produtos.length} produtos gravados${r.parcial ? " (parcial)" : ""}`);
       }
     } catch (err) {
-      feitos.push({ campaignId: c.campaignId, title: c.title, ok: false, produtos: 0, erro: err.message });
+      feito = { campaignId: c.campaignId, title: c.title, ok: false, produtos: 0, erro: err.message };
       log("erro", `${c.title}: ${err.message}`);
     }
-    onProgresso({ tipo: "vitrine-feita", ...feitos.at(-1) });
+    feitos.push(feito);
+    onProgresso({ tipo: "vitrine-feita", ...feito });
 
     // Muro é estado da CONTA, não daquela vitrine: seguir para o próximo cupom só
     // queima a conta mais rápido, e a conta é a mesma do Hub.
-    if (viuMuro) {
+    if (viuMuro && !muro) {
       muro = true;
       parado = "O Mercado Livre pediu verificação — parei aqui de propósito";
-      break;
-    }
-    if (i < fila.length - 1) {
-      const ms = cfg.pausaEntreVitrinesMs || 4000;
-      onProgresso({ tipo: "pausa", ms, motivo: "entre vitrines" });
-      await new Promise(r => setTimeout(r, ms));
     }
   }
+
+  async function trabalhador(w) {
+    // Escalonado: o segundo entra meia pausa depois do primeiro, e assim por diante.
+    if (w > 0) await dormir(Math.round((w * pausa) / paralelo));
+    for (;;) {
+      if (deveParar() || proximo >= fila.length) return;
+      const i = proximo++;
+      await umaVitrine(fila[i], i);
+      if (deveParar() || proximo >= fila.length) return;
+      // Com um trabalhador só, a pausa é anunciada como sempre foi; com vários, o
+      // painel mostra as vitrines em curso, e uma "pausa" por cima dele mentiria.
+      if (paralelo === 1) onProgresso({ tipo: "pausa", ms: pausa, motivo: "entre vitrines" });
+      await dormir(pausa);
+    }
+  }
+
+  const n = Math.min(paralelo, fila.length);
+  await Promise.all(Array.from({ length: n }, (_, w) => trabalhador(w)));
 
   return { feitos, parado, muro };
 }

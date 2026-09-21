@@ -62,3 +62,32 @@ describe("estimativaMs", () => {
     expect(duracao(125_000)).toBe("2min 05s");
   });
 });
+
+describe("vitrines em paralelo e ativação de fundo (task 14)", () => {
+  it("guarda todas as vitrines abertas e tira a que terminou", () => {
+    const e = rodar([
+      { tipo: "fila", total: 3, paralelo: 2 },
+      { tipo: "vitrine-abrindo", campaignId: "A", title: "A", i: 1, de: 3 },
+      { tipo: "vitrine-abrindo", campaignId: "B", title: "B", i: 2, de: 3 },
+      { tipo: "pagina", campaignId: "A", pagina: 3, produtos: 90 },
+      { tipo: "vitrine-feita", campaignId: "B", ok: true, produtos: 5 },
+    ]);
+    expect(Object.keys(e.atuais)).toEqual(["A"]);
+    expect(e.atuais.A).toMatchObject({ pagina: 3, produtos: 90 });
+    expect(e.atual.campaignId).toBe("A");
+    expect(e.paralelo).toBe(2);
+  });
+
+  it("a ativação de fundo não troca a etapa, mas conta os cliques", () => {
+    const e = rodar([
+      { tipo: "vitrine-abrindo", campaignId: "A", title: "A" },
+      { tipo: "ativando", n: 4, fundo: true, loteFundo: 2 },
+      { tipo: "pagina-abrindo", pagina: 3, fundo: true, loteFundo: 2 },
+      { tipo: "ativou", fundo: true, loteFundo: 2 },
+    ]);
+    expect(e.etapa).toBe("vitrine");
+    expect(e.ativacaoFundo).toEqual({ lote: 2, pagina: 3, n: 4 });
+    expect(e.contagem.ativados).toBe(1);
+    expect(reduzirAndamento(e, { tipo: "ativacao-fundo-fim", loteFundo: 2 }).ativacaoFundo).toBeNull();
+  });
+});

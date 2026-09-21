@@ -30,6 +30,8 @@ vi.mock("../data/api", () => ({
   adminMlCuponsDelete: vi.fn(),
   adminMlCuponsAlvosProdutos: vi.fn(),
   adminMlCuponsImportVitrine: vi.fn(),
+  // O carimbo do catálogo uma vez por lote (task 14).
+  adminMlCuponsCarimbar: vi.fn(() => Promise.resolve({ carimbados: 0, limpos: 0 })),
   adminMlCuponsLocalStart: vi.fn(),
   adminMlCuponsLocalAtivar: vi.fn(),
   adminMlCuponsLocalPagina: vi.fn(),
@@ -308,7 +310,7 @@ describe("etapa 2 — buscar os produtos", () => {
     fireEvent.click(await screen.findByRole("button", { name: BOTAO_PRODUTOS }));
 
     await waitFor(() => expect(adminMlCuponsImportVitrine).toHaveBeenCalledWith(
-      "13471229", { products: [produto], parcial: false },
+      "13471229", { products: [produto], parcial: false, carimbar: false },
     ));
     expect(await screen.findByText(/Busca de produtos terminada/)).toBeInTheDocument();
   });
@@ -323,7 +325,7 @@ describe("etapa 2 — buscar os produtos", () => {
     fireEvent.click(await screen.findByRole("button", { name: BOTAO_PRODUTOS }));
 
     await waitFor(() => expect(adminMlCuponsImportVitrine).toHaveBeenCalledWith(
-      "13471229", { products: [produto], parcial: true },
+      "13471229", { products: [produto], parcial: true, carimbar: false },
     ));
     expect((await screen.findAllByText(/parcial/)).length).toBeGreaterThan(0);
   });
@@ -446,7 +448,7 @@ describe("etapa 2 — buscar os produtos", () => {
     // …e voltam para a extensão como ordem de clique, na aba já aberta.
     expect(paginaDeCupons).toHaveBeenNthCalledWith(2, { tabId: 9, rotulos: ["Aplicar cupom 15 por cento OFF"] }, expect.anything());
     // E só então a vitrine.
-    await waitFor(() => expect(adminMlCuponsImportVitrine).toHaveBeenCalledWith("77", { products: [produto], parcial: false }));
+    await waitFor(() => expect(adminMlCuponsImportVitrine).toHaveBeenCalledWith("77", { products: [produto], parcial: false, carimbar: false }));
   });
 
   it("com a aceitação desligada, ninguém é aceito — só se raspa quem já tem vitrine", async () => {
@@ -477,7 +479,7 @@ describe("etapa 2 — buscar os produtos", () => {
     // A fila é pedida para AQUELE cupom: sem isso o botão da linha percorreria a
     // lista inteira.
     await waitFor(() => expect(adminMlCuponsAlvosProdutos).toHaveBeenCalledWith({ campaignId: "42" }));
-    await waitFor(() => expect(adminMlCuponsImportVitrine).toHaveBeenCalledWith("42", { products: [produto], parcial: false }));
+    await waitFor(() => expect(adminMlCuponsImportVitrine).toHaveBeenCalledWith("42", { products: [produto], parcial: false, carimbar: false }));
   });
 });
 

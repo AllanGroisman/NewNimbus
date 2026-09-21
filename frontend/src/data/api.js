@@ -649,8 +649,12 @@ export async function adminMlCuponsSyncProducts(campaignId) {
 // A vitrine colhida pela extensão no Chrome do admin (extension/ na raiz). O
 // `parcial` é o campo caro: coleta interrompida (muro, teto de páginas) não pode
 // entrar como lista fechada — o backend grava origem "landing" quando ele vem.
-export async function adminMlCuponsImportVitrine(campaignId, { products, parcial = false } = {}) {
-  return http("POST", `/api/admin/ml-cupons/${encodeURIComponent(campaignId)}/vitrine-local`, { products, parcial }, { timeoutMs: SLOW_TIMEOUT_MS });
+export async function adminMlCuponsImportVitrine(campaignId, { products, parcial = false, carimbar = true } = {}) {
+  return http("POST", `/api/admin/ml-cupons/${encodeURIComponent(campaignId)}/vitrine-local`, { products, parcial, carimbar }, { timeoutMs: SLOW_TIMEOUT_MS });
+}
+// O carimbo do catálogo que a etapa 2 adia com `carimbar: false` — uma vez por lote.
+export async function adminMlCuponsCarimbar() {
+  return http("POST", "/api/admin/ml-cupons/carimbar", {}, { timeoutMs: SLOW_TIMEOUT_MS });
 }
 // O passo final do diagnóstico da aba Config Test: pede ao servidor um link de
 // afiliado do sistema pra uma URL de produto. É o que prova cookie E tag valendo

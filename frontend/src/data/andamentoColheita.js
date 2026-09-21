@@ -40,6 +40,14 @@ export function andamentoInicial(agora = Date.now()) {
     fila: null,          // { total, feitos, encerrados, aAtivar, prontos }
     lote: null,          // { k, de }
     atual: null,         // { title, i, de, pagina, produtos, maxPaginas, maxProdutos }
+    // As vitrines ABERTAS agora, por campaignId (task 14: várias ao mesmo tempo).
+    // `atual` continua sendo a última aberta, para quem só mostra uma.
+    atuais: {},
+    // A ativação do próximo lote correndo em segundo plano, enquanto este colhe.
+    // Fica fora da `etapa` de propósito: senão o painel pularia de "vitrine" para
+    // "ativando" e de volta a cada página da lista.
+    ativacaoFundo: null, // { lote, pagina, n }
+    paralelo: 1,
     lista: null,         // { pagina, grouping }
     pausa: null,         // { ate, ms, motivo }
     // A ativação de um lote É uma passada pela lista do ML (`percorrerLista` com
@@ -62,6 +70,9 @@ export function reduzirAndamento(estado, evento) {
   const e = estado || andamentoInicial(evento.agora);
   const agora = evento.agora ?? Date.now();
 
+  if (evento.fundo) return reduzirFundo(e, evento);
+  if (evento.tipo === "ativacao-fundo-fim") return { ...e, ativacaoFundo: null };
+
   switch (evento.tipo) {
     case "ciclo":
       return { ...e, ciclo: evento.ciclo, maxCiclos: evento.maxCiclos ?? e.maxCiclos, etapa: "preparando", pausa: null };
@@ -82,6 +93,8 @@ export function reduzirAndamento(estado, evento) {
         fila: { total: evento.total, feitos: 0, encerrados: 0, aAtivar: evento.aAtivar || 0, prontos: evento.prontos || 0 },
         lote: null,
         atual: null,
+        atuais: {},
+        paralelo: evento.paralelo || 1,
         medidos: { desde: null, n: 0 },
         maxPaginas: evento.maxPaginas ?? null,
         maxProdutos: evento.maxProdutos ?? null,
@@ -102,19 +115,29 @@ export function reduzirAndamento(estado, evento) {
     case "ativou":
       return { ...e, contagem: { ...e.contagem, ativados: e.contagem.ativados + 1 } };
 
-    case "vitrine-abrindo":
+    case "vitrine-abrindo": {
+      const atual = { campaignId: evento.campaignId, title: evento.title, i: evento.i, de: evento.de, pagina: 0, produtos: 0 };
       return {
         ...e,
         etapa: "vitrine",
         pausa: null,
         ativandoLote: false,
-        atual: { title: evento.title, i: evento.i, de: evento.de, pagina: 0, produtos: 0 },
+        atual,
+        atuais: evento.campaignId ? { ...(e.atuais || {}), [evento.campaignId]: atual } : (e.atuais || {}),
         medidos: e.medidos.desde == null ? { desde: agora, n: 0 } : e.medidos,
       };
+    }
 
-    case "pagina":
+    case "pagina": {
       if (e.etapa === "lista" || e.etapa === "ativando") return e;
+      const id = evento.campaignId;
+      const atuais = e.atuais || {};
+      if (id && atuais[id]) {
+        const um = { ...atuais[id], pagina: evento.pagina, produtos: evento.produtos };
+        return { ...e, atuais: { ...atuais, [id]: um }, atual: e.atual?.campaignId === id ? um : e.atual };
+      }
       return { ...e, atual: { ...(e.atual || {}), pagina: evento.pagina, produtos: evento.produtos } };
+    }
 
     case "vitrine-feita": {
       const c = { ...e.contagem };
@@ -125,7 +148,14 @@ export function reduzirAndamento(estado, evento) {
       } else if (evento.vazia) c.vazias++;
       else c.falhas++;
       const fila = e.fila ? { ...e.fila, feitos: Math.min(e.fila.total, e.fila.feitos + 1) } : null;
-      return { ...e, contagem: c, fila, medidos: { ...e.medidos, n: e.medidos.n + 1 } };
+      const atuais = { ...(e.atuais || {}) };
+      if (evento.campaignId) delete atuais[evento.campaignId];
+      // A que terminou sai do "agora"; se ainda há outra aberta, ela passa a ser a vez.
+      const restantes = Object.values(atuais);
+      const atual = e.atual?.campaignId && e.atual.campaignId === evento.campaignId
+        ? (restantes.at(-1) || e.atual)
+        : e.atual;
+      return { ...e, contagem: c, fila, atuais, atual, medidos: { ...e.medidos, n: e.medidos.n + 1 } };
     }
 
     case "lote-salvo":
@@ -139,6 +169,25 @@ export function reduzirAndamento(estado, evento) {
     case "muro":
       return { ...e, etapa: "muro", pausa: null };
 
+    default:
+      return e;
+  }
+}
+
+// Os eventos da ativação em SEGUNDO PLANO (`fundo: true`, ver produtosNoChrome.js).
+// Contam cliques e muro como qualquer outro, mas não mexem na etapa nem na vitrine
+// da vez — quem está na frente é a colheita.
+function reduzirFundo(e, evento) {
+  const atual = e.ativacaoFundo || { lote: evento.loteFundo || null, pagina: null, n: null };
+  switch (evento.tipo) {
+    case "ativando":
+      return { ...e, ativacaoFundo: { ...atual, lote: evento.loteFundo ?? atual.lote, n: evento.n ?? atual.n } };
+    case "pagina-abrindo":
+      return { ...e, ativacaoFundo: { ...atual, pagina: evento.pagina } };
+    case "ativou":
+      return { ...e, ativacaoFundo: atual, contagem: { ...e.contagem, ativados: e.contagem.ativados + 1 } };
+    case "muro":
+      return { ...e, etapa: "muro", pausa: null, ativacaoFundo: atual };
     default:
       return e;
   }

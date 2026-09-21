@@ -88,6 +88,11 @@ const DEFAULT_CONFIG = {
   // e nenhuma vitrine chegava a ser aberta. Com lote, parar perde no máximo o lote
   // em andamento.
   tamanhoLoteProdutos: 20,
+  // Quantas vitrines a etapa 2 abre AO MESMO TEMPO no Chrome do admin (task 14).
+  // Era uma por vez, de propósito: várias abas batendo no ML com a mesma conta é o
+  // padrão que acorda o anti-robô, e o muro vale para a CONTA — que é a do Hub. O
+  // teto de 4 é esse freio; se uma aba bater no muro, nenhuma outra começa.
+  vitrinesEmParalelo: 2,
 };
 
 // Um "false" em TEXTO é o erro clássico — `!!"false"` é true —, e ele chega de
@@ -296,6 +301,7 @@ function writeConfig(cfg) {
   merged.pausaEntreCiclosMs = inteiro(merged.pausaEntreCiclosMs, { min: 5000, max: 600000, padrao: DEFAULT_CONFIG.pausaEntreCiclosMs });
   merged.maxCiclos = inteiro(merged.maxCiclos, { min: 1, max: 200, padrao: DEFAULT_CONFIG.maxCiclos });
   merged.tamanhoLoteProdutos = inteiro(merged.tamanhoLoteProdutos, { min: 1, max: 200, padrao: DEFAULT_CONFIG.tamanhoLoteProdutos });
+  merged.vitrinesEmParalelo = inteiro(merged.vitrinesEmParalelo, { min: 1, max: 4, padrao: DEFAULT_CONFIG.vitrinesEmParalelo });
   merged.carimbarCategorias = booleano(merged.carimbarCategorias, DEFAULT_CONFIG.carimbarCategorias);
   merged.skipStoreCoupons = booleano(merged.skipStoreCoupons, DEFAULT_CONFIG.skipStoreCoupons);
   merged.activateCoupons = booleano(merged.activateCoupons, DEFAULT_CONFIG.activateCoupons);
@@ -1073,7 +1079,12 @@ function validarProdutosDaVitrine(lista) {
 // A porta do agente. `parcial` NUNCA pode ser esquecido: o laço que parou no muro
 // ou no teto de páginas viu um pedaço da vitrine, e gravar isso como lista fechada
 // autorizaria o sistema a dizer "fora da vitrine" para produto que está nela.
-async function gravarVitrineLocal(campaignId, lista, { parcial = false } = {}) {
+//
+// `carimbar: false` é da etapa 2 com vitrines em paralelo: o `syncCatalogCoupons`
+// varre a tabela de vínculos inteira, e rodá-lo a cada vitrine era a mesma conta
+// repetida — com gravações concorrentes, disputando o banco. A tela carimba uma
+// vez por lote (`carimbarCatalogo`).
+async function gravarVitrineLocal(campaignId, lista, { parcial = false, carimbar = true } = {}) {
   const cupom = await coupons.getCoupon(campaignId);
   if (!cupom) throw new Error("Esse cupom não está no sistema — puxe os cupons primeiro.");
 
@@ -1087,8 +1098,15 @@ async function gravarVitrineLocal(campaignId, lista, { parcial = false } = {}) {
   const cortou = produtos.length > teto;
   const r = await gravarVitrine(campaignId, cupom, cortou ? produtos.slice(0, teto) : produtos, {
     parcial: !!parcial || cortou,
+    carimbar,
   });
   return { ...r, descartados: descartados.length, cortadosPeloTeto: cortou ? produtos.length - teto : 0 };
+}
+
+// O carimbo adiado do `gravarVitrineLocal({ carimbar: false })`: uma vez por lote.
+async function carimbarCatalogo() {
+  const r = await coupons.syncCatalogCoupons();
+  return { carimbados: r.carimbados, limpos: r.limpos };
 }
 
 // Quem ainda precisa de produtos — a fila da ETAPA 2.
@@ -1116,6 +1134,7 @@ async function alvosDeProdutos({ limit = 500, campaignIds = null, soSemProdutos 
       pausaEntreCiclosMs: Number(cfg.pausaEntreCiclosMs) || DEFAULT_CONFIG.pausaEntreCiclosMs,
       maxCiclos: Number(cfg.maxCiclos) || DEFAULT_CONFIG.maxCiclos,
       tamanhoLoteProdutos: Number(cfg.tamanhoLoteProdutos) || DEFAULT_CONFIG.tamanhoLoteProdutos,
+      vitrinesEmParalelo: Math.min(4, Math.max(1, Number(cfg.vitrinesEmParalelo) || DEFAULT_CONFIG.vitrinesEmParalelo)),
       activateCoupons: ativa,
       // Três valores distintos, e a tela precisa dos três separados: `0` é
       // "ativação desligada", `null` é "ligada, sem teto", número é o teto. Antes
@@ -1371,6 +1390,7 @@ module.exports = {
   syncOneCoupon,
   gravarVitrine,
   gravarVitrineLocal,
+  carimbarCatalogo,
   alvosDeProdutos,
   validarProdutosDaVitrine,
   MAX_PRODUTOS_DA_VITRINE,

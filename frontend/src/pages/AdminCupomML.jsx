@@ -1197,6 +1197,8 @@ export function Config({ config, labels, onSaved }) {
         <Numerico cfg={cfg} setCfg={setCfg} chave="maxPaginasVitrine" label="Páginas da vitrine" min={1} max={20}
           dica="A vitrine anda de 48 em 48 produtos. 11 páginas = até 528, o suficiente pro teto de 500." />
         <Numerico cfg={cfg} setCfg={setCfg} chave="pausaEntreVitrinesMs" label="Pausa entre vitrines (ms)" min={500} max={30000} largura={140} />
+        <Numerico cfg={cfg} setCfg={setCfg} chave="vitrinesEmParalelo" label="Vitrines em paralelo" min={1} max={4}
+          dica="Quantas vitrines abrem ao mesmo tempo (1 a 4). Mais abas é mais rápido, e também mais chance de o ML pedir verificação: o primeiro pedido para todas." />
         <Numerico cfg={cfg} setCfg={setCfg} chave="tamanhoLoteProdutos" label="Cupons por lote" min={1} max={200}
           dica="Ativa, colhe e grava este tanto de cupons antes de passar aos próximos. Parar no meio perde no máximo o lote em andamento." />
         <Marcador cfg={cfg} setCfg={setCfg} chave="activateCoupons" label="aceitar os cupons automaticamente (“Eu quero”)" />
@@ -1209,7 +1211,9 @@ export function Config({ config, labels, onSaved }) {
         vitrine: sem aceitar, o ML não diz quais produtos ele cobre. A conta é a mesma do Hub de
         Afiliados, então a etapa 2 vai com pausa entre as abas e para no primeiro pedido de
         verificação — mas <b>sem teto de aceites ela clica em todos de uma vez</b>, que é o padrão
-        que mais acorda o anti-robô. Se o teto de produtos cortar a vitrine no meio, ela entra
+        que mais acorda o anti-robô. O mesmo vale para as <b>vitrines em paralelo</b>: cada aba a mais
+        é mais uma batendo no ML com a mesma conta. Enquanto um lote colhe, o próximo já vai sendo
+        aceito numa aba à parte. Se o teto de produtos cortar a vitrine no meio, ela entra
         marcada como <b>parcial</b> — prévia, não lista fechada.
       </div>
 
