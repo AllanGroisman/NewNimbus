@@ -147,8 +147,25 @@ async function replaceCouponProducts(campaignId, items, { origem = "vitrine" } =
 // `campanhas` é o escopo do apagamento, e é separado de `pares` de propósito: o
 // cupom cuja lista veio VAZIA precisa ter os vínculos daquela origem apagados, e
 // ele não aparece em par nenhum.
+//
+// Cada par passa antes pela chave CANÔNICA do catálogo (catalog/pg.js:resolveKeys):
+// o mesmo anúncio chega com chaves diferentes pela vitrine (nº de catálogo no
+// caminho) e pelo scraping (nº do anúncio), e o vínculo tem que apontar para a
+// linha que existe — senão o carimbo do `syncCatalogCoupons` nunca acha o produto.
+// `linkAnuncio` é a URL a usar nessa resolução quando a `productUrl` não diz o
+// anúncio (a sintética da amostra é `/p/`, mas o número é de anúncio).
 async function gravarVinculos(pares, campanhas, origem) {
   const agora = nowish();
+
+  const catalog = require("../catalog/pg");
+  const canonica = await catalog.resolveKeys(
+    (pares || []).map(p => ({ key: p.productKey, link: p.linkAnuncio || p.productUrl })),
+  );
+  pares = (pares || []).map(p => ({
+    campaignId: p.campaignId,
+    productKey: canonica.get(p.productKey) || p.productKey,
+    productUrl: p.productUrl,
+  }));
 
   // Deduplicado porque o ML repete anúncio entre páginas da vitrine, e um INSERT
   // com a mesma chave duas vezes morre em "ON CONFLICT DO UPDATE command cannot
@@ -234,7 +251,10 @@ async function replaceCouponSamplesMany(cupons) {
     for (const id of c.sampleItemIds || []) {
       const link = linkSinteticoML(id);
       if (!link) continue;
-      pares.push({ campaignId, productKey: productKey({ link }), productUrl: link });
+      // O número da amostra é de ANÚNCIO (ver coupons/enrich-samples.js), e é pela
+      // URL de anúncio que a resolução acha a linha do catálogo que já o tem.
+      const linkAnuncio = link.replace(/^.*\/p\/MLB/, "https://produto.mercadolivre.com.br/MLB-");
+      pares.push({ campaignId, productKey: productKey({ link }), productUrl: link, linkAnuncio });
     }
   }
 
@@ -516,7 +536,7 @@ async function couponsListForKeys(keys) {
   if (!lista.length) return new Map();
 
   const rows = await prisma().$queryRaw`
-    SELECT p."productKey", c."campaign_id" AS "campaignId", c."title", c."kind", c."value",
+    SELECT p."productKey", p."origem", c."campaign_id" AS "campaignId", c."title", c."kind", c."value",
            c."minPurchase", c."maxDiscount", c."code", c."startsAt", c."expiresAt",
            c."scope", c."sellerName"
       FROM "ml_coupon_products" p
@@ -845,10 +865,16 @@ async function marcarEnriquecimento(productKeys) {
 // que o checkout disse dele — e só criado: cupom que já existe não é reescrito,
 // porque a linha da aba sabe coisas (vitrine, amostras) que o checkout não traz.
 async function vincularPorCheckout({ productKeys, productUrl, cupons }) {
-  const chaves = [...new Set((productKeys || []).filter(Boolean))];
+  const candidatas = [...new Set((productKeys || []).filter(Boolean))];
   const lista = (cupons || []).filter(c => c?.campaignId);
-  if (!chaves.length || !lista.length || !productUrl) return { vinculados: 0, cuponsNovos: 0 };
+  if (!candidatas.length || !lista.length || !productUrl) return { vinculados: 0, cuponsNovos: 0 };
   const agora = nowish();
+
+  // As candidatas continuam todas (o quick-check pergunta por qualquer uma delas),
+  // e ganham a chave da linha do catálogo que já tem este anúncio, se for outra —
+  // é nela que o carimbo do cupom tem que cair.
+  const canonica = await require("../catalog/pg").resolveKeys(candidatas.map(key => ({ key, link: productUrl })));
+  const chaves = [...new Set([...candidatas, ...canonica.values()])];
 
   const { count: cuponsNovos } = await prisma().mlCoupon.createMany({
     data: lista.map(c => ({

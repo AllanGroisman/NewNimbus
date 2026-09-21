@@ -1,6 +1,7 @@
 // Implementação Postgres do catálogo (tudo async via Prisma).
+const { Prisma } = require("@prisma/client");
 const { prisma } = require("../db");
-const { productKey, mlItemIdFromUrl, mlUrlSpace } = require("./product-key");
+const { productKey, mlItemIdFromUrl, mlUrlSpace, mlAnuncioIdFromUrl } = require("./product-key");
 
 function storeToId(store) {
   if (!store) return null;
@@ -25,7 +26,7 @@ function parseSold(s) {
 const INDEXED_FIELDS = new Set([
   "key", "name", "link", "img", "price", "originalPrice",
   "discount", "store", "category", "rating", "sold", "soldCount",
-  "firstSeenAt", "lastSeenAt",
+  "mlAnuncioId", "firstSeenAt", "lastSeenAt",
 ]);
 
 function toRow(p, key, now) {
@@ -52,6 +53,7 @@ function toRow(p, key, now) {
     soldCount: p.soldCount != null && p.soldCount !== "" && Number.isFinite(Number(p.soldCount))
       ? Math.round(Number(p.soldCount))
       : parseSold(p.sold),
+    mlAnuncioId: mlAnuncioIdFromUrl(p.link),
     payload,
     lastSeenAt: now,
   };
@@ -84,24 +86,88 @@ function fromRow(r) {
   };
 }
 
+// A chave que cada produto deve usar no catálogo: Map<keyPedida, keyCanônica>.
+//
+// O mesmo anúncio do ML chega com chaves diferentes conforme o caminho (ver
+// product-key.js:mlAnuncioIdFromUrl): a vitrine do cupom manda o nº de catálogo
+// no caminho, o scraping manda o nº do anúncio. Se já existe linha com aquele
+// anúncio, a chave dela é a canônica — a mais antiga, se houver mais de uma, que
+// é a mesma escolha do scripts/merge-ml-duplicates.js. Se não existe, a primeira
+// chave pedida para o anúncio vira a de todas (dois caminhos na mesma chamada).
+//
+// É o que o upsert usa para gravar na linha certa e o que os vínculos de cupom
+// (coupons/pg.js:gravarVinculos) usam para apontar para ela. Chave sem anúncio
+// (Amazon, Shopee, /p/ sem `wid`) é canônica de si mesma.
+async function resolveKeys(items) {
+  const mapa = new Map();
+  const porAnuncio = new Map();
+  for (const it of items || []) {
+    if (!it?.key) continue;
+    if (!mapa.has(it.key)) mapa.set(it.key, it.key);
+    const anuncio = mlAnuncioIdFromUrl(it.link);
+    if (!anuncio) continue;
+    if (!porAnuncio.has(anuncio)) porAnuncio.set(anuncio, []);
+    porAnuncio.get(anuncio).push(it.key);
+  }
+  if (!porAnuncio.size) return mapa;
+
+  const dono = new Map();
+  const anuncios = [...porAnuncio.keys()];
+  const LOTE = 1000;
+  for (let i = 0; i < anuncios.length; i += LOTE) {
+    const rows = await prisma().catalogProduct.findMany({
+      where: { mlAnuncioId: { in: anuncios.slice(i, i + LOTE) } },
+      select: { key: true, mlAnuncioId: true },
+      orderBy: [{ firstSeenAt: "asc" }, { key: "asc" }],
+    });
+    for (const r of rows) if (!dono.has(r.mlAnuncioId)) dono.set(r.mlAnuncioId, r.key);
+  }
+
+  for (const [anuncio, chaves] of porAnuncio) {
+    const canonica = dono.get(anuncio) || chaves[0];
+    for (const k of chaves) mapa.set(k, canonica);
+  }
+  return mapa;
+}
+
 async function upsertProducts(products) {
   const now = new Date();
-  let inserted = 0, updated = 0;
+  let inserted = 0, updated = 0, fundidos = 0;
+
+  const valid = (products || []).filter(p => p && p.name);
+  const comChave = valid.map(p => ({ p, key: productKey(p) }));
+  const canonical = await resolveKeys(comChave.map(({ p, key }) => ({ key, link: p.link })));
+
+  // Um item por chave canônica: dois caminhos do mesmo anúncio na mesma chamada
+  // viravam dois upserts concorrentes da MESMA linha. Fica, de preferência, o que
+  // É a chave canônica (link coerente com a key); senão o último.
+  const porChave = new Map();
+  for (const { p, key } of comChave) {
+    const alvo = canonical.get(key) || key;
+    const atual = porChave.get(alvo);
+    if (!atual || key === alvo || atual.key !== alvo) porChave.set(alvo, { p, key, alvo });
+  }
 
   // Em batch via transação. Prisma não tem ON CONFLICT bulk nativo no client JS;
   // usamos upsert individual em batches concorrentes pra não saturar a conexão.
+  const itens = [...porChave.values()];
   const BATCH = 50;
-  const valid = (products || []).filter(p => p && p.name);
-  for (let i = 0; i < valid.length; i += BATCH) {
-    const slice = valid.slice(i, i + BATCH);
-    const ops = slice.map(async p => {
-      const key = productKey(p);
-      const row = toRow(p, key, now);
+  for (let i = 0; i < itens.length; i += BATCH) {
+    const slice = itens.slice(i, i + BATCH);
+    const ops = slice.map(async ({ p, key, alvo }) => {
+      const row = toRow(p, alvo, now);
+      // Gravando na linha de OUTRA chave (o mesmo anúncio que já estava lá): o
+      // `link` fica o da linha, que é o que casa com a key dela — trocar o link
+      // e manter a key deixaria os dois se desmentindo. O cupom (`couponCampaignId`)
+      // nunca passa pelo upsert, então continua na linha.
+      const fundindo = key !== alvo;
+      const { link: _link, ...semLink } = row;
       const res = await prisma().catalogProduct.upsert({
-        where: { key },
+        where: { key: alvo },
         create: { ...row, firstSeenAt: now },
-        update: { ...row },
+        update: fundindo ? semLink : { ...row },
       });
+      if (fundindo) fundidos++;
       // Detecta se foi inserção ou update comparando timestamps
       if (res.firstSeenAt.getTime() === res.lastSeenAt.getTime()) inserted++;
       else updated++;
@@ -110,7 +176,7 @@ async function upsertProducts(products) {
   }
 
   const total = await prisma().catalogProduct.count();
-  return { inserted, updated, total };
+  return { inserted, updated, fundidos, total, canonical };
 }
 
 async function loadAll() {
@@ -140,17 +206,34 @@ async function getByLink(link, { maxAgeMs = CATALOG_MAX_AGE_MS } = {}) {
   if (!link || typeof link !== "string") return null;
   const key = productKey({ link });
   const row = await prisma().catalogProduct.findUnique({ where: { key } });
-  const p = fromRow(row);
-  if (!p) return null;
+  let p = fromRow(row);
 
-  const pedido = mlItemIdFromUrl(link);
-  const achado = mlItemIdFromUrl(p.link);
-  if (pedido && achado && pedido !== achado) return null;
-  // Mesmo número em espaços diferentes (/p/MLB123 × /MLB-123-) são produtos
-  // diferentes que caem na mesma chave — aqui a linha não serve.
-  const espacoPedido = mlUrlSpace(link);
-  const espacoAchado = mlUrlSpace(p.link);
-  if (espacoPedido && espacoAchado && espacoPedido !== espacoAchado) return null;
+  if (p) {
+    const pedido = mlItemIdFromUrl(link);
+    const achado = mlItemIdFromUrl(p.link);
+    // Mesmo número em espaços diferentes (/p/MLB123 × /MLB-123-) são produtos
+    // diferentes que caem na mesma chave — aqui a linha não serve.
+    const espacoPedido = mlUrlSpace(link);
+    const espacoAchado = mlUrlSpace(p.link);
+    if ((pedido && achado && pedido !== achado)
+        || (espacoPedido && espacoAchado && espacoPedido !== espacoAchado)) p = null;
+  }
+
+  // Pela chave não achou: o produto pode estar no catálogo pelo OUTRO caminho —
+  // o link colado é `produto.mercadolivre.com.br/MLB-<anúncio>` e a linha veio da
+  // vitrine do cupom, em `/p/MLB<catálogo>?wid=MLB<anúncio>`. O anúncio é a mesma
+  // identidade que o upsert usa para fundir as duas, então aqui não há número a
+  // conferir: foi por ele que a linha foi achada.
+  if (!p) {
+    const anuncio = mlAnuncioIdFromUrl(link);
+    if (anuncio) {
+      p = fromRow(await prisma().catalogProduct.findFirst({
+        where: { mlAnuncioId: anuncio },
+        orderBy: [{ firstSeenAt: "asc" }, { key: "asc" }],
+      }));
+    }
+  }
+  if (!p) return null;
 
   if (maxAgeMs != null) {
     const seen = p.lastSeenAt ? Date.parse(p.lastSeenAt) : NaN;
@@ -251,6 +334,86 @@ async function query({
   return rows.map(fromRow);
 }
 
+// A listagem da tela Admin › Produtos. SQL cru, e não o `buildWhere` do Prisma,
+// por causa dos filtros de CUPOM: "produto coberto pela campanha X" mora na tabela
+// de vínculos (ml_coupon_products), que não tem relação com o catálogo no schema.
+// Via Prisma isso seria buscar as chaves antes e mandar um `key IN (…)` com até
+// dezenas de milhares de itens; aqui é um EXISTS indexado por productKey.
+//
+// Só cupom VIGENTE conta, em todos os filtros — o mesmo corte do
+// `couponsListForKeys`, que é o que a tela mostra no card. Filtrar por um cupom
+// vencido e ver o card sem ele seria a tela se desmentindo.
+//
+// `cupom`: { status, busca, origem }
+//   status — "com" | "com-palavra" | "sem-palavra" | "sem"
+//   busca  — id da campanha (exato), palavra (sem caixa) ou trecho do título
+//   origem — "vitrine" | "landing" | "amostra" | "checkout" (de onde veio o vínculo)
+const ADMIN_SORTS = {
+  price_asc:     Prisma.sql`cp."price" ASC NULLS LAST`,
+  price_desc:    Prisma.sql`cp."price" DESC NULLS LAST`,
+  rating_desc:   Prisma.sql`cp."rating" DESC NULLS LAST`,
+  lastSeen_desc: Prisma.sql`cp."lastSeenAt" DESC`,
+  discount_desc: Prisma.sql`cp."discount" DESC NULLS LAST`,
+};
+const ORIGENS_CUPOM = new Set(["vitrine", "landing", "amostra", "checkout"]);
+
+async function adminQuery({
+  category = null, source = null, q = "", minDiscount = 0, sortBy = "lastSeen_desc",
+  page = 1, pageSize = 60, cupom = {},
+} = {}) {
+  const cond = [];
+  if (category) cond.push(Prisma.sql`cp."category" = ${category}`);
+  if (source) {
+    const label = { ml: "Mercado Livre", amazon: "Amazon", shopee: "Shopee" }[storeToId(source)];
+    cond.push(Prisma.sql`cp."store" = ${label || "__never_matches__"}`);
+  }
+  const termo = String(q || "").trim();
+  if (termo) cond.push(Prisma.sql`cp."name" ILIKE ${"%" + termo + "%"}`);
+  if (Number(minDiscount) > 0) cond.push(Prisma.sql`cp."discount" >= ${Number(minDiscount)}`);
+
+  // O vínculo vigente do produto, com os filtros de busca/origem já aplicados.
+  // Os filtros de status se compõem com ele: "com palavra" + busca "casa" é
+  // "tem um cupom de casa, e esse cupom tem palavra".
+  const { status = null, busca = "", origem = null } = cupom || {};
+  const vinc = [
+    Prisma.sql`p."productKey" = cp."key"`,
+    Prisma.sql`(c."expiresAt" IS NULL OR c."expiresAt" > NOW())`,
+  ];
+  const b = String(busca || "").trim();
+  if (b) {
+    vinc.push(Prisma.sql`(c."campaign_id" = ${b} OR LOWER(c."code") = LOWER(${b}) OR c."title" ILIKE ${"%" + b + "%"})`);
+  }
+  if (origem && ORIGENS_CUPOM.has(origem)) vinc.push(Prisma.sql`p."origem" = ${origem}`);
+  const existe = (extra) => Prisma.sql`EXISTS (
+    SELECT 1 FROM "ml_coupon_products" p
+      JOIN "ml_coupons" c ON c."campaign_id" = p."campaign_id"
+     WHERE ${Prisma.join([...vinc, ...(extra ? [extra] : [])], " AND ")})`;
+
+  if (status === "sem") {
+    cond.push(Prisma.sql`NOT ${existe()}`);
+  } else if (status === "com-palavra") {
+    cond.push(existe(Prisma.sql`c."code" IS NOT NULL`));
+  } else if (status === "sem-palavra") {
+    cond.push(existe());
+    cond.push(Prisma.sql`NOT ${existe(Prisma.sql`c."code" IS NOT NULL`)}`);
+  } else if (status === "com" || b || (origem && ORIGENS_CUPOM.has(origem))) {
+    // Buscar por um cupom (ou por uma origem) já implica ter o cupom.
+    cond.push(existe());
+  }
+
+  const where = cond.length ? Prisma.sql`WHERE ${Prisma.join(cond, " AND ")}` : Prisma.empty;
+  const orderBy = ADMIN_SORTS[sortBy] || ADMIN_SORTS.lastSeen_desc;
+  const take = Math.min(200, Math.max(1, Number(pageSize) || 60));
+  const skip = (Math.max(1, Number(page) || 1) - 1) * take;
+
+  const [rows, contagem] = await Promise.all([
+    prisma().$queryRaw`SELECT cp.* FROM "catalog_products" cp ${where}
+                        ORDER BY ${orderBy}, cp."key" ASC LIMIT ${take} OFFSET ${skip}`,
+    prisma().$queryRaw`SELECT COUNT(*)::int AS n FROM "catalog_products" cp ${where}`,
+  ]);
+  return { items: rows.map(fromRow), total: contagem[0]?.n || 0 };
+}
+
 // Total de produtos que batem com os filtros (pro contador/paginação da UI).
 // Mesmo `where` do query(), então o número é exato — inclusive com minSales.
 async function count({ categories, sources, excludeKeys, filters = {} } = {}) {
@@ -312,12 +475,14 @@ async function clearAll() {
 
 module.exports = {
   productKey,
+  resolveKeys,
   upsertProducts,
   loadAll,
   getByLink,
   CATALOG_MAX_AGE_MS,
   listAll,
   query,
+  adminQuery,
   count,
   getStats,
   parseSold,

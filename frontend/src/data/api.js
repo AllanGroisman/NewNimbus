@@ -675,7 +675,10 @@ export async function adminMlCupons({ page = 1, pageSize = 50, q, scope, groupin
   if (sortBy) params.set("sortBy", sortBy);
   return http("GET", `/api/admin/ml-cupons?${params}`);
 }
-export async function adminCatalog({ page = 1, pageSize = 50, category, source, q, sortBy } = {}) {
+// `cupom` (com | com-palavra | sem-palavra | sem), `cupomBusca` (id, palavra ou
+// título) e `cupomOrigem` (vitrine | landing | amostra | checkout) filtram pelo
+// vínculo cupom ↔ produto; cada item volta com `coupons` (os vigentes).
+export async function adminCatalog({ page = 1, pageSize = 50, category, source, q, sortBy, minDiscount, cupom, cupomBusca, cupomOrigem } = {}) {
   const params = new URLSearchParams();
   params.set("page", page);
   params.set("pageSize", pageSize);
@@ -683,6 +686,10 @@ export async function adminCatalog({ page = 1, pageSize = 50, category, source, 
   if (source) params.set("source", source);
   if (q) params.set("q", q);
   if (sortBy) params.set("sortBy", sortBy);
+  if (minDiscount > 0) params.set("minDiscount", minDiscount);
+  if (cupom) params.set("cupom", cupom);
+  if (cupomBusca) params.set("cupomBusca", cupomBusca);
+  if (cupomOrigem) params.set("cupomOrigem", cupomOrigem);
   return http("GET", `/api/admin/catalog?${params}`);
 }
 export async function adminClearCatalog() { return http("DELETE", "/api/admin/catalog"); }

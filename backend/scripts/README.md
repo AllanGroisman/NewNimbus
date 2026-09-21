@@ -136,6 +136,20 @@ Ele só apaga o par quando tem evidência de que os dois endereços são o mesmo
 
 Detalhes em `backend/whatsapp/README.md`, seção "O endereço LID".
 
+## Catálogo: juntar o mesmo anúncio do ML que ficou em duas linhas
+
+`merge-ml-duplicates.js` — ferramenta pontual, roda **uma vez** depois da migration `20260921180000_catalog_ml_anuncio_id`.
+
+A vitrine/landing do cupom entrega `/p/MLB<catálogo>?…&wid=MLB<anúncio>` e o scraping entrega `produto.mercadolivre.com.br/MLB-<anúncio>`: o `productKey` dos dois é diferente, e o catálogo ganhava duas linhas do mesmo produto, com o cupom carimbado numa só. Desde a coluna `mlAnuncioId` o upsert já junta os dois (ver `backend/catalog/README.md`); o script arruma o que ficou de antes.
+
+```bash
+cd backend
+node scripts/merge-ml-duplicates.js           # dry-run: quantos anúncios duplicados e exemplos
+node scripts/merge-ml-duplicates.js --apply   # preenche mlAnuncioId, junta e recarimba os cupons
+```
+
+Por anúncio repetido fica a linha **mais antiga**; os vínculos de cupom (a origem mais forte vence: vitrine > checkout > landing > amostra), a fila, os pendentes e o histórico dos grupos passam para ela, e ela herda o preço da linha vista por último. Critério é **só** o número do anúncio — mesmo nome com anúncio diferente é outro vendedor. Idempotente.
+
 ## Sonda visual: por que a busca de produtos de um cupom só traz a prévia
 
 `cupom-produtos-visual.js` fotografa, em ordem, cada página do caminho que o botão

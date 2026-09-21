@@ -64,6 +64,58 @@ function CouponBadge({ product }) {
   );
 }
 
+// A lista COMPLETA dos cupons do produto — só na tela Admin › Produtos, que é onde
+// se confere o vínculo cupom ↔ produto. Uma linha por cupom: a palavra (ou "sem
+// palavra"), o valor, o título, de onde veio o vínculo e o id da campanha, que é
+// o que se procura na aba Admin › Cupom.
+const ORIGEM_LABEL = { vitrine: "vitrine", landing: "landing", amostra: "amostra", checkout: "checkout" };
+
+function valorDoCupom(c) {
+  if (c.rotulo) return c.rotulo;
+  if (c.kind === "percent" && c.value != null) return `${c.value}% OFF`;
+  if (c.kind === "fixed" && c.value != null) return `${formatPrice(c.value)} OFF`;
+  return null;
+}
+
+function CouponList({ product }) {
+  const lista = product?.coupons || [];
+  if (!lista.length) {
+    return <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Sem cupom vinculado</div>;
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }} data-testid="coupon-list">
+      {lista.map(c => {
+        const valor = valorDoCupom(c);
+        const validade = c.expiresAt ? `Válido até ${new Date(c.expiresAt).toLocaleString("pt-BR")}` : "Sem validade informada";
+        return (
+          <div
+            key={c.campaignId}
+            title={`${c.title || ""}\n${validade}`}
+            style={{
+              fontSize: 11, lineHeight: 1.35, padding: "4px 6px", borderRadius: 6,
+              background: c.code ? "var(--color-background-secondary)" : "transparent",
+              border: "0.5px solid var(--color-border-tertiary)",
+            }}
+          >
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+              <span style={{ fontWeight: 600, color: c.code ? PRIMARY_DARK : "var(--color-text-secondary)" }}>
+                🎟️ {c.code || "sem palavra"}
+              </span>
+              {valor && <span>· {valor}</span>}
+            </div>
+            <div style={{ color: "var(--color-text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {c.title}
+            </div>
+            <div style={{ color: "var(--color-text-secondary)", fontSize: 10 }}>
+              {ORIGEM_LABEL[c.origem] || c.origem || "—"} · #{c.campaignId}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function reviewsText(product) {
   if (product.reviewsCount == null) return null;
   const raw = String(product.reviewsCount).replace(/[^\d]/g, "");
@@ -160,7 +212,9 @@ export function ProductRow({ product, actions, index, extra }) {
 // `showStore` e `emphasizeDiscount` nascem desligados: quem liga é a aba de
 // busca da campanha, onde o usuário compara ofertas de três lojas e escolhe
 // pelo desconto. O /produtos continua com o card enxuto de sempre.
-export function ProductGridCard({ product, footer, badge, showStore = false, emphasizeDiscount = false }) {
+// `showCoupons` troca o selo resumido pela lista inteira de cupons (CouponList) —
+// só o admin usa.
+export function ProductGridCard({ product, footer, badge, showStore = false, emphasizeDiscount = false, showCoupons = false }) {
   const pct = discountPct(product);
   // A faixa mora no canto da imagem — sem imagem, o desconto fica no selo de
   // sempre, lá no rodapé do card.
@@ -240,8 +294,9 @@ export function ProductGridCard({ product, footer, badge, showStore = false, emp
         })()}
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {product.freeShipping && <Badge color="teal">Frete grátis</Badge>}
-          <CouponBadge product={product} />
+          {!showCoupons && <CouponBadge product={product} />}
         </div>
+        {showCoupons && <CouponList product={product} />}
         <div style={{ marginTop: "auto" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>

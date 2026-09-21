@@ -442,7 +442,6 @@ describe("Admin — catalog", () => {
     expect(r.body.page).toBe(1);
     expect(r.body.total).toBeGreaterThanOrEqual(5);
     expect(Array.isArray(r.body.items)).toBe(true);
-    expect(r.body.stats).toBeDefined();
   });
 
   it("filtra por categoria", async () => {

@@ -1858,6 +1858,41 @@ const OFERTAS_SORTS = new Set(["discount_desc", "price_asc", "price_desc", "rati
 // Navegação do catálogo pelo usuário comum — mesma superfície de filtros e
 // ordenação que o refill da campanha usa, com paginação. A aba "Busca de
 // Produtos" consome isso pra mostrar a prévia do que a busca vai trazer.
+// Os cupons de cada produto de uma PÁGINA — uma consulta indexada sobre as chaves
+// dela, e não a tabela inteira. Vai com a conta já feita (`priceWithCoupon` via
+// `detalheDoCupom`): a regra de quando o cupom vale é do backend, e repetir isso
+// em JavaScript de tela é como as duas sairiam de sincronia.
+//
+// A lista inteira, não só o melhor: um produto coberto por dois cupons mostra os
+// dois. O que o envio vai usar é o primeiro COM palavra — a mesma ordem que o
+// `couponsListForKeys` devolve. `origem` é de onde veio o vínculo (vitrine,
+// landing, amostra, checkout) — é o que a tela do admin mostra para conferir.
+async function comCupons(products) {
+  const mapaCupons = await couponsStore.couponsListForKeys(products.map(p => p.key)).catch(() => new Map());
+  return products.map(p => {
+    const lista = mapaCupons.get(p.key) || [];
+    if (!lista.length) return p;
+    return {
+      ...p,
+      coupons: lista.map(c => {
+        const d = couponsStore.detalheDoCupom(p.price, c);
+        return {
+          campaignId: c.campaignId, code: c.code, title: c.title,
+          kind: c.kind, value: c.value,
+          minPurchase: c.minPurchase, maxDiscount: c.maxDiscount,
+          expiresAt: c.expiresAt,
+          origem: c.origem || null,
+          // Nulos quando o cupom não vale para ESTE preço (compra mínima não
+          // atingida, por exemplo): a tela mostra o cupom, mas sem prometer valor.
+          priceWithCoupon: d ? d.final : null,
+          economia: d ? d.economia : null,
+          rotulo: d ? d.rotulo : null,
+        };
+      }),
+    };
+  });
+}
+
 app.get("/api/ofertas", auth.requireAuth, async (req, res) => {
   try {
     // `categories` (lista) é o formato novo; `category` (single) continua aceito.
@@ -1914,36 +1949,7 @@ app.get("/api/ofertas", auth.requireAuth, async (req, res) => {
       paginated ? null : catalog.getStats(),
     ]);
 
-    // Os cupons de cada produto da PÁGINA — uma consulta indexada sobre no máximo
-    // 60 chaves, e não a tabela inteira. Vai com a conta já feita (`precoComCupom`
-    // via `detalheDoCupom`): a regra de quando o cupom vale é do backend, e repetir
-    // isso em JavaScript de tela é como as duas sairiam de sincronia.
-    //
-    // A lista inteira, não só o melhor: um produto coberto por dois cupons mostra os
-    // dois. O que o envio vai usar é o primeiro COM palavra — a mesma ordem que o
-    // `couponsListForKeys` devolve.
-    const mapaCupons = await couponsStore.couponsListForKeys(products.map(p => p.key)).catch(() => new Map());
-    const itemsComCupons = products.map(p => {
-      const lista = mapaCupons.get(p.key) || [];
-      if (!lista.length) return p;
-      return {
-        ...p,
-        coupons: lista.map(c => {
-          const d = couponsStore.detalheDoCupom(p.price, c);
-          return {
-            campaignId: c.campaignId, code: c.code, title: c.title,
-            kind: c.kind, value: c.value,
-            minPurchase: c.minPurchase, maxDiscount: c.maxDiscount,
-            expiresAt: c.expiresAt,
-            // Nulos quando o cupom não vale para ESTE preço (compra mínima não
-            // atingida, por exemplo): a tela mostra o cupom, mas sem prometer valor.
-            priceWithCoupon: d ? d.final : null,
-            economia: d ? d.economia : null,
-            rotulo: d ? d.rotulo : null,
-          };
-        }),
-      };
-    });
+    const itemsComCupons = await comCupons(products);
 
     res.json({
       // `total` no modo paginado é o total de matches; no legado mantém o
@@ -3097,34 +3103,35 @@ app.post("/api/admin/scraper/shopee/test", auth.requireAuth, auth.requireAdmin, 
   }
 });
 
-// Lista paginada do catálogo, com filtros opcionais — visualização do admin
+// Lista paginada do catálogo, com filtros opcionais — a tela Admin › Produtos.
+// Tudo no SQL (catalog/pg.js:adminQuery): antes a rota carregava o catálogo
+// inteiro na memória e filtrava em JS, e o desconto mínimo era cortado na tela só
+// dentro da página — o total e a paginação mentiam.
+//
+// Os filtros de cupom servem para CONFERIR o vínculo cupom ↔ produto: status
+// (com/sem cupom, com/sem palavra), busca por um cupom (id, palavra ou título) e
+// a origem do vínculo. Cada item vem com a lista de cupons vigentes (`comCupons`).
+const CUPOM_STATUS = new Set(["com", "com-palavra", "sem-palavra", "sem"]);
 app.get("/api/admin/catalog", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const pageSize = Math.min(200, Math.max(10, parseInt(req.query.pageSize) || 50));
-    const category = req.query.category || null;
-    const source = req.query.source || null;
-    const search = (req.query.q || "").toString().trim().toLowerCase();
-    const sortBy = req.query.sortBy || "lastSeen_desc";
-
-    let items = await catalog.query({
-      categories: category ? [category] : null,
-      sources: source ? [source] : null,
-      limit: 0,
-      sortBy,
-    });
-    if (search) items = items.filter(p => (p.name || "").toLowerCase().includes(search));
-
-    const total = items.length;
-    const start = (page - 1) * pageSize;
-    const slice = items.slice(start, start + pageSize);
-    res.json({
+    const status = String(req.query.cupom || "");
+    const { items, total } = await catalog.adminQuery({
       page,
       pageSize,
-      total,
-      items: slice,
-      stats: await catalog.getStats(),
+      category: req.query.category || null,
+      source: req.query.source || null,
+      q: (req.query.q || "").toString().slice(0, 200),
+      minDiscount: Math.max(0, parseInt(req.query.minDiscount) || 0),
+      sortBy: req.query.sortBy || "lastSeen_desc",
+      cupom: {
+        status: CUPOM_STATUS.has(status) ? status : null,
+        busca: (req.query.cupomBusca || "").toString().slice(0, 200),
+        origem: req.query.cupomOrigem || null,
+      },
     });
+    res.json({ page, pageSize, total, items: await comCupons(items) });
   } catch (err) {
     httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/catalog" });
   }

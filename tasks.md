@@ -20,5 +20,5 @@
 
 11. [x] Nos cupons quero ter a opcao de buscar os produtos somente dos cupons que não tiveram nenhuma busca de produtos. Os que são parciais ficam de fora, pode ser um checkbox ou algo assim para marcar.
 
-12. [] Quero saber como esta funcionando a vinculação dos produtos que vem das vitrines dos cupons com os produtos que vem do scraping. Quero que se o mesmo produto apareça nos dois, ele seja um só e fique com o cupom vinculado.
+12. [x] Quero saber como esta funcionando a vinculação dos produtos que vem das vitrines dos cupons com os produtos que vem do scraping. Quero que se o mesmo produto apareça nos dois, ele seja um só e fique com o cupom vinculado.
  

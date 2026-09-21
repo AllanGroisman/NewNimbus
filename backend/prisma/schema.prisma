@@ -320,11 +320,18 @@ model CatalogProduct {
   // aqui é SÓ a sincronização de cupons (backend/coupons/pg.js) — o `toRow` nem
   // conhece este campo, e é isso que o mantém vivo entre as raspagens.
   couponCampaignId String?
+  // Número do ANÚNCIO do ML (catalog/product-key.js:mlAnuncioIdFromUrl). O
+  // productKey usa o nº que aparece no caminho — de catálogo (/p/MLB…) na vitrine
+  // do cupom, de anúncio (/MLB-…) no scraping —, então o mesmo produto chegava
+  // com duas chaves. É por esta coluna que o upsert reconhece a linha que já
+  // existe e grava nela (catalog/pg.js:upsertProducts).
+  mlAnuncioId   String?
   payload       Json     @default("{}")
   firstSeenAt   DateTime @default(now())
   lastSeenAt    DateTime @default(now())
 
   @@index([couponCampaignId])
+  @@index([mlAnuncioId])
   @@index([category, discount(sort: Desc)])
   @@index([store])
   @@index([lastSeenAt(sort: Desc)])

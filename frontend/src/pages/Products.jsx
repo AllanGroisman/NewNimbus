@@ -17,6 +17,16 @@ export default function PageProducts() {
   const [search, setSearch] = useState("");
   const [minDiscount, setMinDiscount] = useState(0);
   const [sortBy, setSortBy] = useState("discount_desc");
+  // Filtros de cupom — para conferir o vínculo cupom ↔ produto. A busca por cupom
+  // espera a digitação parar antes de ir ao backend (cada tecla seria uma consulta).
+  const [cupomStatus, setCupomStatus] = useState("");
+  const [cupomOrigem, setCupomOrigem] = useState("");
+  const [cupomBuscaInput, setCupomBuscaInput] = useState("");
+  const [cupomBusca, setCupomBusca] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setCupomBusca(cupomBuscaInput.trim()), 400);
+    return () => clearTimeout(t);
+  }, [cupomBuscaInput]);
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 60;
 
@@ -46,18 +56,19 @@ export default function PageProducts() {
         source: storeFilter === "all" ? undefined : storeFilter,
         q: search || undefined,
         sortBy,
+        minDiscount,
+        cupom: cupomStatus || undefined,
+        cupomBusca: cupomBusca || undefined,
+        cupomOrigem: cupomOrigem || undefined,
       });
-      let items = r.items || [];
-      // Filtro de desconto é aplicado client-side porque adminCatalog não expõe minDiscount
-      if (minDiscount > 0) items = items.filter(p => (p.discount || 0) >= minDiscount);
-      setProducts(items);
+      setProducts(r.items || []);
       setTotal(r.total || 0);
     } catch (err) {
       setError(errText(err, "Não foi possível carregar os produtos."));
     } finally {
       setLoading(false);
     }
-  }, [activeCat, storeFilter, search, sortBy, page, minDiscount]);
+  }, [activeCat, storeFilter, search, sortBy, page, minDiscount, cupomStatus, cupomBusca, cupomOrigem]);
 
   useEffect(() => { loadCatalog(); }, [loadCatalog]);
 
@@ -97,7 +108,7 @@ export default function PageProducts() {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   // Reseta página quando filtros mudam
-  useEffect(() => { setPage(1); }, [activeCat, storeFilter, search, sortBy, minDiscount]);
+  useEffect(() => { setPage(1); }, [activeCat, storeFilter, search, sortBy, minDiscount, cupomStatus, cupomBusca, cupomOrigem]);
 
   const exportHTML = () => {
     if (!products.length) return;
@@ -262,8 +273,35 @@ ${cards}
         </select>
       </div>
 
+      {/* Cupom */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+        <select
+          aria-label="Filtro de cupom"
+          value={cupomStatus}
+          onChange={e => setCupomStatus(e.target.value)}
+          style={selectStyle}
+        >
+          {CUPOM_STATUS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+        </select>
+        <input
+          placeholder="Cupom: ID, palavra ou nome..."
+          value={cupomBuscaInput}
+          onChange={e => setCupomBuscaInput(e.target.value)}
+          style={{ flex: 1, minWidth: 180, padding: "7px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-primary)", fontSize: 13 }}
+        />
+        <select
+          aria-label="Origem do vínculo"
+          value={cupomOrigem}
+          onChange={e => setCupomOrigem(e.target.value)}
+          style={selectStyle}
+          title="De onde veio o vínculo do produto com o cupom"
+        >
+          {CUPOM_ORIGEM.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+        </select>
+      </div>
+
       {/* Active filters chips */}
-      {(activeCat !== "all" || storeFilter !== "all" || minDiscount > 0 || search) && (
+      {(activeCat !== "all" || storeFilter !== "all" || minDiscount > 0 || search || cupomStatus || cupomBusca || cupomOrigem) && (
         <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
           <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Filtros ativos:</span>
           {activeCat !== "all" && (
@@ -286,7 +324,22 @@ ${cards}
               "{search}" ✕
             </span>
           )}
-          <span onClick={() => { setSearch(""); setStoreFilter("all"); setMinDiscount(0); setActiveCat("all"); }} style={{ fontSize: 11, color: "var(--color-text-secondary)", cursor: "pointer", textDecoration: "underline" }}>
+          {cupomStatus && (
+            <span onClick={() => setCupomStatus("")} style={chipStyle}>
+              {CUPOM_STATUS.find(o => o.id === cupomStatus)?.label} ✕
+            </span>
+          )}
+          {cupomBusca && (
+            <span onClick={() => { setCupomBuscaInput(""); setCupomBusca(""); }} style={chipStyle}>
+              Cupom "{cupomBusca}" ✕
+            </span>
+          )}
+          {cupomOrigem && (
+            <span onClick={() => setCupomOrigem("")} style={chipStyle}>
+              Vínculo: {CUPOM_ORIGEM.find(o => o.id === cupomOrigem)?.label} ✕
+            </span>
+          )}
+          <span onClick={() => { setSearch(""); setStoreFilter("all"); setMinDiscount(0); setActiveCat("all"); setCupomStatus(""); setCupomOrigem(""); setCupomBuscaInput(""); setCupomBusca(""); }} style={{ fontSize: 11, color: "var(--color-text-secondary)", cursor: "pointer", textDecoration: "underline" }}>
             Limpar tudo
           </span>
         </div>
@@ -316,7 +369,7 @@ ${cards}
       ) : (
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12 }}>
-            {products.map((p, i) => <ProductGridCard key={p.key || (p.link + i)} product={p} />)}
+            {products.map((p, i) => <ProductGridCard key={p.key || (p.link + i)} product={p} showCoupons />)}
           </div>
 
           <Pagination page={page} totalPages={totalPages} onChange={setPage} />
@@ -325,6 +378,22 @@ ${cards}
     </div>
   );
 }
+
+const CUPOM_STATUS = [
+  { id: "", label: "Todos (cupom)" },
+  { id: "com", label: "Com cupom" },
+  { id: "com-palavra", label: "Com cupom com palavra" },
+  { id: "sem-palavra", label: "Com cupom sem palavra" },
+  { id: "sem", label: "Sem cupom" },
+];
+// De onde veio o vínculo produto ↔ cupom (ml_coupon_products.origem).
+const CUPOM_ORIGEM = [
+  { id: "", label: "Qualquer vínculo" },
+  { id: "vitrine", label: "Vitrine" },
+  { id: "landing", label: "Landing" },
+  { id: "amostra", label: "Amostra" },
+  { id: "checkout", label: "Checkout" },
+];
 
 const selectStyle = { padding: "7px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-primary)", fontSize: 13 };
 const chipStyle = { fontSize: 11, padding: "2px 8px", borderRadius: 6, background: PRIMARY_LIGHT, color: PRIMARY_DARK, cursor: "pointer" };

@@ -20,7 +20,7 @@
 // A separação decide()/quickCheck() é de propósito: `decide` é puro e é onde mora
 // a regra que erra caro (ver "sem-vitrine" abaixo), então ela é testável sem banco
 // e sem rede.
-const { productKey, mlItemIdFromUrl } = require("../catalog/product-key");
+const { productKey, mlItemIdFromUrl, mlAnuncioIdFromUrl } = require("../catalog/product-key");
 const coupons = require("./pg");
 const { precoComCupom } = require("./price");
 
@@ -166,15 +166,13 @@ function chavesCandidatas(url) {
 
   junta(url);
 
-  let u;
-  try { u = new URL(String(url)); } catch { return chaves; }
-  for (const nome of ["pdp_filters", "wid", "item_id"]) {
-    const valor = u.searchParams.get(nome);
-    const id = valor && (String(valor).match(/MLB-?(\d{6,})/i) || [])[1];
-    // Uma URL de catálogo sintética só pra reaproveitar o `productKey` — é ele
-    // que define a chave, e o hash tem que sair da mesma função.
-    if (id) junta(`https://www.mercadolivre.com.br/x/p/MLB${id}`);
-  }
+  // O anúncio que a query aponta (`wid`, `pdp_filters=item_id:`, `item_id`) —
+  // catalog/product-key.js:mlAnuncioIdFromUrl, a mesma leitura que junta vitrine
+  // e scraping numa linha só do catálogo. Uma URL de catálogo sintética só pra
+  // reaproveitar o `productKey` — é ele que define a chave, e o hash tem que sair
+  // da mesma função.
+  const anuncio = mlAnuncioIdFromUrl(String(url || ""));
+  if (anuncio) junta(`https://www.mercadolivre.com.br/x/p/${anuncio}`);
   return chaves;
 }
 

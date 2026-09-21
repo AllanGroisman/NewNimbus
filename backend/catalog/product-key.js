@@ -39,6 +39,44 @@ function mlUrlSpace(link) {
   return null;
 }
 
+// O número do ANÚNCIO do ML (não o de catálogo), quando a URL traz um. Devolve
+// "MLB123…" ou null.
+//
+// É a identidade que junta o mesmo produto vindo por caminhos diferentes: a
+// vitrine/landing do cupom entrega `/p/MLB44567438?…&wid=MLB5212859628` e o
+// scraping entrega `produto.mercadolivre.com.br/MLB-5212859628`. O productKey dos
+// dois sai diferente (um usa o nº de catálogo, o outro o de anúncio) e o catálogo
+// ganhava duas linhas — com o cupom carimbado em uma só.
+//
+// Ordem: as pistas da query (`wid`, `pdp_filters=item_id:`, `item_id`) primeiro,
+// porque num `/p/` ou `/up/` o caminho é catálogo e só a query diz o anúncio;
+// depois o caminho de anúncio (`/MLB-…`). `/p/MLB…` e `/up/MLBU…` sem pista na
+// query NÃO têm anúncio — o número ali é de catálogo.
+function mlAnuncioIdFromUrl(link) {
+  if (!link || typeof link !== "string") return null;
+  const decoded = (() => { try { return decodeURIComponent(link); } catch { return link; } })();
+  let u = null;
+  try { u = new URL(link); } catch {}
+  if (u && !/mercadoli[vb]re\.com/i.test(u.hostname)) return null;
+  if (u) {
+    // O ML às vezes põe os parâmetros depois do `#` (polycard_client=…&wid=…).
+    const params = [u.searchParams, new URLSearchParams(u.hash.replace(/^#/, ""))];
+    for (const ps of params) {
+      for (const nome of ["wid", "pdp_filters", "item_id"]) {
+        const valor = ps.get(nome);
+        if (!valor) continue;
+        const m = nome === "pdp_filters"
+          ? String(valor).match(/item_id:MLB-?(\d{6,})/i)
+          : String(valor).match(/^MLB-?(\d{6,})$/i);
+        if (m) return "MLB" + m[1];
+      }
+    }
+  }
+  const m = decoded.match(/produto\.mercadolivre\.com\.br\/MLB-?(\d{6,})/i)
+        || decoded.match(/\/MLB-(\d{6,})(?:-|$|[?#/])/i);
+  return m ? "MLB" + m[1] : null;
+}
+
 function productKey(p) {
   const link = p.link || "";
   const decoded = (() => { try { return decodeURIComponent(link); } catch { return link; } })();
@@ -64,4 +102,4 @@ function productKey(p) {
   return crypto.createHash("md5").update(`${nm}|${p.store || ""}`).digest("hex");
 }
 
-module.exports = { productKey, mlItemIdFromUrl, mlUrlSpace };
+module.exports = { productKey, mlItemIdFromUrl, mlUrlSpace, mlAnuncioIdFromUrl };

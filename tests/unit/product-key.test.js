@@ -10,7 +10,7 @@ import { createRequire } from "module";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
-const { productKey, mlItemIdFromUrl, mlUrlSpace } = require(path.resolve(__dirname, "..", "..", "backend", "catalog", "product-key.js"));
+const { productKey, mlItemIdFromUrl, mlUrlSpace, mlAnuncioIdFromUrl } = require(path.resolve(__dirname, "..", "..", "backend", "catalog", "product-key.js"));
 
 describe("productKey", () => {
   it("usa MLB id da URL quando disponivel (formato /p/MLB...)", () => {
@@ -89,5 +89,47 @@ describe("productKey", () => {
   it("e deterministico (hash hex 32 chars)", () => {
     const k = productKey({ link: "https://example.com/x" });
     expect(k).toMatch(/^[a-f0-9]{32}$/);
+  });
+});
+
+// O nº do ANÚNCIO é o que junta o mesmo produto vindo da vitrine do cupom (nº de
+// catálogo no caminho, anúncio no `wid`) e do scraping (anúncio no caminho). Os
+// links abaixo são formas reais vistas no catálogo em 21/09/2026.
+describe("mlAnuncioIdFromUrl", () => {
+  it("/p/ da vitrine: o anúncio vem do wid (depois do #)", () => {
+    expect(mlAnuncioIdFromUrl(
+      "https://www.mercadolivre.com.br/10-galhos/p/MLB44567438?pdp_filters=seller_id%3A143398856#polycard_client=search-desktop&type=product&wid=MLB5212859628&sid=search",
+    )).toBe("MLB5212859628");
+  });
+
+  it("/up/ com wid e com pdp_filters=item_id", () => {
+    expect(mlAnuncioIdFromUrl("https://www.mercadolivre.com.br/x/up/MLBU3773562568?pdp_filters=deal%3AMLB1772605-1#a=1&wid=MLB4456745231"))
+      .toBe("MLB4456745231");
+    expect(mlAnuncioIdFromUrl("https://www.mercadolivre.com.br/x/up/MLBU1?pdp_filters=item_id%3AMLB7330057970"))
+      .toBe("MLB7330057970");
+  });
+
+  it("URL de anúncio do scraping, com e sem slug", () => {
+    expect(mlAnuncioIdFromUrl("https://produto.mercadolivre.com.br/MLB-5212859628")).toBe("MLB5212859628");
+    expect(mlAnuncioIdFromUrl("https://produto.mercadolivre.com.br/MLB-5054604344-chinelo-melissa-_JM")).toBe("MLB5054604344");
+  });
+
+  it("vitrine e scraping do mesmo produto dão o mesmo anúncio (e chaves diferentes)", () => {
+    const vitrine = "https://www.mercadolivre.com.br/x/p/MLB44567438#wid=MLB5212859628";
+    const scraping = "https://produto.mercadolivre.com.br/MLB-5212859628";
+    expect(mlAnuncioIdFromUrl(vitrine)).toBe(mlAnuncioIdFromUrl(scraping));
+    expect(productKey({ link: vitrine })).not.toBe(productKey({ link: scraping }));
+  });
+
+  it("/p/ e /up/ sem pista na query não têm anúncio — o número ali é de catálogo", () => {
+    expect(mlAnuncioIdFromUrl("https://www.mercadolivre.com.br/x/p/MLB43949832")).toBe(null);
+    expect(mlAnuncioIdFromUrl("https://www.mercadolivre.com.br/x/up/MLBU4120669935")).toBe(null);
+    expect(mlAnuncioIdFromUrl("https://www.mercadolivre.com.br/x/p/MLB123?pdp_filters=deal%3AMLB1772605-1")).toBe(null);
+  });
+
+  it("outra loja ou lixo → null", () => {
+    expect(mlAnuncioIdFromUrl("https://www.amazon.com.br/dp/B0ABCDEFGH?wid=MLB5212859628")).toBe(null);
+    expect(mlAnuncioIdFromUrl("nao-e-url")).toBe(null);
+    expect(mlAnuncioIdFromUrl(null)).toBe(null);
   });
 });
