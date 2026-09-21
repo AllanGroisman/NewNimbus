@@ -3299,6 +3299,37 @@ app.post("/api/admin/ml-cupons/sonda-checkout", auth.requireAuth, auth.requireAd
   }
 });
 
+// A sonda do checkout em LOTE (task 13): a fila dos produtos do scraping e o
+// resultado de cada um. Quem anda produto a produto é a tela, no Chrome do admin.
+app.get("/api/admin/ml-cupons/sonda-lote/alvos", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const lote = require("./coupons/checkout-lote");
+    const categorias = req.query.categorias ? String(req.query.categorias).split(",").filter(Boolean) : null;
+    res.json(await lote.alvos({
+      categorias,
+      limite: req.query.limite,
+      pularDias: req.query.pularDias ?? 7,
+      soSemCupom: req.query.soSemCupom === "1" || req.query.soSemCupom === "true",
+    }));
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/ml-cupons/sonda-lote/alvos" });
+  }
+});
+
+app.post("/api/admin/ml-cupons/sonda-lote/resultado", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const lote = require("./coupons/checkout-lote");
+    res.json(await lote.gravarResultado({
+      key: req.body?.key ? String(req.body.key) : null,
+      url: req.body?.url ? String(req.body.url) : null,
+      material: req.body?.material || null,
+      erro: req.body?.erro ? String(req.body.erro) : null,
+    }));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // Os cupons que o repasse pescou, um por linha (Admin › Cupom › Repasse).
 // Agrega o log de captura por código e cruza com o dicionário palavra → campanha
 // da aba "Descobrir palavra", pra dizer de cada um se já foi testado, de que

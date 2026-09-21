@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { PRIMARY_DARK } from "../data/constants";
 import { adminProdutoCupons, adminSondaCheckoutCupons, errText } from "../data/api";
 import { coletorEntende, sondarCuponsNoCheckout } from "../data/coletor";
+import { descreverPasso } from "../data/sondaLote";
+import SondaLote from "../components/admin/SondaLote";
 import { cardStyle, inputStyle, labelStyle, botaoSecundario, botaoPrimario, th, td } from "../components/admin/cupomEstilos";
 
 // Admin › Cupom › Cupons do produto: "quais cupons valem NESTE produto?" (task 12, D).
@@ -18,18 +20,6 @@ import { cardStyle, inputStyle, labelStyle, botaoSecundario, botaoPrimario, th, 
 
 const brl = (v) => (Number.isFinite(Number(v)) ? `R$ ${Number(v).toFixed(2).replace(".", ",")}` : "—");
 const dataCurta = (v) => (v ? new Date(v).toLocaleDateString("pt-BR") : "sem validade");
-
-function descreverPasso(p) {
-  if (!p) return null;
-  if (p.tipo === "muro") return "o Mercado Livre pediu verificação — resolva na aba que abriu";
-  if (p.tipo === "pdp") return "página do produto lida";
-  if (p.tipo === "checkout") return `indo ao checkout (${p.via})…`;
-  if (p.tipo === "passo") return `checkout · passo ${p.passo}${p.titulo ? `: ${p.titulo}` : ""}`;
-  if (p.tipo === "seguro") return p.como ? "oferta de seguro recusada (“Agora não”)" : "apareceu a oferta de seguro e não deu pra recusar";
-  if (p.tipo === "pagina-cupons") return p.ok ? "lista de cupons do checkout lida" : "não achei a lista de cupons na página do checkout";
-  if (p.tipo === "capturado") return "tela dos cupons fotografada — mandando pro servidor…";
-  return null;
-}
 
 // O material da sonda pode passar dos 2 MB que o servidor aceita. O que se joga fora
 // primeiro é o HTML (o texto e as respostas da API bastam pra começar a olhar).
@@ -275,6 +265,8 @@ export default function CuponsDoProduto() {
           </div>
         )}
       </div>
+
+      {temSonda && <SondaLote />}
     </div>
   );
 }

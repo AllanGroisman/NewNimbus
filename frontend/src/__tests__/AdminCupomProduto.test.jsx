@@ -8,6 +8,8 @@ vi.mock("../data/api", () => ({
   errText: (err, fallback) => err?.message || fallback,
   adminProdutoCupons: vi.fn(),
   adminSondaCheckoutCupons: vi.fn(),
+  adminSondaLoteAlvos: vi.fn(),
+  adminSondaLoteResultado: vi.fn(),
 }));
 vi.mock("../data/coletor", () => ({
   coletorEntende: vi.fn(),
@@ -15,7 +17,7 @@ vi.mock("../data/coletor", () => ({
 }));
 
 import CuponsDoProduto from "../pages/AdminCupomProduto.jsx";
-import { adminProdutoCupons, adminSondaCheckoutCupons } from "../data/api";
+import { adminProdutoCupons, adminSondaCheckoutCupons, adminSondaLoteAlvos, adminSondaLoteResultado } from "../data/api";
 import { coletorEntende, sondarCuponsNoCheckout } from "../data/coletor";
 
 const LINK = "https://www.mercadolivre.com.br/fone/p/MLB22222222";
@@ -28,6 +30,7 @@ function buscar() {
 beforeEach(() => {
   vi.clearAllMocks();
   coletorEntende.mockResolvedValue(false);
+  adminSondaLoteAlvos.mockResolvedValue({ produtos: [], total: 0, porCategoria: [], cfg: { pausaMs: 0 } });
 });
 
 describe("Cupons do produto", () => {
@@ -98,5 +101,26 @@ describe("Cupons do produto", () => {
     expect(await screen.findByText(/leu a lista de cupons do checkout/)).toBeTruthy();
     expect(screen.getByText(/O checkout não listou cupom nenhum para este produto/)).toBeTruthy();
     expect(screen.queryByText(/não leu a lista de cupons/)).toBeNull();
+  });
+
+  it("testar os produtos do scraping: filtros por categoria, progresso e o desfecho de cada um", async () => {
+    coletorEntende.mockResolvedValue(true);
+    const prod = { key: "k1", name: "Fone Bluetooth", link: LINK, category: "gamer" };
+    adminSondaLoteAlvos.mockResolvedValue({
+      produtos: [prod], total: 4, cfg: { pausaMs: 0 },
+      porCategoria: [{ category: "gamer", elegiveis: 4, sondados: 10, comCupom: 3 }],
+    });
+    sondarCuponsNoCheckout.mockResolvedValue({ checkout: { reached: true } });
+    adminSondaLoteResultado.mockResolvedValue({ ok: true, cupons: [{ campaignId: "C1", titulo: "10% OFF Games", descontoNoCarrinho: 20 }] });
+
+    render(<CuponsDoProduto />);
+    expect(await screen.findByText(/1 produto\(s\) neste lote, de 4 elegível/)).toBeTruthy();
+    expect(screen.getByText(/cupom em 3\/10 \(30%\)/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Testar produtos" }));
+    expect(await screen.findByText(/10% OFF Games \(−R\$ 20,00\)/)).toBeTruthy();
+    expect(screen.getByText(/1 com cupom · 0 sem · 0 não chegou/)).toBeTruthy();
+    expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("1");
+    expect(adminSondaLoteResultado).toHaveBeenCalledWith(expect.objectContaining({ key: "k1", url: LINK }));
   });
 });

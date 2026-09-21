@@ -769,6 +769,19 @@ export async function adminSondaCheckoutCupons({ url, material }) {
   return http("POST", "/api/admin/ml-cupons/sonda-checkout", { url, material });
 }
 
+// A sonda em LOTE (task 13): a fila dos produtos do scraping, já ordenada pelo
+// servidor, e o resultado de cada produto sondado.
+export async function adminSondaLoteAlvos({ categorias = [], limite = 20, pularDias = 7, soSemCupom = false } = {}) {
+  const params = new URLSearchParams({ limite: String(limite), pularDias: String(pularDias) });
+  if (categorias.length) params.set("categorias", categorias.join(","));
+  if (soSemCupom) params.set("soSemCupom", "1");
+  return http("GET", `/api/admin/ml-cupons/sonda-lote/alvos?${params}`);
+}
+
+export async function adminSondaLoteResultado({ key, url, material = null, erro = null }) {
+  return http("POST", "/api/admin/ml-cupons/sonda-lote/resultado", { key, url, material, erro });
+}
+
 // ─── Admin / Repasse (teste automático de cupom) ───────────────────────
 // O robô que testa no ML a palavra pescada na legenda e traz a campanha pro
 // sistema. GET devolve config + defaults + o status da última rodada juntos —

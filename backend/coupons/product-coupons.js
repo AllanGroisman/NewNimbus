@@ -185,17 +185,24 @@ async function gravarSonda({ url, material, dir = SONDA_DIR } = {}) {
   if (paginaDosCupons?.html) await escreve("pagina-cupons.html", String(paginaDosCupons.html));
   // O que o checkout disse, lido do HTML do iframe do popup. A lista dos ativos
   // (se a sonda chegou a abrir) tem o mesmo formato e vem primeiro.
-  const leitura = lerCuponsDaSonda(material);
-  let gravado = null;
-  if (leitura.ok && url) {
-    const valem = cuponsQueValem(leitura.cupons);
-    if (valem.length) {
-      gravado = await require("./pg").vincularPorCheckout({ productKeys: chavesCandidatas(url), productUrl: url, cupons: valem });
-    }
-  }
-  const final = { ...resumo, checkout: { ...leitura, valem: leitura.ok ? cuponsQueValem(leitura.cupons).map(c => c.campaignId) : [], gravado } };
+  const final = { ...resumo, checkout: await lerEVincular({ url, material }) };
   await escreve("leitura.json", JSON.stringify(final.checkout, null, 2));
   return { pasta, resumo: final };
+}
+
+// O que a sonda serve de verdade: ler a lista do checkout e gravar como vínculo
+// `checkout` os cupons que valem. Compartilhado pela sonda manual (acima) e pelo
+// lote (coupons/checkout-lote.js). `productKeys` extra: a chave da linha do
+// catálogo, quando quem chama já a conhece.
+async function lerEVincular({ url, material, productKeys = [] }) {
+  const leitura = lerCuponsDaSonda(material);
+  const valem = leitura.ok ? cuponsQueValem(leitura.cupons) : [];
+  let gravado = null;
+  if (valem.length && url) {
+    const chaves = [...new Set([...productKeys, ...chavesCandidatas(url)].filter(Boolean))];
+    gravado = await require("./pg").vincularPorCheckout({ productKeys: chaves, productUrl: url, cupons: valem });
+  }
+  return { ...leitura, valem: valem.map(c => c.campaignId), gravado };
 }
 
 // O HTML de `/cupons/cho` que a sonda trouxe. Três fontes, e todas são a MESMA
@@ -217,4 +224,4 @@ function lerCuponsDaSonda(material) {
   return { ok: false, motivo: "A sonda não trouxe o HTML da página de cupons do checkout.", economia: null, cupons: [] };
 }
 
-module.exports = { paraProduto, montarResposta, gravarSonda, resumoDaSonda, cupomNoResumo, mascarar, ORIGEM_ROTULO, SONDA_DIR };
+module.exports = { paraProduto, montarResposta, gravarSonda, lerEVincular, lerCuponsDaSonda, resumoDaSonda, cupomNoResumo, mascarar, ORIGEM_ROTULO, SONDA_DIR };

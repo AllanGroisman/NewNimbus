@@ -538,6 +538,31 @@ model MlCouponProduct {
   @@map("ml_coupon_products")
 }
 
+// Cada produto que a sonda do checkout em LOTE já testou (task 13), com o
+// desfecho — inclusive o "0 cupons". É o que deixa o lote pular quem foi sondado
+// há pouco e medir o RENDIMENTO de cada categoria (quantos sondados tiveram cupom),
+// que decide a ordem da fila (coupons/checkout-lote.js).
+//
+// Os vínculos continuam em `ml_coupon_products` (origem "checkout"); aqui fica só
+// o fato "foi sondado". "0 cupons" NÃO vira "nenhum cupom vale" em lugar nenhum —
+// a lista do checkout nunca foi confirmada como completa.
+model MlCheckoutProbe {
+  productKey  String   @id
+  productUrl  String
+  category    String?
+  probedAt    DateTime @default(now())
+  // Leu a página de cupons do checkout. `false` = a caminhada não chegou lá
+  // (muro, seguro, botão desabilitado) — e aí `cupons` não quer dizer nada.
+  ok          Boolean
+  cupons      Int      @default(0)
+  campaignIds Json     @default("[]")
+  motivo      String?
+
+  @@index([probedAt])
+  @@index([category])
+  @@map("ml_checkout_probes")
+}
+
 // Palavra testada no campo "Inserir código do cupom" do ML e o que ele respondeu.
 // É o dicionário palavra → campanha: a página não lista as palavras em lugar
 // nenhum, então ele só cresce por teste (do admin ou do repasse).
