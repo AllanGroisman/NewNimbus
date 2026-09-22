@@ -291,6 +291,18 @@ function CouponField({ value, onSave, compact = false }) {
   );
 }
 
+// Repasse no modo "mensagem original": mostra o texto do líder que vai sair (os
+// links são trocados pelos de afiliado só na hora do envio).
+function OriginalTextPreview({ text }) {
+  if (!text) return null;
+  return (
+    <details style={{ flexBasis: "100%", fontSize: 12 }}>
+      <summary style={{ cursor: "pointer", color: "var(--color-text-secondary)", fontSize: 11 }}>Mensagem original (links trocados no envio)</summary>
+      <div style={{ marginTop: 6, padding: 10, borderRadius: 8, background: "var(--color-background-secondary)", whiteSpace: "pre-wrap", wordBreak: "break-word", overflowWrap: "anywhere", color: "var(--color-text-primary)" }}>{text}</div>
+    </details>
+  );
+}
+
 function QueueItemCard({ item, idx, eta, onRemove, onMoveToTop, onSaveCoupon, onDragStart, onDragOver, onDragEnd, onDrop, isDragOver, isDragging }) {
   const addedAt = item.addedAt ? new Date(item.addedAt) : null;
   const addedAtStr = addedAt && !isNaN(addedAt.getTime()) ? addedAt.toLocaleString("pt-BR") : null;
@@ -381,6 +393,7 @@ function QueueItemCard({ item, idx, eta, onRemove, onMoveToTop, onSaveCoupon, on
           <QueueField label="Adicionado" value={addedAtStr} />
         </div>
       </div>
+      <OriginalTextPreview text={item.originalText} />
     </div>
   );
 }
@@ -1952,6 +1965,12 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
       {tab === "messages" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {isRepasse && group.scraping?.repasse?.messageMode === "original" && (
+            <AlertBanner
+              tone="info"
+              message="Esta campanha repassa a mensagem original do grupo líder (troca só os links) — o modelo abaixo não é usado. Para voltar a usar o modelo, desligue “Repassar a mensagem original” na aba Grupos."
+            />
+          )}
           <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
             <div style={{ marginBottom: 10 }}>
               <div style={{ fontWeight: 500, marginBottom: 4 }}>Modelo de mensagem</div>
@@ -2577,6 +2596,25 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               </div>
             </div>
 
+            {/* Formato da mensagem: modelo da campanha x texto original do líder */}
+            <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 500, marginBottom: 4 }}>Repassar a mensagem original</div>
+                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                    {scraping.repasse?.messageMode === "original"
+                      ? "A mensagem do grupo líder é repassada exatamente como veio, trocando só os links pelos seus links de afiliado. Se algum link da mensagem não puder virar seu link de afiliado, a mensagem inteira é descartada."
+                      : "Cada produto capturado é enviado com o modelo de mensagem da campanha."}
+                  </div>
+                </div>
+                <Toggle
+                  label="Repassar a mensagem original"
+                  value={scraping.repasse?.messageMode === "original"}
+                  onChange={v => setScraping(s => ({ ...s, repasse: { ...(s.repasse || {}), messageMode: v ? "original" : "template" } }))}
+                />
+              </div>
+            </div>
+
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
               <button
                 onClick={save}
@@ -2991,7 +3029,10 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                     <ProductRow
                       key={pid}
                       product={p}
-                      extra={<CouponField value={p.coupon} compact onSave={c => saveCoupon("pending", pid, c)} />}
+                      extra={<>
+                        <CouponField value={p.coupon} compact onSave={c => saveCoupon("pending", pid, c)} />
+                        <OriginalTextPreview text={p.originalText} />
+                      </>}
                       actions={<>
                         <button onClick={() => approveProduct(pid)} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY_LIGHT, color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Adicionar na fila</button>
                         <button onClick={() => rejectProduct(pid)} style={{ padding: "5px 10px", borderRadius: 7, border: "0.5px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", fontSize: 12, cursor: "pointer" }}>Rejeitar</button>

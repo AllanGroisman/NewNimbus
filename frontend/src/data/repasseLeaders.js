@@ -27,5 +27,8 @@ export function leadersOf(scraping) {
 // com as chaves do formato antigo).
 export function withLeaders(scraping, leaders) {
   const { repasse, ...rest } = scraping || {};
-  return { ...rest, repasse: { leaders } };
+  // messageMode mora junto dos líderes e não pode sumir ao trocar a lista.
+  const next = { leaders };
+  if (repasse?.messageMode) next.messageMode = repasse.messageMode;
+  return { ...rest, repasse: next };
 }

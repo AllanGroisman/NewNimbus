@@ -51,7 +51,7 @@ export const makeEmptyGroup = ({ id, name, categories, template, type, repasse, 
       sources: sources && sources.length ? sources : ["Mercado Livre", "Amazon", "Shopee"],
       filters: { minDiscount: 25, minPrice: 0, maxPrice: 3000, minRating: 4.0, minSales: 50, keywords: "" },
       // { leaders: [{ numberId, jid, name }] } — preenchido na aba Repasse.
-      repasse: isRepasse ? { leaders: [] } : undefined,
+      repasse: isRepasse ? { leaders: [], messageMode: "template" } : undefined,
     },
     queue: [],
     pending: [],

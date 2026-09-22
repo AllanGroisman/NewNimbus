@@ -1,6 +1,6 @@
 1. [] Quero acrescentar para poder repassar Canais e não somente grupos do WhatsApp.
 
-2. [] Quero poder repassar a mensagem inteira exatamente como é a original, somente trocando o link de afiliado.
+2. [x] Quero poder repassar a mensagem inteira exatamente como é a original, somente trocando o link de afiliado.
 
 3. [] Quero ter a opção de enviar enquetes para os grupos da campanha.
 

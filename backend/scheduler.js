@@ -13,6 +13,7 @@ const storeLocks = require("./scraping/store-locks");
 const auth = require("./auth");
 const userNotifier = require("./notifications/user-notifier");
 const captureLog = require("./repasse/capture-log");
+const originalMessage = require("./repasse/original-message");
 const { KIND, STAGE } = require("./repasse/error-kinds");
 
 // Respiro entre um envio e o próximo pro WhatsApp não tratar a sequência como
@@ -665,7 +666,25 @@ async function sendItem(userId, group, whatsappGroups, item) {
   }
 
   let itemForSend = item;
-  if (item.affiliateLink) {
+  // Repasse no modo "mensagem original": o texto do líder vai como veio, só com
+  // os links trocados. Aqui cada link precisa virar afiliado — um que falhe
+  // derruba a mensagem inteira (mesma política do item comum: sem comissão, não sai).
+  let originalText = null;
+  if (item.originalText && Array.isArray(item.originalLinks) && item.originalLinks.length) {
+    const pairs = [];
+    for (const l of item.originalLinks) {
+      const conv = AFFILIATE_CONVERTERS[l.store];
+      const aff = conv ? await conv.convert(userId, l.link) : null;
+      if (!aff) {
+        const err = new Error(`Afiliado ${conv?.label || l.store} falhou pra um link da mensagem original de "${item.name?.slice(0, 40)}" — mensagem descartada (sem link com comissão).`);
+        err.code = "affiliate_conversion_failed";
+        logSendDiscard(userId, group, item, err.message);
+        throw err;
+      }
+      pairs.push({ raw: l.raw, link: aff });
+    }
+    originalText = originalMessage.rewriteText(item.originalText, pairs);
+  } else if (item.affiliateLink) {
     // Já convertido no refill — usa direto pra evitar nova chamada de API.
     itemForSend = { ...item, link: item.affiliateLink };
   } else if (item.link && AFFILIATE_CONVERTERS[item.store]) {
@@ -699,6 +718,11 @@ async function sendItem(userId, group, whatsappGroups, item) {
     if (upgraded !== itemForSend.img) itemForSend = { ...itemForSend, img: upgraded };
   }
 
+  if (originalText != null) {
+    // O texto já está pronto: sem modelo, sem cálculo de cupom (o líder já escreveu o dele).
+    return deliverItem(userId, group, linked, item, itemForSend, originalText);
+  }
+
   // Cupom: o do próprio item (que vem da legenda do grupo líder no repasse, ou
   // digitado à mão na fila) ou, na falta dele, o que o catálogo conhece.
   const coupon = (itemForSend.coupon || "").toString().trim();
@@ -722,7 +746,11 @@ async function sendItem(userId, group, whatsappGroups, item) {
   };
 
   const text = renderTemplate(group.messageTemplate, itemForSend);
+  return deliverItem(userId, group, linked, item, itemForSend, text);
+}
 
+// Manda o texto pronto pra cada grupo vinculado e monta queue/history/métricas.
+async function deliverItem(userId, group, linked, item, itemForSend, text) {
   const byNumber = new Map();
   for (const w of linked) {
     const jid = w.jid || w.id;

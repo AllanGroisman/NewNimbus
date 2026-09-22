@@ -618,3 +618,56 @@ describe("repasse capture — landing de afiliado do ML sem navegador", () => {
     expect(state.groups[0].queue[0].link).toBe(PERMALINK);
   }, 30000);
 });
+
+describe("repasse capture — modo mensagem original", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    global.fetch = vi.fn(async (url) => ({ url, body: { cancel: async () => {} } }));
+    vi.spyOn(scraper, "scrapeSingleProduct").mockImplementation(async (url) => ({
+      name: `Produto ${url.slice(-6)}`, link: url, price: 99.9, originalPrice: 149.9,
+      discount: 33, img: "https://img/x.jpg", store: scraper.detectStore(url),
+    }));
+  });
+
+  function originalGroup(id) {
+    const g = repasseGroup(id, { auto: true });
+    g.scraping.repasse = { leaders: [{ numberId: NUMBER_ID, jid: LEADER_JID, name: "Grupo Líder" }], messageMode: "original" };
+    return g;
+  }
+
+  it("mensagem com 2 links vira 1 item com o texto e os links originais", async () => {
+    const { user } = await createTestUser({ plan: "pro" });
+    affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
+    await storage.saveState(user.id, { groups: [originalGroup(5101)] });
+    await capture.rebuildLeaderIndex();
+
+    const text = "🔥 *Dois achados*\nhttps://www.mercadolivre.com.br/p/MLB111\nhttps://www.mercadolivre.com.br/p/MLB222";
+    await capture.onUpsert(user.id, NUMBER_ID, [msgWithText(text)]);
+
+    const g = (await storage.loadState(user.id)).groups.find(x => x.id === 5101);
+    expect(g.queue.length).toBe(1);
+    expect(g.queue[0].originalText).toBe(text);
+    expect(g.queue[0].originalLinks.map(l => l.raw)).toEqual([
+      "https://www.mercadolivre.com.br/p/MLB111",
+      "https://www.mercadolivre.com.br/p/MLB222",
+    ]);
+    expect(g.queue[0].name).toMatch(/\(\+1 produto\)$/);
+  });
+
+  it("um link não suportado descarta a mensagem inteira e loga", async () => {
+    const { user } = await createTestUser({ plan: "pro" });
+    affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
+    await storage.saveState(user.id, { groups: [originalGroup(5102)] });
+    await capture.rebuildLeaderIndex();
+
+    await capture.onUpsert(user.id, NUMBER_ID, [
+      msgWithText("https://www.mercadolivre.com.br/p/MLB333 e https://www.magazineluiza.com.br/produto/123"),
+    ]);
+
+    const g = (await storage.loadState(user.id)).groups.find(x => x.id === 5102);
+    expect(g.queue.length + g.pending.length).toBe(0);
+    const rows = await waitForLogs(user.id, 2);
+    expect(rows.every(r => r.outcome === "discarded")).toBe(true);
+    expect(rows.some(r => /mensagem original inteira descartada/.test(r.reason))).toBe(true);
+  });
+});

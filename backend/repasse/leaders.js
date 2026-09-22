@@ -37,7 +37,12 @@ function leadersOf(scraping) {
 function normalizeRepasse(scraping) {
   const sc = scraping || {};
   if (sc.kind !== "repasse") return sc;
-  return { ...sc, repasse: { leaders: leadersOf(sc) } };
+  const repasse = { leaders: leadersOf(sc) };
+  // Formato da mensagem (repasse/original-message.js) mora junto dos líderes.
+  if (sc.repasse?.messageMode === "original" || sc.repasse?.messageMode === "template") {
+    repasse.messageMode = sc.repasse.messageMode;
+  }
+  return { ...sc, repasse };
 }
 
 module.exports = { leadersOf, normalizeRepasse };

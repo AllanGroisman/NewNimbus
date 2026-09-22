@@ -21,6 +21,7 @@ const { leadersOf } = require("./leaders");
 const { logCapture } = require("./capture-log");
 const { KIND, STAGE, classifyFromText } = require("./error-kinds");
 const couponWords = require("./coupon-words");
+const originalMessage = require("./original-message");
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
 
@@ -250,7 +251,7 @@ async function onUpsert(userId, numberId, messages) {
         byOwner.get(l.userId).push(l);
       }
       for (const [ownerId, ownLeaders] of byOwner) {
-        jobs.push(runSerial(ownerId, () => processMessage(ownerId, ownLeaders, urls, remoteJid, coupon)));
+        jobs.push(runSerial(ownerId, () => processMessage(ownerId, ownLeaders, urls, remoteJid, coupon, text)));
       }
     } catch (err) {
       console.error(`[repasse] onUpsert erro: ${err.message}`);
@@ -261,7 +262,9 @@ async function onUpsert(userId, numberId, messages) {
   return Promise.allSettled(jobs);
 }
 
-async function processMessage(userId, leaders, urls, waJid, coupon = null) {
+// `text` é a mensagem inteira do líder — só usada pelas campanhas no modo
+// "mensagem original" (ver original-message.js).
+async function processMessage(userId, leaders, urls, waJid, coupon = null, text = "") {
   const scheduler = require("../scheduler");
 
   // Gating de plano. A captura é acionada pelo listener do Baileys, fora de
@@ -482,8 +485,48 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null) {
     // do grupo líder, então só vale a escolha de lojas da própria campanha.
     const allowedSources = scheduler.resolveSources(group.scraping?.sources);
 
+    // Modo "mensagem original": a mensagem inteira vira UM item, com todos os
+    // links trocados no envio. Basta um link que não vire afiliado pra ela toda
+    // ser descartada — repassar com link de outro afiliado não é opção.
+    let batch = items;
+    if (originalMessage.isOriginalMode(group)) {
+      const blocked = items.filter(b => {
+        const sid = scraper.normalizeSource(b.store);
+        return !sid || !allowedSources.includes(sid);
+      });
+      if (discarded.length || blocked.length) {
+        const why = discarded.length
+          ? `outro link da mensagem não pôde ser usado (${discarded[0].reason})`
+          : `outro link da mensagem é de loja não habilitada na campanha (${blocked[0].store})`;
+        console.log(`[repasse] campanha ${groupId}: mensagem original descartada — ${why}`);
+        for (const base of items) {
+          const isBlocked = blocked.includes(base);
+          logCapture({
+            groupId, userId, waJid,
+            rawUrl: base.rawUrl, resolvedUrl: base.link, store: base.store,
+            sourceAllowed: !isBlocked, affiliateConfigured: base.affiliateConfigured, scrapeOk: base.scrapeOk,
+            productName: base.name, productImg: base.img, price: base.price, originalPrice: base.originalPrice,
+            discount: base.discount, sold: base.sold, coupon: base.coupon,
+            outcome: "discarded",
+            reason: isBlocked
+              ? "fonte não habilitada — mensagem original inteira descartada"
+              : `mensagem original inteira descartada: ${why}`,
+            stage: isBlocked ? STAGE.SOURCE : STAGE.QUEUE,
+          });
+        }
+        continue;
+      }
+      const extra = items.length - 1;
+      batch = [{
+        ...items[0],
+        name: extra > 0 ? `${items[0].name} (+${extra} produto${extra > 1 ? "s" : ""})` : items[0].name,
+        originalText: text,
+        originalLinks: items.map(b => ({ raw: b.rawUrl, link: b.link, store: b.store })),
+      }];
+    }
+
     let approved = 0, pending = 0;
-    for (const base of items) {
+    for (const base of batch) {
       const storeSourceId = scraper.normalizeSource(base.store);
       const sourceAllowed = !!storeSourceId && allowedSources.includes(storeSourceId);
       if (!sourceAllowed) {
