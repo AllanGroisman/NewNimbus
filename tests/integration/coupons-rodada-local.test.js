@@ -33,6 +33,9 @@ const coupons = require(path.join(backendDir, "coupons"));
 // rodada aprende categorias e as grava aí — então um teste que não zera o
 // dicionário herda o que o anterior descobriu.
 const appConfig = require(path.join(backendDir, "config"));
+// O `sync.js` importa `coupons/pg` DIRETO, e o `coupons/index.js` é um spread dele
+// (uma cópia). Quem quiser espiar a gravação tem que espiar aqui.
+const couponsPg = require(path.join(backendDir, "coupons", "pg.js"));
 
 const PROPS = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "fixtures", "ml-cupons-filter.json"), "utf8"));
 
@@ -135,6 +138,14 @@ describe("paginaLocal", () => {
     // Os produtos são a etapa 2, num botão separado: a varredura da lista não
     // devolve mais vitrine para a tela sair colhendo.
     expect(r.alvos).toBeNull();
+    // As barras da tela (task 18): a página lida, e só a lista geral na fila.
+    expect(r.progresso).toMatchObject({ grouping: null, pagina: 1, de: 13, categoria: 1, categorias: 1, carimbo: null, alvos: null });
+  });
+
+  it("a barra de páginas já vem com o teto: 13 páginas cortadas em 5 é '1 de 5' (task 18)", async () => {
+    sync.startLocalRun({ limiteCupons: 0, carimbarCategorias: false, maxPaginasLista: 5 });
+    const r = await sync.paginaLocal({ grouping: null, props: PROPS });
+    expect(r.progresso.de).toBe(5);
   });
 
   it("com o descarte ligado, o cupom de loja sai antes de entrar", async () => {
@@ -168,6 +179,57 @@ describe("paginaLocal", () => {
     expect(r.resumo.avisos.join(" ")).toMatch(/teto de 1 páginas/i);
   });
 
+  // Task 20. O "sem teto" era meia-verdade: só o teto de páginas da lista saía da
+  // frente, e com um 200 que é teto do mesmo jeito. Os outros dois seguravam a mesma
+  // promessa por baixo — o `limiteCupons` corta a colheita por número, e o
+  // `maxPaginasPorCategoria` corta o carimbo (cupom além dele fica sem categoria).
+  describe("o \"sem teto\" da lista", () => {
+    it("solta os três tetos, e não só o de páginas", () => {
+      const r = sync.startLocalRun({ semTeto: true });
+      expect(r.config.maxPaginasLista).toBe(Infinity);
+      expect(r.config.maxPaginasPorCategoria).toBe(Infinity);
+      expect(r.config.limiteCupons).toBe(0);
+    });
+
+    it("o teto salvo na config não segura uma rodada sem teto", async () => {
+      sync.writeConfig({ maxPaginasLista: 2 });
+      sync.startLocalRun({ semTeto: true, carimbarCategorias: false });
+      // Sem o flag, a 2ª página seria a última. Com ele, quem manda é o `pages` que
+      // o ML declara na própria resposta — 13 nesta fixture.
+      await sync.paginaLocal({ props: PROPS });
+      const r = await sync.paginaLocal({ props: PROPS });
+      expect(r.proxima).not.toBeNull();
+      expect(r.proxima.pagina).toBe(3);
+    });
+
+    it("sem teto não é sem fim: o aviso de teto some, mas a varredura para", async () => {
+      sync.startLocalRun({ semTeto: true, carimbarCategorias: false });
+      // A mesma página repetida: quem encerra agora é o freio de "sem novidade".
+      let r = null;
+      for (let i = 0; i < 12 && (!r || r.proxima); i++) r = await sync.paginaLocal({ props: PROPS });
+      expect(r.proxima).toBeNull();
+      // O aviso de teto não pode aparecer dizendo "teto de Infinity páginas".
+      expect(r.resumo.avisos.join(" ")).not.toMatch(/teto de/i);
+    });
+
+    it("o \"sem teto\" do botão 1 continua deixando o balanço do botão 1", async () => {
+      sync.startLocalRun({ semTeto: true, carimbarCategorias: false });
+      await sync.paginaLocal({ props: PROPS });
+      await sync.fimLocalRun({ cancelada: true });
+      // É o contrapeso do teste do `tudo`, que NÃO deixa balanço: os dois flags
+      // fazem coisas diferentes de propósito, e juntá-los deixaria o card 1 da tela
+      // sem "última vez" para sempre.
+      expect(sync.status().ultimas.lista).not.toBeNull();
+    });
+
+    it("número cru vindo da rota não vira teto novo", () => {
+      const r = sync.startLocalRun({ maxPaginasPorCategoria: 9999, limiteCupons: -5, maxPaginasLista: 0 });
+      expect(r.config.maxPaginasPorCategoria).toBe(200);
+      expect(r.config.limiteCupons).toBe(0);
+      expect(r.config.maxPaginasLista).toBe(1);
+    });
+  });
+
   it("a lista que pagina em círculo não vira varredura infinita", async () => {
     sync.startLocalRun({ limiteCupons: 200, carimbarCategorias: false });
     // A mesma página, repetida: o ML começou a devolver o que já veio. A varredura
@@ -186,8 +248,16 @@ describe("paginaLocal", () => {
     expect(r.resumo.avisos.join(" ")).toMatch(/não devolveu cupom nenhum/i);
   });
 
-  it("sem rodada em andamento não se grava nada", async () => {
-    await expect(sync.paginaLocal({ props: PROPS })).rejects.toThrow(/rodada no Chrome/i);
+  it("sem rodada em andamento não se grava nada — e isso deixou de ser erro", async () => {
+    // Era uma exceção, e a tela levava 400. Com várias abas (task 21) uma página
+    // que volta DEPOIS de a rodada ter sido solta é normal: a última aba a
+    // terminar não é a última a voltar, e transformar isso em erro faria toda
+    // rodada paralela acabar com um vermelho na tela. O que não pode mudar é o
+    // efeito — nada entra no banco —, e é isso que se afirma aqui.
+    const r = await sync.paginaLocal({ props: PROPS });
+    expect(r.fim).toBe(true);
+    expect(r.proxima).toBeNull();
+    expect(await coupons.getCoupon("13907402")).toBeFalsy();
   });
 });
 
@@ -439,6 +509,12 @@ describe("o carimbo só procura o que ainda não tem categoria", () => {
     // A primeira página da vertical carimba os oito: nem a página 2, nem fa_vertical.
     const p1 = await sync.paginaLocal({ grouping: "ce_vertical", props: PROPS });
     expect(p1.proxima).toBeNull();
+    // A barra do carimbo (task 18): o que faltava, todo achado — é isso que
+    // encerrou antes da última página —; e a fila na vertical 2 de 3 (geral + duas).
+    expect(p1.progresso).toMatchObject({ grouping: "ce_vertical", categoria: 2, categorias: 3 });
+    expect(p1.progresso.nome).toMatch(/^Eletrônicos/);
+    expect(p1.progresso.carimbo.total).toBeGreaterThan(0);
+    expect(p1.progresso.carimbo.feitos).toBe(p1.progresso.carimbo.total);
     expect((await coupons.getCoupon("13491809")).groupings).toEqual(["ce_vertical"]);
   });
 
@@ -499,6 +575,7 @@ describe("interromper não joga fora o que foi lido", () => {
     const r = await sync.paginaLocal({ grouping: null, props: PROPS, ativados: 1 });
     expect(r.salvosNestaPagina).toBe(1);
     expect(r.salvosTotal).toBe(1);
+    expect(r.progresso.alvos).toEqual({ total: 2, vistos: 1 });
     expect(r.proxima).toBeTruthy();
     expect(await coupons.getCoupon("13491809")).toBeTruthy();
   });
@@ -591,5 +668,179 @@ describe("startLocalRun com uma campanha alvo", () => {
     sync.startLocalRun({ procurar: "99999999", activateCoupons: false });
     expect((await sync.paginaLocal({ props: PROPS })).paginasLidas).toBe(1);
     expect((await sync.paginaLocal({ props: PROPS })).paginasLidas).toBe(2);
+  });
+});
+
+// Um balanço por botão da tela (task 17). Antes era um slot só, que QUALQUER
+// passada pela lista sobrescrevia — a ativação de um lote do botão 2 apagava o
+// balanço do botão 1, e os botões 2 e 3 nem gravavam o deles.
+describe("o balanço de cada botão", () => {
+  const zerar = () => {
+    appConfig.set(sync.STATUS_KEY, { ultimas: { lista: null, produtos: null, tudo: null } });
+    sync.loadPersistedStatus();
+  };
+  beforeEach(zerar);
+  afterEach(zerar);
+
+  it("a varredura do botão 1 vira o balanço da lista", async () => {
+    sync.startLocalRun({ limiteCupons: 3, carimbarCategorias: false });
+    await sync.paginaLocal({ props: PROPS });
+    await sync.fimLocalRun({});
+    const u = sync.status().ultimas.lista;
+    expect(u.resultado.cupons).toBe(3);
+    expect(u.interrompida).toBe(false);
+    expect(u.at).toBeTruthy();
+  });
+
+  it("a ativação de um lote e a busca de uma campanha não mexem no balanço da lista", async () => {
+    sync.startLocalRun({ ativarApenas: ["1"] });
+    await sync.fimLocalRun({ cancelada: true });
+    sync.startLocalRun({ procurar: "13495993" });
+    await sync.fimLocalRun({});
+    expect(sync.status().ultimas.lista).toBe(null);
+  });
+
+  it("a passada de lista do botão 3 é do botão 3, não do 1", async () => {
+    sync.startLocalRun({ tudo: true });
+    await sync.fimLocalRun({});
+    expect(sync.status().ultimas.lista).toBe(null);
+  });
+
+  it("os botões 2 e 3 gravam o deles, só com números conhecidos", () => {
+    sync.registrarRodada("produtos", {
+      duracaoMs: 5000, interrompida: true, erro: "Interrompido por você",
+      resultado: { tentados: 4, colhidos: "3", lixo: 9, produtos: "abc" },
+    });
+    const u = sync.status().ultimas.produtos;
+    expect(u.resultado).toEqual({ tentados: 4, colhidos: 3 });
+    expect(u.interrompida).toBe(true);
+    expect(u.duracaoMs).toBe(5000);
+    expect(sync.status().ultimas.tudo).toBe(null);
+    expect(() => sync.registrarRodada("lista", {})).toThrow(/desconhecido/i);
+  });
+
+  it("sobrevive ao restart, e o formato antigo vira o balanço da lista", () => {
+    sync.registrarRodada("tudo", { resultado: { ciclos: 2 } });
+    sync.loadPersistedStatus();
+    expect(sync.status().ultimas.tudo.resultado.ciclos).toBe(2);
+
+    appConfig.set(sync.STATUS_KEY, {
+      lastRun: "2026-08-31T12:00:00.000Z", lastDuration: 92000,
+      lastResult: { cupons: 120, cancelada: false }, lastError: null,
+    });
+    sync.loadPersistedStatus();
+    expect(sync.status().ultimas.lista).toMatchObject({
+      at: "2026-08-31T12:00:00.000Z", duracaoMs: 92000, resultado: { cupons: 120 },
+    });
+  });
+});
+
+// A gravação da rodada, quando duas páginas podem estar em voo ao mesmo tempo.
+//
+// Hoje a etapa 1 abre uma página por vez, e estes dois defeitos ficam dormindo:
+// só existe intercalação se alguém chamar `paginaLocal` enquanto outra chamada
+// está parada num `await`. A task 21 (paralelizar a busca) é exatamente isso, e é
+// por isso que os consertos vêm ANTES dela — depois viram "regressão do
+// paralelismo" e ninguém acha a causa.
+//
+// Os dois pontos de suspensão que importam estão em `paginaLocal`: a gravação
+// parcial da troca de categoria e a gravação final.
+describe("gravação da rodada com duas páginas em voo", () => {
+  comORelogioDaFixture();
+
+  // Uma página da lista com UM cupom, no formato cru que o ML manda. O card é
+  // CLONADO da fixture de propósito: o `parseFilterProps` recusa card incompleto,
+  // e um objeto montado à mão aqui passaria por motivo errado.
+  function paginaComCupom(campaignId, { pagina = 1, total = 13 } = {}) {
+    const cru = JSON.parse(JSON.stringify(PROPS.filteredCouponsData.coupons[0]));
+    cru.campaignId = campaignId;
+    return { filteredCouponsData: { coupons: [cru], pagination: { page: pagina, total } } };
+  }
+
+  // Segura a PRIMEIRA gravação até o teste mandar soltar, e conta quantas
+  // estiveram em curso ao mesmo tempo.
+  //
+  // O espião entra em `coupons/pg.js`, e não no `coupons/index.js`: o índice é um
+  // SPREAD (`{ ...require("./pg") }`), ou seja uma cópia — e o `sync.js` importa o
+  // `pg` direto. Trocar a função no índice não trocaria nada, e o teste passaria
+  // sem nunca ter segurado gravação nenhuma.
+  function espiarGravacao() {
+    const real = couponsPg.upsertCoupons;
+    const espiao = { emCurso: 0, maximo: 0, soltar: null, primeira: true };
+    const portao = new Promise(r => { espiao.soltar = r; });
+    couponsPg.upsertCoupons = async (lista) => {
+      espiao.emCurso++;
+      espiao.maximo = Math.max(espiao.maximo, espiao.emCurso);
+      try {
+        if (espiao.primeira) { espiao.primeira = false; await portao; }
+        return await real.call(couponsPg, lista);
+      } finally { espiao.emCurso--; }
+    };
+    espiao.parar = () => { couponsPg.upsertCoupons = real; };
+    return espiao;
+  }
+
+  // Espera a gravação estar DENTRO do banco. Um `setImmediate` não serve: a
+  // chamada que dispara a gravação parcial passa antes por um SELECT
+  // (`abrirCarimbo`), e quem ceder a vez cedo demais entrega o cupom ANTES de a
+  // gravação começar — aí ele entra no lote dela e o teste passa sem nunca ter
+  // reproduzido o defeito.
+  async function esperarGravacaoComecar(espiao) {
+    for (let i = 0; i < 200 && !espiao.emCurso; i++) await new Promise(r => setTimeout(r, 10));
+    expect(espiao.emCurso).toBeGreaterThan(0);
+  }
+
+  it("o cupom que chega durante a gravação não some do rastro", async () => {
+    // Era um booleano `sujo`, limpo DEPOIS do await: a página que chegasse no meio
+    // da gravação marcava "tem coisa nova", e a gravação que estava terminando
+    // apagava essa marca logo em seguida. O `fimLocalRun` só grava quando há
+    // rastro — então o cupom ficava em memória, a rodada terminava dizendo "ok", e
+    // ele nunca chegava ao banco. Sem erro, sem aviso: só um cupom a menos.
+    const espiao = espiarGravacao();
+    try {
+      // `maxPaginasLista: 1` fecha a lista geral na primeira página, e é isso que
+      // dispara a gravação PARCIAL da troca de categoria (a rodada continua).
+      sync.startLocalRun({ categorias: ["ce_vertical"], carimbarCategorias: true, maxPaginasLista: 1, limiteCupons: 0 });
+      const geral = sync.paginaLocal({ grouping: null, props: PROPS });
+      await esperarGravacaoComecar(espiao);
+
+      // Chega agora, com a gravação da geral parada no banco. Esta página NÃO
+      // grava nada por conta própria — a vertical continua, então a única chance
+      // deste cupom é o `fimLocalRun`.
+      const vertical = sync.paginaLocal({ grouping: "ce_vertical", props: paginaComCupom("99990001") });
+
+      espiao.soltar();
+      const [rGeral, rVertical] = await Promise.all([geral, vertical]);
+      expect(rGeral.proxima.grouping).toBe("ce_vertical");   // a rodada seguiu
+      expect(rVertical.proxima).not.toBeNull();
+
+      await sync.fimLocalRun({});
+      expect(await coupons.getCoupon("99990001")).toBeTruthy();
+    } finally { espiao.parar(); }
+  });
+
+  it("duas gravações não se atropelam no banco — uma de cada vez", async () => {
+    // `persistRun` é um upsert multi-linha (`coupons/pg.js`): duas transações
+    // tocando o mesmo conjunto em ordens diferentes deadlockam no Postgres. Hoje a
+    // ordem sai sempre do mesmo Map e coincide por acaso — este teste é o que
+    // impede o acaso de virar requisito.
+    const espiao = espiarGravacao();
+    try {
+      sync.startLocalRun({ categorias: ["ce_vertical"], carimbarCategorias: true, maxPaginasLista: 1, limiteCupons: 0 });
+      const geral = sync.paginaLocal({ grouping: null, props: PROPS });
+      await esperarGravacaoComecar(espiao);
+
+      // `total: 1` = o ML dizendo que a vertical tem uma página só. Com ela a fila
+      // acaba, e esta chamada vai à gravação FINAL enquanto a parcial ainda corre.
+      const vertical = sync.paginaLocal({ grouping: "ce_vertical", props: paginaComCupom("99990002", { total: 1 }) });
+
+      espiao.soltar();
+      const [, rVertical] = await Promise.all([geral, vertical]);
+      expect(rVertical.proxima).toBeNull();
+      expect(espiao.maximo).toBe(1);
+      // E o que chegou por último entrou: a gravação em curso repete quando
+      // alguém bate na porta durante ela.
+      expect(await coupons.getCoupon("99990002")).toBeTruthy();
+    } finally { espiao.parar(); }
   });
 });

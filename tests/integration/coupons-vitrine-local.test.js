@@ -147,18 +147,28 @@ describe("config da ativação automática", () => {
   // O botão 3 solta o teto de páginas da lista geral. O flag é do SERVIDOR: a tela
   // manda `tudo: true`, não um número — `startLocalRun` espalha os overrides por
   // cima da config sem passar pelos clamps do `writeConfig`.
-  it("tudo: true solta o teto de páginas da lista geral", async () => {
-    await sync.writeConfig({ maxPaginasLista: 3 });
+  it("tudo: true solta os três tetos da lista geral", async () => {
+    await sync.writeConfig({ maxPaginasLista: 3, maxPaginasPorCategoria: 4, limiteCupons: 50 });
     const normal = sync.startLocalRun({});
     expect(normal.config.maxPaginasLista).toBe(3);
+    expect(normal.config.maxPaginasPorCategoria).toBe(4);
+    expect(normal.config.limiteCupons).toBe(50);
     sync.fimLocalRun({ cancelada: true });
 
+    // `Infinity`, e não 200: 200 × 30 = 6.000 cupons é um teto disfarçado de "sem
+    // teto", e a conta pode ter mais. Quem encerra passa a ser o `pages` que o
+    // próprio ML declara. Os outros dois tetos saem junto — antes só o de páginas
+    // saía, e os outros seguravam a mesma promessa por baixo (task 20).
     const tudo = sync.startLocalRun({ tudo: true });
-    expect(tudo.config.maxPaginasLista).toBe(200);
+    expect(tudo.config.maxPaginasLista).toBe(Infinity);
+    expect(tudo.config.maxPaginasPorCategoria).toBe(Infinity);
+    expect(tudo.config.limiteCupons).toBe(0);
     sync.fimLocalRun({ cancelada: true });
 
     // E não fica gravado: é override de UMA rodada, não uma mudança de config.
     expect(sync.readConfig().maxPaginasLista).toBe(3);
+    expect(sync.readConfig().maxPaginasPorCategoria).toBe(4);
+    expect(sync.readConfig().limiteCupons).toBe(50);
   });
 
   it("os ciclos do buscar TUDO têm freio próprio", async () => {

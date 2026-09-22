@@ -25,7 +25,7 @@ import { coletorInfo, raparVitrine, _resetColetor } from "../data/coletor";
 import MLSourcesSection from "../components/admin/MLSourcesSection";
 import ExtensaoAusente from "../components/admin/ExtensaoAusente";
 import ColheitaLog from "../components/admin/ColheitaLog";
-import { Config } from "./AdminCupomML";
+import { Config } from "../components/admin/LimitesCupons";
 import { cardStyle, inputStyle, labelStyle, botaoPrimario, botaoSecundario, segundos } from "../components/admin/cupomEstilos";
 
 // Um cookie do ML dura cerca de uma semana. Passado disso ele quase sempre já

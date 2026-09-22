@@ -2669,6 +2669,20 @@ app.post("/api/admin/ml-cupons/local/pagina", auth.requireAuth, auth.requireAdmi
   }
 });
 
+// Uma aba que terminou a página dela e quer a próxima (task 21). Existe separada
+// do `/pagina` porque o servidor pode não ter página AGORA sem a rodada ter
+// acabado: a página 1 de cada entrada corre sozinha, e enquanto ela não volta as
+// outras abas não têm o que abrir. Quem distingue os dois casos é o `fim` — uma
+// aba que lesse a lista vazia como "acabou" sairia, e o paralelismo viraria
+// serial no primeiro instante.
+app.post("/api/admin/ml-cupons/local/proximas", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  try {
+    res.json(mlCupons.pedirProximas(Number(req.body?.n) || 1));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // Async porque o fim GRAVA o que a varredura já leu — inclusive quando ela foi
 // interrompida, que é justamente quando mais importa.
 app.post("/api/admin/ml-cupons/local/fim", auth.requireAuth, auth.requireAdmin, async (req, res) => {
@@ -2676,6 +2690,17 @@ app.post("/api/admin/ml-cupons/local/fim", auth.requireAuth, auth.requireAdmin, 
     res.json(await mlCupons.fimLocalRun(req.body || {}));
   } catch (err) {
     httpErrors.serverError(res, err, { req, ctx: "POST /api/admin/ml-cupons/local/fim" });
+  }
+});
+
+// O balanço dos botões 2 e 3 da aba "Cupons do ML" (task 17). O laço deles roda
+// na tela, então é ela que avisa quando acabou e com que números.
+app.post("/api/admin/ml-cupons/rodada-fim", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  const { botao, ...resto } = req.body || {};
+  try {
+    res.json({ ok: true, ultima: mlCupons.registrarRodada(String(botao || ""), resto) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 

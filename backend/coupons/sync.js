@@ -49,6 +49,16 @@ const DEFAULT_CONFIG = {
   // é separado na tela — descartá-lo escondia metade da lista do ML. Ligar isto
   // volta ao comportamento antigo.
   skipStoreCoupons: false,
+  // Quantas páginas da lista a etapa 1 abre AO MESMO TEMPO no Chrome do admin
+  // (task 21). As URLs da lista são endereçáveis por offset e o ML declara quantas
+  // páginas existem, então nada do lado dele obriga a ir uma por vez.
+  //
+  // Nasce em 1, e não em 2 como o `vitrinesEmParalelo`, por três motivos que se
+  // somam: esta é a PRIMEIRA coisa que roda numa conta, não tem pausa entre
+  // páginas como as vitrines têm, e é o endpoint mais fichado do ML. E o muro vale
+  // para a CONTA, que é a mesma do Hub de Afiliados — um CAPTCHA aqui derruba os
+  // dois. Quem quiser acelerar sobe o número na tela e olha o que acontece.
+  paginasDeListaEmParalelo: 1,
 
   // ── Etapa 2: os produtos ────────────────────────────────────────────────
   //
@@ -119,11 +129,22 @@ let _status = {
   // rodada corre, e o que precisa sobreviver a um restart é o RESUMO — que
   // continua indo pro app_config no persistStatus().
   log: [],
-  lastRun: null,
-  lastDuration: null,
-  lastResult: null,
-  lastError: null,
+  // O balanço da última vez de CADA botão da tela (task 17). Eram quatro campos
+  // soltos (`lastRun`…) que qualquer passada pela lista sobrescrevia — inclusive a
+  // ativação de um lote do botão 2 —, e os botões 2 e 3 nem gravavam o deles.
+  // Cada slot é `{ at, duracaoMs, resultado, erro, interrompida }`.
+  ultimas: { lista: null, produtos: null, tudo: null },
 };
+
+// Os botões cujo laço roda no navegador e que mandam o balanço pronto para cá
+// (`registrarRodada`). O `lista` fica de fora: quem o escreve é o `resumoDoFim`.
+const BOTOES_DO_NAVEGADOR = new Set(["produtos", "tudo"]);
+// O que o navegador pode gravar num balanço. Só números: é o que a tela mostra, e
+// aceitar objeto qualquer seria deixar a tela encher o app_config.
+const CHAVES_DO_BALANCO = [
+  "ativados", "tentados", "colhidos", "produtos", "parciais", "vazias", "falharam",
+  "lotes", "ciclos", "cuponsNaLista", "ficaramDeFora",
+];
 
 // Teto do log. Uma rodada grande emite um evento por cupom, e guardar tudo é
 // segurar megabytes na memória do processo da API pra mostrar 20 linhas na tela.
@@ -145,21 +166,45 @@ let _importPromise = null;
 
 function loadPersistedStatus() {
   const saved = appConfig.get(STATUS_KEY);
-  if (saved && typeof saved === "object") {
-    _status.lastRun = saved.lastRun || null;
-    _status.lastDuration = saved.lastDuration || null;
-    _status.lastResult = saved.lastResult || null;
-    _status.lastError = saved.lastError || null;
+  if (!saved || typeof saved !== "object") return;
+  if (saved.ultimas && typeof saved.ultimas === "object") {
+    for (const k of Object.keys(_status.ultimas)) _status.ultimas[k] = saved.ultimas[k] || null;
+  } else if (saved.lastRun) {
+    // O formato de antes da task 17: um slot só. O melhor palpite é que ele seja
+    // do botão 1, e a próxima rodada dele o substitui de qualquer jeito.
+    _status.ultimas.lista = {
+      at: saved.lastRun,
+      duracaoMs: saved.lastDuration || null,
+      resultado: saved.lastResult || null,
+      erro: saved.lastError || null,
+      interrompida: !!saved.lastResult?.cancelada,
+    };
   }
 }
 
 function persistStatus() {
-  appConfig.set(STATUS_KEY, {
-    lastRun: _status.lastRun,
-    lastDuration: _status.lastDuration,
-    lastResult: _status.lastResult,
-    lastError: _status.lastError,
-  });
+  appConfig.set(STATUS_KEY, { ultimas: _status.ultimas });
+}
+
+// O balanço dos botões 2 e 3, que rodam no navegador — o servidor só vê as
+// vitrines chegando, uma a uma, e não sabe quando o botão acabou.
+function registrarRodada(botao, { duracaoMs = null, resultado = {}, erro = null, interrompida = false } = {}) {
+  if (!BOTOES_DO_NAVEGADOR.has(botao)) throw new Error(`Botão desconhecido: ${botao}`);
+  const limpo = {};
+  for (const k of CHAVES_DO_BALANCO) {
+    const v = Number(resultado?.[k]);
+    if (resultado?.[k] != null && Number.isFinite(v)) limpo[k] = v;
+  }
+  const ms = Number(duracaoMs);
+  _status.ultimas[botao] = {
+    at: new Date().toISOString(),
+    duracaoMs: Number.isFinite(ms) && ms >= 0 ? ms : null,
+    resultado: limpo,
+    erro: erro ? String(erro).slice(0, 500) : null,
+    interrompida: !!interrompida,
+  };
+  persistStatus();
+  return _status.ultimas[botao];
 }
 
 // { chave: nome } do que já se viu em alguma rodada. Só leitura — quem escreve é
@@ -304,6 +349,10 @@ function writeConfig(cfg) {
   merged.vitrinesEmParalelo = inteiro(merged.vitrinesEmParalelo, { min: 1, max: 4, padrao: DEFAULT_CONFIG.vitrinesEmParalelo });
   merged.carimbarCategorias = booleano(merged.carimbarCategorias, DEFAULT_CONFIG.carimbarCategorias);
   merged.skipStoreCoupons = booleano(merged.skipStoreCoupons, DEFAULT_CONFIG.skipStoreCoupons);
+  // Teto 8. É mais alto que o das vitrines (4) porque aqui a página é só leitura —
+  // nenhum clique, nada escrito na conta —, mas continua sendo um teto: o que
+  // acorda o anti-robô é a rajada, e rajada não tem a ver com o que se lê.
+  merged.paginasDeListaEmParalelo = inteiro(merged.paginasDeListaEmParalelo, { min: 1, max: 8, padrao: DEFAULT_CONFIG.paginasDeListaEmParalelo });
   merged.activateCoupons = booleano(merged.activateCoupons, DEFAULT_CONFIG.activateCoupons);
   appConfig.set(CONFIG_KEY, merged);
   return merged;
@@ -317,7 +366,11 @@ function textoDoProgresso(p) {
   if (p.etapa === "cupons") {
     const onde = p.grouping ? `de ${p.grouping}` : "geral";
     const loja = p.ignoradosLoja ? ` (${p.ignoradosLoja} de loja ignorados)` : "";
-    return `lendo a lista ${onde} — página ${p.pagina}/${p.de}, ${p.cupons} cupons${loja}`;
+    // "página X de N" só é progresso com uma aba: com várias, a última a voltar
+    // não é a mais adiantada e a frase pulava 9 → 7 → 11. `p.pagina` passou a ser
+    // quantas já VOLTARAM desta entrada, que é monotônico.
+    const abas = p.emVoo > 1 ? `, ${p.emVoo} abas abertas` : "";
+    return `lendo a lista ${onde} — ${p.pagina}/${p.de} páginas, ${p.cupons} cupons${loja}${abas}`;
   }
   if (p.etapa === "abrindo") return "abrindo a aba de cupons do Mercado Livre";
   if (p.etapa === "ativando") return `ativando "${p.title || p.campaignId}"`;
@@ -490,28 +543,191 @@ function expirarLocalSeSumiu() {
   fimLocalRun({ cancelada: true }).catch(err => logar("erro", `não consegui gravar a rodada pendurada: ${err.message}`));
 }
 
-// A URL da próxima página a abrir, ou null quando a varredura acabou. Puro sobre
-// o estado da rodada — é o coração do laço, e é ele que o teste cobre.
-function proximaPagina() {
-  if (!_local || _local.encerrada) return null;
-  const cat = _local.categorias[_local.iCategoria];
-  if (cat === undefined) return null;
+// ── A fila de trabalho da varredura (task 21) ───────────────────────────────
+//
+// Era um CURSOR: `iCategoria` + `pagina`, e uma função que devolvia "a próxima
+// página". Um cursor só pode responder a uma pergunta por vez, e era ele — não o
+// Mercado Livre — que obrigava a etapa 1 a abrir uma página de cada vez: as URLs
+// da lista são endereçáveis por offset (`filterUrl`), e o próprio ML declara
+// quantas páginas existem.
+//
+// Agora cada entrada da fila (a lista geral e cada vertical) guarda o próprio
+// avanço, e o despachante entrega até K páginas de uma vez.
+
+// Uma entrada da fila. `grouping` null é a lista geral.
+function novaEntrada(grouping) {
   return {
-    grouping: cat,
-    pagina: _local.pagina,
-    url: mlCupons.filterUrl({ grouping: cat, page: _local.pagina }),
+    grouping,
+    proxima: 1,             // a próxima página AINDA NÃO entregue
+    paginas: null,          // o `pages` que o ML declarou; null = a página 1 não voltou
+    lidas: 0,               // páginas concluídas — monotônico, é o que a barra usa
+    ultimaComNovidade: 0,   // ver `semNovidadeDemais`
+    fechada: false,
+    gravada: false,         // já disparou a gravação parcial de quando ficou quieta
   };
 }
 
-// Passa para a próxima entrada da fila — da lista geral para a primeira vertical,
-// de uma vertical para a seguinte — ou encerra. O contador de páginas sem novidade
-// é por entrada: uma vertical seca não pode encerrar a próxima.
-function proximaCategoria(motivo) {
-  if (motivo) _local.motivos.push(motivo);
-  _local.iCategoria++;
-  _local.pagina = 1;
-  _local.semNovidade = 0;
+const chaveDaPagina = (grouping, pagina) => `${grouping ?? ""}#${pagina}`;
+
+function entradaDe(grouping) {
+  return _local.entradas.find(e => e.grouping === grouping) || null;
 }
+
+function emVooDe(grouping) {
+  let n = 0;
+  for (const v of _local.emVoo.values()) if (v.grouping === grouping) n++;
+  return n;
+}
+
+// QUIETA é diferente de FECHADA: fechada fala da entrega ("não peça mais páginas
+// daqui"), quieta fala do resultado ("e nenhuma ainda está voltando"). Confundir
+// as duas é o que faria o carimbo abrir com a coleta pela metade.
+const quieta = (e) => e.fechada && emVooDe(e.grouping) === 0;
+
+function fecharEntrada(e, motivo) {
+  if (motivo) _local.motivos.push(motivo);
+  e.fechada = true;
+}
+
+// A varredura inteira para de entregar. As páginas em voo TERMINAM: os cupons
+// delas são cupons de verdade, e descartá-los seria jogar fora navegação que já
+// foi paga na conta do ML.
+function fecharTudo(motivo) {
+  if (motivo) _local.motivos.push(motivo);
+  for (const e of _local.entradas) e.fechada = true;
+}
+
+// A rodada acabou mesmo. `proximasPaginas` devolvendo `[]` NÃO quer dizer isto —
+// logo depois da semente o servidor legitimamente não tem página para as outras
+// abas, e uma que lesse `[]` como "acabou" sairia, devolvendo o paralelismo para
+// o serial no primeiro instante.
+function fimDaRodada() {
+  return !!_local && _local.entradas.every(e => e.fechada) && _local.emVoo.size === 0;
+}
+
+// O teto de páginas da fase. São dois porque as fases são duas: a lista geral é a
+// coleta, a vertical é a volta por cima para carimbar categoria.
+//
+// O `|| PADRÃO` é também o caminho do "sem teto": `Infinity` é truthy e atravessa
+// intacto, então não existe um segundo caminho para manter em dia. `0` continua
+// NÃO querendo dizer "sem teto" aqui — quem diz isso é o flag do `startLocalRun`,
+// e o `writeConfig` nem deixa gravar 0 nestes dois.
+function tetoDePaginas(carimbo) {
+  return carimbo
+    ? Number(_local.cfg.maxPaginasPorCategoria) || DEFAULT_CONFIG.maxPaginasPorCategoria
+    : Number(_local.cfg.maxPaginasLista) || DEFAULT_CONFIG.maxPaginasLista;
+}
+
+// Esta entrada ainda tem página para entregar? Fechar acontece AQUI, na entrega, e
+// não na volta da página: é o que permite soltar de uma vez as páginas 2..N de uma
+// entrada assim que se sabe quantas ela tem.
+//
+// A ordem das duas guardas importa e é a de antes: quem acabou porque o ML disse
+// que acabou não ganha o aviso de teto. Invertê-las poria "parei no teto de 5
+// páginas" numa lista que tem exatamente 5.
+function podeEntregar(e) {
+  if (e.fechada) return false;
+  if (e.paginas !== null && e.proxima > e.paginas) { fecharEntrada(e, null); return false; }
+  const teto = tetoDePaginas(e.grouping !== null);
+  if (e.proxima > teto) {
+    fecharEntrada(e, e.grouping !== null
+      ? `Parei no teto de ${teto} páginas em ${e.grouping} — os cupons além dele ficam sem categoria.`
+      : `Parei no teto de ${teto} páginas da lista geral — suba o limite se faltou cupom.`);
+    return false;
+  }
+  return true;
+}
+
+// Uma aba que morre segurando uma página deixaria a entrada eternamente "com algo
+// em voo": a rodada não terminaria e ficaria pendurada até o watchdog de 5 min.
+// Passado tempo demais, a página volta para a fila — nominalmente, e não mexendo
+// no `proxima` da entrada, que redespacharia junto tudo o que veio depois dela.
+const PAGINA_PERDIDA_MS = 3 * 45000;   // 3× o que a extensão espera uma página carregar
+
+function reclamarPerdidas() {
+  const agora = Date.now();
+  for (const [k, v] of _local.emVoo) {
+    if (agora - v.desde < PAGINA_PERDIDA_MS) continue;
+    _local.emVoo.delete(k);
+    const e = entradaDe(v.grouping);
+    if (!e || e.fechada) continue;
+    _local.refazer.push(v);
+    logar("aviso", `a página ${v.pagina}${v.grouping ? ` de ${v.grouping}` : " da lista geral"} não voltou — vou pedir de novo`);
+  }
+}
+
+function despachar(grouping, pagina) {
+  _local.emVoo.set(chaveDaPagina(grouping, pagina), { grouping, pagina, desde: Date.now() });
+  return { grouping, pagina, url: mlCupons.filterUrl({ grouping, page: pagina }) };
+}
+
+// Quantas abas estão livres agora. O despachante entrega no máximo isto, e não
+// `paralelo` a cada página que volta: entregar K por conclusão fazia a fila em voo
+// CRESCER — quatro abas viravam oito, depois doze —, e a tela abria muito mais
+// páginas ao mesmo tempo do que o número que quem opera escolheu.
+function vagas() {
+  return Math.max(0, _local.paralelo - _local.emVoo.size);
+}
+
+// Até `quanto` páginas para abrir agora — nunca mais que as abas livres. É o
+// coração do laço, e o que os testes cobrem.
+function proximasPaginas(quanto = 1) {
+  if (!_local) return [];
+  // ANTES de contar as vagas: uma aba morta ocupa uma vaga para sempre, e o pool
+  // pareceria cheio justamente quando está com um lugar vago e uma página perdida.
+  reclamarPerdidas();
+  quanto = Math.min(quanto, vagas());
+  if (quanto < 1) return [];
+  const fora = [];
+
+  // As que voltaram para a fila vêm na frente: são buraco no meio do que já foi
+  // varrido, e quanto mais tarde forem refeitas maior a chance de a rodada
+  // terminar sem elas.
+  while (fora.length < quanto && _local.refazer.length) {
+    const v = _local.refazer.shift();
+    const e = entradaDe(v.grouping);
+    if (!e || e.fechada) continue;
+    fora.push(despachar(v.grouping, v.pagina));
+  }
+
+  // A BARREIRA entre a coleta e o carimbo: enquanto a lista geral não estiver
+  // QUIETA, nenhuma vertical é entregue. O `abrirCarimbo` decide quais cupons
+  // ainda precisam de categoria olhando o `porId` inteiro — abrir uma vertical
+  // antes disso é decidir com a coleta pela metade.
+  const geral = _local.entradas[0];
+  const soAGeral = !!geral && !quieta(geral);
+
+  for (const e of _local.entradas) {
+    if (fora.length >= quanto) break;
+    if (e.fechada) continue;
+    if (soAGeral && e.grouping !== null) continue;
+    // A página 1 de cada entrada vai SOZINHA. É ela que revela quantas páginas a
+    // entrada tem, e na lista geral é também ela que faz a fila de verticais
+    // crescer (`aprenderCategorias`). Entregar a 2 antes de a 1 voltar é entregar
+    // sem saber até onde ir — e, na geral, sem saber quantas entradas existem.
+    if (e.paginas === null && (e.proxima > 1 || emVooDe(e.grouping) > 0)) continue;
+    while (fora.length < quanto && podeEntregar(e)) {
+      fora.push(despachar(e.grouping, e.proxima++));
+      if (e.paginas === null) break;   // a semente é uma só; o resto espera ela voltar
+    }
+  }
+  return fora;
+}
+
+// O que a rota `/local/proximas` entrega: páginas para uma aba que ficou livre.
+// `fim` vai junto de propósito — ver o comentário de `fimDaRodada`.
+function pedirProximas(n = 1) {
+  if (!_local) return { proximas: [], fim: true, emVoo: 0 };
+  tocarLocal();
+  const proximas = proximasPaginas(Math.min(8, Math.max(1, Number(n) || 1)));
+  return { proximas, fim: fimDaRodada(), emVoo: _local.emVoo.size };
+}
+
+// O contrato antigo, derivado do novo: UMA página. Os testes da rodada afirmam
+// sobre ele em quase trinta casos, e com uma aba só ele é exatamente o mesmo
+// objeto — manter é barato e é o que prova que o desenho novo não mudou o
+// comportamento de quem não ligou o paralelismo.
+const umaSo = (proximas) => proximas[0] ?? null;
 
 // Começa a varredura pela extensão — a ETAPA 1 do fluxo de cupons.
 //
@@ -542,6 +758,20 @@ function startLocalRun(overrides = {}) {
     : null;
   const cfg = { ...readConfig(), ...overrides };
 
+  // Os `overrides` entram CRUS: quem chama é a rota `/local/start` com o body da
+  // tela (backend/server.js), e quem clampa a config — o `writeConfig` — não passa
+  // por aqui. Até agora só o teto da lista tinha rede (o `= 200` que havia logo
+  // abaixo); os outros dois viajavam do jeito que chegassem. Agora que "sem teto" é
+  // um FLAG e não um número, dá pra fechar o buraco: número nenhum vindo de fora
+  // vira `Infinity`, e limite de fora fica na mesma faixa que a tela de config
+  // aceita.
+  if (overrides.maxPaginasLista !== undefined)
+    cfg.maxPaginasLista = inteiro(overrides.maxPaginasLista, { min: 1, max: 200, padrao: DEFAULT_CONFIG.maxPaginasLista });
+  if (overrides.maxPaginasPorCategoria !== undefined)
+    cfg.maxPaginasPorCategoria = inteiro(overrides.maxPaginasPorCategoria, { min: 1, max: 200, padrao: DEFAULT_CONFIG.maxPaginasPorCategoria });
+  if (overrides.limiteCupons !== undefined)
+    cfg.limiteCupons = inteiro(overrides.limiteCupons, { min: 0, max: 20000, padrao: DEFAULT_CONFIG.limiteCupons });
+
   // Buscar UMA campanha não é colher: o que segura a varredura passa a ser só o
   // teto de páginas, e os filtros de colheita saem da frente. A campanha
   // procurada PODE ser de loja, e descartá-la aqui é descartar o que se foi
@@ -560,12 +790,32 @@ function startLocalRun(overrides = {}) {
     cfg.carimbarCategorias = false;
     cfg.skipStoreCoupons = false;
   }
-  // "Buscar TUDO": o que segura a lista geral passa a ser o `pages` que o próprio
-  // ML devolve, não um teto nosso. Fica AQUI, e não como número mandado pela tela,
-  // porque o `cfg` acima espalha `overrides` por cima da config SEM passar pelos
-  // clamps do `writeConfig` — uma tela mandando `maxPaginasLista` cru seria um
-  // buraco à toa.
-  if (booleano(overrides.tudo, false)) cfg.maxPaginasLista = 200;
+  // "Sem teto": o que segura a lista geral passa a ser o `pages` que o PRÓPRIO ML
+  // declara, não um número nosso. É o que o botão 1 manda quando quem opera escolhe
+  // "tudo o que o ML tiver" (task 20), e é o que o "Buscar TUDO" sempre quis dizer
+  // — por isso o `tudo` implica isto, e não o contrário. Os dois continuam sendo
+  // coisas diferentes: `tudo` quer dizer "esta passada é a do botão 3", que é o que
+  // o `resumoDoFim` lê para NÃO sobrescrever o balanço do botão 1. Juntá-los faria
+  // o botão 1, no modo sem teto, parar de gravar o próprio "última vez".
+  //
+  // São TRÊS tetos, e antes só um saía da frente. Os outros dois seguravam a mesma
+  // promessa por baixo: o `limiteCupons` corta a colheita por número de cupons, e o
+  // `maxPaginasPorCategoria` corta o CARIMBO — o cupom além dele entra sem
+  // categoria, que é "veio pela metade" com outro nome.
+  //
+  // `Infinity`, e não 200: é o idioma que este arquivo já usa para não-teto (ver o
+  // `restantes.n` mais abaixo), ele atravessa o `Number(x) || PADRÃO` do
+  // `tetoDePaginas` intacto, e o `semTeto()` o devolve como `null` quando precisa
+  // sair em JSON. 200 era um teto disfarçado de "sem teto": 200 × 30 = 6.000
+  // cupons, e a conta pode ter mais.
+  //
+  // `semLimites` e não `semTeto`: `semTeto` já é o nome da função lá em cima.
+  const semLimites = booleano(overrides.tudo, false) || booleano(overrides.semTeto, false);
+  if (semLimites) {
+    cfg.maxPaginasLista = Infinity;
+    cfg.maxPaginasPorCategoria = Infinity;
+    cfg.limiteCupons = 0;   // 0 aqui já quer dizer "sem teto" (ver `paginaLocal`)
+  }
   // O carimbo é INCREMENTAL por padrão: só vai às verticais atrás do cupom que
   // ainda não tem categoria no banco, e para quando o último for achado (ver
   // `abrirCarimbo`). "Buscar TUDO" refaz a passada inteira — é o jeito de pegar
@@ -579,15 +829,34 @@ function startLocalRun(overrides = {}) {
 
   _local = {
     t0: Date.now(),
+    // O que esta passada É. Só a do botão 1 (`lista`, sem `tudo`) vira o balanço
+    // dele: a ativação de um lote e a busca de uma campanha também passam pela
+    // lista, e antes sobrescreviam o "última varredura" com os números delas.
+    tipo: procurar ? "procurar" : (ativarApenas ? "ativacao" : "lista"),
+    tudo: booleano(overrides.tudo, false),
     cfg,
     categorias: categoriasDaRodada(cfg, { procurar }),
-    iCategoria: 0,
-    pagina: 1,
+    // A fila de trabalho, alinhada com `categorias` (ver `novaEntrada`). São duas
+    // listas da mesma coisa de propósito: `categorias` é o que a rodada ANUNCIA
+    // (a tela nomeia as verticais), `entradas` é como ela ANDA.
+    entradas: [],
+    // As páginas abertas agora, por "grouping#pagina". A rodada só acaba com ele
+    // vazio — é o que distingue "não tenho página agora" de "acabou".
+    emVoo: new Map(),
+    // Páginas que voltaram para a fila porque a aba morreu com elas.
+    refazer: [],
+    // As chaves já processadas. Uma aba que refaz o POST depois de um timeout não
+    // pode debitar o orçamento de ativação nem contar página duas vezes.
+    paginasVistas: new Set(),
+    // Quantas páginas a tela pode abrir ao mesmo tempo. `alvos ? 1` é a linha que
+    // segura a escrita: `procurar` e `ativarApenas` CLICAM em "Eu quero" na conta
+    // do ML, e a etapa 2 depende de essa passada ser serial. Mora aqui, e não na
+    // tela, porque quem sabe o que a rodada é são estas linhas.
+    paralelo: alvos ? 1 : Math.min(8, Math.max(1, Number(cfg.paginasDeListaEmParalelo) || 1)),
     // Quantas páginas já foram abertas na varredura inteira (todas as categorias
     // somadas). O `pagina` acima zera a cada categoria; este não — é ele que a
     // tela usa pra dizer o que foi varrido quando a busca não acha nada.
     paginasLidas: 0,
-    semNovidade: 0,
     porId: new Map(),
     ignoradosLoja: 0,
     ativados: 0,
@@ -605,10 +874,21 @@ function startLocalRun(overrides = {}) {
     // varredura acaba — sem isto cada LOTE da etapa 2 varreria a lista inteira.
     vistos: new Set(),
     salvosTotal: 0,
-    // Tem cupom no `porId` que ainda não foi pro banco. É o que o `fimLocalRun`
-    // olha para saber se precisa gravar antes de soltar a rodada.
-    sujo: false,
-    encerrada: false,
+    // O que o `porId` já recebeu, e o que dele já foi pro banco. É como o
+    // `fimLocalRun` sabe se precisa gravar antes de soltar a rodada.
+    //
+    // Era um booleano `sujo`, e ele PERDIA cupom lido: o `false` era escrito
+    // depois do `await persistRun`, então o cupom que chegasse durante a gravação
+    // marcava "sujo" e tinha o rastro apagado logo em seguida — e o `fimLocalRun`,
+    // que só grava quando há rastro, pulava a gravação final. Nunca aparecia como
+    // erro: o cupom simplesmente não estava no banco. Com contador não existe o
+    // que apagar — grava-se a versão que FOI gravada, e o que chegou depois segue
+    // pendente por construção.
+    versao: 0,
+    gravado: 0,
+    // Uma gravação por vez (ver `gravarCuponsLocais`).
+    gravando: null,
+    gravarDeNovo: false,
     persistido: null,
     ultimoContato: Date.now(),
     procurar,
@@ -617,23 +897,32 @@ function startLocalRun(overrides = {}) {
     // Os cupons que a passada de carimbo ainda precisa achar. `null` = carimbo
     // completo (ou ainda na lista geral); é montado no `abrirCarimbo`.
     semCategoria: null,
+    // A promessa do `abrirCarimbo`, que roda uma vez só (ver `abrirCarimboUmaVezSo`).
+    carimboPromessa: null,
+    // Quantos eram no começo do carimbo — o "de N" da barra da tela (task 18).
+    semCategoriaTotal: 0,
   };
 
   _status.running = true;
   _status.startedAt = new Date().toISOString();
   _status.progress = null;
-  _status.lastError = null;
   _status.log = [];
   logar("info", procurar
     ? `procurando a campanha ${procurar} no seu Chrome`
     : ativarApenas
       ? `ativando ${ativarApenas.length} cupom(ns) no seu Chrome${Number.isFinite(_local.restantes.n) ? `, até ${_local.restantes.n} nesta rodada` : " (sem teto por rodada)"}`
-      : `começando no seu Chrome: ${textoDasCategorias(_local.categorias)}${cfg.limiteCupons ? `, até ${cfg.limiteCupons} cupons` : ""}`);
+      : `começando no seu Chrome: ${textoDasCategorias(_local.categorias)}${semLimites
+          ? ", sem teto de páginas (vai até o ML dizer que a lista acabou)"
+          : `, até ${cfg.maxPaginasLista} páginas${cfg.limiteCupons ? ` ou ${cfg.limiteCupons} cupons` : ""}`}`);
 
   // `categorias` vai junto porque a tela precisa DIZER quais são: "todas as
   // categorias" sem nomeá-las foi o que escondeu por meses uma config presa em
   // Brinquedos (task 26).
-  return { config: cfg, ativa, procurar, categorias: _local.categorias, proxima: proximaPagina() };
+  _local.entradas = _local.categorias.map(novaEntrada);
+  // `paralelo` vai junto porque é a tela que dimensiona o pool de abas, e ela tem
+  // de dimensioná-lo pelo que o SERVIDOR decidiu — não pela config que ela leu.
+  const proximas = proximasPaginas(_local.paralelo);
+  return { config: cfg, ativa, procurar, categorias: _local.categorias, paralelo: _local.paralelo, proximas, proxima: umaSo(proximas) };
 }
 
 // Quem ativar nesta página. A extensão manda o modelo cru, este lado devolve os
@@ -659,14 +948,36 @@ function ativacoesLocais({ grouping = null, props = null } = {}) {
 
 // Uma página lida. Devolve o que a tela mostra e a próxima URL — ou o resumo,
 // quando a varredura acabou e os cupons já foram gravados.
-async function paginaLocal({ grouping = null, props = null, ativados = 0, semBotao = 0 } = {}) {
-  if (!_local) throw new Error("Não tem rodada no Chrome em andamento.");
+async function paginaLocal({ grouping = null, pagina = null, props = null, ativados = 0, semBotao = 0 } = {}) {
+  // Com várias abas, uma página que volta depois de a rodada ter sido solta é
+  // normal — a última a fechar não é a última a voltar. Isto lançava, e a tela
+  // recebia um 400 no fim de toda rodada paralela.
+  if (!_local) return { fim: true, proximas: [], proxima: null, cupons: 0, novos: 0, carimbados: 0, emVoo: 0 };
   tocarLocal();
 
-  _local.ativados += Number(ativados) || 0;
-  _local.semBotao += Number(semBotao) || 0;
-  _local.restantes.n = Math.max(0, _local.restantes.n - (Number(ativados) || 0));
-  _local.paginasLidas++;
+  const entrada = entradaDe(grouping);
+  // Sem `pagina` no corpo — a tela antiga, e os testes que dirigem a rodada à mão.
+  // Com uma aba só existe no máximo uma página em voo por entrada, então ela é
+  // identificável sem ambiguidade.
+  const emVooDaEntrada = [..._local.emVoo.values()].filter(v => v.grouping === grouping);
+  const nPagina = Number(pagina) || emVooDaEntrada[0]?.pagina || (entrada ? entrada.proxima : 1);
+  const chave = chaveDaPagina(grouping, nPagina);
+  // SEMPRE, e em todo caminho: uma chave que fica para trás é uma entrada que
+  // nunca fica quieta, e uma rodada que só termina no watchdog de 5 minutos.
+  _local.emVoo.delete(chave);
+  // Repetida = esta página já foi processada. Uma aba que refaz o POST depois de
+  // um timeout juntaria os cupons de novo (inofensivo, o merge é idempotente) mas
+  // debitaria o orçamento de ativação duas vezes — e ativar é escrita na conta.
+  const repetida = _local.paginasVistas.has(chave);
+  _local.paginasVistas.add(chave);
+
+  if (!repetida) {
+    _local.ativados += Number(ativados) || 0;
+    _local.semBotao += Number(semBotao) || 0;
+    _local.restantes.n = Math.max(0, _local.restantes.n - (Number(ativados) || 0));
+    _local.paginasLidas++;
+    if (entrada) entrada.lidas++;
+  }
 
   const parsed = mlCupons.parseFilterProps(props, grouping);
   const limite = Number(_local.cfg.limiteCupons) || 0;   // 0 = sem teto
@@ -677,10 +988,13 @@ async function paginaLocal({ grouping = null, props = null, ativados = 0, semBot
   // mesmo jeito (é cupom de verdade), mas ele não conta pro teto — o teto é sobre
   // o tamanho da colheita, e a colheita já aconteceu.
   const carimbo = grouping !== null;
+  // A página 1 é quem revela o tamanho da entrada — e é por isso que ela vai
+  // sozinha (ver `proximasPaginas`).
+  if (entrada && entrada.paginas === null) entrada.paginas = paginas;
 
   // O que o ML disse sobre as categorias NESTA página. Vem antes de tudo porque é
   // o que faz a fila desta rodada crescer (task 14).
-  aprenderCategorias(parsed, grouping);
+  aprenderCategorias(parsed, grouping, nPagina);
 
   let novos = 0;
   let carimbados = 0;
@@ -708,20 +1022,17 @@ async function paginaLocal({ grouping = null, props = null, ativados = 0, semBot
   }
 
   const ondeEstou = carimbo ? ` de ${grouping}` : " da lista geral";
-  logar("info", `cupons: página ${_local.pagina}/${paginas}${ondeEstou} · ${_local.porId.size} cupons${carimbados ? `, ${carimbados} carimbados` : ""}${_local.ignoradosLoja ? `, ${_local.ignoradosLoja} de loja ignorados` : ""}`, { dedup: true });
-  _status.progress = { etapa: "cupons", pagina: _local.pagina, de: paginas, cupons: _local.porId.size, ignoradosLoja: _local.ignoradosLoja, grouping };
+  const jaLidas = entrada ? entrada.lidas : nPagina;
+  logar("info", `cupons: página ${nPagina}/${paginas}${ondeEstou} · ${_local.porId.size} cupons${carimbados ? `, ${carimbados} carimbados` : ""}${_local.ignoradosLoja ? `, ${_local.ignoradosLoja} de loja ignorados` : ""}`, { dedup: true });
+  // `pagina` aqui é quantas páginas desta entrada já VOLTARAM, e não qual acabou
+  // de voltar: com várias abas a última a voltar não é a mais adiantada, e a
+  // frase do /status ficava pulando 9 → 7 → 11.
+  _status.progress = { etapa: "cupons", pagina: jaLidas, de: paginas, cupons: _local.porId.size, ignoradosLoja: _local.ignoradosLoja, grouping, emVoo: _local.emVoo.size };
 
-  // As paradas. O teto de páginas é diferente nas duas fases: a lista geral é a
-  // coleta e o carimbo é a volta por cima — mas os dois vão fundo, porque o cupom
-  // que fica de fora do carimbo é o cupom que fica sem categoria na tela. Quem
-  // encerra uma vertical de verdade é o `pages` que o próprio ML declara.
-  const tetoDePaginas = carimbo
-    ? Number(_local.cfg.maxPaginasPorCategoria) || DEFAULT_CONFIG.maxPaginasPorCategoria
-    : Number(_local.cfg.maxPaginasLista) || DEFAULT_CONFIG.maxPaginasLista;
-
+  const teto = tetoDePaginas(carimbo);
   // Carimbar também é novidade: ver `juntarCupom`. Sem isto a passada por vertical
   // morria na quinta página, porque nela nenhum cupom é novo por definição.
-  _local.semNovidade = (novos || carimbados) ? 0 : _local.semNovidade + 1;
+  if (entrada && (novos || carimbados)) entrada.ultimaComNovidade = Math.max(entrada.ultimaComNovidade, nPagina);
   // Modo ativação (etapa 2): grava AGORA os alvos que esta página mostrou. Eles
   // são o motivo da varredura, e o `containerUrl` que o "Eu quero" revela só vale
   // se chegar ao banco — antes ele só era gravado na última página, e um Parar no
@@ -741,46 +1052,123 @@ async function paginaLocal({ grouping = null, props = null, ativados = 0, semBot
     }
   }
 
-  const iAntes = _local.iCategoria;
-  if (_local.achou) _local.encerrada = true;
+  // As paradas. Elas fecham a ENTREGA — de uma entrada ou de todas —, nunca a
+  // rodada: o que já está em voo termina e os cupons daquelas páginas entram.
+  //
+  // As duas que sumiram desta lista não sumiram do comportamento: "o ML disse que
+  // acabou" e "bateu no teto de páginas" viraram condição de ENTREGA
+  // (`podeEntregar`), que é o que permite soltar as páginas 2..N de uma vez.
+  if (_local.achou) fecharTudo(null);
   // Todos os alvos já passaram por uma página (ativados ou recusados pelo
   // `aAtivar`), ou o teto de ativações acabou: o resto da lista não tem mais nada
   // para esta varredura.
-  else if (_local.alvos && !_local.procurar && (_local.vistos.size >= _local.alvos.size || _local.restantes.n <= 0)) _local.encerrada = true;
-  else if (!parsed.coupons.length) proximaCategoria(carimbo ? null : `A lista geral não devolveu cupom nenhum — pode ser a página do ML ter mudado.`);
-  else if (!carimbo && limite && _local.porId.size >= limite) proximaCategoria(null);
-  else if (_local.semNovidade >= mlCupons.MAX_PAGINAS_SEM_NOVIDADE) proximaCategoria(null);
-  else if (_local.pagina >= paginas) proximaCategoria(null);
-  else if (_local.pagina >= tetoDePaginas) proximaCategoria(carimbo
-    ? `Parei no teto de ${tetoDePaginas} páginas em ${grouping} — os cupons além dele ficam sem categoria.`
-    : `Parei no teto de ${tetoDePaginas} páginas da lista geral — suba o limite se faltou cupom.`);
-  else _local.pagina++;
+  else if (_local.alvos && !_local.procurar && (_local.vistos.size >= _local.alvos.size || _local.restantes.n <= 0)) fecharTudo(null);
+  else if (entrada && !parsed.coupons.length) fecharEntrada(entrada, carimbo ? null : `A lista geral não devolveu cupom nenhum — pode ser a página do ML ter mudado.`);
+  else if (entrada && !carimbo && limite && _local.porId.size >= limite) fecharEntrada(entrada, null);
+  else if (entrada && semNovidadeDemais(entrada)) fecharEntrada(entrada, null);
 
-  if (carimbo && _local.semCategoria && !_local.encerrada) {
+  if (carimbo && _local.semCategoria) {
     for (const c of parsed.coupons) if (c.groupings.length) _local.semCategoria.delete(c.campaignId);
-    if (!_local.semCategoria.size) {
-      _local.encerrada = true;
+    if (!_local.semCategoria.size && !fimDaRodada()) {
+      fecharTudo(null);
       logar("ok", `todos os cupons sem categoria já foram carimbados — pulei o resto das verticais`);
     }
   }
-  if (!carimbo && _local.iCategoria > iAntes && !_local.encerrada && proximaPagina()) await abrirCarimbo();
+  // "Esta entrada ainda tem página?" — e `podeEntregar` FECHA a entrada quando a
+  // resposta é não, carimbando o motivo. Perguntar aqui, e não só na hora de
+  // despachar, é o que faz a pergunta seguinte ter resposta: a lista geral só é
+  // reconhecida como terminada se alguém perguntar antes da barreira.
+  if (entrada) podeEntregar(entrada);
 
-  const proxima = proximaPagina();
-  const base = { cupons: _local.porId.size, novos, carimbados, ignoradosLoja: _local.ignoradosLoja, de: paginas, paginasLidas: _local.paginasLidas, achou: _local.achou, salvosNestaPagina, salvosTotal: _local.salvosTotal };
-  if (!proxima) return { ...base, proxima: null, ...(await gravarCuponsLocais()) };
-  // Trocou de categoria e ainda tem fila pela frente: grava o que já tem. A fila
-  // passou de quatro entradas para onze (task 14), e antes NADA ia pro banco antes
-  // da última página da última vertical — um muro do ML, uma aba fechada ou o
-  // watchdog no meio jogavam a rodada inteira fora. `persistRun` é upsert sobre o
-  // mesmo mapa acumulado, então repetir é idempotente.
-  if (_local.iCategoria > iAntes) await gravarCuponsLocais({ parcial: true });
-  return { ...base, proxima, alvos: null };
+  // A lista geral ficou QUIETA e a fila segue para as verticais: é a hora — e a
+  // única — de decidir quais cupons ainda precisam de categoria. Quieta, e não
+  // apenas fechada: com páginas ainda voltando, o `porId` está pela metade e o
+  // carimbo decidiria de menos.
+  if (_local.entradas.length > 1 && quieta(_local.entradas[0])) await abrirCarimboUmaVezSo();
+
+  const proximas = proximasPaginas(vagas());
+  const base = {
+    cupons: _local.porId.size, novos, carimbados, ignoradosLoja: _local.ignoradosLoja, de: paginas, paginasLidas: _local.paginasLidas,
+    achou: _local.achou, salvosNestaPagina, salvosTotal: _local.salvosTotal,
+    emVoo: _local.emVoo.size,
+    progresso: progressoDaLista({ entrada, paginas, teto }),
+  };
+  if (fimDaRodada()) return { ...base, proximas: [], proxima: null, fim: true, ...(await gravarCuponsLocais()) };
+  // Uma entrada terminou e a fila segue: grava o que já tem. A fila passou de
+  // quatro entradas para onze (task 14), e antes NADA ia pro banco antes da última
+  // página da última vertical — um muro do ML, uma aba fechada ou o watchdog no
+  // meio jogavam a rodada inteira fora. `persistRun` é upsert sobre o mesmo mapa
+  // acumulado, então repetir é idempotente.
+  if (entrada && !entrada.gravada && quieta(entrada)) {
+    entrada.gravada = true;
+    await gravarCuponsLocais({ parcial: true });
+  }
+  return { ...base, proximas, proxima: umaSo(proximas), fim: false, alvos: null };
+}
+
+// "A lista secou a partir daqui." Era um contador de páginas CONSECUTIVAS sem
+// novidade, e "consecutivas" deixa de querer dizer alguma coisa quando várias
+// páginas estão em voo: a 12 estéril volta antes da 8 rica, e um trecho seco
+// enche o contador numa ida-e-volta só — cortando a lista muito antes das cinco
+// páginas que a regra promete.
+//
+// Vira PROFUNDIDADE: a entrada fecha quando a página mais rasa que ainda falta já
+// está mais de cinco páginas além da última que rendeu alguma coisa. Independe da
+// ordem em que as páginas voltam, e com uma aba só dá exatamente o mesmo ponto de
+// corte de antes.
+function semNovidadeDemais(e) {
+  let maisRasa = e.proxima;
+  for (const v of _local.emVoo.values()) {
+    if (v.grouping === e.grouping && v.pagina < maisRasa) maisRasa = v.pagina;
+  }
+  return maisRasa - e.ultimaComNovidade > mlCupons.MAX_PAGINAS_SEM_NOVIDADE;
+}
+
+// Onde a passada pela lista está, para as barras da tela (task 18). As três
+// perguntas que o "página 4 de Casa" sozinho não respondia: quanto falta DESTA
+// entrada da fila (`de` já com o teto, senão a barra nunca enche numa lista geral
+// de 90 páginas cortada em 40), quantas entradas faltam, e — no carimbo e na
+// ativação — quantos dos cupons procurados já apareceram, que é o que de fato
+// encerra a varredura antes do fim das páginas.
+function progressoDaLista({ entrada, paginas, teto }) {
+  const labels = readGroupingLabels();
+  const grouping = entrada ? entrada.grouping : null;
+  // Quantas páginas desta entrada já voltaram — não qual acabou de voltar. Com
+  // várias abas a última a voltar não é a mais adiantada, e uma barra alimentada
+  // pelo número da página andava para trás.
+  const lidas = entrada ? entrada.lidas : 1;
+  return {
+    grouping,
+    nome: grouping ? (labels[grouping] || grouping) : null,
+    pagina: lidas,
+    de: Math.max(lidas, Math.min(paginas, teto)),
+    categoria: entrada ? _local.entradas.indexOf(entrada) + 1 : 1,
+    categorias: _local.entradas.length,
+    // Quantas abas estão com página aberta agora. É o que deixa a tela dizer
+    // "3 abas abertas" em vez de fingir um cursor que não existe mais.
+    emVoo: _local.emVoo.size,
+    carimbo: _local.semCategoria
+      ? { total: _local.semCategoriaTotal, feitos: _local.semCategoriaTotal - _local.semCategoria.size }
+      : null,
+    alvos: _local.alvos && !_local.procurar ? { total: _local.alvos.size, vistos: _local.vistos.size } : null,
+  };
 }
 
 // A lista geral acabou e a fila segue para as verticais. Elas existem só para
 // carimbar categoria, e o banco já sabe a de quase todo cupom de uma rodada
 // anterior — o `upsertCoupons` nunca apaga `groupings`. Sem isto, toda rodada
 // relia a conta inteira uma vez por vertical, e era aí que ia quase todo o tempo.
+// UMA vez por rodada, e a trava é escrita antes de qualquer await de propósito:
+// o `campanhasComCategoria()` abaixo é um SELECT, e duas chamadas concorrentes
+// passariam as duas pelo guard antes de qualquer uma escrever `semCategoria` —
+// `semCategoriaTotal` seria sobrescrito, a barra da task 18 pularia para trás e o
+// banco levaria a consulta em dobro. Quem chega depois espera a mesma promessa.
+async function abrirCarimboUmaVezSo() {
+  if (_local.carimboPromessa) return _local.carimboPromessa;
+  _local.carimboPromessa = abrirCarimbo();
+  return _local.carimboPromessa;
+}
+
 async function abrirCarimbo() {
   if (_local.carimboCompleto || _local.procurar || _local.alvos) return;
   const jaTem = await coupons.campanhasComCategoria();
@@ -792,11 +1180,12 @@ async function abrirCarimbo() {
     .filter(c => !c.expiresAt || new Date(c.expiresAt).getTime() > agora)
     .map(c => c.campaignId);
   if (!faltam.length) {
-    _local.encerrada = true;
+    fecharTudo(null);
     logar("ok", `todos os ${_local.porId.size} cupons já têm categoria no banco — pulei o carimbo por vertical`);
     return;
   }
   _local.semCategoria = new Set(faltam);
+  _local.semCategoriaTotal = faltam.length;
   logar("info", `${faltam.length} cupom(ns) sem categoria — as verticais param assim que o último for achado`);
 }
 
@@ -817,12 +1206,12 @@ async function abrirCarimbo() {
 //
 // Quem escolheu categorias na tela (`cfg.categorias`) manda: descoberta não
 // atropela escolha.
-function aprenderCategorias(parsed, grouping) {
+function aprenderCategorias(parsed, grouping, pagina = 1) {
   const chaves = [...(parsed.availableGroupings || []), ...(parsed.appliedFilters || [])];
   if (!chaves.length) return;
   const labels = mergeGroupingLabels(chaves);
 
-  const naPrimeiraPaginaDaGeral = grouping === null && _local.pagina === 1;
+  const naPrimeiraPaginaDaGeral = grouping === null && pagina === 1;
   const escolhidas = (_local.cfg.categorias || []).map(g => g?.key ?? g).filter(Boolean);
   if (!naPrimeiraPaginaDaGeral || escolhidas.length) return;
   if (!booleano(_local.cfg.carimbarCategorias, DEFAULT_CONFIG.carimbarCategorias)) return;
@@ -834,6 +1223,9 @@ function aprenderCategorias(parsed, grouping) {
   const novas = verticaisConhecidas(labels).filter(k => !_local.categorias.includes(k));
   if (!novas.length) return;
   _local.categorias.push(...novas);
+  // A fila de trabalho cresce junto: `categorias` é o que se anuncia, `entradas` é
+  // por onde se anda, e as duas descrevendo a mesma rodada não podem divergir.
+  _local.entradas.push(...novas.map(novaEntrada));
   logar("info", `o ML mostrou ${novas.length} categoria(s) que ainda não estavam na fila — agora a rodada é ${textoDasCategorias(_local.categorias, labels)}`);
 }
 
@@ -851,7 +1243,7 @@ function aprenderCategorias(parsed, grouping) {
 // `maxPaginasPorCategoria`. Ganhar uma categoria É novidade.
 function juntarCupom(c) {
   const anterior = _local.porId.get(c.campaignId);
-  if (!anterior) { _local.porId.set(c.campaignId, c); _local.sujo = true; return { novo: true, carimbado: false }; }
+  if (!anterior) { _local.porId.set(c.campaignId, c); _local.versao++; return { novo: true, carimbado: false }; }
   let carimbado = false;
   for (const g of c.groupings) {
     if (anterior.groupings.includes(g)) continue;
@@ -860,7 +1252,7 @@ function juntarCupom(c) {
   }
   const ganhouVitrine = !anterior.containerUrl && !!c.containerUrl;
   if (ganhouVitrine) Object.assign(anterior, c, { groupings: anterior.groupings });
-  if (carimbado || ganhouVitrine) _local.sujo = true;
+  if (carimbado || ganhouVitrine) _local.versao++;
   return { novo: false, carimbado };
 }
 
@@ -869,26 +1261,56 @@ function juntarCupom(c) {
 // Grava ANTES das vitrines porque o `gravarVitrineLocal` exige o cupom no banco —
 // e porque cupom guardado sem vitrine já é melhor que nada se o Chrome fechar no
 // meio da colheita.
+// UMA gravação por vez. `persistRun` é um upsert multi-linha
+// (`coupons/pg.js:41-109`), e duas transações tocando o mesmo conjunto em ordens
+// diferentes deadlockam no Postgres. Hoje a ordem sai sempre do mesmo Map e
+// coincide por acaso — acaso que a primeira página em voo a mais desfaz.
+//
+// Quem chega durante uma gravação não espera na fila: marca que ficou coisa nova
+// para trás e a própria gravação em curso repete. É o `gravado` que diz se
+// sobrou — não um "quem chegou por último ganha".
 async function gravarCuponsLocais({ parcial = false } = {}) {
-  const cupons = [..._local.porId.values()];
+  const local = _local;
+  if (local.gravando) { local.gravarDeNovo = true; return local.gravando; }
+  local.gravando = (async () => {
+    let r;
+    do {
+      local.gravarDeNovo = false;
+      r = await gravarAgora(local, { parcial });
+    } while (local.gravarDeNovo);
+    return r;
+  })();
+  try { return await local.gravando; }
+  finally { local.gravando = null; }
+}
+
+// `local` vem por argumento e não do módulo: o `fimLocalRun` solta o `_local`
+// antes de gravar, e esta função continua precisando falar da rodada que a
+// chamou.
+async function gravarAgora(local, { parcial = false } = {}) {
+  // Os dois lidos no MESMO instante, antes de qualquer await: é o que faz o
+  // cupom que chegar durante a gravação continuar pendente em vez de ser dado
+  // como salvo.
+  const versao = local.versao;
+  const cupons = [...local.porId.values()];
   // `vitrines: []` de propósito: quem grava produto na rodada local é o
   // `gravarVitrineLocal`, cupom a cupom, com o que a extensão colheu.
-  const resumo = await persistRun({ cupons, vitrines: [], ativados: _local.ativados, ignoradosLoja: _local.ignoradosLoja, avisos: _local.motivos });
-  _local.persistido = resumo;
-  _local.sujo = false;
+  const resumo = await persistRun({ cupons, vitrines: [], ativados: local.ativados, ignoradosLoja: local.ignoradosLoja, avisos: local.motivos });
+  local.persistido = resumo;
+  local.gravado = versao;
   logar("ok", parcial
-    ? `gravei o que já tem: ${resumo.cupons} cupons — faltam ${Math.max(0, _local.categorias.length - _local.iCategoria)} categoria(s)`
-    : `lista pronta: ${resumo.cupons} cupons (${resumo.novos} novos)${_local.ativados ? `, ${_local.ativados} ativados` : ""}`);
+    ? `gravei o que já tem: ${resumo.cupons} cupons — faltam ${local.entradas.filter(e => !e.fechada).length} categoria(s)`
+    : `lista pronta: ${resumo.cupons} cupons (${resumo.novos} novos)${local.ativados ? `, ${local.ativados} ativados` : ""}`);
   // `alvos` só sai numa BUSCA. Na etapa 1 normal ele seria a lista inteira, e a
   // tela sairia raspando vitrine atrás de vitrine — que é exatamente o que a
   // separação em dois botões desfez: os produtos são a etapa 2, e quem decide
   // quando ela roda é o Allan, porque ela escreve na conta do ML.
-  const alvos = _local.procurar
+  const alvos = local.procurar
     ? cupons
-      .filter(c => c.containerUrl && c.campaignId === _local.procurar)
+      .filter(c => c.containerUrl && c.campaignId === local.procurar)
       .map(c => ({ campaignId: c.campaignId, title: c.title, containerUrl: c.containerUrl }))
     : null;
-  return { alvos, resumo, achou: _local.achou };
+  return { alvos, resumo, achou: local.achou };
 }
 
 // Fim da rodada. `vitrines` é o que a tela conseguiu colher depois — só contagem,
@@ -908,7 +1330,11 @@ async function fimLocalRun({ vitrines = [], produtos = 0, cancelada = false } = 
   _status.progress = null;
 
   let salvos = 0;
-  if (local.sujo && local.porId.size) {
+  // Uma gravação em curso é esperada antes desta: duas transações sobre as mesmas
+  // linhas é o deadlock que o single-flight do `gravarCuponsLocais` existe para
+  // evitar, e o `gravado` que ela deixar pode tornar esta aqui desnecessária.
+  if (local.gravando) await local.gravando.catch(() => {});
+  if (local.versao > local.gravado && local.porId.size) {
     try {
       const r = await persistRun({ cupons: [...local.porId.values()], vitrines: [], ativados: local.ativados, ignoradosLoja: local.ignoradosLoja, avisos: local.motivos });
       salvos = r.cupons;
@@ -934,10 +1360,15 @@ function resumoDoFim(local, { vitrines, produtos, cancelada }) {
     cancelada: !!cancelada,
     origem: "extensao",
   };
-  _status.lastRun = new Date().toISOString();
-  _status.lastDuration = Date.now() - local.t0;
-  _status.lastResult = resumo;
-  _status.lastError = resumo.avisos.length ? resumo.avisos.join(" ") : null;
+  if (local.tipo === "lista" && !local.tudo) {
+    _status.ultimas.lista = {
+      at: new Date().toISOString(),
+      duracaoMs: Date.now() - local.t0,
+      resultado: resumo,
+      erro: resumo.avisos.length ? resumo.avisos.join(" ") : null,
+      interrompida: !!cancelada,
+    };
+  }
   logar(cancelada ? "aviso" : "ok", cancelada
     ? "rodada no seu Chrome interrompida"
     : `terminou em ${Math.round((Date.now() - local.t0) / 1000)}s: ${resumo.cupons} cupons (${resumo.novos} novos), ${resumo.ativados} ativados, ${resumo.cuponsComVitrine} vitrines`);
@@ -1381,7 +1812,9 @@ module.exports = {
   startLocalRun,
   ativacoesLocais,
   paginaLocal,
+  pedirProximas,
   fimLocalRun,
+  registrarRodada,
   localAtivo,
   status,
   readConfig,

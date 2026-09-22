@@ -46,9 +46,15 @@ export function andamentoInicial(agora = Date.now()) {
     // A ativação do próximo lote correndo em segundo plano, enquanto este colhe.
     // Fica fora da `etapa` de propósito: senão o painel pularia de "vitrine" para
     // "ativando" e de volta a cada página da lista.
-    ativacaoFundo: null, // { lote, pagina, n }
+    ativacaoFundo: null, // { lote, pagina, n, vistos, total }
+    // A ativação na frente: quantos cupons do lote já apareceram na lista (task 18).
+    // É o aparecer que encerra a passada, não o fim das páginas.
+    ativacao: null,      // { total, vistos, pagina }
     paralelo: 1,
-    lista: null,         // { pagina, grouping }
+    // `de` e o resto chegam no `pagina-lida`, depois que o servidor viu a página.
+    // `abertas` são as páginas em voo agora, por aba (task 21) — o análogo do
+    // `atuais` das vitrines. `emVoo` é quantas o SERVIDOR ainda espera.
+    lista: null,         // { pagina, grouping, nome, de, lidas, categoria, categorias, carimbo, cupons, abertas, emVoo }
     pausa: null,         // { ate, ms, motivo }
     // A ativação de um lote É uma passada pela lista do ML (`percorrerLista` com
     // `ativarApenas`), e ela anuncia `pagina-abrindo` como a etapa 1. Sem esta
@@ -77,13 +83,41 @@ export function reduzirAndamento(estado, evento) {
     case "ciclo":
       return { ...e, ciclo: evento.ciclo, maxCiclos: evento.maxCiclos ?? e.maxCiclos, etapa: "preparando", pausa: null };
 
-    case "pagina-abrindo":
+    case "pagina-abrindo": {
+      const grouping = evento.grouping || null;
+      if (e.ativandoLote) return { ...e, etapa: "ativando", pausa: null };
+      // Só se registra QUE abriu, e em qual aba. A tela não infere mais nada daqui
+      // — nem "a fila andou uma casa", que ela deduzia de o grouping ter mudado.
+      // Com várias abas (task 21) dois groupings intercalam eventos, e aquele
+      // palpite disparava a cada alternância, corrompendo a barra de fila. Quem
+      // sabe em que entrada a rodada está é o servidor, e ele diz no `pagina-lida`.
+      const abertas = { ...e.lista?.abertas, [evento.aba ?? 0]: { grouping, pagina: evento.pagina } };
+      const antes = e.lista || { lidas: 0 };
+      return { ...e, etapa: "lista", pausa: null, lista: { ...antes, pagina: evento.pagina, grouping, abertas } };
+    }
+
+    // O servidor leu a página: é daqui que vêm os totais das barras (task 18).
+    case "pagina-lida": {
+      if (e.ativandoLote) {
+        const total = evento.alvos?.total ?? e.ativacao?.total ?? null;
+        return { ...e, ativacao: { total, vistos: evento.alvos?.vistos ?? e.ativacao?.vistos ?? 0, pagina: evento.pagina } };
+      }
+      // A aba que acabou de ler some das abertas. `lidas` vem do servidor, que
+      // conta páginas CONCLUÍDAS — o número da página não serve de progresso
+      // quando várias estão em voo, porque a 9 volta antes da 7.
+      const abertas = { ...e.lista?.abertas };
+      delete abertas[evento.aba ?? 0];
       return {
         ...e,
-        etapa: e.ativandoLote ? "ativando" : "lista",
-        pausa: null,
-        lista: { pagina: evento.pagina, grouping: evento.grouping || null },
+        lista: {
+          pagina: evento.pagina, grouping: evento.grouping ?? null, nome: evento.nome ?? null,
+          de: evento.de ?? null, lidas: evento.pagina,
+          categoria: evento.categoria ?? null, categorias: evento.categorias ?? null,
+          carimbo: evento.carimbo ?? null, cupons: evento.cupons ?? null,
+          abertas, emVoo: evento.emVoo ?? 0,
+        },
       };
+    }
 
     case "fila":
       return {
@@ -104,13 +138,17 @@ export function reduzirAndamento(estado, evento) {
       const fila = e.fila
         ? { ...e.fila, feitos: Math.max(e.fila.feitos, e.fila.encerrados), encerrados: e.fila.encerrados + (evento.tamanho || 0) }
         : null;
-      return { ...e, fila, lote: { k: evento.k, de: evento.de }, pausa: null, ativandoLote: false };
+      return { ...e, fila, lote: { k: evento.k, de: evento.de }, pausa: null, ativandoLote: false, ativacao: null };
     }
 
     // Vem de dois lugares: o `umCiclo` anuncia o lote a ativar (`n`), e a passada
-    // pela lista anuncia os cliques de cada página (`quantos`).
+    // pela lista anuncia os cliques de cada página (`quantos`). Só o anúncio do
+    // lote traz `n`, então só ele zera a barra da ativação.
     case "ativando":
-      return { ...e, etapa: "ativando", pausa: null, atual: null, ativandoLote: true };
+      return {
+        ...e, etapa: "ativando", pausa: null, atual: null, ativandoLote: true,
+        ativacao: evento.n != null ? { total: evento.n, vistos: 0, pagina: null } : e.ativacao,
+      };
 
     case "ativou":
       return { ...e, contagem: { ...e.contagem, ativados: e.contagem.ativados + 1 } };
@@ -122,6 +160,7 @@ export function reduzirAndamento(estado, evento) {
         etapa: "vitrine",
         pausa: null,
         ativandoLote: false,
+        ativacao: null,
         atual,
         atuais: evento.campaignId ? { ...(e.atuais || {}), [evento.campaignId]: atual } : (e.atuais || {}),
         medidos: e.medidos.desde == null ? { desde: agora, n: 0 } : e.medidos,
@@ -184,6 +223,15 @@ function reduzirFundo(e, evento) {
       return { ...e, ativacaoFundo: { ...atual, lote: evento.loteFundo ?? atual.lote, n: evento.n ?? atual.n } };
     case "pagina-abrindo":
       return { ...e, ativacaoFundo: { ...atual, pagina: evento.pagina } };
+    case "pagina-lida":
+      return {
+        ...e,
+        ativacaoFundo: {
+          ...atual,
+          total: evento.alvos?.total ?? atual.total ?? atual.n ?? null,
+          vistos: evento.alvos?.vistos ?? atual.vistos ?? 0,
+        },
+      };
     case "ativou":
       return { ...e, ativacaoFundo: atual, contagem: { ...e.contagem, ativados: e.contagem.ativados + 1 } };
     case "muro":

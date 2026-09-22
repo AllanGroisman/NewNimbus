@@ -17,7 +17,7 @@
 // AdminCupomPalavra.test.jsx.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 
 vi.mock("../data/api", () => ({
   // errText é helper puro (não faz rede) — usa a implementação de verdade.
@@ -36,6 +36,8 @@ vi.mock("../data/api", () => ({
   adminMlCuponsLocalAtivar: vi.fn(),
   adminMlCuponsLocalPagina: vi.fn(),
   adminMlCuponsLocalFim: vi.fn(),
+  // O balanço dos botões 2 e 3 (task 17).
+  adminMlCuponsRodadaFim: vi.fn(),
   // O ImportarCampanhaModal, que a caixa "Trazer campanha por ID" abre.
   adminMlCuponsImportCampaign: vi.fn(),
   adminMlCuponsImportStatus: vi.fn(),
@@ -64,6 +66,7 @@ import {
   adminMlCuponsLocalAtivar,
   adminMlCuponsLocalPagina,
   adminMlCuponsLocalFim,
+  adminMlCuponsRodadaFim,
 } from "../data/api";
 import { adminMlCuponsImportCampaign, adminMlCuponsImportStatus } from "../data/api";
 import { coletorInfo, coletorEntende, raparVitrine, paginaDeCupons, fecharAbaDoColetor } from "../data/coletor";
@@ -105,6 +108,7 @@ beforeEach(() => {
   adminMlCupons.mockResolvedValue(VAZIO);
   adminMlCuponsAlvosProdutos.mockResolvedValue(SEM_ALVO);
   adminMlCuponsLocalFim.mockResolvedValue({ ok: true, resumo: {} });
+  adminMlCuponsRodadaFim.mockResolvedValue({ ok: true });
   fecharAbaDoColetor.mockResolvedValue({ fechada: true });
   // Sem extensão é o estado padrão: a maioria dos testes desta tela não fala dela.
   coletorInfo.mockResolvedValue({ instalada: false, versao: null, comandos: [] });
@@ -243,6 +247,95 @@ describe("etapa 1 — buscar cupons e condições", () => {
     expect(await screen.findByText(/Varredura terminada/)).toBeInTheDocument();
   });
 
+  // Task 20. Os quatorze números eram "meio confusos": a escolha que importa —
+  // até onde ir — não era um número, estava escondida entre eles, e só o botão 3
+  // sabia fazê-la.
+  describe("até onde ir na lista", () => {
+    const listaDeUmaPagina = () => {
+      comExtensaoQueColheLista();
+      adminMlCuponsLocalStart.mockResolvedValue({ config: {}, ativa: false, categorias: [null], proxima: PAGINA1 });
+      paginaDeCupons.mockResolvedValue({ tabId: 7, props: { p: 1 }, muro: null, clicados: 0, semBotao: [] });
+      adminMlCuponsLocalPagina.mockResolvedValue({ cupons: 1, novos: 1, de: 1, proxima: null, alvos: null, resumo: { cupons: 1, novos: 1, avisos: [] } });
+    };
+
+    it("no padrão, o botão 1 vai até os limites salvos", async () => {
+      listaDeUmaPagina();
+      await abrirTela();
+
+      fireEvent.click(await screen.findByRole("button", { name: BOTAO_LISTA }));
+
+      await waitFor(() => expect(adminMlCuponsLocalStart).toHaveBeenCalledWith({}));
+    });
+
+    it("escolhido \"tudo o que o ML tiver\", o botão 1 manda o flag — e não um número", async () => {
+      listaDeUmaPagina();
+      await abrirTela();
+
+      fireEvent.click(await screen.findByRole("radio", { name: /tudo o que o ML tiver/i }));
+      fireEvent.click(await screen.findByRole("button", { name: BOTAO_LISTA }));
+
+      // `semTeto`, e NÃO `tudo`: o `tudo` é o botão 3, e é ele que faz o servidor
+      // pular a gravação do "última vez" da lista. O botão 1 precisa continuar
+      // deixando o balanço dele.
+      await waitFor(() => expect(adminMlCuponsLocalStart).toHaveBeenCalledWith({ semTeto: true }));
+    });
+
+    // Task 19: cada botão num card, com o progresso e o balanço DELE. Antes as duas
+    // respostas para "o que este botão fez?" moravam em cards diferentes.
+    it("o que acontece aparece no card do botão que foi clicado", async () => {
+      listaDeUmaPagina();
+      await abrirTela();
+
+      fireEvent.click(await screen.findByRole("button", { name: BOTAO_LISTA }));
+
+      const card1 = screen.getByRole("region", { name: /1 · Cupons e condições/i });
+      expect(await within(card1).findByText(/Varredura terminada/)).toBeInTheDocument();
+      // E não no card do vizinho.
+      const card2 = screen.getByRole("region", { name: /2 · Produtos dos que faltam/i });
+      expect(within(card2).queryByText(/Varredura terminada/)).toBeNull();
+    });
+
+    it("os limites de cada etapa moram no card daquela etapa", async () => {
+      listaDeUmaPagina();
+      await abrirTela();
+
+      const card1 = screen.getByRole("region", { name: /1 · Cupons e condições/i });
+      const card2 = screen.getByRole("region", { name: /2 · Produtos dos que faltam/i });
+      expect(within(card1).getByLabelText("Páginas da lista geral")).toBeInTheDocument();
+      expect(within(card1).queryByLabelText("Aceites por rodada")).toBeNull();
+      expect(within(card2).getByLabelText("Aceites por rodada")).toBeInTheDocument();
+      expect(within(card2).queryByLabelText("Páginas da lista geral")).toBeNull();
+    });
+
+    it("salvar os limites de uma etapa não embarca os da outra", async () => {
+      listaDeUmaPagina();
+      await abrirTela();
+
+      // Mexe num campo da etapa 2 e salva a etapa 1: o que foi mexido ao lado não
+      // pode viajar junto — aceitar cupom é escrita irreversível na conta do ML.
+      fireEvent.change(screen.getByLabelText("Aceites por rodada"), { target: { value: "7" } });
+      fireEvent.click(screen.getByRole("button", { name: /salvar os limites da lista/i }));
+
+      await waitFor(() => expect(adminMlCuponsSaveConfig).toHaveBeenCalled());
+      expect(adminMlCuponsSaveConfig).toHaveBeenCalledWith(
+        expect.not.objectContaining({ maxActivationsPerRun: expect.anything() }),
+      );
+    });
+
+    it("nessa escolha os três tetos ficam de fora, e a tela diz isso", async () => {
+      listaDeUmaPagina();
+      await abrirTela();
+
+      fireEvent.click(await screen.findByRole("radio", { name: /tudo o que o ML tiver/i }));
+
+      expect(await screen.findByLabelText("Páginas da lista geral")).toBeDisabled();
+      expect(screen.getByLabelText("Teto de cupons (0 = todos)")).toBeDisabled();
+      expect(screen.getByLabelText("Páginas por categoria")).toBeDisabled();
+      // O que NÃO é teto continua valendo: eles dizem o que colher, não até onde ir.
+      expect(screen.getByRole("checkbox", { name: /ignorar cupom de loja/i })).not.toBeDisabled();
+    });
+  });
+
   it("é leitura pura: não pergunta ao servidor quem ativar, nem raspa vitrine", async () => {
     // A regressão que este teste segura: se a etapa 1 voltar a ativar, o botão
     // "buscar cupons" volta a escrever na conta do ML sem ninguém pedir.
@@ -303,6 +396,11 @@ describe("etapa 2 — buscar os produtos", () => {
       "13471229", { products: [produto], parcial: false, carimbar: false },
     ));
     expect(await screen.findByText(/Busca de produtos terminada/)).toBeInTheDocument();
+    // O balanço do botão 2 vai pro servidor, para o "última vez" dele sobreviver a um F5.
+    expect(adminMlCuponsRodadaFim).toHaveBeenCalledWith(expect.objectContaining({
+      botao: "produtos", interrompida: false,
+      resultado: expect.objectContaining({ tentados: 1, colhidos: 1, produtos: 1 }),
+    }));
   });
 
   it("o que parou no meio vai marcado como parcial — e a tela avisa", async () => {
@@ -470,6 +568,9 @@ describe("etapa 2 — buscar os produtos", () => {
     // lista inteira.
     await waitFor(() => expect(adminMlCuponsAlvosProdutos).toHaveBeenCalledWith({ campaignId: "42" }));
     await waitFor(() => expect(adminMlCuponsImportVitrine).toHaveBeenCalledWith("42", { products: [produto], parcial: false, carimbar: false }));
+    // Um cupom escolhido a dedo não é o botão 2: não vira o "última vez" dele.
+    await screen.findByText(/Busca de produtos terminada/);
+    expect(adminMlCuponsRodadaFim).not.toHaveBeenCalled();
   });
 });
 
@@ -596,7 +697,7 @@ describe("categoria dos cupons", () => {
     expect(await screen.findByText("carimba todas")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Eletrônicos" }));
-    fireEvent.click(screen.getByRole("button", { name: "salvar" }));
+    fireEvent.click(screen.getByRole("button", { name: /salvar os limites da lista/i }));
 
     await waitFor(() => {
       expect(adminMlCuponsSaveConfig).toHaveBeenCalledWith(expect.objectContaining({ categorias: ["ce_vertical"] }));
@@ -615,7 +716,7 @@ describe("categoria dos cupons", () => {
     expect(await screen.findByText("1 escolhida")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "carimbar todas" }));
-    fireEvent.click(screen.getByRole("button", { name: "salvar" }));
+    fireEvent.click(screen.getByRole("button", { name: /salvar os limites da lista/i }));
 
     await waitFor(() => {
       expect(adminMlCuponsSaveConfig).toHaveBeenCalledWith(expect.objectContaining({ categorias: [] }));
@@ -650,23 +751,49 @@ describe("categoria dos cupons", () => {
   });
 });
 
-// O balanço da última varredura vem do servidor e sobrevive a um F5 — o log ao
-// vivo não.
-describe("o balanço da última varredura", () => {
+// O balanço da última vez de cada botão vem do servidor e sobrevive a um F5 — o
+// log ao vivo não. Um por botão (task 17): os três fazem coisas diferentes.
+describe("o balanço da última vez de cada botão", () => {
   it("terminada a varredura, o resumo vira números em vez de uma frase corrida", async () => {
     adminMlCuponsStatus.mockResolvedValue({
       config: {}, running: false,
-      lastRun: "2026-08-31T12:00:00.000Z",
-      lastDuration: 92000,
-      lastResult: { cupons: 120, novos: 7, ativados: 3, vinculos: 4100, catalogoCarimbado: 88, cuponsDeLojaIgnorados: 12 },
+      ultimas: {
+        lista: {
+          at: "2026-08-31T12:00:00.000Z", duracaoMs: 92000, erro: null, interrompida: false,
+          resultado: { cupons: 120, novos: 7, atualizados: 100, cuponsDeLojaIgnorados: 12 },
+        },
+        produtos: null, tudo: null,
+      },
       log: [],
     });
     await abrirTela();
 
-    expect(await screen.findByText(/Última varredura —/)).toBeInTheDocument();
+    expect(await screen.findByText(/1 · Cupons e condições — última vez/)).toBeInTheDocument();
     expect(screen.getByText("Cupons").previousSibling).toHaveTextContent("120");
     expect(screen.getByText("Novos").previousSibling).toHaveTextContent("7");
     expect(screen.getByText("Duração").previousSibling).toHaveTextContent("92s");
+    // Sem balanço dos outros botões, nada deles aparece.
+    expect(screen.queryByText(/2 · Produtos dos que faltam — última vez/)).toBe(null);
+  });
+
+  it("cada botão mostra o seu, com o aviso de quem foi interrompido", async () => {
+    const at = "2026-08-31T12:00:00.000Z";
+    adminMlCuponsStatus.mockResolvedValue({
+      config: {}, running: false,
+      ultimas: {
+        lista: { at, duracaoMs: 1000, resultado: { cupons: 5 }, erro: null, interrompida: false },
+        produtos: { at, duracaoMs: 2000, resultado: { tentados: 4, colhidos: 3 }, erro: "Interrompido por você", interrompida: true },
+        tudo: { at, duracaoMs: 3000, resultado: { ciclos: 2, ficaramDeFora: 1 }, erro: null, interrompida: false },
+      },
+      log: [],
+    });
+    await abrirTela();
+
+    expect(await screen.findByText(/1 · Cupons e condições — última vez/)).toBeInTheDocument();
+    expect(screen.getByText(/2 · Produtos dos que faltam — última vez .*\(interrompida\)/)).toBeInTheDocument();
+    expect(screen.getByText(/3 · Buscar TUDO — última vez/)).toBeInTheDocument();
+    expect(screen.getByText("Interrompido por você")).toBeInTheDocument();
+    expect(screen.getByText("Ciclos").previousSibling).toHaveTextContent("2");
   });
 });
 
@@ -718,6 +845,11 @@ describe("etapa 3 — buscar TUDO (até acabar)", () => {
     fireEvent.click(await screen.findByRole("button", { name: BOTAO_TUDO }));
 
     await screen.findByText(/Buscar tudo — terminado/i);
+    // O balanço do botão 3 é dele: não é o do botão 2, nem o da lista.
+    expect(adminMlCuponsRodadaFim).toHaveBeenCalledTimes(1);
+    expect(adminMlCuponsRodadaFim).toHaveBeenCalledWith(expect.objectContaining({
+      botao: "tudo", resultado: expect.objectContaining({ colhidos: 1, cuponsNaLista: 1 }),
+    }));
     // A vitrine foi aberta UMA vez, embora o `/alvos-produtos` continue devolvendo
     // o mesmo cupom: o segundo ciclo o reconhece como já tentado e encerra.
     expect(raparVitrine).toHaveBeenCalledTimes(1);

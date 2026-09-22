@@ -28,5 +28,12 @@
 
 16. [x] Quero que o scraping tenha uma barra de progresso. Ele pode ser pausado no meio sem perder o progresso?
 
-17. [] Separa a busca dos cupons para cada um ter sua estatistica de "ultima varredura". Pq são diferentes os 3 botões. 
+17. [x] Separa a busca dos cupons para cada um ter sua estatistica de "ultima varredura". Pq são diferentes os 3 botões. 
 
+18. [x] Na busca dos cupons quero que tenha barra de progresso também nas 3 etapas.
+
+19. [x] Nos Cupons do ML separa cada um dos 3 botões com suas proprias configurações e ultima rodada em card próprio. Ta tudo meio confuso com as configurações todas juntas logo abaixo.
+
+20. [x] Quero uma maneira facil de buscar todos os cupons sem limite de pagina e etc... Tão meio confusas as configurações pra mim.
+
+21. [x] Tem como paralelizar a busca dos cupons?

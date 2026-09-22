@@ -19,9 +19,9 @@
 import { Fragment, useState, useEffect, useCallback, useRef, useReducer } from "react";
 import { PRIMARY_DARK } from "../data/constants";
 import {
-  adminMlCupons, adminMlCuponsStatus, adminMlCuponsSaveConfig,
+  adminMlCupons, adminMlCuponsStatus,
   adminMlCuponsProducts, adminMlCuponsClearAll, adminMlCuponsDelete,
-  adminMlCuponsAlvosProdutos, adminMlCuponsLocalFim, errText,
+  adminMlCuponsAlvosProdutos, adminMlCuponsLocalFim, adminMlCuponsRodadaFim, errText,
 } from "../data/api";
 import { percorrerLista } from "../data/rodadaNoChrome";
 import { buscarProdutos, buscarTudo } from "../data/produtosNoChrome";
@@ -39,28 +39,65 @@ import ProgressoColheita from "../components/admin/ProgressoColheita";
 import { reduzirAndamento } from "../data/andamentoColheita";
 import ExtensaoAusente from "../components/admin/ExtensaoAusente";
 import Numero from "../components/admin/Numero";
+import { LimitesLista, LimitesProdutos, LimitesCiclos } from "../components/admin/LimitesCupons";
 import {
-  segundos, brl, dia, desconto, cardStyle, inputStyle, labelStyle, th, td,
+  segundos, brl, dia, desconto, cardStyle, inputStyle, th, td,
   botaoPrimario, botaoSecundario, botaoPerigo, botaoLink,
 } from "../components/admin/cupomEstilos";
 
-// O balanço da última varredura, guardado no servidor — é o que sobrevive a um
-// F5 e ao restart do backend. Antes isto era uma frase corrida de 300 caracteres,
-// que ninguém lia.
-function resumoDaRodada(status) {
-  const r = status.lastResult;
+// O balanço da última vez de CADA botão, guardado no servidor — é o que sobrevive
+// a um F5 e ao restart do backend (`status.ultimas`, backend/coupons/sync.js).
+// Um por botão (task 17) porque os três fazem coisas diferentes: com um slot só,
+// a ativação de um lote do botão 2 sobrescrevia o balanço da lista do botão 1, e
+// os botões 2 e 3 nem deixavam o deles.
+const BALANCOS = [
+  {
+    chave: "lista",
+    nome: "1 · Cupons e condições",
+    numeros: (r) => [
+      { label: "Cupons", valor: r.cupons },
+      { label: "Novos", valor: r.novos },
+      { label: "Atualizados", valor: r.atualizados },
+      { label: "De loja ignorados", valor: r.cuponsDeLojaIgnorados },
+    ],
+  },
+  {
+    chave: "produtos",
+    nome: "2 · Produtos dos que faltam",
+    numeros: (r) => [
+      { label: "Lotes salvos", valor: r.lotes },
+      { label: "Cupons ativados", valor: r.ativados },
+      { label: "Tentados", valor: r.tentados },
+      { label: "Colhidos", valor: r.colhidos },
+      { label: "Produtos gravados", valor: r.produtos },
+      { label: "…destas, parciais", valor: r.parciais },
+      { label: "Vitrine vazia", valor: r.vazias },
+      { label: "Falharam", valor: r.falharam },
+    ],
+  },
+  {
+    chave: "tudo",
+    nome: "3 · Buscar TUDO",
+    numeros: (r) => [
+      { label: "Cupons na lista", valor: r.cuponsNaLista },
+      { label: "Ciclos", valor: r.ciclos },
+      { label: "Lotes salvos", valor: r.lotes },
+      { label: "Cupons ativados", valor: r.ativados },
+      { label: "Vitrines colhidas", valor: r.colhidos },
+      { label: "Produtos gravados", valor: r.produtos },
+      { label: "Ficaram de fora", valor: r.ficaramDeFora },
+    ],
+  },
+];
+
+function resumoDoBotao({ nome, numeros }, u) {
   return {
-    titulo: `Última varredura — ${new Date(status.lastRun).toLocaleString("pt-BR")}`,
-    tom: status.lastError ? "aviso" : "ok",
-    nota: status.lastError || null,
+    titulo: `${nome} — última vez ${new Date(u.at).toLocaleString("pt-BR")}${u.interrompida ? " (interrompida)" : ""}`,
+    tom: u.erro || u.interrompida ? "aviso" : "ok",
+    nota: u.erro || null,
     numeros: [
-      { label: "Cupons", valor: r?.cupons },
-      { label: "Novos", valor: r?.novos },
-      { label: "Ativados", valor: r?.ativados },
-      { label: "Vínculos cupom↔produto", valor: r?.vinculos },
-      { label: "Catálogo carimbado", valor: r?.catalogoCarimbado },
-      { label: "De loja ignorados", valor: r?.cuponsDeLojaIgnorados },
-      { label: "Duração", valor: segundos(status.lastDuration) },
+      ...numeros(u.resultado || {}).filter(n => n.valor != null),
+      { label: "Duração", valor: segundos(u.duracaoMs) },
     ],
   };
 }
@@ -159,6 +196,23 @@ export default function CuponsDoML({ buscaInicial = null }) {
   useEffect(() => {
     try { localStorage.setItem("cupons.soSemProdutos", soSemProdutos ? "1" : "0"); } catch { /* sem storage, só não lembra */ }
   }, [soSemProdutos]);
+  // De quem é o painel do "agora": "lista" | "produtos" | "tudo" | null. Só uma
+  // rodada existe por vez (os três botões se desabilitam entre si), então um slot
+  // basta — e é ele que leva o progresso e o resumo para dentro do card do botão que
+  // foi clicado, em vez de deixá-los num rodapé comum lá embaixo (task 19). Não zera
+  // quando a rodada acaba, de propósito: o resumo do que acabou de acontecer é a
+  // resposta daquele card.
+  const [painelDe, setPainelDe] = useState(null);
+  // "Até os limites abaixo" × "tudo o que o ML tiver" (task 20). Lembrado por
+  // navegador, como o `soSemProdutos`: é preferência de quem opera, não estado do
+  // sistema. E é uma ESCOLHA, não um número — virar config no servidor seria criar um
+  // décimo quinto campo justamente para resolver a confusão dos quatorze.
+  const [listaSemTeto, setListaSemTeto] = useState(() => {
+    try { return localStorage.getItem("cupons.listaSemTeto") === "1"; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("cupons.listaSemTeto", listaSemTeto ? "1" : "0"); } catch { /* sem storage, só não lembra */ }
+  }, [listaSemTeto]);
   // O que a busca de produtos JÁ GRAVOU, lote a lote. Separado do `andamento`
   // porque diz outra coisa: o andamento é o que está sendo feito, isto é o que um
   // Parar agora não perde. Fica na tela depois do fim — é a prova do que ficou.
@@ -316,31 +370,38 @@ export default function CuponsDoML({ buscaInicial = null }) {
   // servidor). `resumir: false` é o encadeamento do botão 3: o resumo de lá é o
   // dos dois passos somados, e escrever este por cima faria a tela piscar um
   // balanço que some meio segundo depois.
-  const varrerLista = async ({ tudo = false, resumir = true } = {}) => {
+  const varrerLista = async ({ tudo = false, semTeto = false, resumir = true } = {}) => {
     pararRef.current = false;
     setRodandoNoChrome(true);
     setErro(null);
-    if (resumir) { setEventos([]); setResumoColheita(null); andar({ tipo: "reiniciar" }); }
+    // `resumir: false` é o botão 3 chamando esta etapa por dentro: o card dono do
+    // painel continua sendo o dele, e não o do botão 1.
+    if (resumir) { setPainelDe("lista"); setEventos([]); setResumoColheita(null); andar({ tipo: "reiniciar" }); }
     const t0 = Date.now();
-    let tabId = null;
+    // Uma aba por trabalhador (task 21): com `paginasDeListaEmParalelo` em 1 é a
+    // mesma aba única de sempre, e aí esta lista tem um item só.
+    let abas = [];
     let resumoLista;
     let parado;
 
     try {
       const r = await percorrerLista({
         tudo,
+        semTeto,
         parou: () => pararRef.current,
         log: logar,
         onProgresso: avisarMuro,
       });
-      tabId = r.tabId;
+      abas = r.abas || (r.tabId != null ? [r.tabId] : []);
       resumoLista = r.resumo;
       parado = r.parado;
     } catch (err) {
       parado = errText(err, "A varredura no seu Chrome parou com um erro.");
       logar("erro", parado);
     } finally {
-      await fecharAbaDoColetor(tabId);
+      // `id => ...` e não a função direto: `map` passa (item, índice, lista), e o
+      // índice viraria o segundo argumento de quem fecha a aba.
+      await Promise.all(abas.map(id => fecharAbaDoColetor(id)));
       // O fim é sempre chamado: sem ele o servidor ficaria com a varredura
       // "rodando", e a próxima e o "Apagar todos" ficariam recusando até o
       // processo reiniciar.
@@ -355,11 +416,14 @@ export default function CuponsDoML({ buscaInicial = null }) {
       `${parado ? `${parado}. ` : ""}${resumoLista?.cupons ?? 0} cupom(ns) na lista`);
     if (!resumir) return { parado, resumo: resumoLista };
     setResumoColheita({
+      botao: "lista",
       titulo: parado ? "Varredura interrompida" : "Varredura terminada",
       tom: parado ? "aviso" : "ok",
       nota: parado
         ? `${parado}. O que já entrou está gravado — é só rodar de novo.`
-        : "Os produtos de cada cupom são o próximo botão — ele é separado porque precisa ativar cupom na sua conta do ML.",
+        : semTeto
+          ? "Sem teto: parei onde o ML disse que a lista acaba. Os produtos de cada cupom são o próximo botão."
+          : "Os produtos de cada cupom são o próximo botão — ele é separado porque precisa ativar cupom na sua conta do ML.",
       numeros: [
         { label: "Cupons na lista", valor: resumoLista?.cupons ?? 0 },
         { label: "Novos", valor: resumoLista?.novos ?? 0 },
@@ -371,7 +435,7 @@ export default function CuponsDoML({ buscaInicial = null }) {
     return { parado, resumo: resumoLista };
   };
 
-  const rodarNoChrome = () => varrerLista();
+  const rodarNoChrome = () => varrerLista({ semTeto: listaSemTeto });
 
   // ETAPA 2 — os produtos. `campaignIds` null = todos os que faltam; com um id, é
   // o botão da linha. O laço (ativar → raspar) mora em `data/produtosNoChrome.js`,
@@ -380,6 +444,11 @@ export default function CuponsDoML({ buscaInicial = null }) {
     const umSo = campaignIds?.length === 1;
     pararRef.current = false;
     setBuscandoProdutos(true);
+    // Inclusive o botão da linha da tabela: ele não é o botão 2 para efeito de
+    // "última vez" (ver o `rodadaFim` lá embaixo), mas o que ele faz É buscar
+    // produtos, e o card da etapa 2 é o único lugar da tela onde esse progresso tem
+    // casa. Mandá-lo para lugar nenhum era a busca terminar sem dizer no que deu.
+    setPainelDe("produtos");
     if (umSo) setColhendo(campaignIds[0]);
     setSalvo(null);
     setErro(null);
@@ -415,9 +484,24 @@ export default function CuponsDoML({ buscaInicial = null }) {
     const falhas = r.feitos.filter(f => !f.ok && !f.vazia).length;
     const produtosTotal = ok.reduce((n, f) => n + (f.produtos || 0), 0);
     const parciais = ok.filter(f => f.parcial).length;
+    // O botão da linha é um cupom escolhido a dedo, não o botão 2: não vira o
+    // "última vez" dele.
+    if (!umSo) {
+      adminMlCuponsRodadaFim({
+        botao: "produtos",
+        duracaoMs: Date.now() - t0,
+        interrompida: !!r.parado,
+        erro: r.parado || null,
+        resultado: {
+          lotes: r.lotes || 0, ativados: r.ativados, tentados: r.feitos.length, colhidos: ok.length,
+          produtos: produtosTotal, parciais, vazias: vazios, falharam: falhas,
+        },
+      }).then(recarregar, () => {});
+    }
     logar(r.parado ? "aviso" : "ok",
       `${r.parado ? `${r.parado}. ` : ""}${ok.length} de ${r.feitos.length} vitrine(s) colhida(s), ${produtosTotal} produto(s)`);
     setResumoColheita({
+      botao: "produtos",
       titulo: r.parado ? "Busca de produtos interrompida" : "Busca de produtos terminada",
       tom: r.parado || falhas ? "aviso" : "ok",
       nota: r.parado
@@ -454,15 +538,25 @@ export default function CuponsDoML({ buscaInicial = null }) {
   const rodarTudo = async () => {
     pararRef.current = false;
     setErro(null);
+    setPainelDe("tudo");
     setEventos([]);
     setResumoColheita(null);
     andar({ tipo: "reiniciar" });
     const t0 = Date.now();
 
+    // `tudo: true` já implica o "sem teto" no servidor — e continua sendo outra
+    // coisa: é ele que diz que esta passada é a do botão 3.
     const lista = await varrerLista({ tudo: true, resumir: false });
     if (lista?.parado || pararRef.current) {
       andar({ tipo: "encerrar" });
-      setResumoColheita({
+      adminMlCuponsRodadaFim({
+        botao: "tudo",
+        duracaoMs: Date.now() - t0,
+        interrompida: true,
+        erro: `${lista?.parado || "Interrompido por você"} (ainda na lista)`,
+        resultado: { cuponsNaLista: lista?.resumo?.cupons ?? 0 },
+      }).then(recarregar, () => {});
+      setResumoColheita({ botao: "tudo",
         titulo: "Interrompido na lista",
         tom: "aviso",
         nota: `${lista?.parado || "Interrompido por você"}. Os cupons que já entraram estão gravados; os produtos ficaram para o botão 2.`,
@@ -504,7 +598,17 @@ export default function CuponsDoML({ buscaInicial = null }) {
     // botão 2 NÃO vai zerar por causa deles, e sem essa linha parece que o "até
     // acabar" desistiu no meio.
     const sobraram = r.feitos.filter(f => !f.ok);
-    setResumoColheita({
+    adminMlCuponsRodadaFim({
+      botao: "tudo",
+      duracaoMs: Date.now() - t0,
+      interrompida: !!r.parado,
+      erro: [teto, r.motivo ? `Parou porque ${r.motivo}.` : null].filter(Boolean).join(" ") || null,
+      resultado: {
+        cuponsNaLista: lista?.resumo?.cupons ?? 0, ciclos: r.ciclos, lotes: r.lotes || 0,
+        ativados: r.ativados, colhidos: ok.length, produtos: produtosTotal, ficaramDeFora: sobraram.length,
+      },
+    }).then(recarregar, () => {});
+    setResumoColheita({ botao: "tudo",
       titulo: r.parado ? "Buscar tudo — interrompido" : "Buscar tudo — terminado",
       tom: r.parado || teto ? "aviso" : "ok",
       nota: [
@@ -584,17 +688,59 @@ export default function CuponsDoML({ buscaInicial = null }) {
   const semTetoAtivacao = !!alvos?.config?.activateCoupons && tetoAtivacao === null;
   const quantosAtiva = semTetoAtivacao ? "todos eles" : `até ${tetoAtivacao}`;
 
+  // O balanço guardado de um botão, pronto para o `ColheitaLog`. `null` quando
+  // aquele botão nunca rodou.
+  const balancoDe = (chave) => {
+    const b = BALANCOS.find(x => x.chave === chave);
+    const u = status?.ultimas?.[chave];
+    return b && u ? resumoDoBotao(b, u) : null;
+  };
+
+  // O "agora" de uma rodada, dentro do card de quem a disparou (task 19). Enquanto
+  // este card não é o dono do painel, ele mostra o balanço guardado — que responde a
+  // mesma pergunta ("o que este botão fez?") da última vez que ele rodou.
+  const painelDaEtapa = (chave) => {
+    if (painelDe !== chave) {
+      const balanco = balancoDe(chave);
+      return balanco ? <ColheitaLog eventos={[]} rodando={false} resumo={balanco} /> : null;
+    }
+    return (
+      <div style={{ marginTop: 10 }}>
+        <ProgressoColheita andamento={andamento} />
+        {salvo && (
+          <div style={{ fontSize: 12, color: "var(--color-text-primary)", fontWeight: 600, marginTop: 2 }}>
+            💾 salvo: {salvo.lotes}/{salvo.de} lote(s) · {salvo.vitrines} vitrine(s) · {salvo.produtos.toLocaleString("pt-BR")} produto(s)
+            {salvo.em ? ` · ${new Date(salvo.em).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : ""}
+          </div>
+        )}
+        <ColheitaLog
+          eventos={eventos}
+          resumo={resumoColheita}
+          rodando={buscandoProdutos || rodandoNoChrome}
+          titulo={buscandoProdutos || rodandoNoChrome ? "O que está acontecendo agora" : "O que aconteceu"}
+        />
+      </div>
+    );
+  };
+
+  // Os limites não se editam no meio de uma rodada: o `cfg` dela foi congelado lá no
+  // `startLocalRun`, e deixar o campo ativo é prometer um efeito que não acontece.
+  const emRodada = rodandoNoChrome || buscandoProdutos || rodando;
+
   return (
     <div>
+      {/* CARD 0 — o que esta tela é, e os números do que já está guardado. O que
+          vale para as três etapas mora aqui; o que é de uma etapa só mora no card
+          dela (task 19). */}
       <div style={cardStyle}>
         <div style={{ fontWeight: 500, marginBottom: 4 }}>Puxar os cupons do Mercado Livre</div>
         <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12, lineHeight: 1.5 }}>
-          Duas etapas, em dois botões. A <b>primeira</b> abre a lista geral do ML numa aba deste
-          Chrome e guarda <b>todos</b> os cupons com as condições de cada um — é só leitura, não
-          mexe na sua conta. A <b>segunda</b> busca os produtos de cada cupom, e essa precisa
-          aceitar (“Eu quero”) os que ainda não foram aceitos: sem isso o ML não mostra a vitrine.
-          As duas demoram minutos e vão se atualizando sozinhas. A <b>terceira</b> faz as duas
-          seguidas e repete a busca de produtos em ciclos até não sobrar cupom nenhum sem eles.
+          Três caminhos, um card para cada — com os limites e o “última vez” de cada um lá dentro.
+          O <b>1</b> abre a lista geral do ML numa aba deste Chrome e guarda todos os cupons com as
+          condições de cada um: é só leitura, não mexe na sua conta. O <b>2</b> busca os produtos de
+          cada cupom, e precisa aceitar (“Eu quero”) os que ainda não foram aceitos — sem isso o ML
+          não mostra a vitrine. O <b>3</b> faz os dois seguidos e repete a busca de produtos em
+          ciclos até não sobrar cupom sem eles. Todos demoram minutos e vão se atualizando sozinhos.
         </div>
 
         {s && (
@@ -613,76 +759,146 @@ export default function CuponsDoML({ buscaInicial = null }) {
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          {/* ETAPA 1. Leitura pura — dá pra clicar à vontade. */}
-          {rodandoNoChrome ? (
-            <button onClick={() => { pararRef.current = true; }} style={botaoSecundario}>
-              Parar a varredura
-            </button>
-          ) : (
-            <button
-              onClick={rodarNoChrome}
-              disabled={!colheLista || rodando || buscandoProdutos}
-              style={botaoPrimario(!colheLista || rodando || buscandoProdutos)}
-              title={!colheLista
-                ? "Precisa da extensão do Chrome instalada — o ML responde CAPTCHA para navegador automatizado."
-                : "Abre a lista geral de cupons do ML numa aba deste Chrome e guarda todos, com as condições. Não mexe na sua conta."}
-            >
-              1 · Buscar cupons e condições
-            </button>
-          )}
+        {/* Sem a extensão os três botões ficam cinza — e é aqui que se diz por quê.
+            Morando no card da tabela, a explicação ficava a três cards de distância
+            do botão que ela explica. */}
+        {temColetor === false && (
+          <div style={{ marginBottom: 10 }}><ExtensaoAusente /></div>
+        )}
 
-          {/* ETAPA 2. Separada porque ESCREVE na conta do ML. */}
-          {buscandoProdutos ? (
-            <button onClick={() => { pararRef.current = true; }} style={botaoSecundario}>
-              Parar a busca
-            </button>
-          ) : (
-            <button
-              onClick={() => rodarProdutos()}
-              disabled={!temColetor || rodando || rodandoNoChrome || !faltamProdutos}
-              style={botaoPrimario(!temColetor || rodando || rodandoNoChrome || !faltamProdutos)}
-              title={!temColetor
-                ? "Precisa da extensão do Chrome instalada."
-                : !faltamProdutos
-                  ? "Todos os cupons guardados já têm produtos."
-                  : `Abre a vitrine de ${faltamProdutos} cupom(ns), uma aba por vez.${precisamAtivar ? ` ${precisamAtivar} deles ainda não foram aceitos — o ML só mostra a vitrine depois do “Eu quero”, então ${quantosAtiva} vão ser ativados na sua conta.` : ""}`}
-            >
-              2 · Buscar produtos dos que faltam{faltamProdutos ? ` (${faltamProdutos})` : ""}
-            </button>
-          )}
+        {/* Desabilitado durante a varredura porque a rota devolve 409 — melhor
+            não deixar clicar do que explicar o erro depois de confirmar. */}
+        <button
+          onClick={() => setConfirmarLimpeza(true)}
+          disabled={limpando || rodando || rodandoNoChrome || buscandoProdutos || semCupom}
+          style={botaoPerigo(limpando || rodando || rodandoNoChrome || buscandoProdutos || semCupom)}
+        >
+          {limpando ? "Apagando..." : "🗑 Apagar todos"}
+        </button>
 
-          {/* ETAPA 1 + ETAPA 2 em ciclos, até acabar. Some enquanto qualquer uma das
-              duas roda: o "Parar" que aparece no lugar delas já interrompe este
-              também, porque é a mesma `pararRef`. */}
-          {!rodandoNoChrome && !buscandoProdutos && (
-            <button
-              onClick={rodarTudo}
-              disabled={!colheLista || !temColetor || rodando}
-              style={botaoPrimario(!colheLista || !temColetor || rodando)}
-              title={!colheLista || !temColetor
-                ? "Precisa da extensão do Chrome instalada."
-                : `Varre a lista inteira e depois busca os produtos em ciclos, até não sobrar nenhum. Ativa ${semTetoAtivacao ? "todos os cupons" : `até ${tetoAtivacao} cupons por ciclo`} na sua conta do ML.`}
-            >
-              3 · Buscar TUDO (até acabar)
-            </button>
-          )}
+        {erro && (
+          <div style={{ marginTop: 8, background: "var(--danger-bg)", color: "var(--danger-text)", padding: "8px 10px", borderRadius: 8, fontSize: 12 }}>
+            {erro}
+          </div>
+        )}
+      </div>
 
-          {/* Desabilitado durante a varredura porque a rota devolve 409 — melhor
-              não deixar clicar do que explicar o erro depois de confirmar. */}
-          <button
-            onClick={() => setConfirmarLimpeza(true)}
-            disabled={limpando || rodando || rodandoNoChrome || buscandoProdutos || semCupom}
-            style={botaoPerigo(limpando || rodando || rodandoNoChrome || buscandoProdutos || semCupom)}
-          >
-            {limpando ? "Apagando..." : "🗑 Apagar todos"}
-          </button>
+      {/* CARD 1 — ETAPA 1. Leitura pura: dá pra clicar à vontade. */}
+      <section style={cardStyle} role="region" aria-label="1 · Cupons e condições">
+        <div style={{ fontWeight: 500, marginBottom: 4 }}>1 · Cupons e condições</div>
+        <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 10, lineHeight: 1.5 }}>
+          Abre a lista geral de cupons do ML numa aba deste Chrome e guarda todos, com desconto,
+          mínimo, teto e validade. <b>Não mexe na sua conta.</b>
         </div>
 
-        {/* O filtro da fila dos botões 2 e 3 (task 11). Fica colado nos botões, e
-            não nos filtros da tabela, porque muda o que ELES vão buscar — a tabela
-            continua mostrando todos. */}
-        <label style={{ marginTop: 8, fontSize: 12, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+        {rodandoNoChrome ? (
+          <button onClick={() => { pararRef.current = true; }} style={botaoSecundario}>
+            Parar a varredura
+          </button>
+        ) : (
+          <button
+            onClick={rodarNoChrome}
+            disabled={!colheLista || rodando || buscandoProdutos}
+            style={botaoPrimario(!colheLista || rodando || buscandoProdutos)}
+            title={!colheLista
+              ? "Precisa da extensão do Chrome instalada — o ML responde CAPTCHA para navegador automatizado."
+              : "Abre a lista geral de cupons do ML numa aba deste Chrome e guarda todos, com as condições. Não mexe na sua conta."}
+          >
+            1 · Buscar cupons e condições
+          </button>
+        )}
+
+        {/* Até onde ir (task 20). Rádio e não caixa de marcar: as duas saídas ficam
+            escritas lado a lado, e é isso que transforma "configuração" em escolha.
+            O número da primeira opção vem da config salva — ele aparece na FRASE, e
+            não só num campo lá embaixo, que era o que ninguém ligava ao botão. */}
+        <fieldset style={{ marginTop: 12, border: "none", padding: 0, margin: "12px 0 0" }}>
+          <legend style={{ fontSize: 12, fontWeight: 500, padding: 0, marginBottom: 6 }}>Até onde ir na lista</legend>
+          <label style={{ fontSize: 12, display: "flex", alignItems: "baseline", gap: 6, marginBottom: 4 }}>
+            <input
+              type="radio" name="ate-onde-na-lista"
+              checked={!listaSemTeto}
+              disabled={emRodada}
+              onChange={() => setListaSemTeto(false)}
+            />
+            <span>
+              até os limites abaixo
+              <span style={{ color: "var(--color-text-secondary)" }}>
+                {" "}— para em {status?.config?.maxPaginasLista ?? 40} páginas da lista geral
+                (≈{((status?.config?.maxPaginasLista ?? 40) * 30).toLocaleString("pt-BR")} cupons)
+                {status?.config?.limiteCupons ? `, ou em ${status.config.limiteCupons} cupons` : ""}.
+              </span>
+            </span>
+          </label>
+          <label style={{ fontSize: 12, display: "flex", alignItems: "baseline", gap: 6 }}>
+            <input
+              type="radio" name="ate-onde-na-lista"
+              checked={listaSemTeto}
+              disabled={emRodada}
+              onChange={() => setListaSemTeto(true)}
+            />
+            <span>
+              tudo o que o ML tiver
+              <span style={{ color: "var(--color-text-secondary)" }}> — sem teto de páginas nem de cupons.</span>
+            </span>
+          </label>
+          {listaSemTeto && (
+            <div style={{ marginTop: 6, fontSize: 11, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+              <b>Sem teto não quer dizer sem fim.</b> A varredura para quando o ML diz que a lista
+              acabou (ele declara quantas páginas tem em toda resposta), quando cinco páginas
+              seguidas não trazem cupom novo, e quando você clica em Parar. O que já entrou fica
+              gravado — rodar de novo não repete trabalho.
+            </div>
+          )}
+        </fieldset>
+
+        {painelDaEtapa("lista")}
+
+        <details>
+          <summary style={{ cursor: "pointer", fontSize: 12, marginTop: 12 }}>Limites desta etapa</summary>
+          <LimitesLista
+            config={status?.config}
+            labels={status?.groupingLabels}
+            onSaved={recarregar}
+            desabilitado={emRodada}
+            semTeto={listaSemTeto}
+          />
+        </details>
+      </section>
+
+      {/* CARD 2 — ETAPA 2. Separada porque ESCREVE na conta do ML. */}
+      <section style={cardStyle} role="region" aria-label="2 · Produtos dos que faltam">
+        <div style={{ fontWeight: 500, marginBottom: 4 }}>2 · Produtos dos que faltam</div>
+        <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 10, lineHeight: 1.5 }}>
+          Abre a vitrine de cada cupom que ainda não tem produtos e guarda o que ela lista. Precisa
+          aceitar (“Eu quero”) os cupons ainda não aceitos: sem isso o ML não revela a vitrine.
+        </div>
+
+        {buscandoProdutos ? (
+          <button onClick={() => { pararRef.current = true; }} style={botaoSecundario}>
+            Parar a busca
+          </button>
+        ) : (
+          <button
+            onClick={() => rodarProdutos()}
+            disabled={!temColetor || rodando || rodandoNoChrome || !faltamProdutos}
+            style={botaoPrimario(!temColetor || rodando || rodandoNoChrome || !faltamProdutos)}
+            title={!temColetor
+              ? "Precisa da extensão do Chrome instalada."
+              : !faltamProdutos
+                ? "Todos os cupons guardados já têm produtos."
+                : `Abre a vitrine de ${faltamProdutos} cupom(ns), uma aba por vez.${precisamAtivar ? ` ${precisamAtivar} deles ainda não foram aceitos — o ML só mostra a vitrine depois do “Eu quero”, então ${quantosAtiva} vão ser ativados na sua conta.` : ""}`}
+          >
+            2 · Buscar produtos dos que faltam{faltamProdutos ? ` (${faltamProdutos})` : ""}
+          </button>
+        )}
+
+        {/* O filtro da fila (task 11). Mora AQUI, e não nos filtros da tabela, porque
+            muda o que este botão vai buscar — a tabela continua mostrando todos. O
+            botão 3 reusa a mesma escolha, e por isso o card dele a ecoa em vez de
+            oferecer uma segunda caixa: dois controles sobre a mesma preferência é a
+            cara do problema que a task 19 veio resolver. */}
+        <label style={{ marginTop: 10, fontSize: 12, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
           <input
             type="checkbox"
             checked={soSemProdutos}
@@ -697,7 +913,7 @@ export default function CuponsDoML({ buscaInicial = null }) {
           )}
         </label>
 
-        {/* O aviso do que a etapa 2 vai escrever na conta. Fica FORA do title do
+        {/* O aviso do que esta etapa vai escrever na conta. Fica FORA do title do
             botão de propósito: "ativar" é irreversível, e um aviso que só aparece
             no hover é um aviso que ninguém leu. */}
         {precisamAtivar > 0 && (
@@ -705,60 +921,96 @@ export default function CuponsDoML({ buscaInicial = null }) {
             <b>{precisamAtivar}</b> cupom(ns) ainda não foram aceitos na sua conta. O ML só revela a vitrine
             depois do “Eu quero”, então a etapa 2 vai clicar nisso — <b>escrita irreversível</b>,{" "}
             {semTetoAtivacao ? <>em <b>todos</b> eles, sem teto por rodada</> : <>até <b>{tetoAtivacao}</b> por rodada</>}.{" "}
-            {!tetoAtivacao && !semTetoAtivacao && "Está desligada: ligue a ativação nos limites abaixo."}
+            {!tetoAtivacao && !semTetoAtivacao && "Está desligada: ligue a ativação nos limites desta etapa."}
           </div>
         )}
 
-        {/* Trazer UMA campanha pelo número dela (task 32). Fica junto dos botões das
-            etapas porque é a quarta forma de um cupom entrar aqui — e a única que
-            não depende de varrer a lista inteira nem de ter testado uma palavra. */}
-        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "0.5px solid var(--color-border-tertiary)" }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <input
-              placeholder="13495993 ou o link do cupom"
-              value={idColado}
-              onChange={e => { setIdColado(e.target.value); setRecadoId(null); }}
-              onKeyDown={e => { if (e.key === "Enter" && !procurandoId) trazerPorId(); }}
-              style={{ ...inputStyle, width: 280 }}
-            />
-            <button
-              onClick={trazerPorId}
-              disabled={procurandoId || !idColado.trim()}
-              style={botaoSecundario}
-              title="Procura essa campanha no que já está guardado e, se ela não estiver aqui, oferece buscá-la no ML."
-            >
-              {procurandoId ? "procurando..." : "Trazer campanha por ID"}
-            </button>
-          </div>
-          <div style={{ marginTop: 6, fontSize: 11, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
-            O número da campanha é o <code>coupon_campaign_id</code> do link do cupom — o mesmo{" "}
-            <code>#</code> que aparece em cada linha da tabela.
-          </div>
-          {recadoId && (
-            <div style={{ marginTop: 6, fontSize: 12, color: recadoId.tom === "erro" ? "var(--danger-text)" : "var(--color-text-secondary)" }}>
-              {recadoId.texto}
-            </div>
-          )}
+        {painelDaEtapa("produtos")}
+
+        <details>
+          <summary style={{ cursor: "pointer", fontSize: 12, marginTop: 12 }}>Limites desta etapa</summary>
+          <LimitesProdutos config={status?.config} onSaved={recarregar} desabilitado={emRodada} />
+        </details>
+      </section>
+
+      {/* CARD 3 — as duas etapas seguidas, em ciclos, até acabar. */}
+      <section style={cardStyle} role="region" aria-label="3 · Buscar TUDO">
+        <div style={{ fontWeight: 500, marginBottom: 4 }}>3 · Buscar TUDO (até acabar)</div>
+        <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 10, lineHeight: 1.5 }}>
+          Faz a etapa 1 e depois repete a etapa 2 em ciclos, até não sobrar cupom sem produtos. É um
+          botão só porque a pergunta que ele responde é uma só — e porque parar entre as duas deixa
+          cupom guardado sem produto nenhum, que é o estado que ele existe para desfazer.
         </div>
 
-        {/* O balanço da última varredura. O log vive na memória do processo da API
-            (backend/coupons/sync.js) e some se ele reiniciar — o RESUMO é o que
-            fica guardado, e é ele que responde "quando foi a última vez?". */}
-        {status?.lastRun && !rodandoNoChrome && !buscandoProdutos && (
-          <ColheitaLog eventos={[]} rodando={false} resumo={resumoDaRodada(status)} />
-        )}
-        {status?.lastError && (
-          <div style={{ marginTop: 8, background: "var(--warn-bg)", color: "var(--warn-text)", padding: "8px 10px", borderRadius: 8, fontSize: 12 }}>
-            {status.lastError}
-          </div>
-        )}
-        {erro && (
-          <div style={{ marginTop: 8, background: "var(--danger-bg)", color: "var(--danger-text)", padding: "8px 10px", borderRadius: 8, fontSize: 12 }}>
-            {erro}
-          </div>
+        {/* Some enquanto qualquer uma das duas roda: o "Parar" que aparece no card
+            delas já interrompe este também, porque é a mesma `pararRef`. */}
+        {rodandoNoChrome || buscandoProdutos ? (
+          painelDe === "tudo" ? (
+            <button onClick={() => { pararRef.current = true; }} style={botaoSecundario}>
+              Parar
+            </button>
+          ) : null
+        ) : (
+          <button
+            onClick={rodarTudo}
+            disabled={!colheLista || !temColetor || rodando}
+            style={botaoPrimario(!colheLista || !temColetor || rodando)}
+            title={!colheLista || !temColetor
+              ? "Precisa da extensão do Chrome instalada."
+              : `Varre a lista inteira e depois busca os produtos em ciclos, até não sobrar nenhum. Ativa ${semTetoAtivacao ? "todos os cupons" : `até ${tetoAtivacao} cupons por ciclo`} na sua conta do ML.`}
+          >
+            3 · Buscar TUDO (até acabar)
+          </button>
         )}
 
-        <Config config={status?.config} labels={status?.groupingLabels} onSaved={recarregar} />
+        {/* O que ele herda dos outros dois cards. Eco somente-leitura, não uma
+            segunda cópia dos controles: um controle, um dono. */}
+        <div style={{ marginTop: 10, fontSize: 11, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+          Usa a lista <b>sem teto</b> sempre · o filtro do card 2 ({soSemProdutos ? "só os sem nenhum produto" : "todos os que faltam"}){" "}
+          · {semTetoAtivacao ? "aceita todos os cupons" : `até ${tetoAtivacao} aceites`} por ciclo
+          {status?.config?.maxCiclos ? ` · até ${status.config.maxCiclos} ciclos` : ""}.
+        </div>
+
+        {painelDaEtapa("tudo")}
+
+        <details>
+          <summary style={{ cursor: "pointer", fontSize: 12, marginTop: 12 }}>Limites desta etapa</summary>
+          <LimitesCiclos config={status?.config} onSaved={recarregar} desabilitado={emRodada} />
+        </details>
+      </section>
+
+      {/* CARD 4 — trazer UMA campanha pelo número dela (task 32). É a quarta forma
+          de um cupom entrar, mas não é etapa: não tem limite, não tem "última vez" e
+          não tem Parar. Fica entre os três botões e a tabela, que é a ponte entre
+          "puxar do ML" e "o que está guardado". */}
+      <div style={cardStyle}>
+        <div style={{ fontWeight: 500, marginBottom: 8 }}>Trazer uma campanha pelo número</div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <input
+            placeholder="13495993 ou o link do cupom"
+            value={idColado}
+            onChange={e => { setIdColado(e.target.value); setRecadoId(null); }}
+            onKeyDown={e => { if (e.key === "Enter" && !procurandoId) trazerPorId(); }}
+            style={{ ...inputStyle, width: 280 }}
+          />
+          <button
+            onClick={trazerPorId}
+            disabled={procurandoId || !idColado.trim()}
+            style={botaoSecundario}
+            title="Procura essa campanha no que já está guardado e, se ela não estiver aqui, oferece buscá-la no ML."
+          >
+            {procurandoId ? "procurando..." : "Trazer campanha por ID"}
+          </button>
+        </div>
+        <div style={{ marginTop: 6, fontSize: 11, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+          O número da campanha é o <code>coupon_campaign_id</code> do link do cupom — o mesmo{" "}
+          <code>#</code> que aparece em cada linha da tabela.
+        </div>
+        {recadoId && (
+          <div style={{ marginTop: 6, fontSize: 12, color: recadoId.tom === "erro" ? "var(--danger-text)" : "var(--color-text-secondary)" }}>
+            {recadoId.texto}
+          </div>
+        )}
       </div>
 
       <div style={cardStyle}>
@@ -794,30 +1046,6 @@ export default function CuponsDoML({ buscaInicial = null }) {
             </label>
           </div>
         </div>
-
-        {(andamento || salvo || eventos.length > 0 || resumoColheita) && (
-          <div style={{ marginBottom: 10 }}>
-            <ProgressoColheita andamento={andamento} />
-            {salvo && (
-              <div style={{ fontSize: 12, color: "var(--color-text-primary)", fontWeight: 600, marginTop: 2 }}>
-                💾 salvo: {salvo.lotes}/{salvo.de} lote(s) · {salvo.vitrines} vitrine(s) · {salvo.produtos.toLocaleString("pt-BR")} produto(s)
-                {salvo.em ? ` · ${new Date(salvo.em).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : ""}
-              </div>
-            )}
-            <ColheitaLog
-              eventos={eventos}
-              resumo={resumoColheita}
-              rodando={buscandoProdutos || rodandoNoChrome}
-              titulo={buscandoProdutos || rodandoNoChrome ? "O que está acontecendo agora" : "O que aconteceu"}
-            />
-          </div>
-        )}
-
-        {/* Sem a extensão o botão "no meu Chrome" some — e sumir sem explicação é
-            pior do que não existir. Esta linha diz onde ele foi parar. */}
-        {temColetor === false && (
-          <div style={{ marginBottom: 10 }}><ExtensaoAusente /></div>
-        )}
 
         {lista.items.length === 0 ? (
           <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
@@ -1065,166 +1293,6 @@ function Produtos({ dados }) {
             </span>
           </div>
         ))}
-      </div>
-    </div>
-  );
-}
-
-// Os tetos da rodada. Ficam à vista porque são eles que seguram o tempo (e o
-// atrito com o ML): a conta enxerga milhares de cupons, e cada um é uma página.
-// Um campo numérico da config. Existem doze deles agora — repetir o label + input
-// + onChange doze vezes é onde um `min` errado passa despercebido.
-function Numerico({ cfg, setCfg, chave, label, min, max, dica, largura = 120 }) {
-  return (
-    <div>
-      <label style={labelStyle} title={dica}>{label}</label>
-      <input
-        type="number" min={min} max={max} value={cfg[chave] ?? ""}
-        onChange={e => setCfg(c => ({ ...c, [chave]: Number(e.target.value) }))}
-        style={{ ...inputStyle, width: largura }}
-      />
-    </div>
-  );
-}
-
-function Marcador({ cfg, setCfg, chave, label }) {
-  return (
-    <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6, paddingBottom: 8 }}>
-      <input type="checkbox" checked={cfg[chave] !== false} onChange={e => setCfg(c => ({ ...c, [chave]: e.target.checked }))} />
-      {label}
-    </label>
-  );
-}
-
-export function Config({ config, labels, onSaved }) {
-  // O que está sendo editado, se alguém mexeu; senão, o que o servidor mandou.
-  // Estado derivado em vez de efeito copiando prop pra estado — que é o que
-  // desfaria a edição sozinho a cada volta do poll de status.
-  const [edit, setEdit] = useState(null);
-  const [salvando, setSalvando] = useState(false);
-  const cfg = edit || config;
-  const setCfg = (fn) => setEdit(typeof fn === "function" ? fn(cfg) : fn);
-  if (!cfg) return null;
-
-  const salvar = async () => {
-    setSalvando(true);
-    try { await adminMlCuponsSaveConfig(cfg); onSaved?.(); } catch { /* o erro aparece na próxima leitura */ }
-    finally { setSalvando(false); }
-  };
-
-  // As categorias que dá pra escolher para o CARIMBO. Só as VERTICAIS: o
-  // dicionário do ML mistura filtro com categoria — `price` ("Mais de R$100"),
-  // `percentage`, `recommended` estão na mesma lista, e carimbar por eles poria no
-  // cupom uma "categoria" que não existe. O sufixo é o que o próprio ML usa.
-  const verticais = Object.keys(labels || {})
-    .filter(k => /_vertical$/.test(k))
-    .sort((a, b) => rotuloCategoria(a, labels).localeCompare(rotuloCategoria(b, labels), "pt-BR"));
-  const escolhidas = Array.isArray(cfg.categorias) ? cfg.categorias : [];
-  const alternar = (chave) => setCfg(c => {
-    const atuais = Array.isArray(c.categorias) ? c.categorias : [];
-    return { ...c, categorias: atuais.includes(chave) ? atuais.filter(k => k !== chave) : [...atuais, chave] };
-  });
-
-  const linha = { display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", marginTop: 10 };
-  const titulo = { fontWeight: 500, fontSize: 12, marginTop: 16 };
-  const nota = { fontSize: 11, color: "var(--color-text-secondary)", marginTop: 8, lineHeight: 1.5 };
-
-  return (
-    <div style={{ marginTop: 16, borderTop: "0.5px solid var(--color-border-tertiary)", paddingTop: 12 }}>
-      <div style={{ fontWeight: 500, marginBottom: 2 }}>Limites</div>
-      <div style={nota}>
-        Tudo o que as duas etapas fazem cabe aqui. Cada página aberta é uma visita ao ML com a
-        sua conta — a mesma do Hub de Afiliados —, então subir muito estes números aumenta a
-        chance de o ML pedir verificação.
-      </div>
-
-      <div style={titulo}>Etapa 1 — a lista</div>
-      <div style={linha}>
-        <Numerico cfg={cfg} setCfg={setCfg} chave="maxPaginasLista" label="Páginas da lista geral" min={1} max={200}
-          dica="A lista traz 30 cupons por página. 40 páginas = 1.200 cupons." />
-        <Numerico cfg={cfg} setCfg={setCfg} chave="limiteCupons" label="Teto de cupons (0 = todos)" min={0} max={20000} largura={140} />
-        <Marcador cfg={cfg} setCfg={setCfg} chave="carimbarCategorias" label="carimbar a categoria (passada por vertical)" />
-        <Numerico cfg={cfg} setCfg={setCfg} chave="maxPaginasPorCategoria" label="Páginas por categoria" min={1} max={200}
-          dica="Também 30 por página. A maior vertical da conta tem ~1.170 cupons: 40 páginas cobrem 1.200. Cupom além deste teto fica sem categoria." />
-        <Marcador cfg={cfg} setCfg={setCfg} chave="skipStoreCoupons" label="ignorar cupom de loja" />
-      </div>
-      <div style={nota}>
-        A coleta é a <b>lista geral</b> (<code>?all=true</code>), que traz todos os cupons da conta.
-        As passadas por categoria vêm depois e servem só para <b>carimbar</b> a vertical em quem já
-        entrou: a lista do ML não diz a que categoria cada cupom pertence — quem diz é o filtro que
-        a gente pede na URL. Sem elas a coluna Categoria fica vazia. <b>Quais</b> categorias existem
-        a rodada descobre sozinha, na primeira página: o ML manda a lista delas em toda página da
-        lista de cupons, e é por isso que a caixa abaixo pode ficar em branco sem prejuízo.
-        Cupom de <b>loja</b> agora entra por padrão e aparece separado na tabela; ligar o último
-        marcador volta ao comportamento antigo, em que ele era descartado. Cupom de loja não entra
-        em vertical nenhuma no ML — a Categoria dele é “—” por natureza, e quem o identifica é a
-        coluna Tipo.
-      </div>
-
-      {verticais.length > 0 && (
-        <div style={{ marginTop: 10 }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
-            <label style={labelStyle}>Categorias a carimbar</label>
-            <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
-              {escolhidas.length ? `${escolhidas.length} escolhida${escolhidas.length === 1 ? "" : "s"}` : "carimba todas"}
-            </span>
-            {escolhidas.length > 0 && (
-              <button type="button" onClick={() => setCfg(c => ({ ...c, categorias: [] }))} style={botaoLink}>
-                carimbar todas
-              </button>
-            )}
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px" }}>
-            {verticais.map(chave => (
-              <label key={chave} style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
-                <input type="checkbox" checked={escolhidas.includes(chave)} onChange={() => alternar(chave)} />
-                {rotuloCategoria(chave, labels)}
-              </label>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div style={titulo}>Etapa 2 — os produtos</div>
-      <div style={linha}>
-        <Numerico cfg={cfg} setCfg={setCfg} chave="maxProductsPerCoupon" label="Produtos por cupom" min={10} max={500} />
-        <Numerico cfg={cfg} setCfg={setCfg} chave="maxPaginasVitrine" label="Páginas da vitrine" min={1} max={20}
-          dica="A vitrine anda de 48 em 48 produtos. 11 páginas = até 528, o suficiente pro teto de 500." />
-        <Numerico cfg={cfg} setCfg={setCfg} chave="pausaEntreVitrinesMs" label="Pausa entre vitrines (ms)" min={500} max={30000} largura={140} />
-        <Numerico cfg={cfg} setCfg={setCfg} chave="vitrinesEmParalelo" label="Vitrines em paralelo" min={1} max={4}
-          dica="Quantas vitrines abrem ao mesmo tempo (1 a 4). Mais abas é mais rápido, e também mais chance de o ML pedir verificação: o primeiro pedido para todas." />
-        <Numerico cfg={cfg} setCfg={setCfg} chave="tamanhoLoteProdutos" label="Cupons por lote" min={1} max={200}
-          dica="Ativa, colhe e grava este tanto de cupons antes de passar aos próximos. Parar no meio perde no máximo o lote em andamento." />
-        <Marcador cfg={cfg} setCfg={setCfg} chave="activateCoupons" label="aceitar os cupons automaticamente (“Eu quero”)" />
-        <Numerico cfg={cfg} setCfg={setCfg} chave="maxActivationsPerRun" label="Aceites por rodada" min={0} max={500}
-          dica="0 = sem teto (aceita todos). Para não aceitar nenhum, desmarque a caixa acima." />
-      </div>
-      <div style={nota}>
-        <b>Aceitar é ESCRITA na sua conta do Mercado Livre</b> — é o mesmo “Eu quero” que você
-        clicaria à mão, e não há como desfazer por aqui. É também a única forma de o cupom ter
-        vitrine: sem aceitar, o ML não diz quais produtos ele cobre. A conta é a mesma do Hub de
-        Afiliados, então a etapa 2 vai com pausa entre as abas e para no primeiro pedido de
-        verificação — mas <b>sem teto de aceites ela clica em todos de uma vez</b>, que é o padrão
-        que mais acorda o anti-robô. O mesmo vale para as <b>vitrines em paralelo</b>: cada aba a mais
-        é mais uma batendo no ML com a mesma conta. Enquanto um lote colhe, o próximo já vai sendo
-        aceito numa aba à parte. Se o teto de produtos cortar a vitrine no meio, ela entra
-        marcada como <b>parcial</b> — prévia, não lista fechada.
-      </div>
-
-      <div style={titulo}>Buscar TUDO — os ciclos</div>
-      <div style={linha}>
-        <Numerico cfg={cfg} setCfg={setCfg} chave="pausaEntreCiclosMs" label="Pausa entre ciclos (ms)" min={5000} max={600000} largura={150} />
-        <Numerico cfg={cfg} setCfg={setCfg} chave="maxCiclos" label="Máximo de ciclos" min={1} max={200} />
-      </div>
-      <div style={nota}>
-        O botão 3 repete a etapa 2 até a fila esvaziar. Ele já para sozinho quando não sobra
-        cupom, quando o ML pede verificação e quando um ciclo inteiro não move nada — o
-        <b> máximo de ciclos</b> é só rede de segurança. A pausa entre ciclos é o intervalo em que
-        a sua conta fica quieta; é maior que a pausa entre vitrines de propósito.
-      </div>
-
-      <div style={{ marginTop: 12 }}>
-        <button onClick={salvar} disabled={salvando} style={botaoSecundario}>{salvando ? "salvando…" : "salvar"}</button>
       </div>
     </div>
   );

@@ -173,6 +173,28 @@ describe("GET /api/admin/ml-cupons/alvos-produtos", () => {
   });
 });
 
+// O balanço dos botões 2 e 3 (task 17): o laço é da tela, que avisa o fim por aqui.
+describe("POST /api/admin/ml-cupons/rodada-fim", () => {
+  it("guarda o balanço do botão, e recusa botão que não existe", async () => {
+    const { user, auth } = await createTestUser();
+    await authMod.setUserRole(user.id, "admin");
+
+    const ok = await auth("post", "/api/admin/ml-cupons/rodada-fim")
+      .send({ botao: "produtos", duracaoMs: 1200, resultado: { tentados: 2, colhidos: 1 } });
+    expect(ok.status).toBe(200);
+    expect(sync.status().ultimas.produtos.resultado).toEqual({ tentados: 2, colhidos: 1 });
+
+    const ruim = await auth("post", "/api/admin/ml-cupons/rodada-fim").send({ botao: "lista" });
+    expect(ruim.status).toBe(400);
+  });
+
+  it("não é para quem não é admin", async () => {
+    const { auth } = await createTestUser();
+    const r = await auth("post", "/api/admin/ml-cupons/rodada-fim").send({ botao: "produtos" });
+    expect(r.status).toBe(403);
+  });
+});
+
 // O teto de produtos por cupom não pode virar uma lista fechada mentirosa: uma
 // vitrine cortada no meio, gravada como fechada, faz o quick-check responder
 // "este cupom não vale para o seu produto" para produto que o cupom cobre.

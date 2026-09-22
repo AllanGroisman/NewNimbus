@@ -26,7 +26,7 @@ export default function ProgressoColheita({ andamento }) {
   }, [ativo]);
   if (!andamento) return null;
 
-  const { etapa, fila, lote, atual, lista, pausa, contagem, ciclo, maxCiclos, maxPaginas, maxProdutos, ativacaoFundo } = andamento;
+  const { etapa, fila, lote, atual, lista, pausa, contagem, ciclo, maxCiclos, maxPaginas, maxProdutos, ativacao, ativacaoFundo } = andamento;
   // Várias vitrines ao mesmo tempo (task 14): lista todas as abertas.
   const abertas = Object.values(andamento.atuais || {});
   const variasAbertas = abertas.length > 1;
@@ -35,7 +35,15 @@ export default function ProgressoColheita({ andamento }) {
   const restaPausa = pausa ? Math.max(0, pausa.ate - agora) : 0;
 
   let titulo = ROTULO[etapa] || etapa;
-  if (etapa === "lista" && lista) titulo += ` · página ${lista.pagina}${lista.grouping ? ` de ${lista.grouping}` : " (geral)"}`;
+  // Com várias páginas em voo (task 21) o número da página corrente deixa de
+  // querer dizer progresso — a 9 volta antes da 7. Aí o título passa a contar
+  // páginas LIDAS, que é monotônico, e diz quantas abas estão abertas.
+  const paginasAbertas = Object.values(lista?.abertas || {});
+  if (etapa === "lista" && lista) {
+    titulo += paginasAbertas.length > 1
+      ? ` · ${lista.lidas || 0}${lista.de ? ` de ${lista.de}` : ""} páginas${lista.grouping ? ` de ${lista.nome || lista.grouping}` : " (geral)"}`
+      : ` · página ${lista.pagina}${lista.grouping ? ` de ${lista.nome || lista.grouping}` : " (geral)"}`;
+  }
   if (etapa === "pausa" && pausa) titulo = `Em pausa · ${PAUSA[pausa.motivo] || "continua"} em ${Math.ceil(restaPausa / 1000)}s`;
 
   return (
@@ -60,6 +68,15 @@ export default function ProgressoColheita({ andamento }) {
         {EXPLICACAO[etapa]}
       </div>
 
+      {etapa === "lista" && lista && <BarrasDaLista lista={lista} />}
+      {etapa === "ativando" && ativacao?.total > 0 && (
+        <Barra
+          valor={ativacao.vistos}
+          total={ativacao.total}
+          rotulo={`Cupons do lote já achados na lista: ${ativacao.vistos} de ${ativacao.total}${ativacao.pagina ? ` · página ${ativacao.pagina}` : ""}`}
+        />
+      )}
+
       {fila && (
         <Barra
           valor={fila.feitos}
@@ -83,6 +100,17 @@ export default function ProgressoColheita({ andamento }) {
         </div>
       )}
 
+      {paginasAbertas.length > 1 && (etapa === "lista" || muro) && (
+        <div style={{ marginTop: 8, fontSize: 12, lineHeight: 1.5 }}>
+          <div>{paginasAbertas.length} páginas abertas agora:</div>
+          <div style={{ color: "var(--color-text-secondary)" }}>
+            {paginasAbertas
+              .map(v => `${v.grouping ? (lista.nome || v.grouping) : "geral"} p.${v.pagina}`)
+              .join(" · ")}
+          </div>
+        </div>
+      )}
+
       {!variasAbertas && atual && (etapa === "vitrine" || etapa === "pausa" || muro) && (
         <div style={{ marginTop: 8, fontSize: 12, lineHeight: 1.5 }}>
           <div>
@@ -101,6 +129,9 @@ export default function ProgressoColheita({ andamento }) {
           ⟳ Em paralelo: clicando em “Eu quero” no lote {ativacaoFundo.lote ?? "seguinte"}
           {ativacaoFundo.n ? ` (${ativacaoFundo.n} cupom(ns))` : ""}
           {ativacaoFundo.pagina ? ` · página ${ativacaoFundo.pagina} da lista` : ""}
+          {ativacaoFundo.total > 0 && (
+            <Barra valor={ativacaoFundo.vistos || 0} total={ativacaoFundo.total} rotulo={`Achados na lista: ${ativacaoFundo.vistos || 0} de ${ativacaoFundo.total}`} />
+          )}
         </div>
       )}
 
@@ -115,5 +146,34 @@ export default function ProgressoColheita({ andamento }) {
         </div>
       )}
     </div>
+  );
+}
+
+// As barras da etapa 1 (task 18). A lista não tem um "de N" só: a fila é a lista
+// geral e depois as categorias, cada uma com as páginas dela — e no carimbo o que
+// encerra de verdade é achar o último cupom sem categoria, não a última página.
+function BarrasDaLista({ lista }) {
+  const { grouping, nome, lidas, de, categoria, categorias, carimbo, cupons } = lista;
+  const onde = grouping ? `de ${nome || grouping}` : "da lista geral";
+  return (
+    <>
+      {categorias > 1 && categoria != null && (
+        <Barra
+          valor={Math.min(categoria - 1, categorias)}
+          total={categorias}
+          rotulo={`Fila: ${grouping ? `categoria ${nome || grouping}` : "lista geral"} (${Math.min(categoria, categorias)} de ${categorias})`}
+        />
+      )}
+      {de > 0 && (
+        <Barra
+          valor={lidas || 0}
+          total={de}
+          rotulo={`Páginas ${onde}: ${lidas || 0} de ${de}${cupons != null ? ` · ${cupons.toLocaleString("pt-BR")} cupons até aqui` : ""}`}
+        />
+      )}
+      {carimbo?.total > 0 && (
+        <Barra valor={carimbo.feitos} total={carimbo.total} rotulo={`Cupons sem categoria já carimbados: ${carimbo.feitos} de ${carimbo.total}`} />
+      )}
+    </>
   );
 }

@@ -21,13 +21,21 @@ const { textoDoProgresso } = sync;
 
 describe("textoDoProgresso", () => {
   it("traduz a leitura da lista, com a categoria e os cupons de loja ignorados", () => {
+    // `pagina` é quantas páginas desta entrada já VOLTARAM, não qual acabou de
+    // voltar: com várias abas (task 21) a última a voltar não é a mais adiantada,
+    // e a frase pulava 9 → 7 → 11.
     expect(textoDoProgresso({ etapa: "cupons", pagina: 2, de: 5, cupons: 40, grouping: "ce_vertical", ignoradosLoja: 3 }))
-      .toBe("lendo a lista de ce_vertical — página 2/5, 40 cupons (3 de loja ignorados)");
+      .toBe("lendo a lista de ce_vertical — 2/5 páginas, 40 cupons (3 de loja ignorados)");
   });
 
   it("sem categoria a leitura é a geral — e não some do log por causa disso", () => {
     expect(textoDoProgresso({ etapa: "cupons", pagina: 1, de: 1, cupons: 9, grouping: null, ignoradosLoja: 0 }))
-      .toBe("lendo a lista geral — página 1/1, 9 cupons");
+      .toBe("lendo a lista geral — 1/1 páginas, 9 cupons");
+  });
+
+  it("com várias abas, a frase diz quantas estão abertas", () => {
+    expect(textoDoProgresso({ etapa: "cupons", pagina: 7, de: 40, cupons: 210, grouping: null, ignoradosLoja: 0, emVoo: 3 }))
+      .toBe("lendo a lista geral — 7/40 páginas, 210 cupons, 3 abas abertas");
   });
 
   it("nomeia a vitrine que acabou de abrir, não só os contadores", () => {
