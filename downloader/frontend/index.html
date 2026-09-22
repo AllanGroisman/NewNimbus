@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/nimbus-icon-32.png" />
+    <meta name="theme-color" content="#cd6f04" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nimbus Downloader</title>
+    <script>
+      // Aplica o tema salvo antes do primeiro paint, pra não piscar.
+      try {
+        var t = localStorage.getItem("nimbus_dl_theme");
+        if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+      } catch (e) { /* modo privado: segue o sistema */ }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

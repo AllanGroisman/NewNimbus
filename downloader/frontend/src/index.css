@@ -1,0 +1,273 @@
+/* Tokens copiados de frontend/src/index.css do Nimbus (só a paleta padrão).
+   Mantenha em sincronia manualmente se o design do Nimbus mudar. */
+:root,
+:root[data-palette="nimbus"] {
+  /* Nimbus: laranja do logo (#f98601) escurecido até dar contraste em fundo
+     branco, e neutros puxados pro marinho do logo (#012742). */
+  --pal-primary: #cd6f04;
+  --pal-primary-dark: #a55a03;
+  --pal-primary-light: #fdecd8;
+
+  --pal-l-brand: #cd6f04;
+  --pal-l-bg-1: #ffffff;
+  --pal-l-bg-2: #f5f8fa;
+  --pal-l-bg-3: #eaf0f5;
+  --pal-l-text-1: #11212c;
+  --pal-l-text-2: #5b6e7b;
+  --pal-l-border-2: #c8d3da;
+  --pal-l-border-3: #e6ebf0;
+
+  --pal-d-brand: #e07f16;
+  --pal-d-bg-1: #13232f;
+  --pal-d-bg-2: #0d1921;
+  --pal-d-bg-3: #1c2f3d;
+  --pal-d-text-1: #e6ebf0;
+  --pal-d-text-2: #98a5ae;
+  --pal-d-border-2: #415462;
+  --pal-d-border-3: #2a3a46;
+}
+/* ══ Camada 2: temas ═══════════════════════════════════════════════════════
+   Escolhem entre o conjunto claro e o escuro da paleta ativa. Não conhecem
+   cor nenhuma da marca — por isso não precisam ser duplicados por paleta.
+*/
+:root {
+  --color-background-primary: var(--pal-l-bg-1);
+  --color-background-secondary: var(--pal-l-bg-2);
+  --color-background-tertiary: var(--pal-l-bg-3);
+  --color-text-primary: var(--pal-l-text-1);
+  --color-text-secondary: var(--pal-l-text-2);
+  --color-border-secondary: var(--pal-l-border-2);
+  --color-border-tertiary: var(--pal-l-border-3);
+  --color-brand: var(--pal-l-brand);
+  --color-brand-contrast: #ffffff;
+
+  /* Iguais nos dois temas — é o que PRIMARY* expõe pro JS. */
+  --color-primary: var(--pal-primary);
+  --color-primary-dark: var(--pal-primary-dark);
+  --color-primary-light: var(--pal-primary-light);
+
+  /* Cards de aviso (faixas de alerta, blocos de erro/sucesso). Antes eram hex
+     fixos claros espalhados pelo código — no tema escuro viravam manchas
+     claras no meio da tela. Agora cada tema define seu próprio conjunto.
+     Não mudam com a paleta: são semânticos, não da marca. */
+  --warn-bg: #fef3c7;
+  --warn-border: #f4d08a;
+  --warn-text: #854f0b;
+  --danger-bg: #fcebeb;
+  --danger-border: #f7c1c1;
+  --danger-text: #a32d2d;
+  --success-bg: #e8f5ee;
+  --success-border: #b9dec9;
+  --success-text: #1f6a3c;
+  --info-bg: #eff6ff;
+  --info-border: #bfdbfe;
+  --info-text: #1e40af;
+
+  /* Selos (ui/Badge). Mesma história dos avisos acima: eram hex claros fixos no
+     JS, e no tema escuro ficavam pastilhas claras num fundo escuro. */
+  --badge-green-bg: #EAF3DE;  --badge-green-text: #3B6D11;
+  --badge-red-bg: #FCEBEB;    --badge-red-text: #A32D2D;
+  --badge-amber-bg: #FAEEDA;  --badge-amber-text: #854F0B;
+  --badge-blue-bg: #E6F1FB;   --badge-blue-text: #185FA5;
+  --badge-teal-bg: #E1F5EE;   --badge-teal-text: #0F6E56;
+  --badge-gray-bg: #F1EFE8;   --badge-gray-text: #5F5E5A;
+  --badge-purple-bg: #EEEDFE; --badge-purple-text: #3C3489;
+  --badge-rose-bg: #FCE7F0;   --badge-rose-text: #9D2B5E;
+  --badge-indigo-bg: #E7E9FB; --badge-indigo-text: #34409A;
+  --badge-cyan-bg: #DFF4F6;   --badge-cyan-text: #0E6E78;
+  --badge-orange-bg: #FBE9DA; --badge-orange-text: #9A4A0B;
+
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-text-primary);
+  background: var(--color-background-secondary);
+  color-scheme: light dark;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-background-primary: var(--pal-d-bg-1);
+    --color-background-secondary: var(--pal-d-bg-2);
+    --color-background-tertiary: var(--pal-d-bg-3);
+    --color-text-primary: var(--pal-d-text-1);
+    --color-text-secondary: var(--pal-d-text-2);
+    --color-border-secondary: var(--pal-d-border-2);
+    --color-border-tertiary: var(--pal-d-border-3);
+    --color-brand: var(--pal-d-brand);
+    --color-brand-contrast: #ffffff;
+
+    --warn-bg: #3a2c0d;
+    --warn-border: #6b5218;
+    --warn-text: #f2c96b;
+    --danger-bg: #3a1c1c;
+    --danger-border: #6d2f2e;
+    --danger-text: #f0a3a2;
+    --success-bg: #16301f;
+    --success-border: #2c5a3b;
+    --success-text: #8fd6a9;
+    --info-bg: #16233a;
+    --info-border: #2c4570;
+    --info-text: #9dc0f5;
+
+    --badge-green-bg: #1b3316;  --badge-green-text: #a9d98b;
+    --badge-red-bg: #3a1c1c;    --badge-red-text: #f0a3a2;
+    --badge-amber-bg: #3a2c0d;  --badge-amber-text: #f2c96b;
+    --badge-blue-bg: #16233a;   --badge-blue-text: #9dc0f5;
+    --badge-teal-bg: #10322a;   --badge-teal-text: #7fd8bd;
+    --badge-gray-bg: #2a2926;   --badge-gray-text: #b8b5ad;
+    --badge-purple-bg: #221f3d; --badge-purple-text: #b4aefb;
+    --badge-rose-bg: #3a1a28;   --badge-rose-text: #f2a0c0;
+    --badge-indigo-bg: #1c1f3d; --badge-indigo-text: #a8b0f7;
+    --badge-cyan-bg: #10303a;   --badge-cyan-text: #7fd0dc;
+    --badge-orange-bg: #38210f; --badge-orange-text: #f0b183;
+  }
+}
+
+/* Override manual via Configurações > Aparência. Vence a media query acima
+   porque tem maior especificidade ([data-theme] vs nada). */
+:root[data-theme="light"] {
+  --color-background-primary: var(--pal-l-bg-1);
+  --color-background-secondary: var(--pal-l-bg-2);
+  --color-background-tertiary: var(--pal-l-bg-3);
+  --color-text-primary: var(--pal-l-text-1);
+  --color-text-secondary: var(--pal-l-text-2);
+  --color-border-secondary: var(--pal-l-border-2);
+  --color-border-tertiary: var(--pal-l-border-3);
+  --color-brand: var(--pal-l-brand);
+  --color-brand-contrast: #ffffff;
+
+  --warn-bg: #fef3c7;
+  --warn-border: #f4d08a;
+  --warn-text: #854f0b;
+  --danger-bg: #fcebeb;
+  --danger-border: #f7c1c1;
+  --danger-text: #a32d2d;
+  --success-bg: #e8f5ee;
+  --success-border: #b9dec9;
+  --success-text: #1f6a3c;
+  --info-bg: #eff6ff;
+  --info-border: #bfdbfe;
+  --info-text: #1e40af;
+
+  --badge-green-bg: #EAF3DE;  --badge-green-text: #3B6D11;
+  --badge-red-bg: #FCEBEB;    --badge-red-text: #A32D2D;
+  --badge-amber-bg: #FAEEDA;  --badge-amber-text: #854F0B;
+  --badge-blue-bg: #E6F1FB;   --badge-blue-text: #185FA5;
+  --badge-teal-bg: #E1F5EE;   --badge-teal-text: #0F6E56;
+  --badge-gray-bg: #F1EFE8;   --badge-gray-text: #5F5E5A;
+  --badge-purple-bg: #EEEDFE; --badge-purple-text: #3C3489;
+  --badge-rose-bg: #FCE7F0;   --badge-rose-text: #9D2B5E;
+  --badge-indigo-bg: #E7E9FB; --badge-indigo-text: #34409A;
+  --badge-cyan-bg: #DFF4F6;   --badge-cyan-text: #0E6E78;
+  --badge-orange-bg: #FBE9DA; --badge-orange-text: #9A4A0B;
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --color-background-primary: var(--pal-d-bg-1);
+  --color-background-secondary: var(--pal-d-bg-2);
+  --color-background-tertiary: var(--pal-d-bg-3);
+  --color-text-primary: var(--pal-d-text-1);
+  --color-text-secondary: var(--pal-d-text-2);
+  --color-border-secondary: var(--pal-d-border-2);
+  --color-border-tertiary: var(--pal-d-border-3);
+  --color-brand: var(--pal-d-brand);
+  --color-brand-contrast: #ffffff;
+
+  --warn-bg: #3a2c0d;
+  --warn-border: #6b5218;
+  --warn-text: #f2c96b;
+  --danger-bg: #3a1c1c;
+  --danger-border: #6d2f2e;
+  --danger-text: #f0a3a2;
+  --success-bg: #16301f;
+  --success-border: #2c5a3b;
+  --success-text: #8fd6a9;
+  --info-bg: #16233a;
+  --info-border: #2c4570;
+  --info-text: #9dc0f5;
+
+  --badge-green-bg: #1b3316;  --badge-green-text: #a9d98b;
+  --badge-red-bg: #3a1c1c;    --badge-red-text: #f0a3a2;
+  --badge-amber-bg: #3a2c0d;  --badge-amber-text: #f2c96b;
+  --badge-blue-bg: #16233a;   --badge-blue-text: #9dc0f5;
+  --badge-teal-bg: #10322a;   --badge-teal-text: #7fd8bd;
+  --badge-gray-bg: #2a2926;   --badge-gray-text: #b8b5ad;
+  --badge-purple-bg: #221f3d; --badge-purple-text: #b4aefb;
+  --badge-rose-bg: #3a1a28;   --badge-rose-text: #f2a0c0;
+  --badge-indigo-bg: #1c1f3d; --badge-indigo-text: #a8b0f7;
+  --badge-cyan-bg: #10303a;   --badge-cyan-text: #7fd0dc;
+  --badge-orange-bg: #38210f; --badge-orange-text: #f0b183;
+  color-scheme: dark;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+h1, h2, h3 {
+  color: var(--color-text-primary);
+  font-weight: 500;
+  margin: 0;
+}
+
+input, select, textarea, button {
+  font-family: inherit;
+  color: var(--color-text-primary);
+}
+
+/* Foco visível pra quem navega por teclado. Antes não havia nenhuma regra de
+   foco: o Tab percorria a tela toda sem nenhum indicador de onde estava. */
+:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Retorno visual no hover. `filter` funciona igual nos botões coloridos e nos
+   transparentes, sem precisar tocar em nenhum dos estilos inline das telas. */
+button:not(:disabled):hover,
+[role="button"]:not([aria-disabled="true"]):hover {
+  filter: brightness(0.95);
+}
+button:disabled {
+  cursor: not-allowed;
+}
+
+/* Placeholder bem mais fraco que o texto digitado — do jeito que estava, o exemplo
+   parecia valor já preenchido no formulário. */
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-text-secondary);
+  opacity: 0.5;
+}
+
+/* Spinner usado em BusyOverlay (e onde mais precisar). */
+@keyframes nimbus-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Placeholder de carregamento (cards da busca de produtos). */
+@keyframes nimbus-skeleton {
+  0%, 100% { opacity: 1;   }
+  50%      { opacity: 0.45; }
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .desktop-only { display: none !important; }
+  .main-content { padding: 14px 12px !important; }
+}
+@media (min-width: 769px) {
+  .mobile-only { display: none !important; }
+}
