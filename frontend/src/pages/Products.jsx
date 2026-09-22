@@ -98,7 +98,8 @@ export default function PageProducts() {
   async function runScraper() {
     setRunError(null);
     try {
-      await adminRunScraper();
+      // Continua um run pausado de hoje em vez de jogar o progresso fora.
+      await adminRunScraper({ resume: true });
       await refreshStatus();
     } catch (err) {
       setRunError(errText(err, "Não foi possível carregar os produtos."));

@@ -5,11 +5,15 @@ import Toggle from "../components/ui/Toggle";
 import Modal from "../components/ui/Modal";
 import ScheduleField from "../components/ui/ScheduleField";
 import Pagination from "../components/ui/Pagination";
+import Barra from "../components/admin/Barra";
+import Numero from "../components/admin/Numero";
+import { duracao } from "../data/andamentoColheita";
 import {
   adminScraperConfig,
   adminSaveScraperConfig,
   adminRunScraper,
   adminCancelScraper,
+  adminPauseScraper,
   adminScraperStatus,
   adminCatalog,
   adminClearCatalog,
@@ -17,6 +21,7 @@ import {
 } from "../data/api";
 
 const STATUS_POLL_MS = 5000;
+const STATUS_POLL_RUNNING_MS = 2000;   // mais fino enquanto roda — a barra anda por passo
 
 export default function PageAdminScraper() {
   const [available, setAvailable] = useState({ categories: [], sources: [] });
@@ -26,6 +31,7 @@ export default function PageAdminScraper() {
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
   const [canceling, setCanceling] = useState(false);
+  const [pausing, setPausing] = useState(false);
   const [error, setError] = useState(null);
   const [savedMsg, setSavedMsg] = useState(null);
 
@@ -84,17 +90,19 @@ export default function PageAdminScraper() {
     refreshCatalog();
   }, [refreshCatalog]);
 
-  // Polling de status enquanto rodando
+  // Polling de status (mais rápido enquanto rodando)
+  const isRunning = !!status?.running;
   useEffect(() => {
-    const id = setInterval(refreshStatus, STATUS_POLL_MS);
+    const id = setInterval(refreshStatus, isRunning ? STATUS_POLL_RUNNING_MS : STATUS_POLL_MS);
     return () => clearInterval(id);
-  }, [refreshStatus]);
+  }, [refreshStatus, isRunning]);
 
   // Quando termina de rodar, recarrega catálogo
   useEffect(() => {
     if (status && !status.running && running) {
       setRunning(false);
       setCanceling(false);
+      setPausing(false);
       refreshCatalog();
     }
     if (status?.running && !running) setRunning(true);
@@ -148,10 +156,10 @@ export default function PageAdminScraper() {
     }
   }
 
-  async function runNow() {
+  async function runNow({ resume = false } = {}) {
     setError(null);
     try {
-      await adminRunScraper();
+      await adminRunScraper({ resume });
       setRunning(true);
       await refreshStatus();
     } catch (err) {
@@ -167,6 +175,29 @@ export default function PageAdminScraper() {
       await refreshStatus();
     } catch (err) {
       setCanceling(false);
+      setError(errText(err, "Não foi possível concluir a ação no scraping."));
+    }
+  }
+
+  async function pauseRun() {
+    setError(null);
+    setPausing(true);
+    try {
+      await adminPauseScraper();
+      await refreshStatus();
+    } catch (err) {
+      setPausing(false);
+      setError(errText(err, "Não foi possível concluir a ação no scraping."));
+    }
+  }
+
+  // Descarta o run pausado (o backend reaproveita o /cancel quando nada roda).
+  async function discardPaused() {
+    setError(null);
+    try {
+      await adminCancelScraper();
+      await refreshStatus();
+    } catch (err) {
       setError(errText(err, "Não foi possível concluir a ação no scraping."));
     }
   }
@@ -211,11 +242,17 @@ export default function PageAdminScraper() {
       {/* Status / stats — TODOS os campos lidos de `status` (snapshot do backend),
           nunca de `config` local. Senão dessincroniza durante toggle. */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 18 }}>
-        <StatBox label="Status" value={status?.canceling ? "✕ Cancelando..." : (status?.running ? "⟳ Rodando" : (status?.config?.enabled ? "Agendado" : "Pausado"))} color={status?.canceling ? "var(--danger-text)" : (status?.running ? PRIMARY : (status?.config?.enabled ? PRIMARY_DARK : "var(--warn-text)"))} />
+        <StatBox
+          label="Status"
+          value={status?.canceling ? "✕ Cancelando..." : status?.pausing ? "⏸ Pausando..." : status?.running ? "⟳ Rodando" : status?.paused ? "⏸ Pausado" : (status?.config?.enabled ? "Agendado" : "Desligado")}
+          color={status?.canceling ? "var(--danger-text)" : (status?.pausing || status?.paused) ? "var(--warn-text)" : status?.running ? PRIMARY : (status?.config?.enabled ? PRIMARY_DARK : "var(--warn-text)")}
+        />
         <StatBox label="Último run" value={fmtDate(status?.lastRun)} sub={status?.lastDuration ? `${(status.lastDuration / 1000).toFixed(1)}s` : null} />
         <StatBox label="Próximo run" value={status?.config?.enabled ? fmtDate(status?.nextRunAt) : "—"} />
         <StatBox label="Produtos no catálogo" value={lastResult?.total ?? "—"} />
       </div>
+
+      <ScraperProgress status={status} available={available} />
 
       {/* Cards por loja — total + quebra por categoria (lidos de catStats do catálogo) */}
       {available.sources.length > 0 && (
@@ -256,11 +293,20 @@ export default function PageAdminScraper() {
           <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>
             Resultado do último scraping
             {lastResult.cancelled && <span style={{ fontSize: 11, fontWeight: 400, color: "var(--danger-text)", marginLeft: 8 }}>(cancelado — incompleto)</span>}
+            {lastResult.paused && <span style={{ fontSize: 11, fontWeight: 400, color: "var(--warn-text)", marginLeft: 8 }}>(pausado — parcial)</span>}
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
             <Badge color="green">+{lastResult.inserted} novos</Badge>
             <Badge color="blue">{lastResult.updated} atualizados</Badge>
-            {lastResult.pruned > 0 && <Badge color="amber">-{lastResult.pruned} antigos limpos</Badge>}
+            {lastResult.purged != null ? (
+              <>
+                {lastResult.prunedOld > 0 && <Badge color="amber">-{lastResult.prunedOld} sem ser vistos há {status?.config?.pruneAfterDays ?? 30}+ dias</Badge>}
+                {lastResult.purged > 0 && <Badge color="amber">-{lastResult.purged} de dias anteriores</Badge>}
+                {lastResult.keptCoupon > 0 && <Badge color="blue">{lastResult.keptCoupon} de cupons mantidos</Badge>}
+              </>
+            ) : (
+              lastResult.pruned > 0 && <Badge color="amber">-{lastResult.pruned} antigos limpos</Badge>
+            )}
           </div>
           {lastResult.perCategory && (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 6 }}>
@@ -351,21 +397,37 @@ export default function PageAdminScraper() {
           />
         </Field>
 
-        <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+        <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
           <button onClick={save} disabled={saving} style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: saving ? 0.6 : 1 }}>
             {saving ? "Salvando..." : "Salvar configuração"}
           </button>
-          <button onClick={runNow} disabled={status?.running} style={{ padding: "8px 16px", borderRadius: 8, background: status?.running ? "var(--color-border-secondary)" : "#fff", color: status?.running ? "var(--color-text-secondary)" : PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 13, cursor: status?.running ? "not-allowed" : "pointer", fontWeight: 500 }}>
-            {status?.running ? "⟳ Rodando..." : "▶ Rodar agora"}
+          {!status?.running && status?.paused?.resumable && (
+            <button onClick={() => runNow({ resume: true })} style={{ padding: "8px 16px", borderRadius: 8, background: "#fff", color: PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 13, cursor: "pointer", fontWeight: 500 }}>
+              ▶ Retomar
+            </button>
+          )}
+          <button onClick={() => runNow()} disabled={status?.running} style={{ padding: "8px 16px", borderRadius: 8, background: status?.running ? "var(--color-border-secondary)" : "#fff", color: status?.running ? "var(--color-text-secondary)" : PRIMARY_DARK, border: `0.5px solid ${PRIMARY}`, fontSize: 13, cursor: status?.running ? "not-allowed" : "pointer", fontWeight: 500 }}>
+            {status?.running ? "⟳ Rodando..." : (status?.paused ? "↻ Recomeçar do zero" : "▶ Rodar agora")}
           </button>
           {status?.running && (() => {
             const isCanceling = canceling || status?.canceling;
+            const isPausing = pausing || status?.pausing;
             return (
-              <button onClick={cancelRun} disabled={isCanceling} style={{ padding: "8px 16px", borderRadius: 8, background: "#fff", color: isCanceling ? "var(--color-text-secondary)" : "var(--danger-text)", border: `0.5px solid ${isCanceling ? "var(--color-border-secondary)" : "var(--danger-text)"}`, fontSize: 13, cursor: isCanceling ? "not-allowed" : "pointer", fontWeight: 500 }}>
-                {isCanceling ? "Cancelando..." : "✕ Cancelar scraping"}
-              </button>
+              <>
+                <button onClick={pauseRun} disabled={isPausing || isCanceling} style={{ padding: "8px 16px", borderRadius: 8, background: "#fff", color: (isPausing || isCanceling) ? "var(--color-text-secondary)" : "var(--warn-text)", border: `0.5px solid ${(isPausing || isCanceling) ? "var(--color-border-secondary)" : "var(--warn-text)"}`, fontSize: 13, cursor: (isPausing || isCanceling) ? "not-allowed" : "pointer", fontWeight: 500 }}>
+                  {isPausing ? "Pausando..." : "⏸ Pausar"}
+                </button>
+                <button onClick={cancelRun} disabled={isCanceling} style={{ padding: "8px 16px", borderRadius: 8, background: "#fff", color: isCanceling ? "var(--color-text-secondary)" : "var(--danger-text)", border: `0.5px solid ${isCanceling ? "var(--color-border-secondary)" : "var(--danger-text)"}`, fontSize: 13, cursor: isCanceling ? "not-allowed" : "pointer", fontWeight: 500 }}>
+                  {isCanceling ? "Cancelando..." : "✕ Cancelar scraping"}
+                </button>
+              </>
             );
           })()}
+          {!status?.running && status?.paused && (
+            <button onClick={discardPaused} style={{ padding: "8px 16px", borderRadius: 8, background: "#fff", color: "var(--danger-text)", border: "0.5px solid var(--danger-text)", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>
+              ✕ Descartar pausado
+            </button>
+          )}
           {savedMsg && <span style={{ alignSelf: "center", fontSize: 12, color: PRIMARY_DARK }}>{savedMsg}</span>}
         </div>
       </div>
@@ -481,3 +543,66 @@ function StatBox({ label, value, sub, color }) {
 }
 
 // ShopeeAdminSection foi extraído pra pages/AdminShopee.jsx
+
+// Andamento do scraping: rodando (barra por passo categoria × loja, passo atual,
+// contagens e ETA) ou pausado (onde parou e se dá pra retomar).
+function ScraperProgress({ status, available }) {
+  const [agora, setAgora] = useState(() => Date.now());
+  const p = status?.running ? status.progress : null;
+  const paused = !status?.running ? status?.paused : null;
+  const ativo = !!p;
+  useEffect(() => {
+    if (!ativo) return undefined;
+    const id = setInterval(() => setAgora(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [ativo]);
+  if (!p && !paused) return null;
+
+  const box = { marginBottom: 18, padding: "12px 14px", borderRadius: 10, background: "var(--color-background-secondary)", border: "0.5px solid var(--color-border-tertiary)" };
+  const muted = { fontSize: 12, color: "var(--color-text-secondary)" };
+
+  if (paused) {
+    return (
+      <div style={{ ...box, background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)" }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--warn-text)" }}>
+          ⏸ {paused.interrupted ? "Scraping interrompido (backend reiniciou)" : "Scraping pausado"} em {paused.done} de {paused.total} passos
+        </div>
+        <Barra valor={paused.done} total={paused.total} rotulo={`Iniciado em ${new Date(paused.startedAt).toLocaleString("pt-BR")}`} />
+        <div style={{ ...muted, marginTop: 6, lineHeight: 1.5 }}>
+          {paused.resumable
+            ? "Retome para continuar de onde parou — os passos já feitos não são refeitos. O próximo run agendado também retoma daqui."
+            : "Esta pausa é de outro dia: o próximo run começa do zero para não misturar preços antigos."}
+        </div>
+      </div>
+    );
+  }
+
+  const label = (list, id) => list.find(x => x.id === id)?.label || id;
+  const decorrido = agora - new Date(p.sessionStartedAt).getTime();
+  const eta = p.avgStepMs ? (p.total - p.done) * p.avgStepMs - (p.current ? agora - new Date(p.current.startedAt).getTime() : 0) : null;
+  return (
+    <div style={box}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "baseline" }}>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>
+          {status.pausing ? "⏸ Pausando após o passo atual..." : status.canceling ? "✕ Cancelando após o passo atual..." : `⟳ Scraping${p.resumed ? " (retomado)" : ""}`}
+        </div>
+        <div style={{ ...muted, fontSize: 11, fontVariantNumeric: "tabular-nums" }}>
+          rodando há {duracao(decorrido)}
+          {eta != null && eta > 0 ? ` · faltam ~${duracao(eta)}` : ""}
+        </div>
+      </div>
+      <Barra valor={p.done} total={p.total} rotulo={`Passos (categoria × loja): ${p.done} de ${p.total}`} />
+      {p.current && (
+        <div style={{ ...muted, marginTop: 6 }}>
+          Agora: <b style={{ color: "var(--color-text-primary)" }}>{label(available.categories, p.current.cat)} · {label(available.sources, p.current.src)}</b>
+          {" "}há {duracao(agora - new Date(p.current.startedAt).getTime())}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 18, flexWrap: "wrap", fontSize: 12, marginTop: 10 }}>
+        <Numero label="Novos" valor={p.inserted} />
+        <Numero label="Atualizados" valor={p.updated} />
+        <Numero label="Passos com falha" valor={p.failed} />
+      </div>
+    </div>
+  );
+}

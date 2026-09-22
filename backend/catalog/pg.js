@@ -460,11 +460,33 @@ async function prune(daysOld = 30) {
   return { removed: r.count, total };
 }
 
-async function pruneBeforeDate(cutoffDate) {
+// `keepCouponLinked`: poupa o produto com vínculo (ml_coupon_products) a um cupom
+// que ainda vale. Os produtos das vitrines de cupons entram no catálogo com o
+// lastSeenAt da COLHEITA de cupons, não do scraping — sem isso, o purge diário do
+// scraping apagava todos eles (~90 mil numa rodada). O vínculo, e não a coluna
+// couponCampaignId, é o critério: não depende do syncCatalogCoupons ter rodado.
+// O prune de 30 dias (acima) continua valendo para todos.
+async function pruneBeforeDate(cutoffDate, { keepCouponLinked = false } = {}) {
   const cutoff = new Date(cutoffDate);
-  const r = await prisma().catalogProduct.deleteMany({ where: { lastSeenAt: { lt: cutoff } } });
-  const total = await prisma().catalogProduct.count();
-  return { removed: r.count, total };
+  if (!keepCouponLinked) {
+    const r = await prisma().catalogProduct.deleteMany({ where: { lastSeenAt: { lt: cutoff } } });
+    const total = await prisma().catalogProduct.count();
+    return { removed: r.count, kept: 0, total };
+  }
+  const removed = await prisma().$executeRaw`
+    DELETE FROM "catalog_products" cp
+     WHERE cp."lastSeenAt" < ${cutoff}
+       AND NOT EXISTS (
+         SELECT 1 FROM "ml_coupon_products" p
+           JOIN "ml_coupons" c ON c."campaign_id" = p."campaign_id"
+          WHERE p."productKey" = cp."key"
+            AND (c."expiresAt" IS NULL OR c."expiresAt" > now()))`;
+  // O que sobrou antes do corte é justamente o que o cupom segurou.
+  const [kept, total] = await Promise.all([
+    prisma().catalogProduct.count({ where: { lastSeenAt: { lt: cutoff } } }),
+    prisma().catalogProduct.count(),
+  ]);
+  return { removed: Number(removed), kept, total };
 }
 
 // Apaga TODO o catálogo (usado pelo botão "Apagar todos" do admin).

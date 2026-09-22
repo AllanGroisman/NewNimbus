@@ -548,7 +548,8 @@ export async function adminSystemDisk()                { return http("GET",    "
 // ─── Admin / scraper global e catálogo ─────────────────────────────────
 export async function adminScraperConfig()       { return http("GET",  "/api/admin/scraper/config"); }
 export async function adminSaveScraperConfig(cfg){ return http("PUT",  "/api/admin/scraper/config", cfg); }
-export async function adminRunScraper()          { return http("POST", "/api/admin/scraper/run"); }
+export async function adminRunScraper({ resume = false } = {}) { return http("POST", "/api/admin/scraper/run", { resume }); }
+export async function adminPauseScraper()        { return http("POST", "/api/admin/scraper/pause"); }
 export async function adminCancelScraper()       { return http("POST", "/api/admin/scraper/cancel"); }
 export async function adminScraperStatus()       { return http("GET",  "/api/admin/scraper/status"); }
 export async function adminScraperShopee()           { return http("GET",    "/api/admin/scraper/shopee"); }

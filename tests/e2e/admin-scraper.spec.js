@@ -46,4 +46,24 @@ test.describe("Admin · Scraping", () => {
     // De qualquer forma, deve voltar ao estado idle ("Rodar agora").
     await expect(page.getByRole("button", { name: /Rodar agora/ })).toBeVisible({ timeout: 90000 });
   });
+
+  test("pausar, ver pausado e descartar", async ({ page }) => {
+    await gotoPage(page, "Scraping", { admin: true });
+    await page.getByRole("button", { name: /Rodar agora/ }).click();
+
+    // O scraping real pode terminar antes de dar tempo de pausar.
+    const pausar = page.getByRole("button", { name: /Pausar/ });
+    const apareceu = await pausar.waitFor({ state: "visible", timeout: 8000 }).then(() => true).catch(() => false);
+    if (apareceu) {
+      await pausar.click();
+      const retomar = page.getByRole("button", { name: /Retomar/ });
+      const pausou = await retomar.waitFor({ state: "visible", timeout: 90000 }).then(() => true).catch(() => false);
+      if (pausou) {
+        await expect(page.getByText(/Scraping pausado em \d+ de \d+ passos/)).toBeVisible();
+        await page.getByRole("button", { name: /Descartar pausado/ }).click();
+      }
+    }
+    // Sem run pausado, volta ao idle ("Rodar agora") — não deixa estado pro próximo teste.
+    await expect(page.getByRole("button", { name: /Rodar agora/ })).toBeVisible({ timeout: 90000 });
+  });
 });

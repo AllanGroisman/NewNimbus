@@ -2423,9 +2423,11 @@ app.post("/api/admin/scraper/run", auth.requireAuth, auth.requireAdmin, async (r
     if (adminScraper.status().running) {
       return res.status(409).json({ error: "Scraping já em execução" });
     }
+    // `resume`: continua o run pausado (se for de hoje) em vez de começar do zero.
+    const resume = !!(req.body && req.body.resume);
     // Não bloqueia a resposta — roda em background
-    adminScraper.runOnce().catch(err => console.error("[admin-scraper.run]", err.message));
-    res.json({ ok: true, message: "Scraping iniciado em background" });
+    adminScraper.runOnce({ resume }).catch(err => console.error("[admin-scraper.run]", err.message));
+    res.json({ ok: true, message: resume ? "Scraping retomado em background" : "Scraping iniciado em background" });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -2433,6 +2435,12 @@ app.post("/api/admin/scraper/run", auth.requireAuth, auth.requireAdmin, async (r
 
 app.post("/api/admin/scraper/cancel", auth.requireAuth, auth.requireAdmin, (req, res) => {
   const r = adminScraper.cancel();
+  if (!r.ok) return res.status(409).json({ error: r.message });
+  res.json(r);
+});
+
+app.post("/api/admin/scraper/pause", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  const r = adminScraper.pause();
   if (!r.ok) return res.status(409).json({ error: r.message });
   res.json(r);
 });
@@ -4229,6 +4237,7 @@ async function boot() {
     console.log(`  GET  /api/admin/scraper/config (admin)`);
     console.log(`  POST /api/admin/scraper/run    (admin)`);
     console.log(`  POST /api/admin/scraper/cancel (admin)`);
+    console.log(`  POST /api/admin/scraper/pause  (admin)`);
     console.log(`  GET  /api/admin/users          (admin)`);
     console.log(`  GET  /api/admin/users/:id/detail (admin)`);
 

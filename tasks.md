@@ -26,6 +26,6 @@
 
 15. [] Da pra paralelizar o scraping?
 
-16. [] Quero que o scraping tenha uma barra de progresso. Ele pode ser pausado no meio sem perder o progresso?
+16. [x] Quero que o scraping tenha uma barra de progresso. Ele pode ser pausado no meio sem perder o progresso?
 
-17. [] Quero ter mais um computador de teste rodando a versao ngrok em paralelo. Esta tudo pronto para só instalar o sistema? O que vou ter que configurar? O que precisa mudar para ter mais um rodando ao mesmo tempo.
+
