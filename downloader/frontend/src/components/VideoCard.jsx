@@ -5,7 +5,7 @@ import { cardStyle, skelBar } from "../styles";
 
 // Card de vídeo com seleção. Mesmo esqueleto do ProductGridCard do Nimbus:
 // imagem no topo, título em 2 linhas, selos embaixo.
-export default function VideoCard({ video, vertical, selected, onToggle, product }) {
+export default function VideoCard({ video, vertical, selected, onToggle, product, platform }) {
   const d = duration(video.duration);
   const v = views(video.views);
   const dt = date(video.uploadDate);
@@ -54,7 +54,7 @@ export default function VideoCard({ video, vertical, selected, onToggle, product
         </span>
         {items.length > 0 && (
           <span style={{ position: "absolute", top: 8, right: 8 }}>
-            <Badge color="orange">🛍 TikTok Shop</Badge>
+            <Badge color="orange">🛍 {platform === "youtube" ? "YouTube Shopping" : "TikTok Shop"}</Badge>
           </span>
         )}
         {d && (
@@ -74,12 +74,21 @@ export default function VideoCard({ video, vertical, selected, onToggle, product
         }}>
           {video.title}
         </div>
-        {(v || dt) && (
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: "auto" }}>
-            {v && <Badge color="gray">{v}</Badge>}
-            {dt && <Badge color="blue">{dt}</Badge>}
-          </div>
-        )}
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: "auto" }}>
+          {v && <Badge color="gray">{v}</Badge>}
+          {dt && <Badge color="blue">{dt}</Badge>}
+          <a
+            href={video.url}
+            target="_blank"
+            rel="noreferrer"
+            title="Abrir o vídeo original"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+            style={{ marginLeft: "auto", fontSize: 12, fontWeight: 500, color: PRIMARY, textDecoration: "none", whiteSpace: "nowrap" }}
+          >
+            Ver original ↗
+          </a>
+        </div>
         {product?.status === "loading" && <div style={{ ...skelBar, height: 28, borderRadius: 8 }} />}
         {product?.status === "error" && (
           <div><Badge color="gray">produto indisponível</Badge></div>
@@ -112,8 +121,13 @@ function ProductLink({ product }) {
         <img src={product.image} alt="" loading="lazy" referrerPolicy="no-referrer"
           style={{ width: 28, height: 28, borderRadius: 6, objectFit: "cover", flexShrink: 0 }} />
       )}
-      <span style={{ flex: 1, minWidth: 0, fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-        {product.title}
+      <span style={{ flex: 1, minWidth: 0, fontSize: 12, display: "flex", flexDirection: "column" }}>
+        <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{product.title}</span>
+        {(product.price || product.merchant) && (
+          <span style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {[product.price, product.merchant].filter(Boolean).join(" · ")}
+          </span>
+        )}
       </span>
       <span style={{ fontSize: 12, fontWeight: 500, color: PRIMARY, whiteSpace: "nowrap" }}>Ver produto ↗</span>
     </a>

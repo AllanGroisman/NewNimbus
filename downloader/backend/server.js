@@ -7,6 +7,7 @@ const archiver = require("archiver");
 const ytdlp = require("./ytdlp");
 const jobs = require("./jobs");
 const tiktokProduct = require("./tiktokProduct");
+const youtubeProduct = require("./youtubeProduct");
 
 const PORT = Number(process.env.PORT) || 3002;
 const app = express();
@@ -34,13 +35,12 @@ app.post("/api/list", async (req, res) => {
   }
 });
 
-app.post("/api/tiktok/products", async (req, res) => {
+app.post("/api/products", async (req, res) => {
   const url = req.body?.url;
-  if (typeof url !== "string" || !tiktokProduct.isVideoUrl(url)) {
-    return res.status(400).json({ error: "URL de vídeo do TikTok inválida." });
-  }
+  const source = typeof url === "string" && [tiktokProduct, youtubeProduct].find((m) => m.isVideoUrl(url));
+  if (!source) return res.status(400).json({ error: "URL de vídeo inválida." });
   try {
-    res.json({ products: await tiktokProduct.getProducts(url) });
+    res.json({ products: await source.getProducts(url) });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }

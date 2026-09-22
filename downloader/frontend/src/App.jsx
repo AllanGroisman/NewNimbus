@@ -40,11 +40,13 @@ export default function App() {
   const [selected, setSelected] = useState(() => new Set());
   const [jobId, setJobId] = useState(null);
   const [job, setJob] = useState(null);
-  // { [videoId]: { status: "loading"|"done"|"error", items } } — só TikTok.
+  // { [videoId]: { status: "loading"|"done"|"error", items } } — TikTok e Shorts.
   const [products, setProducts] = useState({});
   const listGen = useRef(0);
 
   const vertical = result?.platform === "tiktok" || result?.url?.includes("/shorts");
+  // Produto marcado só existe no TikTok Shop e nos Shorts (YouTube Shopping).
+  const hasProducts = (data) => data.platform === "tiktok" || (data.platform === "youtube" && data.url?.includes("/shorts"));
 
   // Busca o produto de cada vídeo em segundo plano, 4 por vez. Uma listagem
   // nova incrementa listGen e faz as buscas da anterior pararem.
@@ -56,7 +58,7 @@ export default function App() {
         const v = queue.shift();
         let entry;
         try {
-          const { products: items } = await api("/tiktok/products", { method: "POST", body: JSON.stringify({ url: v.url }) });
+          const { products: items } = await api("/products", { method: "POST", body: JSON.stringify({ url: v.url }) });
           entry = { status: "done", items };
         } catch {
           entry = { status: "error", items: [] };
@@ -79,7 +81,7 @@ export default function App() {
       if (gen !== listGen.current) return;
       if (!data.videos.length) setError("Nenhum vídeo encontrado nesse perfil.");
       setResult(data);
-      if (data.platform === "tiktok" && data.videos.length) loadProducts(data.videos, gen);
+      if (hasProducts(data) && data.videos.length) loadProducts(data.videos, gen);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -180,7 +182,7 @@ export default function App() {
               onNone={() => setSelected(new Set())}
               onDownload={startDownload}
               busy={jobRunning}
-              productLinks={result.platform === "tiktok" ? productLinks : null}
+              productLinks={hasProducts(result) ? productLinks : null}
             />
           </>
         )}
@@ -201,6 +203,7 @@ export default function App() {
                   selected={selected.has(v.id)}
                   onToggle={() => toggle(v.id)}
                   product={products[v.id]}
+                  platform={result.platform}
                 />
               ))}
           </div>
