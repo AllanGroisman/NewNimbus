@@ -47,6 +47,7 @@ const TEMPLATE_VARS = [
   { token: "{desconto_cupom}", desc: "O que o cupom tira: \"15% OFF\" ou \"R$ 30,00 OFF\" (a linha some quando não houver)" },
   { token: "{economia_cupom}", desc: "Quanto o cupom economiza neste produto, em reais (a linha some quando não houver)" },
   { token: "{link}", desc: "Link de compra" },
+  { token: "{todos}", desc: "Marca todos os membros do grupo (aparece como @todos e notifica todo mundo)" },
 ];
 
 const TEMPLATE_PREVIEW_DATA = {
@@ -61,6 +62,7 @@ const TEMPLATE_PREVIEW_DATA = {
   desconto_cupom: "10% OFF",
   economia_cupom: "R$ 190,00",
   link: "https://merc.li/abc123",
+  todos: "@todos",
 };
 
 // Espelha o renderTemplate do backend (scheduler.js): sem cupom, a linha inteira que

@@ -67,12 +67,12 @@ async function deleteSession(userId, numberId) {
   return queue.callControl("deleteSession", [String(userId), String(numberId)], { timeoutMs: 15000 });
 }
 
-async function sendText(userId, numberId, jid, text) {
-  return queue.callControl("sendText", [String(userId), String(numberId), jid, text], { timeoutMs: 30000 });
+async function sendText(userId, numberId, jid, text, opts) {
+  return queue.callControl("sendText", [String(userId), String(numberId), jid, text, opts], { timeoutMs: 30000 });
 }
 
-async function sendImage(userId, numberId, jid, imageUrl, caption) {
-  return queue.callControl("sendImage", [String(userId), String(numberId), jid, imageUrl, caption], { timeoutMs: 60000 });
+async function sendImage(userId, numberId, jid, imageUrl, caption, opts) {
+  return queue.callControl("sendImage", [String(userId), String(numberId), jid, imageUrl, caption, opts], { timeoutMs: 60000 });
 }
 
 // Quantas vezes o aparelho pediu reenvio desta mensagem. O store vive no processo do

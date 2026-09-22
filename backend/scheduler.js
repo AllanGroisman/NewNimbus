@@ -127,7 +127,9 @@ function renderTemplate(template, p) {
     .replace(/\{cupom\}/g, cupom)
     .replace(/\{desconto_cupom\}/g, p.couponLabel || "")
     .replace(/\{economia_cupom\}/g, fmt(p.couponSaving))
-    .replace(/\{link\}/g, p.link || "");
+    .replace(/\{link\}/g, p.link || "")
+    // Só o texto: quem marca de verdade é o `mentions` que o sendItem pede.
+    .replace(/\{todos\}/g, "@todos");
 }
 
 function resolveSources(sources) {
@@ -746,11 +748,16 @@ async function sendItem(userId, group, whatsappGroups, item) {
   };
 
   const text = renderTemplate(group.messageTemplate, itemForSend);
-  return deliverItem(userId, group, linked, item, itemForSend, text);
+  // {todos} no modelo = marcar o grupo inteiro. O repasse no modo original não
+  // passa por aqui (não tem modelo), então nunca marca ninguém.
+  const mentionAll = /\{todos\}/.test(group.messageTemplate || "");
+  return deliverItem(userId, group, linked, item, itemForSend, text, { mentionAll });
 }
 
 // Manda o texto pronto pra cada grupo vinculado e monta queue/history/métricas.
-async function deliverItem(userId, group, linked, item, itemForSend, text) {
+async function deliverItem(userId, group, linked, item, itemForSend, text, { mentionAll = false } = {}) {
+  // Só vai o argumento extra quando precisa: sem @todos a chamada fica idêntica.
+  const extra = mentionAll ? [{ mentionAll: true }] : [];
   const byNumber = new Map();
   for (const w of linked) {
     const jid = w.jid || w.id;
@@ -768,9 +775,9 @@ async function deliverItem(userId, group, linked, item, itemForSend, text) {
     for (const w of ws) {
       try {
         if (itemForSend.img) {
-          await wa.sendImage(userId, numberId, w.jid, itemForSend.img, text);
+          await wa.sendImage(userId, numberId, w.jid, itemForSend.img, text, ...extra);
         } else {
-          await wa.sendText(userId, numberId, w.jid, text);
+          await wa.sendText(userId, numberId, w.jid, text, ...extra);
         }
         sentCount++;
         log.info({ item: item.name?.slice(0, 60), waGroup: w.name, jid: w.jid, userId, numberId }, "envio ok");

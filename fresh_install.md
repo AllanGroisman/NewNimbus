@@ -107,7 +107,7 @@ Depois de instalado uma vez, dá pra usar os scripts prontos:
 
 ## Variáveis de ambiente (`backend/.env`)
 
-Vem versionado no clone. As principais chaves:
+Não vem no clone (gitignored) — o `install.sh` cria a partir do `.env.example`. As principais chaves:
 
 | Chave | Para quê |
 |---|---|

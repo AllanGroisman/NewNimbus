@@ -2,9 +2,7 @@
 
 2. [x] Quero poder repassar a mensagem inteira exatamente como é a original, somente trocando o link de afiliado.
 
-3. [] Quero ter a opção de enviar enquetes para os grupos da campanha.
-
-4. [] Quero poder marcar @all nas mensagens.
+4. [x] Quero poder marcar @all nas mensagens.
 
 5. [] Os cupons estão demorando muito, como posso otimizar?
 
@@ -29,3 +27,5 @@
 15. [] Da pra paralelizar o scraping?
 
 16. [] Quero que o scraping tenha uma barra de progresso. Ele pode ser pausado no meio sem perder o progresso?
+
+17. [] Quero ter mais um computador de teste rodando a versao ngrok em paralelo. Esta tudo pronto para só instalar o sistema? O que vou ter que configurar? O que precisa mudar para ter mais um rodando ao mesmo tempo.

@@ -707,6 +707,26 @@ async function _openSocket(userId, numberId, k, opts = {}) {
   // Metadata de grupo por socket. Zera na reconexão de propósito: estado velho de
   // participante é justamente o que faz a sender key ir pra lista errada.
   const groupMetaCache = new Map();
+  // Um IQ de groupMetadata por envio em grupo saía caro e ficava dentro da
+  // transação de chaves. Devolver undefined em caso de erro é o contrato: o
+  // Baileys busca por conta própria. O envio com @todos (mentionsFor) lê daqui
+  // também, pra não pagar um IQ a mais por mensagem.
+  const cachedGroupMetadata = async (jid) => {
+    const hit = groupMetaCache.get(jid);
+    if (hit && (Date.now() - hit.at) < GROUP_META_TTL_MS) return hit.meta;
+    try {
+      const meta = await sock.groupMetadata(jid);
+      if (meta) {
+        groupMetaCache.set(jid, { at: Date.now(), meta });
+        while (groupMetaCache.size > GROUP_META_MAX) {
+          groupMetaCache.delete(groupMetaCache.keys().next().value);
+        }
+      }
+      return meta;
+    } catch {
+      return undefined;
+    }
+  };
 
   const sock = makeWASocket({
     version: version || undefined,
@@ -740,29 +760,12 @@ async function _openSocket(userId, numberId, k, opts = {}) {
       if (!key?.remoteJid) return undefined;
       return msgStore.get(key.id);
     },
-    // Um IQ de groupMetadata por envio em grupo saía caro e ficava dentro da
-    // transação de chaves. Devolver undefined em caso de erro é o contrato: o
-    // Baileys busca por conta própria.
-    cachedGroupMetadata: async (jid) => {
-      const hit = groupMetaCache.get(jid);
-      if (hit && (Date.now() - hit.at) < GROUP_META_TTL_MS) return hit.meta;
-      try {
-        const meta = await sock.groupMetadata(jid);
-        if (meta) {
-          groupMetaCache.set(jid, { at: Date.now(), meta });
-          while (groupMetaCache.size > GROUP_META_MAX) {
-            groupMetaCache.delete(groupMetaCache.keys().next().value);
-          }
-        }
-        return meta;
-      } catch {
-        return undefined;
-      }
-    },
+    cachedGroupMetadata,
   });
 
   const session = sessions.get(k) || { userId, numberId, restartCount: 0, createdAt: Date.now() };
   session.sock = sock;
+  session.groupMeta = cachedGroupMetadata;
   session.gen = gen;
   session.socketAlive = true;
   session.terminal = false; // um start explícito sempre tira do estado terminal
@@ -1109,19 +1112,37 @@ function ensureConnected(userId, numberId) {
 // caso da imagem, o reenvio reaproveita as media keys em vez de subir de novo.
 // ensureConnected fica DENTRO da trava: numa fila de envios o socket pode ter
 // caído entre o enfileiramento e a vez deste envio.
-async function sendText(userId, numberId, jid, text) {
+// {todos} no modelo da campanha: todo participante vai em `mentions` — é isso
+// que notifica, inclusive quem silenciou o grupo. Em grupo endereçado por LID os
+// ids já vêm como LID, e é assim que o Baileys quer. Sem metadata o envio sai sem
+// menção: marcar todo mundo não vale derrubar a mensagem.
+async function mentionsFor(s, jid, opts) {
+  if (!opts?.mentionAll || !String(jid).endsWith("@g.us")) return undefined;
+  const meta = s.groupMeta ? await s.groupMeta(jid) : undefined;
+  const ids = (meta?.participants || []).map(p => p.id).filter(Boolean);
+  if (!ids.length) {
+    console.warn(`[whatsapp] @todos sem participantes em ${jid} — enviando sem menção`);
+    return undefined;
+  }
+  return ids;
+}
+
+async function sendText(userId, numberId, jid, text, opts = {}) {
   return withSendLock(key(userId, numberId), async () => {
     const s = ensureConnected(userId, numberId);
-    const sent = await s.sock.sendMessage(jid, { text });
+    const mentions = await mentionsFor(s, jid, opts);
+    const sent = await s.sock.sendMessage(jid, mentions ? { text, mentions } : { text });
     msgStore.put(sent);
     return sent;
   });
 }
 
-async function sendImage(userId, numberId, jid, imageUrl, caption) {
+async function sendImage(userId, numberId, jid, imageUrl, caption, opts = {}) {
   return withSendLock(key(userId, numberId), async () => {
     const s = ensureConnected(userId, numberId);
-    const sent = await s.sock.sendMessage(jid, { image: { url: imageUrl }, caption });
+    const mentions = await mentionsFor(s, jid, opts);
+    const content = { image: { url: imageUrl }, caption };
+    const sent = await s.sock.sendMessage(jid, mentions ? { ...content, mentions } : content);
     msgStore.put(sent);
     return sent;
   });

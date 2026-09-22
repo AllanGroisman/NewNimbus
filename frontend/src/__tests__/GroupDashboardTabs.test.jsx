@@ -460,6 +460,12 @@ describe("GroupDashboard — aba Modelos Mensagens (prévia)", () => {
     expect(preview.textContent).toContain("Com cupom: R$ 1.899");
   });
 
+  it("{todos} aparece como @todos na prévia", () => {
+    const { container } = renderMessagesTab({ group: { messageTemplate: "Oferta!\n{todos}" } });
+    expect(container.querySelector(".wa-preview").textContent).toContain("@todos");
+    expect(container.querySelector(".wa-preview").textContent).not.toContain("{todos}");
+  });
+
   it("o chip {preco_com_cupom} insere a variável no editor", () => {
     const { container } = renderMessagesTab({ group: { messageTemplate: "" } });
     fireEvent.click(screen.getByRole("button", { name: "{preco_com_cupom}" }));
