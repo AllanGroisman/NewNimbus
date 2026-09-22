@@ -404,7 +404,8 @@ export async function fetchOfertas({ category, minDiscount = 0, minPrice = 0, ma
 
 // Navega o catálogo com os mesmos filtros/ordem que a busca da campanha usa.
 // Alimenta a prévia da aba "Busca de Produtos" (paginada).
-// Retorna { items, total, page, pageSize, catalogStats }.
+// Retorna { items, total, page, pageSize, fuzzy, catalogStats } — `fuzzy` quando
+// nada batia exato com `q` e a lista é de nomes parecidos.
 // Com `groupId`, o backend já tira da lista o que essa campanha tem na fila
 // (hideQueued) e o que ela já mandou alguma vez (hideRecent) — o mesmo corte que
 // o preenchimento automático faz.

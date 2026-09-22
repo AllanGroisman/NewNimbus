@@ -326,6 +326,10 @@ model CatalogProduct {
   // com duas chaves. É por esta coluna que o upsert reconhece a linha que já
   // existe e grava nela (catalog/pg.js:upsertProducts).
   mlAnuncioId   String?
+  // O `name` sem acento e em minúsculas (catalog/search-query.js:normalizeText),
+  // escrito pelo toRow. É onde a busca por palavras-chave roda — com índice de
+  // trigramas, que serve o LIKE '%x%' e a busca aproximada.
+  nameSearch    String   @default("")
   payload       Json     @default("{}")
   firstSeenAt   DateTime @default(now())
   lastSeenAt    DateTime @default(now())
@@ -337,6 +341,7 @@ model CatalogProduct {
   @@index([lastSeenAt(sort: Desc)])
   @@index([discount(sort: Desc)])
   @@index([soldCount(sort: Desc)])
+  @@index([nameSearch(ops: raw("gin_trgm_ops"))], type: Gin)
   @@map("catalog_products")
 }
 

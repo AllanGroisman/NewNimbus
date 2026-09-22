@@ -736,6 +736,28 @@ describe("ProductSearchTab — busca por palavras-chave", () => {
     expect(browseCatalog.mock.calls[1][0].sortBy).toBe("price_asc");
   });
 
+  it("resposta aproximada (fuzzy) mostra o aviso com o termo buscado", async () => {
+    render(<Harness />);
+    await waitFor(() => expect(browseCatalog).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(/Nenhum resultado exato/)).not.toBeInTheDocument();
+
+    browseCatalog.mockResolvedValue({ items: [makeProduct({ name: "Carregador Samsung" })], total: 1, page: 1, pageSize: 24, fuzzy: true });
+    fireEvent.change(screen.getByLabelText("Busca por palavras-chave"), { target: { value: "samsumg" } });
+    fireEvent.click(screen.getByRole("button", { name: "Buscar" }));
+
+    expect(await screen.findByText(/Nenhum resultado exato para “samsumg”/)).toBeInTheDocument();
+  });
+
+  it("a dica explica a sintaxe e dá pra ordenar por relevância", async () => {
+    render(<Harness />);
+    await waitFor(() => expect(browseCatalog).toHaveBeenCalledTimes(1));
+    expect(screen.getByText(/-palavra exclui/)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Ordenar Por"), { target: { value: "relevance" } });
+    await waitFor(() => expect(browseCatalog).toHaveBeenCalledTimes(2));
+    expect(browseCatalog.mock.calls[1][0].sortBy).toBe("relevance");
+  });
+
   it("o ✕ limpa o campo de busca", async () => {
     render(<Harness />);
     const campo = await screen.findByLabelText("Busca por palavras-chave");

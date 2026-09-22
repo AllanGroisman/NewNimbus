@@ -2,6 +2,7 @@
 const { Prisma } = require("@prisma/client");
 const { prisma } = require("../db");
 const { productKey, mlItemIdFromUrl, mlUrlSpace, mlAnuncioIdFromUrl } = require("./product-key");
+const { normalizeText, parseSearch, isEmptySearch, likePattern } = require("./search-query");
 
 function storeToId(store) {
   if (!store) return null;
@@ -26,7 +27,7 @@ function parseSold(s) {
 const INDEXED_FIELDS = new Set([
   "key", "name", "link", "img", "price", "originalPrice",
   "discount", "store", "category", "rating", "sold", "soldCount",
-  "mlAnuncioId", "firstSeenAt", "lastSeenAt",
+  "mlAnuncioId", "nameSearch", "firstSeenAt", "lastSeenAt",
 ]);
 
 function toRow(p, key, now) {
@@ -38,6 +39,7 @@ function toRow(p, key, now) {
   return {
     key,
     name: p.name || "",
+    nameSearch: normalizeText(p.name),
     link: p.link || "",
     img: p.img || null,
     price: p.price ?? null,
@@ -247,13 +249,51 @@ async function listAll() {
   return all.map(fromRow);
 }
 
-// Monta o `where` do Prisma a partir dos filtros da campanha/página.
-// Separado de query() porque count() precisa exatamente do mesmo filtro.
+// O pedaço de SQL da busca por palavras-chave (sintaxe em search-query.js), sobre
+// a coluna `nameSearch` do alias `cp`. `fuzzy` deixa cada PALAVRA casar também
+// por semelhança de trigramas (`<%`, o word_similarity do pg_trgm) — frase e
+// exclusão continuam exatas, senão "-infantil" tiraria "infantaria".
+// Devolve null quando a busca não tem termo nenhum.
+function keywordSql(parsed, { fuzzy = false } = {}) {
+  if (isEmptySearch(parsed)) return null;
+  const like = (t) => Prisma.sql`cp."nameSearch" LIKE ${likePattern(t)}`;
+  const cond = [];
+  if (parsed.groups.length) {
+    const grupos = parsed.groups.map(g => Prisma.join([
+      ...g.words.map(w => (fuzzy ? Prisma.sql`(${like(w)} OR ${w} <% cp."nameSearch")` : like(w))),
+      ...g.phrases.map(like),
+    ], " AND "));
+    cond.push(Prisma.sql`(${Prisma.join(grupos.map(g => Prisma.sql`(${g})`), " OR ")})`);
+  }
+  for (const x of parsed.excludes) cond.push(Prisma.sql`NOT ${like(x)}`);
+  return Prisma.join(cond, " AND ");
+}
+
+// Corte de semelhança da busca aproximada. O padrão do pg_trgm (0,6) deixava de
+// fora erro comum de digitação ("notbook" 0,55, "blutooth" 0,58); abaixo de 0,5
+// começa a casar palavra que só divide um pedaço ("fone" ~ "iphone", 0,4).
+const FUZZY_THRESHOLD = 0.5;
+
+// Roda a consulta; na aproximada, numa transação com o corte do `<%` ajustado
+// (SET LOCAL morre com ela, e não vaza pra outra consulta da mesma conexão).
+async function runSearchSql(sql, fuzzy) {
+  if (!fuzzy) return prisma().$queryRaw(sql);
+  const [, rows] = await prisma().$transaction([
+    prisma().$executeRawUnsafe(`SET LOCAL pg_trgm.word_similarity_threshold = ${FUZZY_THRESHOLD}`),
+    prisma().$queryRaw(sql),
+  ]);
+  return rows;
+}
+
+// Monta o WHERE a partir dos filtros da campanha/página. Separado de query()
+// porque count() precisa exatamente do mesmo filtro. SQL cru (e não o `where` do
+// Prisma) por causa da busca: sem acento, com trigramas e ordem por relevância,
+// nada disso cabe no client.
 function buildWhere({ categories, sources, excludeKeys, filters = {} }) {
-  const where = { AND: [] };
+  const cond = [];
 
   if (Array.isArray(categories) && categories.length) {
-    where.AND.push({ category: { in: categories } });
+    cond.push(Prisma.sql`cp."category" IN (${Prisma.join(categories)})`);
   }
   if (Array.isArray(sources) && sources.length) {
     // Sources podem vir como ids ("ml", "amazon", "shopee") ou rótulos ("Mercado Livre"). Normaliza.
@@ -267,37 +307,51 @@ function buildWhere({ categories, sources, excludeKeys, filters = {} }) {
     // IMPORTANTE: se o usuário pediu sources mas NENHUM normalizou (ex: typo, ou
     // store inexistente), retorna lista vazia. Sem esse guard, o filtro store
     // seria pulado e a query devolveria TODOS os produtos — bug.
-    where.AND.push({ store: { in: labels.length ? labels : ["__never_matches__"] } });
+    cond.push(Prisma.sql`cp."store" IN (${Prisma.join(labels.length ? labels : ["__never_matches__"])})`);
   }
   if (excludeKeys) {
     const arr = excludeKeys instanceof Set ? [...excludeKeys] : (Array.isArray(excludeKeys) ? excludeKeys : []);
-    if (arr.length) where.AND.push({ key: { notIn: arr } });
+    // Um parâmetro só (array), e não um IN com milhares de placeholders.
+    if (arr.length) cond.push(Prisma.sql`cp."key" <> ALL(${arr}::text[])`);
   }
 
-  const { minDiscount = 0, minPrice = 0, maxPrice, minRating = 0, minSales = 0, keywords = "", hasCoupon = false } = filters;
+  const { minDiscount = 0, minPrice = 0, maxPrice, minRating = 0, minSales = 0, keywords = "", hasCoupon = false, fuzzy = false } = filters;
   // "só produtos com cupom do ML". Cabe no WHERE porque o vínculo mora numa
   // COLUNA (couponCampaignId, escrita só pela sincronização de cupons) — filtrar
   // isso em JS depois da query deixaria o count() e a paginação mentindo, que é
   // o mesmo motivo do soldCount ter virado coluna.
-  if (hasCoupon) where.AND.push({ couponCampaignId: { not: null } });
-  if (minDiscount > 0) where.AND.push({ discount: { gte: minDiscount } });
-  if (minPrice > 0) where.AND.push({ price: { gte: minPrice } });
+  if (hasCoupon) cond.push(Prisma.sql`cp."couponCampaignId" IS NOT NULL`);
+  if (minDiscount > 0) cond.push(Prisma.sql`cp."discount" >= ${minDiscount}`);
+  if (minPrice > 0) cond.push(Prisma.sql`cp."price" >= ${minPrice}`);
   if (maxPrice != null && Number.isFinite(maxPrice) && maxPrice > 0) {
-    where.AND.push({ price: { lte: maxPrice, not: null } });
+    cond.push(Prisma.sql`cp."price" <= ${maxPrice}`);
   }
-  if (minRating > 0) where.AND.push({ rating: { gte: minRating } });
+  if (minRating > 0) cond.push(Prisma.sql`cp."rating" >= ${minRating}`);
   // soldCount é gravado já parseado (0 quando o produto não diz quantas vendeu),
   // então o corte de vendas mínimas cabe no WHERE junto com os outros — é o que
   // mantém o count() honesto e a paginação sem páginas vazias no fim.
-  if (minSales > 0) where.AND.push({ soldCount: { gte: minSales } });
-  if (keywords && String(keywords).trim()) {
-    const terms = String(keywords).toLowerCase().split(",").map(t => t.trim()).filter(Boolean);
-    if (terms.length) {
-      where.AND.push({ OR: terms.map(t => ({ name: { contains: t, mode: "insensitive" } })) });
-    }
-  }
+  if (minSales > 0) cond.push(Prisma.sql`cp."soldCount" >= ${minSales}`);
+  const kw = keywords && String(keywords).trim() ? keywordSql(parseSearch(keywords), { fuzzy }) : null;
+  if (kw) cond.push(kw);
 
-  return where.AND.length ? where : undefined;
+  return cond.length ? Prisma.sql`WHERE ${Prisma.join(cond, " AND ")}` : Prisma.empty;
+}
+
+// "Mais relevantes": primeiro quem tem a busca inteira como frase, depois quem
+// COMEÇA com a primeira palavra, depois a soma da semelhança de cada palavra
+// (o que ordena os resultados da busca aproximada). Desempata pelo desconto.
+// Sem palavras-chave não há o que medir, e vale o maior desconto.
+function relevanceOrder(keywords) {
+  const parsed = parseSearch(keywords || "");
+  const termos = parsed.groups.flatMap(g => [...g.words, ...g.phrases]);
+  if (!termos.length) return null;
+  const inteira = parsed.groups[0] ? [...parsed.groups[0].phrases, ...parsed.groups[0].words].join(" ") : termos[0];
+  const primeira = termos[0];
+  const soma = Prisma.join(termos.map(t => Prisma.sql`word_similarity(${t}, cp."nameSearch")`), " + ");
+  return Prisma.sql`(cp."nameSearch" LIKE ${likePattern(inteira)}) DESC,
+                    (cp."nameSearch" LIKE ${likePattern(primeira).slice(1)}) DESC,
+                    (${soma}) DESC,
+                    cp."discount" DESC NULLS LAST`;
 }
 
 async function query({
@@ -307,30 +361,19 @@ async function query({
   const where = buildWhere({ categories, sources, excludeKeys, filters });
   const skip = Math.max(0, Number(offset) || 0);
 
-  // `nulls: "last"` é obrigatório: price/discount/rating são colunas opcionais e
+  // `NULLS LAST` é obrigatório: price/discount/rating são colunas opcionais e
   // no Postgres o DESC joga NULL na frente — "maior desconto" abria a lista com
   // os produtos que nem têm desconto.
   //
   // O `key` no fim desempata: empate é a regra aqui (dezenas de produtos com 50%
   // de desconto, a cauda inteira com desconto nulo) e sem critério estável o
   // Postgres pode devolver a mesma linha na página 1 e na 2 — e sumir com outra.
-  const orderBy = (() => {
-    switch (sortBy) {
-      case "price_asc":     return [{ price: { sort: "asc", nulls: "last" } }, { key: "asc" }];
-      case "price_desc":    return [{ price: { sort: "desc", nulls: "last" } }, { key: "asc" }];
-      case "rating_desc":   return [{ rating: { sort: "desc", nulls: "last" } }, { key: "asc" }];
-      case "lastSeen_desc": return [{ lastSeenAt: "desc" }, { key: "asc" }];
-      case "discount_desc":
-      default:              return [{ discount: { sort: "desc", nulls: "last" } }, { key: "asc" }];
-    }
-  })();
+  const orderBy = (sortBy === "relevance" && relevanceOrder(filters.keywords))
+    || ADMIN_SORTS[sortBy] || ADMIN_SORTS.discount_desc;
 
-  const rows = await prisma().catalogProduct.findMany({
-    where,
-    orderBy,
-    skip: skip || undefined,
-    take: limit > 0 ? limit : undefined,
-  });
+  const lim = limit > 0 ? Prisma.sql`LIMIT ${Number(limit)}` : Prisma.empty;
+  const rows = await runSearchSql(Prisma.sql`SELECT cp.* FROM "catalog_products" cp ${where}
+                                             ORDER BY ${orderBy}, cp."key" ASC ${lim} OFFSET ${skip}`, !!filters.fuzzy);
   return rows.map(fromRow);
 }
 
@@ -368,7 +411,8 @@ async function adminQuery({
     cond.push(Prisma.sql`cp."store" = ${label || "__never_matches__"}`);
   }
   const termo = String(q || "").trim();
-  if (termo) cond.push(Prisma.sql`cp."name" ILIKE ${"%" + termo + "%"}`);
+  const kw = termo ? keywordSql(parseSearch(termo)) : null;
+  if (kw) cond.push(kw);
   if (Number(minDiscount) > 0) cond.push(Prisma.sql`cp."discount" >= ${Number(minDiscount)}`);
 
   // O vínculo vigente do produto, com os filtros de busca/origem já aplicados.
@@ -418,7 +462,8 @@ async function adminQuery({
 // Mesmo `where` do query(), então o número é exato — inclusive com minSales.
 async function count({ categories, sources, excludeKeys, filters = {} } = {}) {
   const where = buildWhere({ categories, sources, excludeKeys, filters });
-  return prisma().catalogProduct.count({ where });
+  const [{ n }] = await runSearchSql(Prisma.sql`SELECT COUNT(*)::int AS n FROM "catalog_products" cp ${where}`, !!filters.fuzzy);
+  return n || 0;
 }
 
 async function getStats() {

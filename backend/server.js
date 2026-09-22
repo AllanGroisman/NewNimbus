@@ -1853,7 +1853,7 @@ app.post("/api/state/groups/:gid/refill", auth.requireAuth, requireActiveSubscri
 // Ofertas — agora lê do CATÁLOGO global (preenchido pelo admin-scraper)
 // ────────────────────────────────────────────────────────────────────────
 
-const OFERTAS_SORTS = new Set(["discount_desc", "price_asc", "price_desc", "rating_desc", "lastSeen_desc"]);
+const OFERTAS_SORTS = new Set(["relevance", "discount_desc", "price_asc", "price_desc", "rating_desc", "lastSeen_desc"]);
 
 // Navegação do catálogo pelo usuário comum — mesma superfície de filtros e
 // ordenação que o refill da campanha usa, com paginação. A aba "Busca de
@@ -1943,11 +1943,25 @@ app.get("/api/ofertas", auth.requireAuth, async (req, res) => {
     // getStats() são 5 agregações na tabela inteira — caro demais pra prévia
     // paginada, que refaz a request a cada ajuste de filtro. Só no modo legado.
     // `excludeKeys` vai nos dois: sem ele no count, o número de páginas mentiria.
-    const [products, total, catalogStats] = await Promise.all([
+    let [products, total, catalogStats] = await Promise.all([
       catalog.query({ categories, sources, excludeKeys, filters, limit, offset, sortBy }),
       catalog.count({ categories, sources, excludeKeys, filters }),
       paginated ? null : catalog.getStats(),
     ]);
+
+    // Nada exato para as palavras digitadas ("samsumg"): tenta de novo aceitando
+    // palavras PARECIDAS, ordenado pelas mais parecidas, e avisa a tela. Só aqui,
+    // na busca manual — o preenchimento da fila (scheduler) segue exato, pra não
+    // encher a campanha de produto que só se parece com o que foi pedido.
+    let fuzzy = false;
+    if (keywords && total === 0) {
+      const aproximado = { ...filters, fuzzy: true };
+      [products, total] = await Promise.all([
+        catalog.query({ categories, sources, excludeKeys, filters: aproximado, limit, offset, sortBy: "relevance" }),
+        catalog.count({ categories, sources, excludeKeys, filters: aproximado }),
+      ]);
+      fuzzy = total > 0;
+    }
 
     const itemsComCupons = await comCupons(products);
 
@@ -1961,6 +1975,7 @@ app.get("/api/ofertas", auth.requireAuth, async (req, res) => {
       categories,
       sources,
       sortBy,
+      fuzzy,
       items: itemsComCupons,
       products: itemsComCupons,   // alias legado
       ...(catalogStats ? { catalogStats } : {}),

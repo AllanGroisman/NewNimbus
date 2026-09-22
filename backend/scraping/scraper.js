@@ -3,6 +3,7 @@ const urlGuard = require("./urlGuard");
 const mlSocial = require("./ml-social");
 const { pickBestImage } = require("./image-quality");
 const { canonicalAmazonUrl } = require("./amazon-url");
+const { parseSearch, isEmptySearch, matchesSearch } = require("../catalog/search-query");
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -1276,14 +1277,11 @@ function applyFilters(products, { minDiscount = 0, minPrice = 0, maxPrice = Infi
   if (maxPrice < Infinity) out = out.filter(p => p.price != null && p.price <= maxPrice);
   if (minRating > 0) out = out.filter(p => (p.rating || 0) >= minRating);
   if (minSales > 0) out = out.filter(p => parseSold(p.sold) >= minSales);
+  // Mesma sintaxe da busca do catálogo (catalog/search-query.js): espaço = todas
+  // as palavras, vírgula = ou, -palavra exclui, aspas = frase, sem acento.
   if (keywords && String(keywords).trim()) {
-    const terms = String(keywords).toLowerCase().split(/[,\s]+/).filter(Boolean);
-    if (terms.length) {
-      out = out.filter(p => {
-        const name = (p.name || "").toLowerCase();
-        return terms.some(t => name.includes(t));
-      });
-    }
+    const parsed = parseSearch(keywords);
+    if (!isEmptySearch(parsed)) out = out.filter(p => matchesSearch(p.name, parsed));
   }
   return out;
 }

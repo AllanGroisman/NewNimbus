@@ -239,6 +239,59 @@ describe("catalog.query — preço, nota e vendas", () => {
   });
 });
 
+describe("catalog.query — sintaxe da busca", () => {
+  const seed = () => catalog.upsertProducts([
+    mlProduct(641, { category: "saude", name: "Fone de Ouvido Bluetooth Sem Fio", discount: 30 }),
+    mlProduct(642, { category: "saude", name: "Bluetooth Fone Infantil Gatinho", discount: 40 }),
+    mlProduct(643, { category: "saude", name: "Fone com fio P2", discount: 50 }),
+    mlProduct(644, { category: "saude", name: "Café Torrado Especial", discount: 10 }),
+    mlProduct(645, { category: "saude", name: "Carregador Samsung Galaxy", discount: 20 }),
+    mlProduct(646, { category: "saude", name: "Desconto 50% off", discount: 5 }),
+  ]);
+  const names = (items) => items.map(p => p.name);
+  const busca = (keywords, extra = {}) => catalog.query({
+    categories: ["saude"], filters: { keywords, ...(extra.filters || {}) }, limit: 100, sortBy: extra.sortBy,
+  });
+  const conta = (keywords, filters = {}) => catalog.count({ categories: ["saude"], filters: { keywords, ...filters } });
+
+  it("espaço exige todas as palavras, em qualquer ordem", async () => {
+    await seed();
+    expect(names(await busca("bluetooth fone")).sort()).toEqual(["Bluetooth Fone Infantil Gatinho", "Fone de Ouvido Bluetooth Sem Fio"]);
+    expect(await conta("bluetooth fone")).toBe(2);
+  });
+
+  it("-palavra exclui e \"frase\" exige o trecho contínuo", async () => {
+    await seed();
+    expect(names(await busca("fone -infantil")).sort()).toEqual(["Fone com fio P2", "Fone de Ouvido Bluetooth Sem Fio"]);
+    expect(names(await busca('"sem fio"'))).toEqual(["Fone de Ouvido Bluetooth Sem Fio"]);
+    expect(await conta("fone -infantil")).toBe(2);
+  });
+
+  it("acento não importa e curinga do usuário é texto", async () => {
+    await seed();
+    expect(names(await busca("cafe"))).toEqual(["Café Torrado Especial"]);
+    expect(names(await busca("50%"))).toEqual(["Desconto 50% off"]);
+    expect(await busca("%")).toHaveLength(1);
+  });
+
+  it("erro de digitação só casa com fuzzy", async () => {
+    await seed();
+    expect(await busca("samsumg")).toHaveLength(0);
+    expect(names(await busca("samsumg", { filters: { fuzzy: true } }))).toEqual(["Carregador Samsung Galaxy"]);
+    expect(await conta("samsumg", { fuzzy: true })).toBe(1);
+  });
+
+  it("relevance põe na frente quem começa com a palavra, mesmo com desconto menor", async () => {
+    await seed();
+    // Por desconto o 642 (40%) viria antes; por relevância, o que começa com "fone".
+    expect(names(await busca("fone bluetooth"))).toEqual(["Bluetooth Fone Infantil Gatinho", "Fone de Ouvido Bluetooth Sem Fio"]);
+    const items = await busca("fone bluetooth", { sortBy: "relevance" });
+    expect(names(items)).toEqual(["Fone de Ouvido Bluetooth Sem Fio", "Bluetooth Fone Infantil Gatinho"]);
+    const exato = await busca("fone de ouvido", { sortBy: "relevance" });
+    expect(names(exato)[0]).toBe("Fone de Ouvido Bluetooth Sem Fio");
+  });
+});
+
 describe("catalog.query — ordenações", () => {
   const seed = () => catalog.upsertProducts([
     mlProduct(701, { category: "casa", name: "A 701", price: 10, rating: 3.1, discount: 10 }),
@@ -340,6 +393,24 @@ describe("GET /api/ofertas — navegação paginada do catálogo", () => {
     // Página 2 não repete nada da página 1
     const keys1 = res.body.items.map(p => p.key);
     expect(p2.body.items.every(p => !keys1.includes(p.key))).toBe(true);
+  });
+
+  it("q sem nada exato cai na busca aproximada e avisa com fuzzy", async () => {
+    await seed();
+    const { auth } = await createTestUser();
+    const exato = await auth("get", "/api/ofertas?categories=gamer&q=teclado&page=1&pageSize=24");
+    expect(exato.body.fuzzy).toBe(false);
+    expect(exato.body.total).toBe(1);
+
+    const res = await auth("get", "/api/ofertas?categories=gamer&q=tecldo&page=1&pageSize=24");
+    expect(res.status).toBe(200);
+    expect(res.body.fuzzy).toBe(true);
+    expect(res.body.items.map(p => p.name)).toEqual(["Teclado Nimbus 401"]);
+    expect(res.body.total).toBe(1);
+
+    const nada = await auth("get", "/api/ofertas?categories=gamer&q=geladeira&page=1&pageSize=24");
+    expect(nada.body.fuzzy).toBe(false);
+    expect(nada.body.total).toBe(0);
   });
 
   it("q filtra pelo nome (vários termos = OR) e sortBy ordena", async () => {

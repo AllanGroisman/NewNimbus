@@ -16,6 +16,7 @@ import { DEFAULT_BATCH, MAX_BATCH, queueMax } from "../../data/refill";
 // `scraping.sortBy` da campanha, então a prévia e o preenchimento da fila
 // enxergam os produtos exatamente na mesma ordem.
 export const SORT_OPTIONS = [
+  { id: "relevance", label: "Mais relevantes" },
   { id: "discount_desc", label: "Maior desconto" },
   { id: "price_asc", label: "Menor preço" },
   { id: "price_desc", label: "Maior preço" },
@@ -23,6 +24,9 @@ export const SORT_OPTIONS = [
   { id: "lastSeen_desc", label: "Mais recentes" },
 ];
 export const DEFAULT_SORT = "discount_desc";
+
+// A sintaxe da busca (backend/catalog/search-query.js), numa linha.
+const SEARCH_HINT = 'Espaço = todas as palavras · vírgula = ou · -palavra exclui · "entre aspas" = frase exata · acento não importa. Vazio = todos.';
 
 // Tetos dos filtros que têm um: nota vai até 5 e desconto até 100%. Vendas não
 // tem teto — o catálogo chega em dezenas de milhares.
@@ -286,7 +290,9 @@ export default function ProductSearchTab({
     const p = JSON.parse(paramsSig);
     try {
       const r = await browseCatalog({ ...p, page, pageSize: PAGE_SIZE }, { signal: ctrl.signal });
-      setPreview({ items: r.items || [], total: r.total || 0 });
+      // `fuzzy`: nada batia exato com as palavras, e o backend trouxe as
+      // parecidas ("samsumg" → Samsung). Guarda o termo pra o aviso citar.
+      setPreview({ items: r.items || [], total: r.total || 0, fuzzy: r.fuzzy ? String(p.q || "").trim() : null });
       // O total encolhe quando produtos entram na fila (o backend passa a
       // excluí-los), e a página em que o usuário está pode deixar de existir.
       const maxPage = Math.max(1, Math.ceil((r.total || 0) / PAGE_SIZE));
@@ -829,7 +835,7 @@ export default function ProductSearchTab({
                 if (e.key === "Enter") { e.preventDefault(); searchNow(); }
                 if (e.key === "Escape") setFilter("keywords", "");
               }}
-              placeholder="Ex: notebook, monitor, fone bluetooth"
+              placeholder='Ex: fone bluetooth, headset -infantil "sem fio"'
               style={{ ...inputStyle, paddingLeft: 36, paddingRight: filters.keywords ? 34 : 11 }}
             />
             {filters.keywords && (
@@ -892,7 +898,7 @@ export default function ProductSearchTab({
         <div style={pendingSearch ? { ...hintStyle, color: "var(--warn-text)" } : hintStyle}>
           {pendingSearch
             ? PENDING_HINT
-            : "Vários termos separados por vírgula. Vazio = todos."}
+            : SEARCH_HINT}
         </div>
 
         {sections.filters && (
@@ -1103,6 +1109,13 @@ export default function ProductSearchTab({
             <button onClick={runSearch} style={{ ...chipStyle({ active: false }), padding: "5px 12px", fontSize: 12 }}>
               Tentar de novo
             </button>
+          </div>
+        )}
+
+        {preview.fuzzy && preview.items.length > 0 && (
+          <div role="status" style={{ ...noteStyle("warn"), marginBottom: 10 }}>
+            Nenhum resultado exato para “{preview.fuzzy}” — mostrando resultados parecidos.
+            O preenchimento da fila só pega os exatos.
           </div>
         )}
 

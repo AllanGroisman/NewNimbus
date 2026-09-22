@@ -157,7 +157,7 @@ function sourcesForCampaign(group) {
 
 // Ordem e tamanho do lote da busca de produtos, escolhidos pelo usuário na aba
 // "Busca de Produtos" e guardados no jsonb `scraping` da campanha.
-const SORT_MODES = new Set(["discount_desc", "price_asc", "price_desc", "rating_desc", "lastSeen_desc"]);
+const SORT_MODES = new Set(["relevance", "discount_desc", "price_asc", "price_desc", "rating_desc", "lastSeen_desc"]);
 const DEFAULT_BATCH = 20;
 const MAX_BATCH = 50;
 
