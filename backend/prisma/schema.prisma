@@ -496,8 +496,7 @@ model MlCoupon {
   productsSyncedAt DateTime?
   code             String?
   origin           String    @default("page")
-  // A varredura pela landing (coupons/landing-sweep.js): quando tentou, se deu, e
-  // o que o ML respondeu. É o que tira da fila o cupom que a landing não lê.
+  // Da varredura pela landing (removida): sem uso, mantidas para não apagar dado.
   landingTriedAt   DateTime?
   landingOk        Boolean?
   landingMessage   String?
@@ -532,8 +531,7 @@ model MlCouponProduct {
   origem        String    @default("vitrine")
   firstSeenAt   DateTime  @default(now())
   lastSeenAt    DateTime  @default(now())
-  // Só para `amostra`: quando coupons/enrich-samples.js tentou trazer este MLB pro
-  // catálogo (a amostra chega sem nome nem preço).
+  // Do enriquecimento das amostras (removido): sem uso, mantida para não apagar dado.
   enrichTriedAt DateTime?
 
   coupon MlCoupon @relation(fields: [campaignId], references: [campaignId], onDelete: Cascade)

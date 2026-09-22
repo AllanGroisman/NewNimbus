@@ -984,9 +984,9 @@ async function syncOneCoupon(campaignId, { maxProducts = null } = {}) {
 // carimba o catálogo. Vive fora do syncOneCoupon porque os dois caminhos de lá
 // terminam aqui, e duplicar isso é como as duas pontas passam a divergir.
 //
-// `carimbar: false` é da varredura em lote (coupons/landing-sweep.js): o
-// `syncCatalogCoupons` varre a tabela de vínculos inteira, e fazê-lo a cada um dos
-// milhares de cupons da rodada seria a mesma conta repetida. Ela carimba uma vez no fim.
+// `carimbar: false` é de quem grava em lote: o `syncCatalogCoupons` varre a tabela
+// de vínculos inteira, e fazê-lo a cada cupom seria a mesma conta repetida. Quem
+// passa isso carimba uma vez no fim.
 async function gravarVitrine(campaignId, cupom, produtos, { parcial, carimbar = true }) {
   const itens = produtos.map(p => ({ ...p, key: productKey(p) }));
   if (itens.length) await catalog.upsertProducts(itens);

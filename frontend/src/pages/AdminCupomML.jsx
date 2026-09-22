@@ -39,7 +39,6 @@ import ProgressoColheita from "../components/admin/ProgressoColheita";
 import { reduzirAndamento } from "../data/andamentoColheita";
 import ExtensaoAusente from "../components/admin/ExtensaoAusente";
 import Numero from "../components/admin/Numero";
-import CouponLandingSweep from "../components/admin/CouponLandingSweep";
 import {
   segundos, brl, dia, desconto, cardStyle, inputStyle, labelStyle, th, td,
   botaoPrimario, botaoSecundario, botaoPerigo, botaoLink,
@@ -587,11 +586,6 @@ export default function CuponsDoML({ buscaInicial = null }) {
 
   return (
     <div>
-      {/* A varredura sem navegador vem primeiro: é ela que põe os produtos dos cupons
-          no catálogo sozinha. Quando termina, relê a página — o botão 2 passa a
-          começar pelos cupons que ela não conseguiu ler. */}
-      <CouponLandingSweep onRodou={recarregar} />
-
       <div style={cardStyle}>
         <div style={{ fontWeight: 500, marginBottom: 4 }}>Puxar os cupons do Mercado Livre</div>
         <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12, lineHeight: 1.5 }}>

@@ -3264,50 +3264,6 @@ app.get("/api/admin/repasse/coupon-autotest/log", auth.requireAuth, auth.require
   }
 });
 
-// ── Varredura dos cupons pela landing (task 12) ──────────────────────────
-// Traz para o catálogo os produtos de cada cupom, sem navegador, e as amostras dos
-// cards (backend/coupons/landing-sweep.js). É o que faz o produto do sistema
-// aparecer com o cupom que vale nele — antes disso eram 4.035 produtos e UM com cupom.
-app.get("/api/admin/ml-cupons/landing-sweep", auth.requireAuth, auth.requireAdmin, async (req, res) => {
-  try {
-    const sweep = require("./coupons/landing-sweep");
-    const sweepConfig = require("./coupons/landing-sweep-config");
-    res.json({
-      config: sweepConfig.readConfig(),
-      defaults: sweepConfig.DEFAULTS,
-      status: sweep.status(),
-      cobertura: await couponsStore.coberturaStats(),
-    });
-  } catch (err) {
-    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/ml-cupons/landing-sweep" });
-  }
-});
-
-app.put("/api/admin/ml-cupons/landing-sweep", auth.requireAuth, auth.requireAdmin, async (req, res) => {
-  try {
-    const sweepConfig = require("./coupons/landing-sweep-config");
-    const config = sweepConfig.writeConfig(req.body || {});
-    if (!await confirmConfigSaved(res)) return;
-    // Intervalo novo só vale reagendando — senão a tela mostraria uma cadência que
-    // não é a que está rodando.
-    const sweep = require("./coupons/landing-sweep");
-    sweep.stop();
-    sweep.start();
-    res.json({ config, status: sweep.status() });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// "Rodar agora": SOLTA, responde na hora. 60 cupons a ~2 s mais as pausas passam
-// dos 90 s do nginx; a tela acompanha pelo status.
-app.post("/api/admin/ml-cupons/landing-sweep/run", auth.requireAuth, auth.requireAdmin, (req, res) => {
-  const sweep = require("./coupons/landing-sweep");
-  sweep.runOnce({ manual: true }).catch(err =>
-    console.error("[cupons.landing-sweep] rodada manual:", err.message));
-  res.status(202).json({ started: true, status: sweep.status() });
-});
-
 // "Quais cupons valem neste produto?" — pelo link (ou pela chave do catálogo).
 // Só o que o sistema já sabe, sem rede: cada cupom vem com a ORIGEM do vínculo,
 // porque "está na prévia" e "está na vitrine completa" não são a mesma garantia.
@@ -4276,9 +4232,6 @@ async function boot() {
     // coupons/sync.js são por processo — no worker o robô abriria um segundo Chrome
     // na conta do ML no meio de uma rodada do admin, sem aparecer em tela nenhuma.
     require("./repasse/coupon-autotest").start();
-    // A varredura dos cupons pela landing (sem navegador) — mesmo motivo de morar
-    // aqui: respeitar os mutex do coupons/sync.js, que são por processo.
-    require("./coupons/landing-sweep").start();
     backupMonitor.start();
     billingReminders.start();
     // Fire-and-forget — falha silenciosa se sessão WA ainda não estiver conectada

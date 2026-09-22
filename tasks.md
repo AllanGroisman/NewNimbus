@@ -28,4 +28,5 @@
 
 16. [x] Quero que o scraping tenha uma barra de progresso. Ele pode ser pausado no meio sem perder o progresso?
 
+17. [] Separa a busca dos cupons para cada um ter sua estatistica de "ultima varredura". Pq são diferentes os 3 botões. 
 

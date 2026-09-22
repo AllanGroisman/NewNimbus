@@ -39,15 +39,6 @@ vi.mock("../data/api", () => ({
   // O ImportarCampanhaModal, que a caixa "Trazer campanha por ID" abre.
   adminMlCuponsImportCampaign: vi.fn(),
   adminMlCuponsImportStatus: vi.fn(),
-  // A varredura sem navegador (card do topo, task 12). Default: parada, com a
-  // cobertura zerada — a maioria dos testes desta tela não fala dela.
-  adminCuponsLandingSweep: vi.fn(() => Promise.resolve({
-    config: { enabled: true, intervaloMs: 1_800_000, pausaMs: 2000, enriquecerAmostras: true },
-    status: { enabled: true, running: false, lastRunAt: null },
-    cobertura: { produtosComCupom: 0, comPrevia: 0, comUrl: 0, tentados: 0, amostrasSemProduto: 0, vinculos: {} },
-  })),
-  adminCuponsLandingSweepSave: vi.fn(),
-  adminCuponsLandingSweepRun: vi.fn(),
 }));
 
 // A extensão que colhe no Chrome do admin (extension/ na raiz). Aqui ela é
@@ -75,7 +66,6 @@ import {
   adminMlCuponsLocalFim,
 } from "../data/api";
 import { adminMlCuponsImportCampaign, adminMlCuponsImportStatus } from "../data/api";
-import { adminCuponsLandingSweep, adminCuponsLandingSweepRun } from "../data/api";
 import { coletorInfo, coletorEntende, raparVitrine, paginaDeCupons, fecharAbaDoColetor } from "../data/coletor";
 
 // A extensão instalada, e quais comandos aquela cópia entende. A tela pergunta os
@@ -894,28 +884,5 @@ describe("trazer campanha por ID", () => {
     expect(await screen.findByText(/Não achei um número de campanha/i)).toBeInTheDocument();
     expect(adminMlCupons).not.toHaveBeenCalled();
     expect(screen.queryByText("Essa campanha não está no sistema")).toBeNull();
-  });
-});
-
-describe("a varredura sem navegador (produtos com cupom)", () => {
-  it("mostra de cara quantos produtos do catálogo têm cupom", async () => {
-    adminCuponsLandingSweep.mockResolvedValueOnce({
-      config: { enabled: true, intervaloMs: 1_800_000, pausaMs: 2000 },
-      status: { enabled: true, running: false, lastRunAt: "2026-09-19T15:00:00Z", lidos: 40, comPrevia: 34, produtos: 216,
-        amostras: { tentadas: 40, trazidas: 40 } },
-      cobertura: { produtosComCupom: 270, comPrevia: 38, comUrl: 2717, tentados: 45, amostrasSemProduto: 9999,
-        vinculos: { landing: 230, amostra: 11304 } },
-    });
-    render(<PageCuponsML />);
-    expect(await screen.findByText("Produtos do catálogo com cupom")).toBeTruthy();
-    expect(screen.getByText("270")).toBeTruthy();
-    expect(screen.getByText(/34 com prévia · 216 produto\(s\) · 40 de 40 amostra/)).toBeTruthy();
-  });
-
-  it("\"Rodar agora\" dispara a rodada no servidor", async () => {
-    adminCuponsLandingSweepRun.mockResolvedValue({ started: true, status: { enabled: true, running: true } });
-    render(<PageCuponsML />);
-    fireEvent.click(await screen.findByRole("button", { name: "Rodar agora" }));
-    await waitFor(() => expect(adminCuponsLandingSweepRun).toHaveBeenCalled());
   });
 });

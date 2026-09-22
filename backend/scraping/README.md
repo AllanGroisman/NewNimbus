@@ -435,26 +435,13 @@ O `deleteMany` do `replaceCouponProducts` é escopado por origem, e produto que
 estava numa coleção fraca e apareceu na vitrine é **promovido**, não duplicado: a
 chave é a mesma.
 
-### A varredura em lote (task 12, 19/09/2026)
+### A varredura em lote (task 12, 19/09/2026) — removida
 
-Medido antes: ~2.800 cupons, 4.035 produtos no catálogo e **um** com cupom. Os
-produtos dos cupons não estavam no catálogo, e ir do produto pro cupom bate no
-CAPTCHA. O caminho que funciona é o inverso — trazer os produtos DE CADA CUPOM:
+A varredura automática pela landing (`coupons/landing-sweep.js`) e o enriquecimento
+das amostras (`coupons/enrich-samples.js`) foram removidos. As colunas
+`ml_coupons.landingTriedAt/landingOk/landingMessage` e
+`ml_coupon_products.enrichTriedAt` ficaram no banco, sem uso.
 
-- `coupons/landing-sweep.js` — roda sozinho no server (config em `app_config`
-  `ml-cupons-landing-sweep`, card no topo de Admin › Cupom › Cupons do ML). Lê a
-  landing (abaixo) de cada cupom com `containerUrl` e sem vitrine fechada, grava pelo
-  `sync.gravarVitrine` com `origem: "landing"` e carimba o catálogo uma vez no fim.
-  **Nunca** abre Chrome nem ativa cupom. Para no primeiro muro e arma um breaker.
-  `ml_coupons.landingTriedAt/landingOk` tiram da fila quem já foi tentado.
-- `coupons/enrich-samples.js` — as AMOSTRAS viram produto de catálogo: o MLB passa
-  pelo link curto do sistema e a landing de afiliado dá nome/preço. O MLB da amostra
-  é número de **anúncio**: com `/p/MLB…` o ML recusa o link, com
-  `produto.mercadolivre.com.br/MLB-…` aceita. E o produto é gravado com essa URL, não
-  com o `/up/MLBU…` que a landing devolve — senão a chave não bate com a da amostra.
-  Landing que devolve outro anúncio (`mlItemId` diferente) é descartada.
-- Primeira rodada real (40 cupons + 40 amostras): 34 prévias, 216 produtos, 40/40
-  amostras, nenhum muro. Produtos com cupom: 1 → 270.
 - `segmentations` do bloco de telemetria vai pra `ml_coupons.raw.regra`, **só
   diagnóstico**: `containers` são ids internos de marketing, não categorias, e casar
   produto por vendedor seria inferência — o sistema só grava vínculo quando o ML diz.

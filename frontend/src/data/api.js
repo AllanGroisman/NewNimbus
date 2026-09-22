@@ -745,23 +745,6 @@ export async function adminRepasseCouponsClear({ days = 90, status = "todos", q 
   return http("DELETE", `/api/admin/repasse/coupons?${params}`);
 }
 
-// ─── Admin / Cupons (varredura pela landing — task 12) ─────────────────
-// Traz para o catálogo os produtos de cada cupom (a prévia da landing de afiliado,
-// sem navegador) e as amostras dos cards. GET devolve config + status + a
-// cobertura (quantos produtos já têm cupom) juntos, pelo mesmo motivo do autotest.
-export async function adminCuponsLandingSweep() {
-  return http("GET", "/api/admin/ml-cupons/landing-sweep");
-}
-
-export async function adminCuponsLandingSweepSave(config) {
-  return http("PUT", "/api/admin/ml-cupons/landing-sweep", config);
-}
-
-// 202: a rodada segue solta no servidor e a tela acompanha pelo status.
-export async function adminCuponsLandingSweepRun() {
-  return http("POST", "/api/admin/ml-cupons/landing-sweep/run", {});
-}
-
 // "Quais cupons valem neste produto?" — só o que o sistema já sabe, sem rede.
 export async function adminProdutoCupons({ url = "", key = "" } = {}) {
   const params = new URLSearchParams();

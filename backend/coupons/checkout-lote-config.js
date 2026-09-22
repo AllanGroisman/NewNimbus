@@ -1,11 +1,28 @@
 // O ritmo da sonda do checkout em lote (coupons/checkout-lote.js), ajustável na
-// tela. Mesmo formato do landing-sweep-config.js: o que está gravado passa sempre
-// pelo `sanitize`, então valor fora da faixa vira o limite e chave velha some.
+// tela. O que está gravado passa sempre pelo `sanitize`, então valor fora da faixa
+// vira o limite e chave velha some.
 //
 // Todos os números valem para a CONTA do ML, que é a mesma do Hub: mais abas e
 // menos pausa são mais produtos por minuto e mais chance de CAPTCHA.
 const appConfig = require("../config");
-const { saneiaBooleano, saneiaNumero } = require("./landing-sweep-config");
+
+// Checkbox de formulário chega como "true"/"on"/1 dependendo do caminho; um
+// `!!v` cru transformaria a string "false" em true.
+function saneiaBooleano(v, padrao) {
+  if (typeof v === "boolean") return v;
+  if (v == null) return padrao;
+  if (typeof v === "number") return v !== 0;
+  const s = String(v).trim().toLowerCase();
+  if (["true", "1", "on", "sim", "yes"].includes(s)) return true;
+  if (["false", "0", "off", "nao", "não", "no"].includes(s)) return false;
+  return padrao;
+}
+
+function saneiaNumero(v, padrao, [min, max]) {
+  const n = typeof v === "number" ? v : parseInt(v, 10);
+  if (!Number.isFinite(n)) return padrao;
+  return Math.min(max, Math.max(min, Math.trunc(n)));
+}
 
 const CONFIG_KEY = "ml-cupons-sonda-lote";
 
