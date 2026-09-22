@@ -1,7 +1,10 @@
 import { useState } from "react";
-import { botaoPrimario, botaoSecundario, hintStyle } from "../styles";
+import { botaoPrimario, botaoSecundario, hintStyle, inputStyle } from "../styles";
 
-export default function SelectionBar({ total, selected, onAll, onNone, onDownload, busy, productLinks }) {
+export default function SelectionBar({
+  total, selected, onAll, onNone, onDownload, busy, preparing, productLinks,
+  templates = [], templateId, onTemplate, onEditTemplates,
+}) {
   const [copyMsg, setCopyMsg] = useState(null);
 
   const copyLinks = async () => {
@@ -30,7 +33,17 @@ export default function SelectionBar({ total, selected, onAll, onNone, onDownloa
       <button type="button" onClick={onAll} style={botaoSecundario}>Selecionar todos</button>
       <button type="button" onClick={onNone} disabled={!selected} style={{ ...botaoSecundario, opacity: selected ? 1 : 0.5 }}>Limpar</button>
       <span style={hintStyle}>{selected} de {total} selecionados</span>
-      <div style={{ marginLeft: "auto", display: "flex", gap: 10, flexWrap: "wrap" }}>
+      <div style={{ marginLeft: "auto", display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <select
+          value={templateId || ""}
+          onChange={(e) => onTemplate?.(e.target.value)}
+          title="Aplica um template por cima do vídeo antes de salvar"
+          style={{ ...inputStyle, width: "auto", minWidth: 150 }}
+        >
+          <option value="">🎬 Sem template</option>
+          {templates.map((t) => <option key={t.id} value={t.id}>🎨 {t.name}</option>)}
+        </select>
+        <button type="button" onClick={onEditTemplates} style={botaoSecundario}>Editar</button>
         {productLinks && (
           <button
             type="button"
@@ -47,7 +60,7 @@ export default function SelectionBar({ total, selected, onAll, onNone, onDownloa
           disabled={!selected || busy}
           style={botaoPrimario(!selected || busy)}
         >
-          ⬇ Baixar {selected ? `(${selected})` : ""}
+          {preparing ? "Preparando…" : `⬇ Baixar${selected ? ` (${selected})` : ""}${templateId ? " com template" : ""}`}
         </button>
       </div>
     </div>

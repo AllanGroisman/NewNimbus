@@ -8,11 +8,14 @@ const ytdlp = require("./ytdlp");
 const jobs = require("./jobs");
 const tiktokProduct = require("./tiktokProduct");
 const youtubeProduct = require("./youtubeProduct");
+const templates = require("./templates");
 
 const PORT = Number(process.env.PORT) || 3002;
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "1mb" }));
+// Os PNGs do overlay viajam no corpo do POST /api/jobs, um por vídeo quando o
+// texto usa {titulo}. Só escutamos em 127.0.0.1, então o limite largo é seguro.
+app.use(express.json({ limit: "64mb" }));
 
 app.get("/api/health", async (_req, res) => {
   try {
@@ -46,10 +49,25 @@ app.post("/api/products", async (req, res) => {
   }
 });
 
+app.get("/api/templates", (_req, res) => res.json({ templates: templates.list() }));
+
+app.put("/api/templates/:id", (req, res) => {
+  try {
+    res.json(templates.save(req.params.id, req.body));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete("/api/templates/:id", (req, res) => {
+  templates.remove(req.params.id);
+  res.json({ ok: true });
+});
+
 app.post("/api/jobs", (req, res) => {
   const videos = (req.body?.videos || []).filter((v) => v && v.id && typeof v.url === "string" && /^https?:\/\//.test(v.url));
   if (!videos.length) return res.status(400).json({ error: "Nenhum vídeo selecionado." });
-  const job = jobs.createJob(videos);
+  const job = jobs.createJob(videos, { template: req.body?.template, overlay: req.body?.overlay });
   res.json({ jobId: job.id });
 });
 
@@ -59,16 +77,24 @@ app.get("/api/jobs/:id", (req, res) => {
   res.json(jobs.serialize(job));
 });
 
+// ?raw=1 entrega o vídeo sem template: o original fica em disco de graça, então
+// dá para decidir depois de ver o resultado.
+const pick = (item, raw) => (raw ? item?.raw : item?.file);
+
 app.get("/api/jobs/:id/file/:videoId", (req, res) => {
   const job = jobs.getJob(req.params.id);
   const item = job?.items.find((i) => i.id === req.params.videoId);
-  if (!item?.file || !fs.existsSync(item.file)) return res.status(404).json({ error: "Arquivo não disponível." });
-  res.download(item.file, path.basename(item.file));
+  const file = pick(item, req.query.raw);
+  if (!file || !fs.existsSync(file)) return res.status(404).json({ error: "Arquivo não disponível." });
+  res.download(file, path.basename(file));
 });
 
 app.get("/api/jobs/:id/zip", (req, res) => {
   const job = jobs.getJob(req.params.id);
-  const done = (job?.items || []).filter((i) => i.file && fs.existsSync(i.file));
+  const done = (job?.items || [])
+    .map((i) => pick(i, req.query.raw))
+    .filter((f) => f && fs.existsSync(f))
+    .map((f) => ({ file: f }));
   if (!done.length) return res.status(404).json({ error: "Nenhum arquivo pronto." });
   res.attachment(`videos-${new Date().toISOString().slice(0, 10)}.zip`);
   // Vídeo já é comprimido: store (level 0) evita gastar CPU à toa.

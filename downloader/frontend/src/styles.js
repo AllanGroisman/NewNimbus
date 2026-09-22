@@ -45,6 +45,20 @@ export const chipStyle = ({ active }) => ({
   fontWeight: active ? 500 : 400,
 });
 
+export const modalBackdrop = {
+  position: "fixed", inset: 0, zIndex: 100,
+  background: "rgba(0,0,0,0.5)",
+  display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+};
+
+export const modalCard = {
+  background: "var(--color-background-primary)",
+  border: "0.5px solid var(--color-border-tertiary)",
+  borderRadius: 12,
+  width: "min(1040px, 100%)", maxHeight: "92vh",
+  display: "flex", flexDirection: "column", overflow: "hidden",
+};
+
 export const skelBar = {
   height: 12, borderRadius: 6,
   background: "var(--color-background-secondary)",

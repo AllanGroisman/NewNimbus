@@ -88,3 +88,6 @@ debug-cupom/
 
 # Nimbus Downloader: binário do yt-dlp baixado pelo setup
 downloader/backend/bin/
+
+# Templates de overlay: dados locais do usuário, com logo embutido em base64
+downloader/backend/data/

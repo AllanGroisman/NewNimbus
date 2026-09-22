@@ -9,10 +9,11 @@ const LIMITS = [
   { value: 0, label: "Todos" },
 ];
 
-export default function UrlForm({ loading, onSubmit }) {
-  const [url, setUrl] = useState("");
-  const [limit, setLimit] = useState(50);
-  const [tab, setTab] = useState("videos");
+// `initial` volta da última busca quando a página é recarregada.
+export default function UrlForm({ loading, onSubmit, initial }) {
+  const [url, setUrl] = useState(initial?.url || "");
+  const [limit, setLimit] = useState(initial?.limit ?? 50);
+  const [tab, setTab] = useState(initial?.tab || "videos");
   const isYoutube = /youtube\.com|youtu\.be/i.test(url);
 
   const submit = (e) => {
