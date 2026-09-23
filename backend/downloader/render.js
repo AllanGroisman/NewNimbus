@@ -60,7 +60,10 @@ function run({ input, overlay, geo, output, duration, audio, onProgress }) {
     "-map", "[v]",
     // O "?" faz vídeo sem trilha de áudio não derrubar o comando.
     "-map", "0:a?",
-    "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+    // -threads 2: o libx264 pega todos os núcleos por padrão e, num VPS pequeno,
+    // deixa o scraping e o Baileys sem CPU enquanto o lote renderiza. Dois
+    // threads mantêm o encode rápido o suficiente sem tomar a máquina.
+    "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-threads", "2",
     ...audio,
     // Repostar sem as tags de encoder/URL que o YouTube carimba no arquivo.
     "-map_metadata", "-1",
@@ -70,7 +73,11 @@ function run({ input, overlay, geo, output, duration, audio, onProgress }) {
   ];
 
   return new Promise((resolve, reject) => {
-    const child = spawn(ffmpegPath, args, { windowsHide: true });
+    // `nice` pelo mesmo motivo do -threads: o encode é a coisa mais pesada que
+    // o backend faz, e não pode atrapalhar quem está mandando mensagem.
+    const child = process.platform === "win32"
+      ? spawn(ffmpegPath, args, { windowsHide: true })
+      : spawn("nice", ["-n", "10", ffmpegPath, ...args], { windowsHide: true });
     let total = Number(duration) > 0 ? Number(duration) : 0;
     let err = "";
     let buf = "";

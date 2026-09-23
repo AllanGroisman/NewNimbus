@@ -37,6 +37,9 @@ const httpErrors = require("./infra/httpErrors");
 const billing = require("./billing");
 const stripeMod = require("./billing/stripe");
 const backupApi = require("./backup/api");
+// Admin › Downloader — yt-dlp + ffmpeg. Router próprio; ver backend/downloader/routes.js.
+const downloaderRoutes = require("./downloader/routes");
+const downloaderJobs = require("./downloader/jobs");
 const diskInfo = require("./infra/disk");
 const backupMonitor = require("./backup/monitor");
 const billingReminders = require("./billing/reminders");
@@ -339,6 +342,27 @@ async function cancelarPorEstorno({ charge, livemode }) {
     sentry.captureException(err, { tags: { stripeEvent: "charge.refunded" } });
   }
 }
+
+// ────────────────────────────────────────────────────────────────────────
+// Downloader — parsers com limite próprio, ANTES do express.json() global.
+// Os PNGs de overlay (1080x1920, um por vídeo quando o texto usa {titulo})
+// viajam como data-URL no corpo e estouram os 2mb globais; o logo dos templates
+// vai em base64 pelo mesmo caminho. Mesmo truque do webhook do Stripe: quem
+// parseia primeiro marca req._body, e o global pula.
+//
+// Escopado por MÉTODO de propósito. Um app.use() no prefixo pegaria também os
+// GET /jobs/:id/file e /jobs/:id/zip, que precisam ficar FORA do requireAuth —
+// são abertos por <a href>, que não manda header (ver a `key` em
+// downloader/jobs.js). Com app.post/app.put os GET passam batido.
+//
+// Auth antes do parser para um anônimo não fazer o processo ler 64MB e só então
+// levar 401; requireAuth só lê o header, então rodar antes é seguro. Sem
+// handler final: o parser chama next() e a requisição segue pro router.
+// ────────────────────────────────────────────────────────────────────────
+app.post("/api/admin/downloader/jobs",
+  auth.requireAuth, auth.requireAdmin, express.json({ limit: "64mb" }));
+app.put("/api/admin/downloader/templates/:id",
+  auth.requireAuth, auth.requireAdmin, express.json({ limit: "8mb" }));
 
 app.use(express.json({ limit: "2mb" }));
 
@@ -2245,6 +2269,14 @@ app.get("/api/admin/users/:id/detail", auth.requireAuth, auth.requireAdmin, asyn
     httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/users/:id/detail" });
   }
 });
+
+// ────────────────────────────────────────────────────────────────────────
+// Admin — Downloader (yt-dlp + ffmpeg)
+// ────────────────────────────────────────────────────────────────────────
+
+// O requireAuth/requireAdmin mora dentro do router: as duas rotas que entregam
+// arquivo precisam ficar de fora dele (ver downloader/routes.js).
+app.use("/api/admin/downloader", downloaderRoutes);
 
 // ────────────────────────────────────────────────────────────────────────
 // Admin — Backups
@@ -4218,6 +4250,14 @@ async function boot() {
   // de loja) depois de reiniciar.
   appConfig.startAutoRefresh();
   await affiliate.warmup();
+
+  // Downloader: limpa os vídeos que ficaram em disco de uma execução anterior.
+  // Fica aqui, no boot, e não no module-load do jobs.js — assim o worker.js,
+  // que carrega o mesmo backend/, nunca apaga o tmp/ embaixo de um lote que o
+  // server está baixando agora.
+  try { downloaderJobs.resetTmp(); } catch (err) {
+    console.error("[downloader] não foi possível limpar o tmp/:", err.message);
+  }
 
   // Inicializa fila de envios (Fase 2). Server é só PRODUCER — quem registra
   // workers é o backend/worker.js (em redis mode). Em memory é no-op.

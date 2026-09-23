@@ -36,7 +36,7 @@ function savePng(dir, name, dataUrl) {
   return file;
 }
 
-function createJob(videos, { template = null, overlay = null } = {}) {
+function createJob(videos, { template = null, overlay = null, ownerId = null } = {}) {
   const id = crypto.randomUUID();
   const dir = path.join(TMP, id);
   fs.mkdirSync(dir, { recursive: true });
@@ -48,6 +48,14 @@ function createJob(videos, { template = null, overlay = null } = {}) {
   const job = {
     id,
     dir,
+    // Chave só deste job. Os <a href> do painel de download não conseguem mandar
+    // o header Authorization, e passar o JWT na query gravaria a sessão inteira
+    // no access.log do nginx e no histórico do navegador. Esta chave abre só
+    // ESTE job, morre com ele (1h) e só chega em quem já passou pelo
+    // requireAdmin — é o GET /jobs/:id, autenticado, que a entrega.
+    key: crypto.randomBytes(24).toString("hex"),
+    // Dono do lote: dois admins não enxergam o download um do outro.
+    ownerId,
     createdAt: Date.now(),
     template: template || null,
     items: videos.map((v, i) => ({
@@ -155,6 +163,9 @@ function getJob(id) {
 function serialize(job) {
   return {
     id: job.id,
+    // A chave vai junto porque esta rota é autenticada — é daqui que o front
+    // tira o ?k= dos links de arquivo e do .zip.
+    key: job.key,
     finished: isFinished(job),
     hasTemplate: Boolean(job.template),
     items: job.items.map(({ id, title, status, percent, error, warning, file, raw }) => ({
@@ -166,4 +177,4 @@ function serialize(job) {
   };
 }
 
-module.exports = { resetTmp, createJob, getJob, serialize };
+module.exports = { resetTmp, createJob, getJob, serialize, isFinished, TMP };

@@ -1,5 +1,5 @@
 // Estilos inline no mesmo padrão do Nimbus (cupomEstilos.js / ProductSearchTab.jsx).
-import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "./constants";
+import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../../../data/constants";
 
 export const cardStyle = {
   background: "var(--color-background-primary)",

@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import api from "../api";
-import { PRIMARY } from "../constants";
+import { adminDlTemplates, adminDlTemplateSave, adminDlTemplateRemove, errText } from "../../../data/api";
+import { PRIMARY } from "../../../data/constants";
 import {
   CANVAS, FONTS, emptyTemplate, frameSize, hitTest, layerBox,
   loadImages, newLayer, paintOverlay, videoPresets, videoRect,
-} from "../overlay";
+} from "./overlay";
 import {
   botaoPrimario, botaoSecundario, chipStyle, hintStyle,
   inputStyle, labelStyle, modalBackdrop, modalCard,
-} from "../styles";
+} from "./downloaderEstilos";
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
@@ -159,12 +159,12 @@ export default function TemplateEditor({ templates, refVideo, onClose, onSaved }
     setErro(null);
     try {
       const id = draft.id || crypto.randomUUID();
-      await api(`/templates/${id}`, { method: "PUT", body: JSON.stringify(draft) });
-      const { templates: lista } = await api("/templates");
+      await adminDlTemplateSave(id, draft);
+      const { templates: lista } = await adminDlTemplates();
       onSaved(lista, id);
       setDraft(clone(lista.find((t) => t.id === id) || draft));
     } catch (err) {
-      setErro(err.message);
+      setErro(errText(err, "Não foi possível salvar o template."));
     } finally {
       setBusy(false);
     }
@@ -174,13 +174,13 @@ export default function TemplateEditor({ templates, refVideo, onClose, onSaved }
     if (!draft.id) return;
     setBusy(true);
     try {
-      await api(`/templates/${draft.id}`, { method: "DELETE" });
-      const { templates: lista } = await api("/templates");
+      await adminDlTemplateRemove(draft.id);
+      const { templates: lista } = await adminDlTemplates();
       onSaved(lista, null);
       setDraft(clone(lista[0] || emptyTemplate()));
       setSel(-1);
     } catch (err) {
-      setErro(err.message);
+      setErro(errText(err, "Não foi possível excluir o template."));
     } finally {
       setBusy(false);
     }

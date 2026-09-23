@@ -6,7 +6,7 @@ import {
   getGroupCategories, getLinkedWhatsapps,
   groupUsesML, groupUsesShopee,
   getGroupStats,
-  CATEGORIES, allSources, sidebarItems,
+  CATEGORIES, allSources, sidebarItems, PAGE_TO_PATH,
   computeQueueETA, formatETA,
   soldText, formatCompact,
 } from "../data/constants.js";
@@ -169,6 +169,15 @@ describe("sidebarItems — estrutura e ícones", () => {
     const icon = tutorials.icon;
     expect(icon.length).toBe(1);
     expect(icon.codePointAt(0)).toBeLessThan(0x10000); // não é emoji high-surrogate
+  });
+
+  it("Downloader é uma aba de admin com rota própria", () => {
+    // Aba nova: as duas tabelas (sidebarItems e PAGE_TO_PATH) são separadas, e
+    // esquecer uma delas dá item que não navega ou rota que não aparece.
+    const item = sidebarItems.find(i => i.id === "admin-downloader");
+    expect(item).toBeTruthy();
+    expect(item.adminOnly).toBe(true);
+    expect(PAGE_TO_PATH["admin-downloader"]).toBe("/admin/downloader");
   });
 
   it("todos os itens têm id, label e icon preenchidos", () => {

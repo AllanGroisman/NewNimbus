@@ -63,6 +63,10 @@ function offlineError(raw, code = "server_offline", status = 0) {
 // com 504, e a mensagem sai igual à de queda.
 const DEFAULT_TIMEOUT_MS = 30_000;
 const SLOW_TIMEOUT_MS = 100_000;
+// O yt-dlp listando um canal grande passa dos 100s do SLOW. Acima dos 180s do
+// nginx de propósito: quem corta é o nginx, com 504, e a mensagem sai igual à
+// de queda em vez de um "abortado" genérico do navegador.
+const VERY_SLOW_TIMEOUT_MS = 190_000;
 
 async function http(method, path, body, { signal, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   const opts = { method, headers: {} };
@@ -877,3 +881,16 @@ export async function whatsNimbusFinalize(info)   { return http("POST", "/api/ad
 export async function whatsNimbusDisconnect()     { return http("POST", "/api/admin/whatsnimbus/disconnect"); }
 export async function whatsNimbusGroups()         { return http("GET",  "/api/admin/whatsnimbus/groups"); }
 export async function whatsNimbusSend(payload)    { return http("POST", "/api/admin/whatsnimbus/send", payload); }
+
+// ─── Admin / Downloader (vídeos do TikTok e do YouTube) ────────────────────
+// Os links de arquivo e de .zip NÃO passam por aqui: são <a href> puros, que
+// não conseguem mandar header. Eles usam a chave do job (ver DownloadPanel.jsx).
+export async function adminDlHealth()              { return http("GET",  "/api/admin/downloader/health"); }
+export async function adminDlList(params)          { return http("POST", "/api/admin/downloader/list", params, { timeoutMs: VERY_SLOW_TIMEOUT_MS }); }
+export async function adminDlProducts(url)         { return http("POST", "/api/admin/downloader/products", { url }); }
+export async function adminDlTemplates()           { return http("GET",  "/api/admin/downloader/templates"); }
+export async function adminDlTemplateSave(id, t)   { return http("PUT",  `/api/admin/downloader/templates/${encodeURIComponent(id)}`, t); }
+export async function adminDlTemplateRemove(id)    { return http("DELETE", `/api/admin/downloader/templates/${encodeURIComponent(id)}`); }
+export async function adminDlJobCreate(payload)    { return http("POST", "/api/admin/downloader/jobs", payload, { timeoutMs: SLOW_TIMEOUT_MS }); }
+export async function adminDlJob(id)               { return http("GET",  `/api/admin/downloader/jobs/${encodeURIComponent(id)}`); }
+export async function adminDlUpdateYtdlp()         { return http("POST", "/api/admin/downloader/update-ytdlp", undefined, { timeoutMs: VERY_SLOW_TIMEOUT_MS }); }

@@ -91,4 +91,13 @@ async function report() {
   };
 }
 
-module.exports = { report, BACKUPS_DIR };
+// Espaço livre num diretório qualquer, sem consultar banco nem Backblaze. O
+// report() acima é caro demais pra rodar antes de cada lote do Downloader.
+// Diretório inexistente devolve Infinity: a checagem de espaço não pode ser o
+// que derruba a rota — quem cria o tmp/ é o próprio job, logo depois.
+async function freeBytes(dir) {
+  const st = await fsp.statfs(dir).catch(() => null);
+  return st ? st.bsize * st.bavail : Infinity;
+}
+
+module.exports = { report, freeBytes, BACKUPS_DIR };

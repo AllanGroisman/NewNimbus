@@ -39,6 +39,7 @@ import PageAdminAmazon from "./pages/AdminAmazon";
 import PageAdminShopee from "./pages/AdminShopee";
 import PageAdminUsers from "./pages/AdminUsers";
 import PageAdminBackups from "./pages/AdminBackups";
+import PageAdminDownloader from "./pages/AdminDownloader";
 import PageAdminNotifications from "./pages/AdminNotifications";
 import PageAdminNotifTemplates from "./pages/AdminNotifTemplates";
 import PageAdminTutoriais from "./pages/AdminTutoriais";
@@ -1124,6 +1125,7 @@ export default function App() {
     "admin-shopee":   user?.role === "admin" ? <PageAdminShopee /> : fallbackPage,
     "admin-repasse":  user?.role === "admin" ? <PageAdminRepasse /> : fallbackPage,
     "admin-cupom":    user?.role === "admin" ? <PageAdminCupom /> : fallbackPage,
+    "admin-downloader": user?.role === "admin" ? <PageAdminDownloader /> : fallbackPage,
     "admin-users":          user?.role === "admin" ? <PageAdminUsers currentUser={user} /> : fallbackPage,
     "admin-backups":        user?.role === "admin" ? <PageAdminBackups /> : fallbackPage,
     "admin-notifications":  user?.role === "admin" ? <PageAdminNotifications onGoToWhatsNimbus={() => requestNavigation(() => setPage("admin-whatsnimbus"))} /> : fallbackPage,

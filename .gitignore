@@ -86,8 +86,12 @@ temp/
 # Prints de diagnóstico do caminho de produtos de cupom (scripts/cupom-produtos-visual.js)
 debug-cupom/
 
-# Nimbus Downloader: binário do yt-dlp baixado pelo setup
-downloader/backend/bin/
+# Nimbus Downloader (Admin > Downloader)
+# Binário do yt-dlp, baixado pelo scripts/setup-ytdlp.js
+backend/downloader/bin/
 
 # Templates de overlay: dados locais do usuário, com logo embutido em base64
-downloader/backend/data/
+backend/downloader/data/
+
+# Vídeos em trânsito: apagados no boot e 1h depois de cada lote
+backend/downloader/tmp/

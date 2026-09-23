@@ -1,6 +1,6 @@
 import { useState } from "react";
-import Spinner from "./ui/Spinner";
-import { cardStyle, inputStyle, labelStyle, hintStyle, botaoPrimario, chipStyle } from "../styles";
+import Spinner from "../../ui/Spinner";
+import { cardStyle, inputStyle, labelStyle, hintStyle, botaoPrimario, chipStyle } from "./downloaderEstilos";
 
 const LIMITS = [
   { value: 20, label: "20" },

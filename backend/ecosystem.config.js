@@ -16,7 +16,11 @@ module.exports = {
       exec_mode: "fork",
       autorestart: true,
       watch: false,            // não auto-reload em prod
-      max_memory_restart: "1G",
+      // 1500M e não 1G por causa do Downloader: o POST de um lote com template
+      // por título carrega até 64MB de PNG, que viram string + objeto parseado
+      // + Buffer ao mesmo tempo. Em 1G o PM2 reiniciava justo no job que causou
+      // o pico e, como a fila é em memória, o lote do usuário sumia em silêncio.
+      max_memory_restart: "1500M",
       // Se o boot falha por dependência fora (Redis/Postgres), o PM2 reinicia
       // em loop. Sem espaçar as tentativas isso vira dezenas de restarts por
       // segundo enchendo o log; com backoff, ele tenta de novo cada vez mais

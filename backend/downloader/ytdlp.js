@@ -9,18 +9,28 @@ const BIN = path.join(__dirname, "bin", process.platform === "win32" ? "yt-dlp.e
 // e o caminho impresso não batia com o arquivo real.
 const SPAWN_OPTS = { windowsHide: true, env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" } };
 
+// O downloader divide a máquina com o scraping, o Puppeteer e o Baileys. Baixar
+// vídeo é I/O, mas o merge de faixas que o yt-dlp faz no fim chama ffmpeg e
+// queima CPU — com `nice` o resto do sistema continua ganhando a disputa.
+// Só em Unix: no Windows não existe, e aí o spawn é do binário direto.
+const NICE = process.platform === "win32" ? null : "nice";
+const niceArgs = (bin, args) => (NICE ? [NICE, ["-n", "10", bin, ...args]] : [bin, args]);
+
 function ensureBinary() {
   if (!fs.existsSync(BIN)) {
-    throw new Error("yt-dlp não encontrado. Rode `npm run setup` na pasta downloader.");
+    throw new Error("yt-dlp não encontrado. Rode `npm run setup:ytdlp` na pasta backend.");
   }
 }
 
 // Roda o yt-dlp e devolve stdout inteiro. Rejeita com a última linha de erro
 // do stderr, que é onde o yt-dlp explica o que deu errado.
-function run(args, { timeoutMs = 180000 } = {}) {
+// 170s e não 180: o nginx corta em 180s (location /api/admin/downloader/) e o
+// front espera 190s. Perder a corrida de propósito faz quem responde ser este
+// erro, legível, em vez de um 504 genérico.
+function run(args, { timeoutMs = 170000 } = {}) {
   ensureBinary();
   return new Promise((resolve, reject) => {
-    const child = spawn(BIN, args, SPAWN_OPTS);
+    const child = spawn(...niceArgs(BIN, args), SPAWN_OPTS);
     child.stdout.setEncoding("utf8");
     let out = "";
     let err = "";
@@ -122,7 +132,7 @@ function downloadVideo(video, dir, onProgress) {
       "-o", path.join(dir, "%(title).80B [%(id)s].%(ext)s"),
       video.url,
     ];
-    const child = spawn(BIN, args, SPAWN_OPTS);
+    const child = spawn(...niceArgs(BIN, args), SPAWN_OPTS);
     child.stdout.setEncoding("utf8");
     let file = null;
     let err = "";
@@ -163,7 +173,14 @@ function version() {
   return run(["--version"], { timeoutMs: 15000 }).then((v) => v.trim());
 }
 
-function update() {
+// O `-U` só atualiza um binário que já existe. Sem esse fallback, um servidor
+// onde o setup não rodou (GitHub fora do ar no deploy) ficaria sem saída: a
+// tela oferece "Atualizar yt-dlp" e o botão sempre falharia.
+async function update() {
+  if (!fs.existsSync(BIN)) {
+    await require("../scripts/setup-ytdlp").download();
+    return "yt-dlp instalado.";
+  }
   return run(["-U"], { timeoutMs: 120000 });
 }
 

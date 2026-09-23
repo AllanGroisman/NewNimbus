@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { botaoPrimario, botaoSecundario, hintStyle, inputStyle } from "../styles";
+import { botaoPrimario, botaoSecundario, hintStyle, inputStyle } from "./downloaderEstilos";
 
 export default function SelectionBar({
   total, selected, onAll, onNone, onDownload, busy, preparing, productLinks,

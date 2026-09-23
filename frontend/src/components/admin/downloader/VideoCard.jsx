@@ -1,7 +1,7 @@
-import Badge from "./ui/Badge";
-import { PRIMARY } from "../constants";
-import { duration, views, date } from "../format";
-import { cardStyle, skelBar } from "../styles";
+import Badge from "../../ui/Badge";
+import { PRIMARY } from "../../../data/constants";
+import { duration, views, date } from "./format";
+import { cardStyle, skelBar } from "./downloaderEstilos";
 
 // Card de vídeo com seleção. Mesmo esqueleto do ProductGridCard do Nimbus:
 // imagem no topo, título em 2 linhas, selos embaixo.

@@ -16,3 +16,4 @@ Uma página por rota/seção do app. O `App.jsx` decide qual renderizar baseado 
 - **`AdminUsers.jsx`** — só admin: lista de usuários, promove/rebaixa role.
 - **`AdminScraper.jsx`** — só admin: configura o admin-scraper (intervalo, categorias, limites) e vê status.
 - **`AdminStripe.jsx`** — só admin: mostra qual modo do Stripe está valendo (teste/produção), o que cada modo tem configurado no `.env`, os produtos em uso, e troca de modo em dois cliques.
+- **`AdminDownloader.jsx`** — só admin: lista os vídeos de um perfil do YouTube/TikTok (yt-dlp), mostra o produto anunciado em cada um, e baixa os selecionados em .mp4 ou .zip — com ou sem template queimado por cima (ffmpeg).

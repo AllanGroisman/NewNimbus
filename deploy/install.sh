@@ -106,6 +106,15 @@ npx prisma migrate deploy
 # aqui e no update.sh. Idempotente.
 npx puppeteer browsers install chrome
 
+# yt-dlp (Admin > Downloader): binário do release do GitHub, FORA do
+# node_modules — mesma situação do Chrome do Puppeteer acima. Idempotente:
+# rodar de novo só troca pela versão mais recente, o que é desejável, porque
+# YouTube e TikTok quebram o yt-dlp antigo com frequência.
+# Nunca aborta o deploy: GitHub fora do ar não pode impedir o resto de subir,
+# e a própria tela do Admin tem o botão "Atualizar yt-dlp".
+echo "  baixando/atualizando o yt-dlp..."
+node scripts/setup-ytdlp.js || echo "  !! yt-dlp nao atualizado - use o botao 'Atualizar yt-dlp' em Admin > Downloader."
+
 # .env NÃO vem do repo (guarda senha de banco, chaves de API e credenciais de
 # e-mail). Copie o arquivo do servidor atual, ou preencha a partir do exemplo.
 if [[ ! -f .env ]]; then

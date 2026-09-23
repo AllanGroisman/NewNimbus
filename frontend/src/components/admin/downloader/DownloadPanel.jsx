@@ -1,7 +1,7 @@
-import Badge from "./ui/Badge";
-import Spinner from "./ui/Spinner";
-import { PRIMARY } from "../constants";
-import { cardStyle, botaoPrimario, botaoSecundario, hintStyle } from "../styles";
+import Badge from "../../ui/Badge";
+import Spinner from "../../ui/Spinner";
+import { PRIMARY } from "../../../data/constants";
+import { cardStyle, botaoPrimario, botaoSecundario, hintStyle } from "./downloaderEstilos";
 
 const STATUS = {
   queued: { color: "gray", label: "Na fila" },
@@ -20,7 +20,17 @@ function itemPercent(item, hasTemplate) {
   return (item.percent || 0) / 2;
 }
 
+// A chave vem dentro do job (GET /jobs/:id, autenticado) e autoriza as duas
+// rotas de arquivo — um <a href> não manda header Authorization, e pôr o token
+// da sessão na query gravaria ele no log do nginx e no histórico. Ver a `key`
+// em backend/downloader/jobs.js.
+const BASE = "/api/admin/downloader/jobs";
+
 export default function DownloadPanel({ job, onClose }) {
+  const zipUrl = (raw) => `${BASE}/${job.id}/zip?k=${job.key}${raw ? "&raw=1" : ""}`;
+  const fileUrl = (videoId, raw) =>
+    `${BASE}/${job.id}/file/${encodeURIComponent(videoId)}?k=${job.key}${raw ? "&raw=1" : ""}`;
+
   const done = job.items.filter((i) => i.status === "done").length;
   const errors = job.items.filter((i) => i.status === "error").length;
   const total = job.items.length;
@@ -38,10 +48,10 @@ export default function DownloadPanel({ job, onClose }) {
         </span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           {done > 0 && job.hasTemplate && (
-            <a href={`/api/jobs/${job.id}/zip?raw=1`} style={botaoSecundario}>⬇ .zip sem template</a>
+            <a href={zipUrl(true)} style={botaoSecundario}>⬇ .zip sem template</a>
           )}
           {done > 0 && (
-            <a href={`/api/jobs/${job.id}/zip`} style={botaoPrimario(false)}>
+            <a href={zipUrl(false)} style={botaoPrimario(false)}>
               ⬇ Baixar tudo (.zip){!job.finished ? " — prontos" : ""}
             </a>
           )}
@@ -73,11 +83,11 @@ export default function DownloadPanel({ job, onClose }) {
               {item.status === "done" && (
                 <>
                   {item.raw && (
-                    <a href={`/api/jobs/${job.id}/file/${encodeURIComponent(item.id)}?raw=1`} style={botaoSecundario} title="Baixar sem o template">
+                    <a href={fileUrl(item.id, true)} style={botaoSecundario} title="Baixar sem o template">
                       Original
                     </a>
                   )}
-                  <a href={`/api/jobs/${job.id}/file/${encodeURIComponent(item.id)}`} style={botaoSecundario}>Salvar</a>
+                  <a href={fileUrl(item.id, false)} style={botaoSecundario}>Salvar</a>
                 </>
               )}
             </div>
