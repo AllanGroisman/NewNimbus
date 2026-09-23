@@ -68,7 +68,7 @@ function CouponBadge({ product }) {
 // se confere o vínculo cupom ↔ produto. Uma linha por cupom: a palavra (ou "sem
 // palavra"), o valor, o título, de onde veio o vínculo e o id da campanha, que é
 // o que se procura na aba Admin › Cupom.
-const ORIGEM_LABEL = { vitrine: "vitrine", landing: "landing", amostra: "amostra", checkout: "checkout" };
+const ORIGEM_LABEL = { vitrine: "vitrine", parcial: "vitrine parcial", checkout: "checkout" };
 
 function valorDoCupom(c) {
   if (c.rotulo) return c.rotulo;

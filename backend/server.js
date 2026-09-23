@@ -1890,7 +1890,7 @@ const OFERTAS_SORTS = new Set(["relevance", "discount_desc", "price_asc", "price
 // A lista inteira, não só o melhor: um produto coberto por dois cupons mostra os
 // dois. O que o envio vai usar é o primeiro COM palavra — a mesma ordem que o
 // `couponsListForKeys` devolve. `origem` é de onde veio o vínculo (vitrine,
-// landing, amostra, checkout) — é o que a tela do admin mostra para conferir.
+// parcial, checkout) — é o que a tela do admin mostra para conferir.
 async function comCupons(products) {
   const mapaCupons = await couponsStore.couponsListForKeys(products.map(p => p.key)).catch(() => new Map());
   return products.map(p => {

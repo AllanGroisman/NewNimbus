@@ -15,8 +15,8 @@
 // inteira. O ML monta uma PRÉVIA — 3, 5 e 8 produtos nos três testes, com o
 // `totalElements` batendo — e o "Mostrar mais" devolve pra página murada. Então o
 // que sai daqui é prova POSITIVA de cobertura ("este produto está no cupom"),
-// nunca a lista fechada: é por isso que os vínculos entram com `origem: "landing"`
-// e não contam como vitrine em coupons/pg.js:hasVitrine.
+// nunca a lista fechada. Desde a task 22 os fluxos de cupom não usam mais este
+// caminho; ele fica para a sonda scripts/cupom-produtos-visual.js.
 //
 // A ARMADILHA CENTRAL, e é cara: a landing tem QUATRO blocos, e três deles são
 // recomendação para o perfil do afiliado ("Para você", "Mais vendidos",

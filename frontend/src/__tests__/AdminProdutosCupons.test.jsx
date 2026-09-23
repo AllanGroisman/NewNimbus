@@ -24,7 +24,7 @@ const comCupons = {
   store: "Mercado Livre", img: null,
   coupons: [
     { campaignId: "111", code: "CASA15", title: "Cupom Casa", kind: "percent", value: 15, origem: "vitrine", rotulo: "15% OFF" },
-    { campaignId: "222", code: null, title: "Cupom Ferramentas", kind: "percent", value: 10, origem: "amostra" },
+    { campaignId: "222", code: null, title: "Cupom Ferramentas", kind: "percent", value: 10, origem: "parcial" },
   ],
 };
 
@@ -43,7 +43,7 @@ describe("ProductGridCard showCoupons", () => {
     expect(within(lista).getByText(/sem palavra/)).toBeTruthy();
     expect(within(lista).getByText("Cupom Ferramentas")).toBeTruthy();
     expect(within(lista).getByText(/vitrine · #111/)).toBeTruthy();
-    expect(within(lista).getByText(/amostra · #222/)).toBeTruthy();
+    expect(within(lista).getByText(/vitrine parcial · #222/)).toBeTruthy();
   });
 
   it("sem cupom diz isso, e sem a prop o card não mostra a lista", () => {
@@ -65,8 +65,8 @@ describe("PageProducts — filtros de cupom", () => {
     fireEvent.change(screen.getByLabelText("Filtro de cupom"), { target: { value: "com-palavra" } });
     await waitFor(() => expect(adminCatalog).toHaveBeenLastCalledWith(expect.objectContaining({ cupom: "com-palavra" })));
 
-    fireEvent.change(screen.getByLabelText("Origem do vínculo"), { target: { value: "amostra" } });
-    await waitFor(() => expect(adminCatalog).toHaveBeenLastCalledWith(expect.objectContaining({ cupomOrigem: "amostra" })));
+    fireEvent.change(screen.getByLabelText("Origem do vínculo"), { target: { value: "parcial" } });
+    await waitFor(() => expect(adminCatalog).toHaveBeenLastCalledWith(expect.objectContaining({ cupomOrigem: "parcial" })));
 
     fireEvent.change(screen.getByPlaceholderText(/Cupom: ID, palavra ou nome/), { target: { value: "CASA15" } });
     await waitFor(() => expect(adminCatalog).toHaveBeenLastCalledWith(expect.objectContaining({ cupomBusca: "CASA15" })), { timeout: 2000 });

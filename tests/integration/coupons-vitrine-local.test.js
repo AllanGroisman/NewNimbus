@@ -1,11 +1,11 @@
 // A vitrine que chega do agente local, gravada de verdade.
 //
 // O que se protege aqui é a fronteira entre as duas naturezas de dado que
-// convivem em `ml_coupon_products` (ver integration/coupons-amostra.test.js):
+// convivem em `ml_coupon_products` (ver integration/coupons-origem.test.js):
 //
 //   origem "vitrine" — a lista FECHADA. É a única que autoriza o sistema a dizer
 //                      "esse cupom não cobre seu produto".
-//   origem "landing" — prova positiva, pedaço. Nunca conclui um "não".
+//   origem "parcial" — prova positiva, pedaço. Nunca conclui um "não".
 //
 // A extensão (`extension/`) para quando o Mercado Livre pede verificação, e nesse
 // caso ela viu um PEDAÇO da vitrine. Se esse pedaço entrasse
@@ -63,7 +63,7 @@ describe("gravarVitrineLocal", () => {
 
     expect(r.parcial).toBe(true);
     const lista = await coupons.couponProducts(CAMPANHA, { page: 1, pageSize: 50 });
-    expect(lista.items.every(i => i.origem === "landing")).toBe(true);
+    expect(lista.items.every(i => i.origem === "parcial")).toBe(true);
     expect(await coupons.hasVitrine(CAMPANHA)).toBe(false);
   });
 
@@ -83,14 +83,13 @@ describe("gravarVitrineLocal", () => {
       .rejects.toThrow(/não está no sistema/i);
   });
 
-  it("a vitrine nova substitui a anterior, e as amostras do card seguem", async () => {
-    await coupons.replaceCouponSamples(CAMPANHA, ["MLB1111111111"]);
+  it("a vitrine nova substitui a anterior, e as miniaturas do card não entram (task 22)", async () => {
+    await coupons.upsertCoupons([{ campaignId: CAMPANHA, title: "Cupom", sampleItemIds: ["MLB1111111111"] }]);
     await sync.gravarVitrineLocal(CAMPANHA, [produto(1), produto(2)], { parcial: false });
     await sync.gravarVitrineLocal(CAMPANHA, [produto(9)], { parcial: false });
 
     const lista = await coupons.couponProducts(CAMPANHA, { page: 1, pageSize: 50 });
-    expect(lista.items.filter(i => i.origem === "vitrine")).toHaveLength(1);
-    expect(lista.items.filter(i => i.origem === "amostra")).toHaveLength(1);
+    expect(lista.items.map(i => i.origem)).toEqual(["vitrine"]);
   });
 });
 

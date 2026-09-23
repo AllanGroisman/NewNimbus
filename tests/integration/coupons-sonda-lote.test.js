@@ -82,7 +82,7 @@ describe("alvos", () => {
 
   it("só sem cupom: quem já tem vínculo fica de fora", async () => {
     await prisma().mlCoupon.create({ data: { campaignId: "X", title: "X", kind: "percent", value: 10, scope: "campaign" } });
-    await coupons.replaceCouponProducts("X", [{ productKey: await keyDe(ml(1001).link), productUrl: ml(1001).link }], { origem: "landing" });
+    await coupons.replaceCouponProducts("X", [{ productKey: await keyDe(ml(1001).link), productUrl: ml(1001).link }], { origem: "parcial" });
     const r = await lote.alvos({ soSemCupom: true });
     expect(r.produtos.map(p => p.name).sort()).toEqual(["Produto 1002", "Produto 1003"]);
   });

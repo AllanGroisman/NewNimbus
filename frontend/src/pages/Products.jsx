@@ -391,8 +391,7 @@ const CUPOM_STATUS = [
 const CUPOM_ORIGEM = [
   { id: "", label: "Qualquer vínculo" },
   { id: "vitrine", label: "Vitrine" },
-  { id: "landing", label: "Landing" },
-  { id: "amostra", label: "Amostra" },
+  { id: "parcial", label: "Vitrine parcial" },
   { id: "checkout", label: "Checkout" },
 ];
 

@@ -420,26 +420,6 @@ async function persistRun(result) {
   const t0 = Date.now();
   const { novos, atualizados } = await coupons.upsertCoupons(result.cupons || []);
 
-  // As amostras do card entram para TODO cupom, antes das vitrines.
-  //
-  // Vêm de graça no modelo que a rodada já leu, e são o ÚNICO vínculo possível
-  // para o cupom não ativado — que não tem vitrine pra raspar sem ativar o cupom
-  // na conta do sistema. Vão marcadas como `amostra`, então não se misturam com a
-  // vitrine nem autorizam um "fora da vitrine" lá no quick-check.
-  //
-  // Ao contrário da vitrine, aqui NÃO se escreve no catálogo: o ML dá só o id, sem
-  // nome nem preço, e um produto de catálogo sem nada disso é lixo que a fila do
-  // repasse teria que aprender a ignorar. O vínculo aponta para a chave e espera o
-  // scraping normal trazer o produto.
-  //
-  // Numa chamada só, e não um cupom por vez: cada cupom custava ~6 idas ao banco
-  // (4 amostras, o apagamento do que saiu, o carimbo), e com milhares de cupons
-  // guardados a fila indiana passava dos 90s que o nginx espera — a tela recebia
-  // o 503 de "Nimbus indisponível" no meio da etapa 2. Medido com os 2.871 cupons
-  // de hoje: 171s cupom a cupom, 1,1s em massa.
-  const comAmostra = (result.cupons || []).filter(c => c?.campaignId && (c.sampleItemIds || []).length);
-  const { vinculados: amostras } = await coupons.replaceCouponSamplesMany(comAmostra);
-
   let produtosNoCatalogo = 0;
   let vinculos = 0;
   for (const v of result.vitrines || []) {
@@ -449,14 +429,13 @@ async function persistRun(result) {
       const r = await catalog.upsertProducts(itens);
       produtosNoCatalogo += r.inserted + r.updated;
     }
-    // `parcial` = veio da landing de afiliado, que entrega uma PRÉVIA de 3-8
-    // produtos, não a vitrine inteira. Gravar isso como vitrine autorizaria o
-    // quick-check a dizer "este produto não está no cupom" olhando 5 de 50 —
-    // o mesmo erro caro da amostra, por outra porta.
+    // `parcial` = a raspagem viu só um pedaço da vitrine (muro, teto de páginas).
+    // Gravar isso como vitrine autorizaria o quick-check a dizer "este produto
+    // não está no cupom" olhando 5 de 50.
     const r = await coupons.replaceCouponProducts(
       v.campaignId,
       itens.map(p => ({ productKey: p.key, productUrl: p.link })),
-      { origem: v.parcial ? "landing" : "vitrine" },
+      { origem: v.parcial ? "parcial" : "vitrine" },
     );
     vinculos += r.vinculados;
   }
@@ -487,7 +466,6 @@ async function persistRun(result) {
     atualizados,
     cuponsComVitrine: result.cuponsComVitrine || 0,
     vinculos,
-    amostras,
     produtosNoCatalogo,
     catalogoCarimbado: carimbo.carimbados,
     catalogoLimpo: carimbo.limpos,
@@ -1387,50 +1365,31 @@ async function syncOneCoupon(campaignId, { maxProducts = null } = {}) {
 
   const maxProdutos = maxProducts || cfg.maxProductsPerCoupon;
 
-  // A landing de afiliado ANTES de abrir Chrome nenhum. São duas chamadas HTTP e
-  // resolvem a maioria dos casos hoje; abrir o navegador pra descobrir isso
-  // custaria ~30s e uma passada a mais na conta do sistema, que é a mesma do Hub.
-  const pelaLanding = await mlCupons.vitrinePelaLanding(cupom);
-  if (pelaLanding?.ok) {
-    return gravarVitrine(campaignId, cupom, pelaLanding.products.slice(0, maxProdutos), { parcial: true });
-  }
-
   const res = await mlCupons.withCuponsPage(session.cookie, null);
   try {
     const r = await mlCupons.scrapeCouponProducts(res.browser, cupom, { maxProducts: maxProdutos });
-    // Vitrine barrada não pode sair de mãos vazias: as amostras do card já estão
-    // guardadas no cupom e regravá-las custa uma consulta, sem rede nenhuma.
-    if (!r.ok) {
-      const a = await coupons.replaceCouponSamples(campaignId, cupom.sampleItemIds || []);
-      await coupons.syncCatalogCoupons();
-      return { ok: false, reason: pelaLanding?.reason ? `${r.reason} (a landing também não veio: ${pelaLanding.reason})` : r.reason, produtos: 0, amostras: a.vinculados };
-    }
-    return gravarVitrine(campaignId, cupom, r.products || [], { parcial: !!r.parcial });
+    if (!r.ok) return { ok: false, reason: r.reason, produtos: 0 };
+    return gravarVitrine(campaignId, r.products || [], { parcial: !!r.parcial });
   } finally {
     await res.browser.close().catch(() => {});
   }
 }
 
-// Grava os produtos de uma vitrine (venha ela do navegador ou da landing) e
+// Grava os produtos de uma vitrine (venha ela do navegador ou da extensão) e
 // carimba o catálogo. Vive fora do syncOneCoupon porque os dois caminhos de lá
 // terminam aqui, e duplicar isso é como as duas pontas passam a divergir.
 //
 // `carimbar: false` é de quem grava em lote: o `syncCatalogCoupons` varre a tabela
 // de vínculos inteira, e fazê-lo a cada cupom seria a mesma conta repetida. Quem
 // passa isso carimba uma vez no fim.
-async function gravarVitrine(campaignId, cupom, produtos, { parcial, carimbar = true }) {
+async function gravarVitrine(campaignId, produtos, { parcial, carimbar = true }) {
   const itens = produtos.map(p => ({ ...p, key: productKey(p) }));
   if (itens.length) await catalog.upsertProducts(itens);
   const v = await coupons.replaceCouponProducts(
     campaignId,
     itens.map(p => ({ productKey: p.key, productUrl: p.link })),
-    { origem: parcial ? "landing" : "vitrine" },
+    { origem: parcial ? "parcial" : "vitrine" },
   );
-  // As amostras seguem gravadas ao lado: elas são outra coleção, e a prévia da
-  // landing não as substitui (podem ser produtos diferentes do mesmo cupom).
-  if ((cupom?.sampleItemIds || []).length) {
-    await coupons.replaceCouponSamples(campaignId, cupom.sampleItemIds);
-  }
   if (carimbar) await coupons.syncCatalogCoupons();
   return { ok: true, produtos: itens.length, parcial, ...v };
 }
@@ -1446,7 +1405,7 @@ async function gravarVitrine(campaignId, cupom, produtos, { parcial, carimbar = 
 // aberto pelo admin: a extensão em `extension/` só colhe e a tela manda pra cá.
 //
 // Isso muda a natureza do dado: o que vem do agente é a LISTA FECHADA (`origem:
-// "vitrine"`), não a prova positiva da landing. É por isso que a validação abaixo
+// "vitrine"`), não um pedaço dela. É por isso que a validação abaixo
 // é dura — um payload torto viraria "este cupom NÃO cobre seu produto" para um
 // cupom que cobre, que é o prejuízo que coupons/quick-check.js existe pra evitar.
 
@@ -1527,7 +1486,7 @@ async function gravarVitrineLocal(campaignId, lista, { parcial = false, carimbar
   // o prejuízo que este arquivo inteiro existe pra evitar.
   const teto = Number(readConfig().maxProductsPerCoupon) || DEFAULT_CONFIG.maxProductsPerCoupon;
   const cortou = produtos.length > teto;
-  const r = await gravarVitrine(campaignId, cupom, cortou ? produtos.slice(0, teto) : produtos, {
+  const r = await gravarVitrine(campaignId, cortou ? produtos.slice(0, teto) : produtos, {
     parcial: !!parcial || cortou,
     carimbar,
   });
@@ -1615,15 +1574,6 @@ async function importCampaign(campaignId, { withProducts = true, maxProducts = n
   const palavras = await coupons.restampCodesFromChecks();
   await coupons.recoverCodesFromCoupons();
 
-  // As amostras do card vêm no próprio cupom que a busca achou, e são o que salva
-  // o caso comum aqui: a campanha que a palavra apontou quase sempre está NÃO
-  // ativada, e cupom não ativado não tem vitrine nenhuma pra ler.
-  let amostras = 0;
-  if ((achado.coupon.sampleItemIds || []).length) {
-    const a = await coupons.replaceCouponSamples(id, achado.coupon.sampleItemIds);
-    amostras = a.vinculados;
-  }
-
   let produtos = 0;
   let vinculos = 0;
   if (achado.products?.length) {
@@ -1632,7 +1582,7 @@ async function importCampaign(campaignId, { withProducts = true, maxProducts = n
     const v = await coupons.replaceCouponProducts(
       id,
       itens.map(p => ({ productKey: p.key, productUrl: p.link })),
-      { origem: achado.parcial ? "landing" : "vitrine" },
+      { origem: achado.parcial ? "parcial" : "vitrine" },
     );
     produtos = itens.length;
     vinculos = v.vinculados;
@@ -1644,7 +1594,6 @@ async function importCampaign(campaignId, { withProducts = true, maxProducts = n
     coupon: await coupons.getCoupon(id),
     produtos,
     vinculos,
-    amostras,
     palavrasRecarimbadas: palavras.recarimbados,
     avisoVitrine: achado.reasonVitrine || null,
   };

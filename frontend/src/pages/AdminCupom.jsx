@@ -49,15 +49,14 @@ const COBERTURA = {
   "sem-vitrine": "a vitrine desse cupom nunca foi raspada",
 };
 
-// De onde veio o vínculo que respondeu. Os três dizem "o cupom cobre este
-// produto", mas não com a mesma força: só a vitrine é a lista inteira. A prévia
-// da landing (3-8 itens) e as miniaturas do card (4) são o que o sistema consegue
-// enquanto a vitrine estiver atrás do muro anti-bot do ML — valem como resposta,
-// e a tela diz de onde ela saiu em vez de fingir que é a mesma coisa.
+// De onde veio o vínculo que respondeu. Todos dizem "o cupom cobre este
+// produto", mas não com a mesma força: só a vitrine é a lista inteira. Um pedaço
+// dela vale como resposta, e a tela diz de onde ela saiu em vez de fingir que é
+// a mesma coisa.
 const COBERTURA_ORIGEM = {
   vitrine: "pela vitrine raspada",
-  landing: "pela prévia da landing de afiliado",
-  amostra: "pelas miniaturas do card do cupom",
+  parcial: "por um pedaço da vitrine",
+  checkout: "pelo checkout do ML",
 };
 
 // Cinco perguntas diferentes moram nesta página, e cada uma tem a sua aba:

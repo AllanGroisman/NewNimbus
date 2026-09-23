@@ -691,7 +691,7 @@ export async function adminMlCupons({ page = 1, pageSize = 50, q, scope, groupin
   return http("GET", `/api/admin/ml-cupons?${params}`);
 }
 // `cupom` (com | com-palavra | sem-palavra | sem), `cupomBusca` (id, palavra ou
-// título) e `cupomOrigem` (vitrine | landing | amostra | checkout) filtram pelo
+// título) e `cupomOrigem` (vitrine | parcial | checkout) filtram pelo
 // vínculo cupom ↔ produto; cada item volta com `coupons` (os vigentes).
 export async function adminCatalog({ page = 1, pageSize = 50, category, source, q, sortBy, minDiscount, cupom, cupomBusca, cupomOrigem } = {}) {
   const params = new URLSearchParams();

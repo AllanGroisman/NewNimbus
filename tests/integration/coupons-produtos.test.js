@@ -128,9 +128,9 @@ describe("alvosDeProdutos — a fila da etapa 2", () => {
 describe("soSemProdutos — a fila sem os parciais (task 11)", () => {
   beforeEach(semear);
 
-  it("o parcial (só prévia) sai da fila, e a contagem diz quantos saíram", async () => {
-    // Uma prévia da landing: vínculo existe, `productsSyncedAt` não.
-    await coupons.replaceCouponProducts(PRONTO, [{ productKey: productKey(produto), productUrl: produto.link }], { origem: "landing" });
+  it("o parcial (só um pedaço) sai da fila, e a contagem diz quantos saíram", async () => {
+    // Um pedaço da vitrine: vínculo existe, `productsSyncedAt` não.
+    await coupons.replaceCouponProducts(PRONTO, [{ productKey: productKey(produto), productUrl: produto.link }], { origem: "parcial" });
 
     const todos = await sync.alvosDeProdutos({});
     expect(todos.prontos.map(c => c.campaignId)).toEqual([PRONTO]);
@@ -144,7 +144,7 @@ describe("soSemProdutos — a fila sem os parciais (task 11)", () => {
   });
 
   it("a rota lê o filtro da query", async () => {
-    await coupons.replaceCouponProducts(PRONTO, [{ productKey: productKey(produto), productUrl: produto.link }], { origem: "landing" });
+    await coupons.replaceCouponProducts(PRONTO, [{ productKey: productKey(produto), productUrl: produto.link }], { origem: "parcial" });
     const { user, auth } = await createTestUser();
     await authMod.setUserRole(user.id, "admin");
 
@@ -221,7 +221,7 @@ describe("gravarVitrineLocal — o teto de produtos corta, e o corte é parcial"
     expect(r.produtos).toBe(10);
     expect(r.parcial).toBe(true);
     expect(r.cortadosPeloTeto).toBe(15);
-    // Parcial grava como "landing" — prova positiva de cobertura, nunca lista
+    // Parcial grava como "parcial" — prova positiva de cobertura, nunca lista
     // fechada. É o que impede o "fora da vitrine".
     expect(await coupons.hasVitrine(PRONTO)).toBe(false);
   });

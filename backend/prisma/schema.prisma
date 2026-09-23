@@ -520,14 +520,14 @@ model MlCouponProduct {
   productUrl    String
   // De onde veio o vínculo, e é o que decide o peso dele:
   //   "vitrine" — raspado da vitrine (_Container_) no navegador: a lista COMPLETA.
-  //   "landing" — a prévia (3-8 itens) que a landing de afiliado entrega sem
-  //               navegador (scraping/ml-vitrine-landing.js).
-  //   "amostra" — as 4 miniaturas do card do cupom (ml_coupons.sampleItemIds).
+  //   "parcial" — um PEDAÇO da vitrine: a raspagem parou no muro, no teto de
+  //               páginas ou no teto de produtos por cupom.
   //   "checkout"— o checkout do ML aplicou/calculou o cupom NESTE produto (sonda da
   //               extensão, coupons/checkout-list.js). O mais forte de todos.
   // Os três provam que o produto ESTÁ coberto. Só "vitrine" é lista fechada, e
   // por isso só ele autoriza um "fora da vitrine" (coupons/quick-check.js).
-  // As três são coleções separadas: cada uma só apaga a si mesma.
+  // "landing" e "amostra" existiram até a task 22 (23/09/2026) e foram apagadas.
+  // As coleções são separadas: cada uma só apaga a si mesma.
   origem        String    @default("vitrine")
   firstSeenAt   DateTime  @default(now())
   lastSeenAt    DateTime  @default(now())

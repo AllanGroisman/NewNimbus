@@ -2,7 +2,7 @@
 //
 // É a tela de CONFERÊNCIA do vínculo cupom ↔ produto: quem tem cupom, quem tem
 // cupom com palavra, qual produto está na campanha X e de onde veio o vínculo
-// (vitrine, landing, amostra, checkout). Tudo só com cupom VIGENTE — o card mostra
+// (vitrine, parcial, checkout). Tudo só com cupom VIGENTE — o card mostra
 // o que o `couponsListForKeys` devolve, e o filtro não pode discordar dele.
 import { describe, it, expect, beforeEach } from "vitest";
 import path from "path";
@@ -26,7 +26,7 @@ const prod = (n, extra = {}) => ({
   link: `https://produto.mercadolivre.com.br/MLB-77000000${n}`, ...extra,
 });
 const A = prod(1, { discount: 40 });   // cupom com palavra, vitrine
-const B = prod(2);                      // cupom sem palavra, amostra
+const B = prod(2);                      // cupom sem palavra, vitrine parcial
 const C = prod(3);                      // só cupom vencido
 const D = prod(4);                      // sem cupom nenhum
 
@@ -46,7 +46,7 @@ beforeEach(async () => {
   ]);
   const par = (p) => [{ productKey: productKey(p), productUrl: p.link }];
   await coupons.replaceCouponProducts("9940001", par(A), { origem: "vitrine" });
-  await coupons.replaceCouponProducts("9940002", par(B), { origem: "amostra" });
+  await coupons.replaceCouponProducts("9940002", par(B), { origem: "parcial" });
   await coupons.replaceCouponProducts("9940003", par(C), { origem: "vitrine" });
 });
 
@@ -59,7 +59,7 @@ describe("GET /api/admin/catalog — filtros de cupom", () => {
     expect(porNome[A.name].coupons).toEqual([
       expect.objectContaining({ campaignId: "9940001", code: "CASA15", origem: "vitrine", title: "Cupom Casa Bonita" }),
     ]);
-    expect(porNome[B.name].coupons[0]).toMatchObject({ campaignId: "9940002", code: null, origem: "amostra" });
+    expect(porNome[B.name].coupons[0]).toMatchObject({ campaignId: "9940002", code: null, origem: "parcial" });
     expect(porNome[C.name].coupons).toBeUndefined();   // vencido não aparece
     expect(porNome[D.name].coupons).toBeUndefined();
   });
@@ -80,7 +80,7 @@ describe("GET /api/admin/catalog — filtros de cupom", () => {
   });
 
   it("origem do vínculo", async () => {
-    expect(nomes(await get("cupomOrigem=amostra"))).toEqual([B.name]);
+    expect(nomes(await get("cupomOrigem=parcial"))).toEqual([B.name]);
     expect(nomes(await get("cupomOrigem=vitrine"))).toEqual([A.name]);
   });
 

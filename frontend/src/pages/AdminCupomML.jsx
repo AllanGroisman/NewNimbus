@@ -750,7 +750,7 @@ export default function CuponsDoML({ buscaInicial = null }) {
             <Numero label="Com vitrine raspada" valor={s.comVitrine} />
             <Numero label="Sem produtos ainda" valor={faltamProdutos} />
             <Numero label="Vínculos cupom↔produto" valor={s.vinculos} />
-            {/* Quanto do número acima é prévia (landing ou miniaturas do card) e
+            {/* Quanto do número acima é pedaço de vitrine (ou checkout) e
                 não vitrine fechada. Fica ao lado de propósito: sem ele, "3.000
                 vínculos" parece cobertura que o sistema não tem. */}
             <Numero label="…destes, parciais" valor={s.parciais ?? 0} />
@@ -1230,25 +1230,23 @@ export default function CuponsDoML({ buscaInicial = null }) {
   );
 }
 
-// Os produtos de um cupom vêm de três lugares e valem coisas diferentes, então a
-// tela não pode mostrar os três como se fossem a mesma coisa:
+// Os produtos de um cupom vêm todos da página dele (_Container_), mas valem coisas
+// diferentes, então a tela não pode mostrar como se fossem a mesma coisa:
 //
-//   vitrine — a lista inteira, raspada da página do cupom (_Container_).
-//   landing — a prévia de 3-8 itens que a landing de afiliado entrega sem abrir
-//             navegador. É o que funciona hoje, com o muro anti-bot de pé.
-//   amostra — as 4 miniaturas que o card do cupom mostra na aba /cupons, e o
-//             ÚNICO vínculo possível do cupom não ativado.
+//   vitrine  — a lista inteira.
+//   parcial  — um pedaço dela: a raspagem parou no muro ou num teto.
+//   checkout — o checkout do ML aplicou o cupom naquele produto.
 //
-// Quem olha esta lista precisa saber qual está vendo: "5 produtos" de prévia não
-// quer dizer que o cupom cobre só 5.
+// Quem olha esta lista precisa saber qual está vendo: "5 produtos" de um pedaço
+// não quer dizer que o cupom cobre só 5.
 const ORIGEM = {
   vitrine: "vitrine",
-  landing: "prévia (landing)",
-  amostra: "miniatura do card",
+  parcial: "vitrine parcial",
+  checkout: "checkout",
 };
 // Em que pé está a lista de produtos do cupom. `productsSyncedAt` só é escrito
-// quando a vitrine inteira foi raspada; vínculo sem ele é prévia (landing,
-// miniaturas, checkout) — o "parcial" que o checkbox dos botões 2 e 3 pula.
+// quando a vitrine inteira foi raspada; vínculo sem ele é pedaço (vitrine
+// parcial, checkout) — o "parcial" que o checkbox dos botões 2 e 3 pula.
 function EstadoProdutos({ cupom }) {
   const [texto, cor] = cupom.productsSyncedAt
     ? ["completa", "var(--success-text)"]
@@ -1274,8 +1272,8 @@ function Produtos({ dados }) {
       <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 6 }}>
         {dados.total} produto(s) neste cupom
         {soParcial
-          ? " — só uma prévia; a vitrine completa dele ainda não foi raspada"
-          : parciais ? ` (${parciais} de prévia, não da vitrine completa)` : ""}
+          ? " — só um pedaço; a vitrine completa dele ainda não foi raspada"
+          : parciais ? ` (${parciais} fora da vitrine completa)` : ""}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {dados.items.map(p => (

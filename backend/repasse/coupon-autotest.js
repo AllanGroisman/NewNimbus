@@ -276,7 +276,7 @@ async function runOnce({ manual = false } = {}) {
             });
             if (r.ok) resumo.importados += 1;
           } else {
-            // Tenta a landing (duas chamadas HTTP, sem navegador) antes do Chrome.
+            // A vitrine da página do cupom, no Chrome do servidor.
             const r = await sync.syncOneCoupon(alvo.campaignId);
             const produtos = r?.produtos ?? r?.vinculos ?? null;
             await logAutotest({

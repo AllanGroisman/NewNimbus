@@ -383,57 +383,46 @@ o teste de cupom responde "não sei" para sempre. Os freios ficam no código:
 
 Desligar: *Limites da rodada* → "ativar os cupons automaticamente".
 
-### De onde vêm os produtos de um cupom (as três coleções)
+### De onde vêm os produtos de um cupom
 
-Desde 26/08/2026 `ml_coupon_products` guarda **três coleções**, separadas pela
-coluna `origem`, e confundi-las custa caro:
+Desde a task 22 (23/09/2026) os produtos de um cupom vêm **só da página dele** (a
+vitrine, `_Container_`). `ml_coupon_products.origem` separa o quanto se viu dela:
 
-| origem | o que é | quantos | como chega | é lista fechada? |
-|---|---|---|---|---|
-| `vitrine` | a lista COMPLETA do cupom | dezenas | `scrapeCouponProducts` abre o `_Container_` no Chrome | **sim** |
-| `landing` | a prévia da landing de afiliado | 3 a 8 | `ml-vitrine-landing.js`, sem navegador (~2 s) | não |
-| `amostra` | as miniaturas do card do cupom | sempre 4 | de graça, no modelo que a rodada já lê | não |
+| origem | o que é | é lista fechada? |
+|---|---|---|
+| `vitrine` | a vitrine inteira: a raspagem chegou ao fim da lista | **sim** |
+| `parcial` | um pedaço dela: parou no muro, no teto de páginas ou no `maxProductsPerCoupon` | não |
+| `checkout` | o checkout do ML aplicou o cupom naquele produto (`vincularPorCheckout`) | não |
 
-As três são coleções separadas e **cada uma só apaga a si mesma**. Sem isso,
-raspar a vitrine apagaria as amostras e a rodada seguinte apagaria a vitrine —
-zerando uma à outra em looping.
-
-A amostra existe porque a vitrine está atrás do muro anti-bot (a tabela lá em
-cima). Os ids dela **não estão no card**: o card traz `items[].image_url` e
-`alt_text` (é o `sampleItems`), sem id nenhum. Os MLBs vivem no bloco de
-telemetria da mesma página — `tracking.view.eventData.coupons_list[]`, num campo
-`item_ids` **irmão** de `segmentations` (cuidado: `segmentations.item_ids` também
-existe, e vem sempre vazio). Quem lê é `sampleIdsFromTracking`, e nos dumps
-guardados 72 de 72 cupons trazem os 4.
-
-Duas coisas que a amostra resolve e a vitrine não:
-
-- ela existe para o cupom **não ativado**, que não tem vitrine para raspar de jeito
-  nenhum (ver a tabela de ativação acima) — e esse é o caso da maioria;
-- ela não custa requisição nenhuma: vem no HTML que a rodada já baixou.
-
-Como o ML dá só o id, a URL gravada é sintética:
-`https://www.mercadolivre.com.br/x/p/MLB<id>` — a **mesma** forma que
-`coupons/quick-check.js:chavesCandidatas` monta a partir de
-`pdp_filters=item_id:MLB…`. Isso não é detalhe de estilo: o `productKey` é um hash
-da URL, então as duas pontas montando URLs diferentes dariam chaves diferentes e o
-vínculo nunca casaria com nada. Amostra **não** entra no catálogo (o ML não manda
-nome nem preço, e produto de catálogo sem isso é lixo que a fila teria que
-aprender a ignorar) e **não** carimba `productsSyncedAt`, que continua querendo
-dizer só "a vitrine foi raspada".
+As coleções são separadas e **cada uma só apaga a si mesma**: a rodada que só viu um
+pedaço da vitrine não pode apagar a lista completa que a anterior colheu.
 
 **A regra que erra caro** (`coupons/quick-check.js:coberturaDoProduto`): um vínculo
 que casa é resposta, venha de onde vier — foi o ML que disse que aquele produto
-está coberto. Mas `fora-da-vitrine` só pode sair quando o cupom tem vitrine DE
-VERDADE (`coupons/pg.js:hasVitrine`). Cinco itens de prévia que não casam não
-provam nada: o produto pode estar nos outros 43 da vitrine que ninguém leu. Contar
-prévia ali transformaria "não sei" em "não vale" e descartaria cupom bom — o mesmo
-prejuízo de tratar `sem-vitrine` como `fora-da-vitrine`, só por outra porta.
-Tem teste com banco em `tests/integration/coupons-amostra.test.js`.
+está coberto. Mas `fora-da-vitrine` só pode sair quando o cupom tem vitrine
+INTEIRA (`coupons/pg.js:hasVitrine`). Cinco itens de um pedaço que não casam não
+provam nada: o produto pode estar nos outros 43 que ninguém leu. Só `vitrine`
+carimba `ml_coupons.productsSyncedAt`.
 
 O `deleteMany` do `replaceCouponProducts` é escopado por origem, e produto que
 estava numa coleção fraca e apareceu na vitrine é **promovido**, não duplicado: a
 chave é a mesma.
+
+#### As prévias — removidas (task 22)
+
+Até 23/09/2026 havia mais duas fontes, ambas prévias e nenhuma da página do cupom:
+
+- `landing` — os 3-8 itens que a landing de afiliado entrega sem navegador
+  (`vitrinePelaLanding`). Quando respondia, a vitrine de verdade nem era aberta.
+- `amostra` — os 4 MLBs das miniaturas do card na aba /cupons
+  (`replaceCouponSamples`, a partir de `sampleIdsFromTracking`).
+
+As duas saíram dos fluxos de cupom e a migration `20260923120000_coupon_so_vitrine`
+apagou os vínculos delas (as vitrines parciais antigas estavam gravadas como
+`landing` e saíram junto — voltam na fila de "sem produtos"). O que ficou:
+`ml_coupons.sampleItemIds`/`sampleItems` continuam sendo lidos e guardados no
+cupom (vêm de graça no modelo), e `scraping/ml-vitrine-landing.js` continua
+existindo para a sonda `scripts/cupom-produtos-visual.js`.
 
 ### A varredura em lote (task 12, 19/09/2026) — removida
 
@@ -447,7 +436,7 @@ das amostras (`coupons/enrich-samples.js`) foram removidos. As colunas
   produto por vendedor seria inferência — o sistema só grava vínculo quando o ML diz.
 
 O botão "2 · Buscar produtos dos que faltam" (extensão) continua sendo a vitrine
-FECHADA, e agora começa pelos cupons que a landing não conseguiu ler.
+FECHADA.
 
 ### A sonda do checkout: "quais cupons pegam NESTE produto?"
 
@@ -490,13 +479,13 @@ O que ainda **não** existe, de propósito: concluir "este cupom NÃO vale aqui"
 ausência na lista. Com uma sonda só não dá pra saber se a lista é completa, e a
 regra de "fora" errada descarta cupom bom.
 
-### A landing de afiliado da vitrine (o caminho que funciona hoje)
+### A landing de afiliado da vitrine (fora dos fluxos de cupom desde a task 22)
 
 É o truque do repasse aplicado à vitrine: a `containerUrl` passa pela API de link
 curto do **próprio ML** (com a conta do sistema) e a landing que sai é lida por
-`fetch`, sem navegador. Quem faz é `scraping/ml-vitrine-landing.js`, e o
-`scrapeCouponProducts` tenta esse caminho **antes** de abrir o Chrome — se ele
-responder, o navegador nem é aberto.
+`fetch`, sem navegador. Quem faz é `scraping/ml-vitrine-landing.js`. Até a task 22
+o `scrapeCouponProducts` tentava esse caminho **antes** de abrir o Chrome; hoje só
+a sonda visual usa o módulo.
 
 Medido em 26/08/2026, três cupons: funciona, e é rápido (~2 s por cupom, contra
 ~30 s do navegador). Mas **não traz a vitrine inteira**: o ML monta uma PRÉVIA — 3,
@@ -534,14 +523,7 @@ o cookie e nunca ativa cupom. Cuidado ao ler a saída dela: contar MLB no HTML c
 **mente** (foi a primeira leitura errada desta sonda), por causa dos blocos de
 recomendação. O número que vale é o do `carousel-featured`.
 
-### Por que a busca de produtos só traz a prévia (e a sonda visual)
-
-A vitrine no navegador **só é tentada quando a landing falha**: tanto
-`coupons/sync.js:syncOneCoupon` quanto `scraping/ml-cupons.js:scrapeCouponProducts`
-chamam `vitrinePelaLanding` primeiro e **retornam ali mesmo** com `parcial: true`
-quando ela responde. Como hoje ela quase sempre responde, o laço de
-`lista.mercadolivre.com.br/_Container_…` praticamente não roda — e o que chega são
-os 3–8 produtos da prévia, com `origem: "landing"`.
+### A sonda visual
 
 Para ver isso de olho, `scripts/cupom-produtos-visual.js` fotografa cada página do
 caminho em `debug-cupom/<ts>-<campaignId>/` na raiz do projeto: o link curto, a
@@ -573,8 +555,8 @@ insiste sozinha e nunca vê credencial nenhuma.
 
 O que muda no dado é o ponto inteiro: o que vem dali entra com `origem: "vitrine"`
 (lista fechada), então `hasVitrine` passa a valer e o `quick-check` ganha de volta
-a resposta **"fora-da-vitrine"**, que a prévia da landing nunca pode dar. Se a
-coleta parou no meio, ela diz `parcial: true` e o backend grava como `"landing"`.
+a resposta **"fora-da-vitrine"**. Se a coleta parou no meio, ela diz
+`parcial: true` e o backend grava como `"parcial"`.
 
 Dois avisos de manutenção:
 
@@ -630,11 +612,10 @@ carimbada no `ml_coupons.code`.
 
 ### Onde os dados ficam
 
-- `ml_coupons` — o cupom (PK `campaign_id`). `sampleItemIds` são os 4 MLBs da
-  amostra, guardados no cupom para se poder regravar os vínculos sem reabrir a
-  página.
+- `ml_coupons` — o cupom (PK `campaign_id`). `sampleItemIds` são os 4 MLBs das
+  miniaturas do card — só guardados, não viram vínculo (task 22).
 - `ml_coupon_products` — o vínculo cupom ↔ produto pelo `productKey` do catálogo,
-  com `origem` ∈ `vitrine` | `amostra` (ver acima).
+  com `origem` ∈ `vitrine` | `parcial` | `checkout` (ver acima).
 - `ml_coupon_codes` — as palavras testadas e a resposta do ML.
 - `catalog_products.couponCampaignId` — **coluna**, não payload: o upsert do
   scraping reescreve o payload inteiro (`catalog/pg.js:toRow`), então o cupom

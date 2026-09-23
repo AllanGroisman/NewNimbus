@@ -64,7 +64,6 @@ const CARD_SELECTORS = ["[class*='coupon' i]", ".andes-card", "[class*='card' i]
 const NAV_TIMEOUT_MS = 45000;
 const COUPON_PAUSE_MS = 2000;        // entre a vitrine de um cupom e a do próximo
 const PAGE_PAUSE_MS = 400;           // entre páginas da mesma vitrine
-const LANDING_PAUSE_MS = 300;        // entre cupons quando a vitrine veio pela landing (sem navegador)
 const CONTAINER_MAX_PAGES = 3;
 const CONTAINER_PAGE_SIZE = 48;      // o `_Desde_` do ML anda de 48 em 48 (1, 49, 97...)
 
@@ -205,11 +204,9 @@ function palavraDoTitulo(titulo) {
 // `segmentations.item_ids` existe e vem sempre vazio). Nos dumps guardados, 72 de
 // 72 cupons trazem, sempre 4.
 //
-// Por que isso vale ouro aqui: são produtos reais da vitrine que chegam de graça,
-// no HTML que a rodada JÁ baixa, e para TODO cupom — inclusive o não ativado, que
-// não tem vitrine pra raspar de jeito nenhum. Não é a vitrine inteira, e é por isso
-// que eles são gravados marcados (`origem: "amostra"`): servem de prova POSITIVA
-// ("está coberto"), nunca de prova negativa.
+// São produtos reais da vitrine que chegam de graça, no HTML que a rodada JÁ
+// baixa. Ficam guardados no cupom (`ml_coupons.sampleItemIds`), mas desde a task 22
+// não viram vínculo: os produtos de um cupom vêm só da página dele.
 function sampleIdsFromTracking(bloco) {
   const lista = bloco?.tracking?.view?.eventData?.coupons_list;
   const mapa = new Map();
@@ -929,30 +926,6 @@ async function ativarNaPagina(page, cupons, { restantes = { n: 20 }, onAtivou = 
 // É uma página de listagem normal do ML, então quem lê os cards é o harvestMLCards
 // do scraper.js — o mesmo código da vitrine pública e do teste de produto. Escrever
 // leitura de card nova aqui seria uma terceira cópia dos mesmos seletores.
-// A vitrine pela landing de afiliado: sem navegador, sem CAPTCHA, e sem gastar a
-// conta do sistema. Devolve produtos ou null — falhar aqui é normal e silencioso,
-// porque o caminho do navegador continua existindo atrás.
-//
-// O que vem daqui é uma PRÉVIA (o ML manda 3-8 produtos, não a vitrine inteira),
-// então quem grava marca como `origem: "landing"` — prova positiva de cobertura,
-// nunca lista fechada. Ver scraping/ml-vitrine-landing.js.
-async function vitrinePelaLanding(coupon) {
-  const url = containerUrlFor(coupon);
-  if (!url) return null;
-  try {
-    const r = await require("./ml-vitrine-landing").fetchVitrineLanding(url);
-    if (!r.ok || !r.products.length) return { ok: false, reason: r.reason, kind: r.kind };
-    for (const p of r.products) {
-      p.img = upgradeMLImageUrl(p.img);
-      p.store = "Mercado Livre";
-    }
-    return { ok: true, products: r.products, total: r.total, reason: r.reason };
-  } catch (err) {
-    // Nunca derruba a rodada: este é o caminho barato, o caro vem depois.
-    return { ok: false, reason: err.message, kind: "erro" };
-  }
-}
-
 async function scrapeCouponProducts(browser, coupon, { maxProducts = 100, maxPages = CONTAINER_MAX_PAGES } = {}) {
   const url = containerUrlFor(coupon);
   if (!url) {
@@ -965,18 +938,13 @@ async function scrapeCouponProducts(browser, coupon, { maxProducts = 100, maxPag
     };
   }
 
-  // Primeiro a landing de afiliado: ela não abre navegador, não corre risco de
-  // CAPTCHA e não mexe na conta. Se ela responder, a vitrine no Chrome nem é
-  // tentada — hoje esse caminho está barrado de qualquer jeito, e cada tentativa
-  // aproxima a conta do sistema de uma verificação que derrubaria o Hub junto.
-  const pelaLanding = await vitrinePelaLanding(coupon);
-  if (pelaLanding?.ok) {
-    return { ok: true, reason: pelaLanding.reason, products: pelaLanding.products.slice(0, maxProducts), url, parcial: true };
-  }
-
   const vistos = new Set();
   const products = [];
   let blocked = null;
+  // Só a vitrine que ACABOU (página vazia ou o ML repetindo) é lista fechada. Parar
+  // no teto de produtos ou de páginas viu um pedaço dela, e isso vai como `parcial`
+  // — senão o quick-check diria "fora da vitrine" pro produto da página seguinte.
+  let acabou = false;
 
   for (let pageNum = 1; pageNum <= maxPages && products.length < maxProducts; pageNum++) {
     const page = await browser.newPage();
@@ -994,7 +962,7 @@ async function scrapeCouponProducts(browser, coupon, { maxProducts = 100, maxPag
 
       await autoScroll(page);
       const cards = await harvestMLCards(page, null);
-      if (!cards.length) break;   // passou da última página
+      if (!cards.length) { acabou = true; break; }   // passou da última página
 
       let novos = 0;
       for (const p of cards) {
@@ -1006,7 +974,7 @@ async function scrapeCouponProducts(browser, coupon, { maxProducts = 100, maxPag
         novos++;
         if (products.length >= maxProducts) break;
       }
-      if (!novos) break;   // o ML começou a repetir
+      if (!novos) { acabou = true; break; }   // o ML começou a repetir
     } catch (err) {
       return { ok: false, reason: err.message, products, url };
     } finally {
@@ -1015,7 +983,7 @@ async function scrapeCouponProducts(browser, coupon, { maxProducts = 100, maxPag
     await sleep(PAGE_PAUSE_MS + Math.floor(Math.random() * 400));
   }
 
-  return { ok: true, reason: null, products, url };
+  return { ok: true, reason: null, products, url, parcial: !acabou };
 }
 
 // Digita UMA palavra no campo "Inserir código do cupom" e lê o que o ML responde.
@@ -1280,7 +1248,6 @@ module.exports = {
   filterUrl,
   crawlFilter,
   containerUrlFor,
-  vitrinePelaLanding,
   aAtivar,
   ativarNaPagina,
   containerPageUrl,

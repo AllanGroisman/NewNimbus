@@ -4,7 +4,7 @@
 // O que protege:
 //   - o link do produto acha o cupom mesmo quando o vínculo foi gravado por outra
 //     numeração (/up/MLBU com `pdp_filters`, anúncio × catálogo);
-//   - cada cupom diz DE ONDE veio (prévia, amostra, vitrine) — não são a mesma garantia;
+//   - cada cupom diz DE ONDE veio (vitrine parcial, vitrine) — não são a mesma garantia;
 //   - cupom vencido não aparece;
 //   - "não vale neste preço" (compra mínima) não vira desconto inventado;
 //   - a sonda grava os arquivos e não interpreta nada.
@@ -26,6 +26,8 @@ const { prisma } = require(path.join(backendDir, "db.js"));
 
 const AMANHA = () => new Date(Date.now() + 864e5);
 const LINK = "https://www.mercadolivre.com.br/fone-bluetooth/p/MLB22222222";
+const vincular = (campaignId, link = LINK, origem = "vitrine") =>
+  coupons.replaceCouponProducts(campaignId, [{ productKey: pcKey(link), productUrl: link }], { origem });
 
 async function cupom(campaignId, over = {}) {
   return prisma().mlCoupon.create({
@@ -41,31 +43,31 @@ describe("paraProduto", () => {
   it("lista os cupons do produto com a origem de cada vínculo e o preço com cupom", async () => {
     await cupom("A", { value: 10 });
     await cupom("B", { value: 25 });
-    await coupons.replaceCouponProducts("A", [{ productKey: pcKey(LINK), productUrl: LINK }], { origem: "landing" });
-    await coupons.replaceCouponSamples("B", ["MLB22222222"]);
+    await vincular("A", LINK, "parcial");
+    await vincular("B");
 
     const r = await pc.paraProduto({ url: LINK });
 
     expect(r.produto).toMatchObject({ name: "Fone Bluetooth", price: 200 });
     // Ordenado pela maior economia neste preço.
     expect(r.cupons.map(c => [c.campaignId, c.origem, c.priceWithCoupon])).toEqual([
-      ["B", "amostra", 150],
-      ["A", "landing", 180],
+      ["B", "vitrine", 150],
+      ["A", "parcial", 180],
     ]);
-    expect(r.cupons[0].origemRotulo).toMatch(/miniatura/);
+    expect(r.cupons[1].origemRotulo).toMatch(/parte da vitrine/);
     expect(r.semVinculo).toBe(false);
   });
 
   it("acha pelo link /up/ com o anúncio na query — a numeração que o afiliado compartilha", async () => {
     await cupom("A");
-    await coupons.replaceCouponSamples("A", ["MLB33333333"]);
+    await vincular("A", "https://www.mercadolivre.com.br/x/p/MLB33333333");
     const r = await pc.paraProduto({ url: "https://www.mercadolivre.com.br/x/up/MLBU999?pdp_filters=item_id:MLB33333333" });
     expect(r.cupons.map(c => c.campaignId)).toEqual(["A"]);
   });
 
   it("cupom vencido não aparece", async () => {
     await cupom("VELHO", { expiresAt: new Date(Date.now() - 864e5) });
-    await coupons.replaceCouponSamples("VELHO", ["MLB22222222"]);
+    await vincular("VELHO");
     const r = await pc.paraProduto({ url: LINK });
     expect(r.cupons).toEqual([]);
     expect(r.semVinculo).toBe(true);
@@ -73,14 +75,14 @@ describe("paraProduto", () => {
 
   it("compra mínima não atingida: mostra o cupom, sem prometer desconto", async () => {
     await cupom("MIN", { minPurchase: 500 });
-    await coupons.replaceCouponSamples("MIN", ["MLB22222222"]);
+    await vincular("MIN");
     const r = await pc.paraProduto({ url: LINK });
     expect(r.cupons[0]).toMatchObject({ campaignId: "MIN", priceWithCoupon: null, economia: null });
   });
 
   it("o mesmo cupom por duas chaves fica com a origem mais forte", () => {
     const r = pc.montarResposta([
-      { campaignId: "A", origem: "amostra", kind: "percent", value: 10 },
+      { campaignId: "A", origem: "parcial", kind: "percent", value: 10 },
       { campaignId: "A", origem: "vitrine", kind: "percent", value: 10 },
     ], { price: 100 });
     expect(r.cupons).toHaveLength(1);

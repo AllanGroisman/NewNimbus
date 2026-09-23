@@ -36,14 +36,13 @@ const SONDA_DIR = path.join(__dirname, "..", "logs", "ml-checkout-cupons");
 const ORIGEM_ROTULO = {
   checkout: "checkout do ML (testado neste produto)",
   vitrine: "vitrine completa do cupom",
-  landing: "prévia da vitrine (landing de afiliado)",
-  amostra: "miniatura do card do cupom",
+  parcial: "parte da vitrine do cupom",
 };
 
 // Pura: as linhas do banco viram a resposta da tela. Um cupom pode aparecer por mais
 // de uma chave do mesmo produto; fica a origem mais forte.
 function montarResposta(linhas, produto) {
-  const peso = { checkout: 4, vitrine: 3, landing: 2, amostra: 1 };
+  const peso = { checkout: 4, vitrine: 3, parcial: 2 };
   const porCampanha = new Map();
   for (const l of linhas || []) {
     const atual = porCampanha.get(l.campaignId);

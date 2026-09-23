@@ -80,19 +80,6 @@ describe("mesmo anúncio pela vitrine do cupom e pelo scraping", () => {
     expect(await linhasDoAnuncio("5100000003")).toHaveLength(1);
   });
 
-  it("amostra do anúncio aponta para a linha que já o tem sob outra chave", async () => {
-    const v = vitrine("71000004", "5100000004");
-    await catalog.upsertProducts([v]);
-    await coupons.upsertCoupons([{ campaignId: "9930004", title: "Cupom amostra", kind: "percent", value: 10, expiresAt: AMANHA() }]);
-    await coupons.replaceCouponSamplesMany([{ campaignId: "9930004", sampleItemIds: ["MLB5100000004"] }]);
-    await coupons.syncCatalogCoupons();
-
-    const vinc = await prisma().mlCouponProduct.findMany({ where: { campaignId: "9930004" } });
-    expect(vinc.map(x => x.productKey)).toEqual([productKey(v)]);
-    const [linha] = await linhasDoAnuncio("5100000004");
-    expect(linha.couponCampaignId).toBe("9930004");
-  });
-
   it("anúncios diferentes com o mesmo nome continuam separados", async () => {
     await catalog.upsertProducts([
       scraping("5100000005", { name: "Mesmo nome" }),
@@ -123,7 +110,7 @@ describe("scripts/merge-ml-duplicates.js — o que ficou de antes da coluna", ()
       } });
     }
     await coupons.upsertCoupons([{ campaignId: "9930008", title: "Cupom velho", kind: "percent", value: 10, expiresAt: AMANHA() }]);
-    await prisma().mlCouponProduct.create({ data: { campaignId: "9930008", productKey: productKey(s), productUrl: s.link, origem: "landing" } });
+    await prisma().mlCouponProduct.create({ data: { campaignId: "9930008", productKey: productKey(s), productUrl: s.link, origem: "parcial" } });
 
     const r = await mergeDuplicates({ apply: true, log: () => {} });
     expect(r.grupos).toBeGreaterThanOrEqual(1);

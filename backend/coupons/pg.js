@@ -115,10 +115,10 @@ async function upsertCoupons(coupons, { origin = "page" } = {}) {
 // Vínculo que não veio nesta rodada é APAGADO: o cupom deixou de cobrir aquele
 // produto, e um vínculo velho vira promessa falsa na fila do repasse.
 //
-// O apagamento é escopado por ORIGEM, e isso não é detalhe: vitrine e amostra são
-// duas coleções que chegam por caminhos diferentes e em momentos diferentes. Sem o
-// escopo, raspar a vitrine apagaria as amostras (e a rodada seguinte, que só
-// consegue as amostras, apagaria a vitrine inteira) — cada uma zerando a outra.
+// O apagamento é escopado por ORIGEM, e isso não é detalhe: vitrine completa e
+// vitrine parcial são duas coleções que chegam em momentos diferentes. Sem o
+// escopo, a rodada que só conseguiu um pedaço da vitrine apagaria a lista
+// completa que a anterior tinha colhido.
 async function replaceCouponProducts(campaignId, items, { origem = "vitrine" } = {}) {
   const pares = (items || [])
     .filter(it => it?.productKey && it?.productUrl)
@@ -126,7 +126,7 @@ async function replaceCouponProducts(campaignId, items, { origem = "vitrine" } =
   const r = await gravarVinculos(pares, [String(campaignId)], origem);
 
   // `productsSyncedAt` quer dizer "a VITRINE foi raspada" e continua querendo
-  // dizer só isso — a amostra não é vitrine e não pode carimbar esse campo, senão
+  // dizer só isso — a vitrine parcial não pode carimbar esse campo, senão
   // a tela pararia de oferecer o botão de raspar justamente onde ele é preciso.
   if (origem === "vitrine") {
     await prisma().mlCoupon.update({ where: { campaignId }, data: { productsSyncedAt: nowish() } }).catch(() => {});
@@ -139,7 +139,7 @@ async function replaceCouponProducts(campaignId, items, { origem = "vitrine" } =
 // DELETE, em vez de uma ida ao banco por vínculo.
 //
 // É o mesmo formato do `syncCatalogCoupons` aqui embaixo (UNNEST de arrays
-// paralelos), e é o que tirou a gravação da rodada dos 90s do nginx: as amostras
+// paralelos), e é o que tirou a gravação da rodada dos 90s do nginx: os vínculos
 // de 2.871 cupons eram ~17 mil idas em fila indiana (171s medidos) e passaram a
 // ser 7 comandos (1,1s). Só o SQL muda — a semântica das coleções por origem é a
 // mesma de antes.
@@ -152,14 +152,12 @@ async function replaceCouponProducts(campaignId, items, { origem = "vitrine" } =
 // o mesmo anúncio chega com chaves diferentes pela vitrine (nº de catálogo no
 // caminho) e pelo scraping (nº do anúncio), e o vínculo tem que apontar para a
 // linha que existe — senão o carimbo do `syncCatalogCoupons` nunca acha o produto.
-// `linkAnuncio` é a URL a usar nessa resolução quando a `productUrl` não diz o
-// anúncio (a sintética da amostra é `/p/`, mas o número é de anúncio).
 async function gravarVinculos(pares, campanhas, origem) {
   const agora = nowish();
 
   const catalog = require("../catalog/pg");
   const canonica = await catalog.resolveKeys(
-    (pares || []).map(p => ({ key: p.productKey, link: p.linkAnuncio || p.productUrl })),
+    (pares || []).map(p => ({ key: p.productKey, link: p.productUrl })),
   );
   pares = (pares || []).map(p => ({
     campaignId: p.campaignId,
@@ -201,8 +199,7 @@ async function gravarVinculos(pares, campanhas, origem) {
   }
 
   // Depois do INSERT, nunca antes: só se apaga quando tudo que vale já está
-  // gravado. `enrichTriedAt` não é tocado em lugar nenhum daqui — quem já tentou
-  // trazer a amostra pro catálogo não volta pra fila por causa de uma regravação.
+  // gravado.
   const removidos = Number(await prisma().$executeRaw`
     DELETE FROM "ml_coupon_products" p
      WHERE p."origem" = ${origem}
@@ -214,51 +211,6 @@ async function gravarVinculos(pares, campanhas, origem) {
   `);
 
   return { vinculados: validos.length, removidos };
-}
-
-// As 4 miniaturas do card do cupom, gravadas como vínculo parcial.
-//
-// Vem de `ml_coupons.sampleItemIds` (ml-cupons.js:sampleIdsFromTracking). Como o
-// ML não dá a URL do anúncio ali — só o id —, a URL é a sintética de catálogo, a
-// MESMA forma que coupons/quick-check.js:chavesCandidatas monta a partir de
-// `pdp_filters=item_id:MLB…`. É isso que faz a chave bater dos dois lados: se as
-// duas pontas não usarem a mesma URL, o hash sai diferente e o vínculo nunca casa.
-function linkSinteticoML(itemId) {
-  const n = (String(itemId || "").match(/MLB-?(\d{6,})/i) || [])[1];
-  return n ? `https://www.mercadolivre.com.br/x/p/MLB${n}` : null;
-}
-
-async function replaceCouponSamples(campaignId, itemIds) {
-  return replaceCouponSamplesMany([{ campaignId, sampleItemIds: itemIds }]);
-}
-
-// As amostras de VÁRIOS cupons de uma vez — o que a gravação da rodada usa.
-//
-// Existe porque a rodada tem milhares de cupons e cada um traz 4 miniaturas:
-// chamar o de cima cupom a cupom era ~6 idas ao banco por cupom e foi o que
-// estourou o tempo do nginx no meio da etapa 2. Aqui tudo vira um punhado de
-// comandos, e o escopo do apagamento continua sendo exatamente os cupons
-// recebidos — cupom que não veio nesta chamada não tem amostra mexida.
-async function replaceCouponSamplesMany(cupons) {
-  const { productKey } = require("../catalog/product-key");
-  const pares = [];
-  const campanhas = [];
-
-  for (const c of cupons || []) {
-    if (!c?.campaignId) continue;
-    const campaignId = String(c.campaignId);
-    campanhas.push(campaignId);
-    for (const id of c.sampleItemIds || []) {
-      const link = linkSinteticoML(id);
-      if (!link) continue;
-      // O número da amostra é de ANÚNCIO (com /p/MLB o ML recusa o link), e é pela
-      // URL de anúncio que a resolução acha a linha do catálogo que já o tem.
-      const linkAnuncio = link.replace(/^.*\/p\/MLB/, "https://produto.mercadolivre.com.br/MLB-");
-      pares.push({ campaignId, productKey: productKey({ link }), productUrl: link, linkAnuncio });
-    }
-  }
-
-  return gravarVinculos(pares, campanhas, "amostra");
 }
 
 // Carimba no catálogo qual campanha cobre cada produto — e tira o carimbo do que
@@ -494,10 +446,9 @@ async function hasCouponProduct(campaignId, productKey) {
   return !!(await couponProductOrigem(campaignId, productKey));
 }
 
-// O mesmo vínculo, mas dizendo de ONDE ele veio ("vitrine" | "amostra"), ou null
-// se não existe. A tela usa isso para não dar à amostra o peso da vitrine: as duas
-// respondem "o cupom cobre este produto", mas uma vem da lista inteira e a outra
-// de 4 miniaturas.
+// O mesmo vínculo, mas dizendo de ONDE ele veio ("vitrine" | "parcial" |
+// "checkout"), ou null se não existe. A tela usa isso para não dar a um pedaço da
+// vitrine o peso da lista inteira.
 async function couponProductOrigem(campaignId, productKey) {
   if (!campaignId || !productKey) return null;
   const row = await prisma().mlCouponProduct.findUnique({
@@ -507,11 +458,11 @@ async function couponProductOrigem(campaignId, productKey) {
   return row ? (row.origem || "vitrine") : null;
 }
 
-// Esta campanha tem vitrine RASPADA (não só as amostras do card)?
+// Esta campanha tem vitrine RASPADA INTEIRA (não só um pedaço dela)?
 //
 // É a pergunta que separa "o produto não está na vitrine" de "não sei": só quem
-// tem a lista completa pode dizer que um produto está fora dela. Quatro amostras
-// não autorizam essa frase — ver coupons/quick-check.js:coberturaDoProduto.
+// tem a lista completa pode dizer que um produto está fora dela. Um pedaço da
+// vitrine não autoriza essa frase — ver coupons/quick-check.js:coberturaDoProduto.
 async function hasVitrine(campaignId) {
   if (!campaignId) return false;
   const n = await prisma().mlCouponProduct.count({ where: { campaignId: String(campaignId), origem: "vitrine" } });
@@ -615,8 +566,8 @@ async function stats() {
     prisma().mlCoupon.count({ where: { OR: [{ expiresAt: null }, { expiresAt: { gt: agora } }] } }),
     prisma().mlCoupon.count({ where: { productsSyncedAt: { not: null } } }),
     prisma().mlCouponProduct.count(),
-    // Quanto do total de vínculos NÃO é vitrine fechada — a prévia da landing e
-    // as miniaturas do card. Sem essa separação o número grande do painel esconde
+    // Quanto do total de vínculos NÃO é vitrine fechada — a vitrine parcial e o
+    // checkout. Sem essa separação o número grande do painel esconde
     // que quase nenhum cupom tem a lista completa.
     prisma().mlCouponProduct.count({ where: { NOT: { origem: "vitrine" } } }),
     prisma().mlCoupon.count({ where: { code: { not: null } } }),
@@ -730,8 +681,8 @@ async function recoverCodesFromCoupons() {
 // só o escreve para `origem: "vitrine"`), e é ele que faz o botão "buscar os que
 // faltam" não repetir o trabalho da rodada anterior.
 //
-// `soSemProdutos` tira da fila os PARCIAIS — quem já tem algum vínculo (landing,
-// amostra, checkout) mas não a vitrine fechada. É o "começa por quem não tem nada".
+// `soSemProdutos` tira da fila os PARCIAIS — quem já tem algum vínculo (vitrine
+// parcial, checkout) mas não a vitrine fechada. É o "começa por quem não tem nada".
 async function couponsSemVitrine({ limit = 500, campaignIds = null, soSemProdutos = false } = {}) {
   const teto = Math.min(2000, Math.max(1, Number(limit) || 500));
   const alvo = Array.isArray(campaignIds) && campaignIds.length
@@ -783,11 +734,11 @@ async function couponsSemVitrine({ limit = 500, campaignIds = null, soSemProduto
 // não veio neste checkout também não é apagado (não prova ausência — ainda).
 //
 // Vínculo `vitrine` já existente fica `vitrine` (as duas são fortes, e a vitrine é a
-// que autoriza o "fora" do quick-check); `landing`/`amostra` são promovidos.
+// que autoriza o "fora" do quick-check); `parcial` é promovido.
 //
 // Cupom que o sistema ainda não tinha (a aba /cupons não o listou) é CRIADO com o
 // que o checkout disse dele — e só criado: cupom que já existe não é reescrito,
-// porque a linha da aba sabe coisas (vitrine, amostras) que o checkout não traz.
+// porque a linha da aba sabe coisas (vitrine, regra, categorias) que o checkout não traz.
 async function vincularPorCheckout({ productKeys, productUrl, cupons }) {
   const candidatas = [...new Set((productKeys || []).filter(Boolean))];
   const lista = (cupons || []).filter(c => c?.campaignId);
@@ -867,9 +818,6 @@ module.exports = {
   findCouponByCode,
   recoverCodesFromCoupons,
   replaceCouponProducts,
-  replaceCouponSamples,
-  replaceCouponSamplesMany,
-  linkSinteticoML,
   hasVitrine,
   syncCatalogCoupons,
   recordCodeCheck,

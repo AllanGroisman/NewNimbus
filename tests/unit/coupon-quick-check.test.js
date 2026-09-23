@@ -208,28 +208,10 @@ function comBanco({ origem = null, temVitrine = false }, fn) {
   return Promise.resolve(fn()).finally(() => Object.assign(pg, orig));
 }
 
-describe("a URL sintética da amostra casa com a chave do produto", () => {
-  // O ML dá só o id na amostra, sem URL de anúncio. A chave sai de uma URL
-  // montada — e ela tem que ser a MESMA que o chavesCandidatas monta do outro
-  // lado, senão o hash sai diferente e o vínculo nunca casa com nada.
-  it("a chave da amostra é uma das chaves candidatas do link do produto", () => {
-    const chaveDaAmostra = productKey({ link: pg.linkSinteticoML("MLB5456947676") });
-    const doLink = chavesCandidatas(
-      "https://www.mercadolivre.com.br/produto/up/MLBU3344556?pdp_filters=item_id:MLB5456947676",
-    );
-    expect(doLink).toContain(chaveDaAmostra);
-  });
-
-  it("id que não é MLB não vira link (e portanto não vira vínculo)", () => {
-    expect(pg.linkSinteticoML("lixo")).toBe(null);
-    expect(pg.linkSinteticoML(null)).toBe(null);
-  });
-});
-
 describe("coberturaDoProduto — o peso de cada vínculo", () => {
-  it("vínculo de amostra que casa é resposta: está na vitrine", async () => {
-    await comBanco({ origem: "amostra" }, async () => {
-      expect(await coberturaDoProduto("123", ["k1"])).toEqual({ cobertura: NA_VITRINE, origem: "amostra" });
+  it("vínculo de vitrine parcial que casa é resposta: está na vitrine", async () => {
+    await comBanco({ origem: "parcial" }, async () => {
+      expect(await coberturaDoProduto("123", ["k1"])).toEqual({ cobertura: NA_VITRINE, origem: "parcial" });
     });
   });
 
@@ -239,7 +221,7 @@ describe("coberturaDoProduto — o peso de cada vínculo", () => {
     });
   });
 
-  it("O ERRO CARO: só amostras guardadas e nenhuma casa ⇒ não sei, nunca 'fora'", async () => {
+  it("O ERRO CARO: só pedaço da vitrine guardado e nenhum casa ⇒ não sei, nunca 'fora'", async () => {
     await comBanco({ origem: null, temVitrine: false }, async () => {
       const r = await coberturaDoProduto("123", ["k1"]);
       expect(r.cobertura).toBe(SEM_VITRINE);
