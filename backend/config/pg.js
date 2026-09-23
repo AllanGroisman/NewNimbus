@@ -100,4 +100,13 @@ function stopAutoRefresh() {
   if (_refreshTimer) { clearInterval(_refreshTimer); _refreshTimer = null; }
 }
 
-module.exports = { get, set, del, flush, warmup, startAutoRefresh, stopAutoRefresh };
+// Só pra testes: a suíte de integração roda vários arquivos no mesmo processo
+// (isolate: false) e limpa o banco entre eles. Sem esvaziar o cache, uma loja
+// trancada num arquivo continuaria trancada no seguinte. Espera as gravações em
+// vôo antes, pra nenhuma cair no banco depois da limpeza do próximo arquivo.
+async function resetForTests() {
+  await flush();
+  _cache.clear();
+}
+
+module.exports = { get, set, del, flush, warmup, startAutoRefresh, stopAutoRefresh, resetForTests };

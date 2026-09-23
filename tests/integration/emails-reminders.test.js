@@ -11,7 +11,7 @@
 // "skipped_test_env". O que importa aqui é a linha em email_log — é ela que
 // garante o não-repeat.
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterAll } from "vitest";
 import "../helpers/env.js";
 import path from "path";
 import crypto from "crypto";
@@ -24,7 +24,24 @@ const require = createRequire(import.meta.url);
 const backendDir = path.resolve(__dirname, "..", "..", "backend");
 
 const { prisma } = require(path.join(backendDir, "db.js"));
-const reminders = require(path.join(backendDir, "billing", "reminders.js"));
+
+// A integração roda com isolate: false, então outro arquivo do mesmo worker pode
+// já ter instalado o mock do e-mail no require.cache (e carregado o reminders
+// com ele). Tiramos os dois do cache pra carregar os de verdade, e devolvemos o
+// cache como estava no fim — quem vier depois continua vendo o mock.
+const emailPath = require.resolve(path.join(backendDir, "notifications", "email"));
+const remindersPath = require.resolve(path.join(backendDir, "billing", "reminders.js"));
+const savedCache = { [emailPath]: require.cache[emailPath], [remindersPath]: require.cache[remindersPath] };
+delete require.cache[emailPath];
+delete require.cache[remindersPath];
+const reminders = require(remindersPath);
+
+afterAll(() => {
+  for (const [p, entry] of Object.entries(savedCache)) {
+    if (entry) require.cache[p] = entry;
+    else delete require.cache[p];
+  }
+});
 
 const DIA = 24 * 60 * 60 * 1000;
 

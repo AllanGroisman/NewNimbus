@@ -98,6 +98,10 @@ const BOTAO_TUDO = /3 · Buscar TUDO/i;
 async function abrirTela() {
   render(<PageCuponsML />);
   await waitFor(() => expect(adminMlCupons).toHaveBeenCalled());
+  // Ter chamado a API não quer dizer que a tela já desenhou o que ela devolveu.
+  // Sem esperar os campos dos cards, os getBy* síncronos dos testes perdiam a
+  // corrida quando a máquina estava ocupada (ex.: suíte inteira em paralelo).
+  await screen.findByLabelText("Páginas da lista geral");
 }
 
 beforeEach(() => {

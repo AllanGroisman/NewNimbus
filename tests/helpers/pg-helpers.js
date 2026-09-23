@@ -5,7 +5,7 @@
 // TRUNCATE recria o arquivo de cada tabela e faz fsync. Nesta stack (Postgres
 // em Docker com fsync=on) isso mediu ~4,3 s por chamada — e a chamada roda num
 // beforeEach de CADA teste, o que sozinho colocava a suíte inteira acima de
-// 50 min. O mesmo trabalho com DELETE mede ~1,6 ms. Ver tests/TIMING.md.
+// 50 min. O mesmo trabalho com DELETE mede ~5 ms. Ver tests/TIMING.md.
 //
 // `SET LOCAL session_replication_role = replica` desliga as FK triggers só
 // dentro da transação, então a ordem dos DELETEs não importa (era o papel do
@@ -13,8 +13,7 @@
 //
 // Sequences: TRUNCATE ... RESTART IDENTITY zerava os autoincrementos. O DELETE
 // não zera, então fazemos isso à parte — mas só quando alguma linha foi de fato
-// apagada, porque entre a maioria dos testes não há nada pra limpar e o reset
-// custa ~22 ms.
+// apagada.
 
 import "./env.js";
 import { createRequire } from "module";
@@ -67,24 +66,20 @@ async function truncateAll() {
   await assertTestDatabase(db);
   const list = await tables(db);
 
-  const deleted = await db.$transaction([
-    db.$executeRawUnsafe(`SET LOCAL session_replication_role = replica`),
-    ...list.map(t => db.$executeRawUnsafe(`DELETE FROM "${t}"`)),
-  ]);
-
-  // deleted[0] é o SET; do índice 1 em diante são as contagens dos DELETEs.
-  const removed = deleted.slice(1).reduce((a, b) => a + b, 0);
-  if (removed > 0) await resetSequences(db);
-}
-
-async function resetSequences(db) {
+  // Uma ida só ao banco: o bloco DO roda numa transação própria. Antes eram
+  // ~25 statements num $transaction do Prisma (uma volta cada, ~16 ms com as
+  // tabelas vazias) e mais um bloco de ALTER SEQUENCE quando havia linhas.
+  // `setval(..., 1, false)` faz o mesmo que `ALTER SEQUENCE ... RESTART` sem ser DDL.
   await db.$executeRawUnsafe(`
     DO $$
-    DECLARE r record;
+    DECLARE removed bigint := 0; n bigint;
     BEGIN
-      FOR r IN SELECT sequencename FROM pg_sequences WHERE schemaname = 'public' LOOP
-        EXECUTE format('ALTER SEQUENCE %I RESTART', r.sequencename);
-      END LOOP;
+      SET LOCAL session_replication_role = replica;
+      ${list.map(t => `DELETE FROM "${t}"; GET DIAGNOSTICS n = ROW_COUNT; removed := removed + n;`).join("\n      ")}
+      IF removed > 0 THEN
+        PERFORM setval(format('%I.%I', schemaname, sequencename)::regclass, 1, false)
+          FROM pg_sequences WHERE schemaname = 'public';
+      END IF;
     END $$;
   `);
 }

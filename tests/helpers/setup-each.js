@@ -8,17 +8,26 @@
 // mock do WhatsApp.
 
 import { beforeEach, beforeAll, afterAll } from "vitest";
+import { createRequire } from "module";
 import "./env.js";
 import { truncateAll, disconnectDb } from "./pg-helpers.js";
 import { reset as resetWa } from "./wa-mock.js";
 import { reset as resetStripe } from "./stripe-mock.js";
 import { reset as resetEmail } from "./email-mock.js";
 
-beforeAll(() => {
-  // Reset do flag a cada arquivo — workers compartilham processo? Não, com
-  // pool=forks + isolate cada arquivo tem processo próprio. Mas zera por garantia.
-  globalThis.__NIMBUS_SKIP_TRUNCATE_BETWEEN_TESTS =
-    globalThis.__NIMBUS_SKIP_TRUNCATE_BETWEEN_TESTS || false;
+const require = createRequire(import.meta.url);
+const appConfig = require("../../backend/config");
+
+// A integração roda com isolate: false — os arquivos de um worker dividem o
+// processo (ver vitest.integration.config.mjs). Então o que um arquivo deixa em
+// memória chega no próximo, e cada um precisa começar como se o processo fosse
+// novo. Este beforeAll roda antes dos hooks do próprio arquivo.
+beforeAll(async () => {
+  // O journey liga o flag; sem zerar, o arquivo seguinte pararia de limpar o banco.
+  globalThis.__NIMBUS_SKIP_TRUNCATE_BETWEEN_TESTS = false;
+  // Cache do app_config (travas de loja, filtros do scraper...): o banco é
+  // limpo entre testes, o cache não.
+  await appConfig.resetForTests();
 });
 
 beforeEach(async () => {
@@ -33,5 +42,6 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  globalThis.__NIMBUS_SKIP_TRUNCATE_BETWEEN_TESTS = false;
   await disconnectDb();
 });

@@ -1,9 +1,9 @@
 # tests/
 
-Bateria automatizada de testes do Nimbus — três camadas, **~594 testes** no total.
+Bateria automatizada de testes do Nimbus — três camadas, **~2500 testes** no total (backend + frontend).
 
-- **Backend** (este diretório): unit + integration + journey, Vitest 2.x + supertest, ~1183 testes, **~69s**. Sobe o backend em memória (sem bindar porta) com WhatsApp, Stripe e mailer mockados.
-- **Frontend** (`frontend/`): Vitest + React Testing Library + jsdom, 370 testes, ~61s. Roda no diretório `frontend/`.
+- **Backend** (este diretório): unit + integration + journey, Vitest 2.x + supertest, ~1886 testes, **~85s**. Sobe o backend em memória (sem bindar porta) com WhatsApp, Stripe e mailer mockados.
+- **Frontend** (`frontend/`): Vitest + React Testing Library + happy-dom, 619 testes, ~58s. Roda no diretório `frontend/`.
 - **E2E** (`tests/e2e/`): Playwright + Chromium, 44 testes. Sobe backend (3101) + frontend (5273) dedicados contra um Postgres isolado (`nimbus_test_e2e`).
 
 **Tempo por arquivo e o mapa "mudei X → rode Y": [TIMING.md](TIMING.md).** Use
@@ -29,9 +29,9 @@ Manualmente:
 # Backend (deste diretório)
 cd tests
 npm install                       # primeira vez
-npm test                          # tudo (~69s)
-npm run test:unit                 # só unitários, SEM banco (~14s)
-npm run test:db                   # integração + jornada (~54s)
+npm test                          # tudo (~85s)
+npm run test:unit                 # só unitários, SEM banco (~17s)
+npm run test:db                   # integração + jornada (~60s)
 npm run test:integration          # só integração
 npm run test:journey              # só jornada
 npm run test:repasse              # atalhos por área — ver TIMING.md
@@ -40,9 +40,9 @@ npm run test:e2e                  # Playwright (auto-sobe servers)
 npm run test:watch                # watch mode (unitários)
 npm run test:timing               # remede o tempo de cada arquivo
 
-# Frontend (RTL + jsdom)
+# Frontend (RTL + happy-dom)
 cd frontend
-npm test                          # ~61s
+npm test                          # ~58s
 ```
 
 **Pré-requisito**: `docker compose up -d` (Postgres + Redis). O DB `nimbus_test` precisa existir uma vez (`docker exec nimbus-postgres psql -U nimbus -c "CREATE DATABASE nimbus_test OWNER nimbus"`); `nimbus_test_e2e` é criado pelo globalSetup do Playwright.

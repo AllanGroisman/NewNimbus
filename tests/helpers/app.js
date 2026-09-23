@@ -61,17 +61,20 @@ async function createTestUser(overrides = {}) {
   const password = overrides.password || "Senha123";
   const name = overrides.name || "Tester";
 
-  // 1. Registra — backend não devolve token (exige verificação de email)
-  const regRes = await request(app).post("/api/auth/register").send({ name, email, password, phone: "11999999999" });
-  if (regRes.status !== 200) throw new Error(`register falhou: ${regRes.status} ${JSON.stringify(regRes.body)}`);
-  const { user } = regRes.body;
-
-  // 2. Busca o token de verificação direto no DB e confirma o email
-  const row = await prisma().user.findUnique({ where: { id: user.id }, select: { emailVerifyToken: true } });
-  if (!row?.emailVerifyToken) throw new Error(`emailVerifyToken não encontrado para ${email}`);
-  const verifyRes = await request(app).post("/api/auth/verify-email").send({ token: row.emailVerifyToken });
-  if (verifyRes.status !== 200) throw new Error(`verify-email falhou: ${verifyRes.status} ${JSON.stringify(verifyRes.body)}`);
-  const { token } = verifyRes.body;
+  // 1-2. Registra e confirma o email chamando o módulo de auth direto — as rotas
+  // /api/auth/register e /verify-email só repassam pra essas funções (e ficam
+  // cobertas em integration/auth.test.js). Pelo HTTP eram 3 idas por usuário,
+  // ~70 ms a mais, e o helper roda em quase todo teste de integração.
+  // O JSON.parse(JSON.stringify()) mantém o formato que a rota devolvia
+  // (datas viram string).
+  let user, token;
+  try {
+    user = JSON.parse(JSON.stringify(await auth.register({ name, email, password, phone: "11999999999" })));
+    const row = await prisma().user.findUnique({ where: { id: user.id }, select: { emailVerifyToken: true } });
+    ({ token } = await auth.verifyEmail({ token: row.emailVerifyToken }));
+  } catch (err) {
+    throw new Error(`createTestUser(${email}) falhou: ${err.message}`);
+  }
 
   // 3. CPF: toda conta tem o seu. `cpf: null` nos overrides simula as contas
   // criadas antes da regra, que o sistema faz preencher na primeira entrada.

@@ -31,30 +31,38 @@ const testsDir = path.resolve(import.meta.dirname, "..");
 const cwd = frontend ? path.resolve(testsDir, "..", "frontend") : testsDir;
 
 const tmp = mkdtempSync(path.join(tmpdir(), "nimbus-timing-"));
-const outFile = path.join(tmp, "report.json");
 
-const vitestArgs = ["vitest", "run", "--reporter=json", `--outputFile=${outFile}`];
-if (!frontend) {
-  // backend: cada camada tem sua config (ver tests/README.md)
-  if (only === "unit") vitestArgs.push("-c", "vitest.config.mjs");
-  else if (only) vitestArgs.push("-c", "vitest.integration.config.mjs", only);
-}
+// Cada camada do backend tem sua config (ver tests/TIMING.md) e os unitários
+// rodam em duas passadas (compartilhada + isolada). Os relatórios de todas as
+// execuções do vitest são somados no fim.
+const UNIT = [["-c", "vitest.config.mjs"], ["-c", "vitest.unit-isolated.config.mjs"]];
+const DB = ["-c", "vitest.integration.config.mjs"];
+let runs;
+if (frontend) runs = [[]];
+else if (only === "unit") runs = UNIT;
+else if (only) runs = [[...DB, only]];
+else runs = [...UNIT, DB];
 
 const label = frontend ? "frontend" : only || "backend (tudo)";
 console.error(`> medindo ${label} em ${cwd} ...`);
 
 const started = Date.now();
-const run = spawnSync("npx", vitestArgs, { cwd, stdio: ["ignore", "ignore", "inherit"] });
+const report = { testResults: [] };
+let status = 0;
+runs.forEach((extra, i) => {
+  const outFile = path.join(tmp, `report-${i}.json`);
+  const vitestArgs = ["vitest", "run", "--reporter=json", `--outputFile=${outFile}`, ...extra];
+  const run = spawnSync("npx", vitestArgs, { cwd, stdio: ["ignore", "ignore", "inherit"] });
+  status ||= run.status || 0;
+  try {
+    report.testResults.push(...JSON.parse(readFileSync(outFile, "utf8")).testResults);
+  } catch {
+    console.error("Falhou ao ler o relatório JSON do vitest. A suite quebrou?");
+    rmSync(tmp, { recursive: true, force: true });
+    process.exit(run.status || 1);
+  }
+});
 const wall = Date.now() - started;
-
-let report;
-try {
-  report = JSON.parse(readFileSync(outFile, "utf8"));
-} catch {
-  console.error("Falhou ao ler o relatório JSON do vitest. A suite quebrou?");
-  rmSync(tmp, { recursive: true, force: true });
-  process.exit(run.status || 1);
-}
 rmSync(tmp, { recursive: true, force: true });
 
 const repoRoot = path.resolve(testsDir, "..");
@@ -94,4 +102,4 @@ if (jsonOut) {
   console.error(`> JSON salvo em ${jsonOut}`);
 }
 
-process.exit(run.status || 0);
+process.exit(status);

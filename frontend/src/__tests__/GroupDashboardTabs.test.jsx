@@ -89,6 +89,9 @@ function renderDashboard(overrides = {}) {
 
 beforeEach(() => {
   saveGroupQueue.mockClear();
+  // A aba aberta é lembrada por grupo no navegador: sem limpar, um teste que
+  // abriu a Fila faz o seguinte começar nela em vez da visão geral.
+  localStorage.clear();
 });
 
 // "Na fila" é um número só em todo lugar: fila + aguardando revisão. É o buffer

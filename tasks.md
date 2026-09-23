@@ -10,7 +10,7 @@
 
 7. [x] Ao buscar cupons, quero ter um progresso mais visivel e explicado do que esta acontecendo.
 
-8. [] Quero otimizar os testes do sistema para serem realizados mais rapidamente.
+8. [x] Quero otimizar os testes do sistema para serem realizados mais rapidamente.
 
 9. [] Quero revisar os backups, se estão sendo feitos corretamente.
 
