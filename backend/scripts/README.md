@@ -14,9 +14,9 @@ Scripts que rodam **fora** da aplicação principal — manualmente ou via cron.
 
 Uma única linha de cron roda `backup-all.sh` **de hora em hora** — ele faz o dump local e o upload. Cada camada é independente: se o upload falhar (sem credencial, sem internet), o dump local continua.
 
-> `backup-gdrive.sh` (3ª camada antiga, Google Drive via rclone) está **DESATIVADO** — enviava os dumps sem cifra pra uma conta pessoal. Ver o header do próprio script antes de reativar.
+O dump é gravado como `.partial` e só vira `db-*.sql.gz` depois de passar em `gzip -t` e ter o marcador `PostgreSQL database dump complete` no fim — um `pg_dump` que morre no meio nunca sobe pro B2. O restore (admin e `restore-remote.js`) faz a mesma checagem (`backend/backup/verify-dump.js`) **antes** de dropar o banco, e roda o `psql` com `ON_ERROR_STOP`.
 
-O backend também vigia o backup (`backend/backup/monitor.js`): checa a cada hora a idade do último dump local (limite 3h) e do último snapshot no B2 (limite 6h) e **alerta o admin pelo WhatsApp** quando estoura. Estado em `GET /healthz` → `checks.backup`.
+O backend também vigia o backup (`backend/backup/monitor.js`): checa a cada hora a idade do último dump local (limite 3h) e do último snapshot no B2 (limite 6h) e **alerta o admin pelo WhatsApp** quando estoura. Também alerta se o último dump local sair com menos da metade da mediana dos 5 anteriores. Estado em `GET /healthz` → `checks.backup`.
 
 ### Setup inicial (na VPS Ubuntu)
 
@@ -41,7 +41,6 @@ Esse script:
 | **`backup-crypto.js`** | Cifra AES-256-GCM dos dumps que saem da máquina (`BACKUP_ENC_KEY`, 64 chars hex). |
 | **`restore-remote.js`** | Baixa do B2, decifra e restaura (`--list`, `--latest`, `--file <nome>`). |
 | **`check-remote.js`** | Imprime o snapshot mais recente no B2. |
-| **`backup-gdrive.sh`** | ⛔ INATIVO — espelho sem cifra no Google Drive. |
 
 ### Comandos do dia a dia
 

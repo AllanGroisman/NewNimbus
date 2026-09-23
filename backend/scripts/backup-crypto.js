@@ -2,8 +2,7 @@
 //
 // Os dumps contêm tudo: hashes de senha, e-mails, credenciais de afiliado e a
 // tabela baileys_auth (sessões de WhatsApp). Eles são enviados pro Backblaze B2
-// e pro Google Drive — dois lugares fora do nosso controle, protegidos só por
-// chaves de API. Cifrar aqui significa que vazar o bucket não vaza os dados.
+// — fora do nosso controle, protegido só por chaves de API. Cifrar aqui significa que vazar o bucket não vaza os dados.
 //
 // A cifra é aplicada só na saída: o dump local continua .sql.gz normal, porque
 // ele vive na mesma máquina que o banco (cifrar lá, com a chave ao lado, não

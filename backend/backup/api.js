@@ -17,6 +17,7 @@ const {
 const { mode } = require("../config/loadEnv");
 const backupCrypto = require("../scripts/backup-crypto");
 const { purgeKey } = require("../scripts/purge-remote-versions");
+const { verifyDumpFile } = require("./verify-dump");
 
 const BACKUPS_DIR = path.join(__dirname, "..", "backups");
 const CONTAINER   = process.env.POSTGRES_CONTAINER || "nimbus-postgres";
@@ -84,26 +85,44 @@ async function createLocalDump() {
   await fsp.mkdir(BACKUPS_DIR, { recursive: true });
   const filename = `db-${getTimestamp()}.sql.gz`;
   const outPath  = path.join(BACKUPS_DIR, filename);
+  // Mesmo esquema do backup-db.sh: .partial até validar, pra um dump quebrado
+  // nunca ganhar o nome db-*.sql.gz (que o upload automático sobe pro B2).
+  const partial  = `${outPath}.partial`;
   const docker   = dockerPrefix();
 
-  return new Promise((resolve, reject) => {
+  const { code, stderr } = await new Promise((resolve, reject) => {
     const proc = spawn(docker, ["exec", CONTAINER, "sh", "-c", `pg_dump -U ${PG_USER} ${PG_DB} | gzip`], {
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const ws = fs.createWriteStream(outPath);
+    const ws = fs.createWriteStream(partial);
     proc.stdout.pipe(ws);
-    let stderr = "";
-    proc.stderr.on("data", chunk => { stderr += chunk; });
-    proc.on("close", async code => {
-      if (code === 0) {
-        const stat = await fsp.stat(outPath);
-        resolve({ name: filename, path: outPath, size: stat.size });
-      } else {
-        try { await fsp.unlink(outPath); } catch {}
-        reject(new Error(`pg_dump falhou: ${stderr.trim() || "erro desconhecido"}`));
-      }
-    });
+    let err = "";
+    proc.stderr.on("data", chunk => { err += chunk; });
+    proc.on("error", reject);
+    // Espera o arquivo fechar, não só o processo — senão a validação lê o fim cortado.
+    let exitCode = null;
+    let done = 0;
+    const finish = () => { if (++done === 2) resolve({ code: exitCode, stderr: err }); };
+    proc.on("close", c => { exitCode = c; finish(); });
+    ws.on("close", finish);
   });
+
+  try {
+    if (code !== 0) throw new Error(`pg_dump falhou: ${stderr.trim() || "erro desconhecido"}`);
+    // O `sh` do container não tem pipefail: o exit code é o do gzip, e um pg_dump
+    // que morre ainda dá 0. O conteúdo é a única prova confiável.
+    try {
+      await verifyDumpFile(partial);
+    } catch (err) {
+      throw new Error(`pg_dump falhou: ${stderr.trim() || err.message}`);
+    }
+    await fsp.rename(partial, outPath);
+  } catch (err) {
+    try { await fsp.unlink(partial); } catch {}
+    throw err;
+  }
+  const stat = await fsp.stat(outPath);
+  return { name: filename, path: outPath, size: stat.size };
 }
 
 async function deleteLocal(filename) {
@@ -171,7 +190,10 @@ async function deleteRemote(filename) {
 
 // ── Restore ───────────────────────────────────────────────────────────────
 
-function restoreFromFile(filePath) {
+async function restoreFromFile(filePath) {
+  // Valida ANTES do DROP: com um arquivo truncado o restore apagava o banco e
+  // recriava só metade, respondendo "restaurado com sucesso".
+  await verifyDumpFile(filePath);
   const docker = dockerPrefix();
 
   // Termina conexões ativas
@@ -190,9 +212,11 @@ function restoreFromFile(filePath) {
     `${docker} exec -i ${CONTAINER} psql -U ${PG_USER} -d postgres -c "CREATE DATABASE ${PG_DB};"`,
     { stdio: "pipe" }
   );
+  // ON_ERROR_STOP + pipefail: erro de SQL ou de gunzip derruba o comando em vez
+  // de ser engolido (antes o psql seguia e saía 0 com o banco pela metade).
   execSync(
-    `gunzip -c "${filePath}" | ${docker} exec -i ${CONTAINER} psql -U ${PG_USER} -d ${PG_DB}`,
-    { stdio: ["pipe", "pipe", "pipe"], shell: true }
+    `set -o pipefail; gunzip -c "${filePath}" | ${docker} exec -i ${CONTAINER} psql -v ON_ERROR_STOP=1 -q -U ${PG_USER} -d ${PG_DB}`,
+    { stdio: ["pipe", "pipe", "pipe"], shell: "/bin/bash", maxBuffer: 64 * 1024 * 1024 }
   );
 }
 
@@ -200,7 +224,7 @@ async function restoreLocal(filename) {
   if (!/^db-\d{8}-\d{6}\.sql\.gz$/.test(filename)) throw new Error("Arquivo inválido");
   const filePath = path.join(BACKUPS_DIR, filename);
   if (!fs.existsSync(filePath)) throw new Error("Arquivo local não encontrado");
-  restoreFromFile(filePath);
+  await restoreFromFile(filePath);
   return { ok: true };
 }
 
@@ -230,7 +254,7 @@ async function restoreRemote(filename) {
   await fsp.writeFile(tmpFile, buf);
 
   try {
-    restoreFromFile(tmpFile);
+    await restoreFromFile(tmpFile);
   } finally {
     try { await fsp.unlink(tmpFile); } catch {}
   }

@@ -37,8 +37,25 @@ if ! $DOCKER ps --format '{{.Names}}' | grep -q "^$CONTAINER$"; then
   exit 1
 fi
 
+# Grava em .partial e só renomeia depois de validar: um pg_dump que morre no meio
+# deixava o .sql.gz truncado em disco, e o backup-remote.js da hora seguinte o
+# subia pro B2 como se fosse bom. O .partial não casa com db-*.sql.gz, então nem o
+# upload nem a rotação o enxergam.
+PARTIAL="$OUT.partial"
+trap 'rm -f "$PARTIAL"' EXIT
+
 echo "[backup-db] pg_dump $PG_DB -> $OUT"
-$DOCKER exec "$CONTAINER" pg_dump -U "$PG_USER" "$PG_DB" | gzip > "$OUT"
+$DOCKER exec "$CONTAINER" pg_dump -U "$PG_USER" "$PG_DB" | gzip > "$PARTIAL"
+
+if ! gzip -t "$PARTIAL"; then
+  echo "[backup-db] dump corrompido (gzip -t falhou). Aborta." >&2
+  exit 1
+fi
+if ! zcat "$PARTIAL" | tail -c 4096 | grep -q "PostgreSQL database dump complete"; then
+  echo "[backup-db] dump incompleto (sem o marcador de fim do pg_dump). Aborta." >&2
+  exit 1
+fi
+mv "$PARTIAL" "$OUT"
 
 SIZE=$(du -h "$OUT" | cut -f1)
 echo "[backup-db] OK ($SIZE)"

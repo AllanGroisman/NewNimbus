@@ -12,9 +12,9 @@
 
 8. [x] Quero otimizar os testes do sistema para serem realizados mais rapidamente.
 
-9. [] Quero revisar os backups, se estão sendo feitos corretamente.
+9. [x] Quero revisar os backups, se estão sendo feitos corretamente.
 
-10. [] Quero melhorar a barra de pesquisa escrita na busca de produtos.
+10. [x] Quero melhorar a barra de pesquisa escrita na busca de produtos.
 
 11. [x] Nos cupons quero ter a opcao de buscar os produtos somente dos cupons que não tiveram nenhuma busca de produtos. Os que são parciais ficam de fora, pode ser um checkbox ou algo assim para marcar.
 
@@ -24,7 +24,7 @@
 
 14. [x] Quero paralelizar a busca de cupons e seus produtos para ser realizado mais rapido, como pode ser feito?
 
-15. [] Da pra paralelizar o scraping?
+15. [x] Da pra paralelizar o scraping?
 
 16. [x] Quero que o scraping tenha uma barra de progresso. Ele pode ser pausado no meio sem perder o progresso?
 
@@ -37,3 +37,5 @@
 20. [x] Quero uma maneira facil de buscar todos os cupons sem limite de pagina e etc... Tão meio confusas as configurações pra mim.
 
 21. [x] Tem como paralelizar a busca dos cupons?
+
+22. [] Não precisa buscar os produtos de amostra dos cupons. Só os produtos direto na pagina de cada um já funcionam pra mim.

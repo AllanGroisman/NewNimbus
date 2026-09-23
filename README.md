@@ -42,7 +42,6 @@ Plataforma de automação de ofertas no WhatsApp. Faz scraping de produtos (Merc
 | **`backup-remote.js`** | Sobe os `db-*.sql.gz` cifrados pro **Backblaze B2** (ou outro S3-compatível). Sem envs `BACKUP_S3_*`, sai sem fazer nada. |
 | **`backup-retention.js`** | Regra de retenção remota: tudo das últimas 48h + 1 por dia até 30 dias. |
 | **`restore-remote.js`** | Baixa do B2, decifra e restaura (`--latest`, `--list`, `--file`). |
-| **`backup-gdrive.sh`** | ⛔ INATIVO — espelho sem cifra no Google Drive (fora do fluxo). |
 
 ## Instalação em ambiente novo (Windows)
 
@@ -159,7 +158,7 @@ pm2 logs nimbus-worker  # logs do worker (Baileys + filas)
 
 Backup automático do Postgres **de hora em hora** em 2 destinos: pasta local → Backblaze B2 (cifrado). Uma linha de cron chama `backend/scripts/backup-all.sh`, que faz o dump e o upload. Doc completa em [`backend/scripts/README.md`](backend/scripts/README.md).
 
-> A antiga 3ª camada (Google Drive via rclone) está **desativada** — enviava os dumps sem cifra. Ver header de `backend/scripts/backup-gdrive.sh`.
+O dump só ganha o nome final depois de validado (gzip íntegro + marcador de fim do `pg_dump`), e o restore valida o arquivo antes de dropar o banco.
 
 ### Setup (1 comando na VPS)
 

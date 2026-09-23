@@ -27,6 +27,7 @@ const path = require("path");
 const os   = require("os");
 const readline = require("readline");
 const backupCrypto = require("./backup-crypto");
+const { verifyDumpFile } = require("../backup/verify-dump");
 
 const {
   S3Client,
@@ -157,9 +158,11 @@ function restoreBackup(filePath, keepSessions) {
   );
 
   // Restaura
+  // ON_ERROR_STOP + pipefail: um erro no meio aborta com exit != 0 em vez de
+  // terminar "com sucesso" com o banco pela metade.
   execSync(
-    `gunzip -c "${filePath}" | ${prefix} exec -i ${CONTAINER} psql -U ${PG_USER} -d ${PG_DB}`,
-    { stdio: ["pipe", "pipe", "pipe"], shell: true }
+    `set -o pipefail; gunzip -c "${filePath}" | ${prefix} exec -i ${CONTAINER} psql -v ON_ERROR_STOP=1 -q -U ${PG_USER} -d ${PG_DB}`,
+    { stdio: ["pipe", "pipe", "pipe"], shell: "/bin/bash", maxBuffer: 64 * 1024 * 1024 }
   );
 
   clearBaileysAuth(prefix, keepSessions);
@@ -277,6 +280,11 @@ async function main() {
   const tmpFile = path.join(os.tmpdir(), localName);
   await download(client, chosen.Key, tmpFile);
   console.log(`[restore-remote] download OK (${(fs.statSync(tmpFile).size / 1024 / 1024).toFixed(2)} MB)`);
+
+  // Valida antes do restoreBackup, que dropa o banco: arquivo truncado aqui para
+  // tudo com o banco atual intacto.
+  await verifyDumpFile(tmpFile);
+  console.log("[restore-remote] dump íntegro (gzip ok + marcador de fim do pg_dump)");
 
   restoreBackup(tmpFile, await decideSessions());
   await fsp.unlink(tmpFile);

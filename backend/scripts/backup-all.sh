@@ -6,8 +6,6 @@
 #   1. pg_dump local (backup-db.sh)             -> backend/backups/db-TS.sql.gz
 #   2. upload pro S3-compatível (backup-remote)  -> Backblaze B2, cifrado
 #
-# (A camada Google Drive/rclone está desativada — ver backup-gdrive.sh.)
-#
 # Cada etapa é independente — se uma falhar, as outras tentam (warn em vez de
 # abortar). Loga tudo em backend/logs/backup.log.
 

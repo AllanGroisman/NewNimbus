@@ -133,8 +133,8 @@ Não vem no clone (gitignored) — o `install.sh` cria a partir do `.env.example
 - **ngrok:** recrie o `backend/.env.ngrok` (não vem no clone) e rode
   `bash deploy/ngrok_start.sh`. Nesse modo o app **lê** backups de produção mas
   **não escreve** (protege os snapshots de produção).
-- **Backups automáticos:** `bash deploy/setup-backups.sh` instala rclone + cron a
-  cada 6h (Backblaze B2 + Google Drive).
+- **Backups automáticos:** `bash deploy/setup-backups.sh` registra o cron de hora
+  em hora (dump local + upload cifrado pro Backblaze B2).
 - **Atualizar depois:** `bash deploy/update.sh` (git pull + deps + migrations +
   rebuild + `pm2 reload`).
 - **Saúde do deploy:** `bash deploy/test.sh` roda 30+ checks (containers, PM2,

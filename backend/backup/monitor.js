@@ -19,12 +19,17 @@ function envHours(name, def) {
 }
 const LOCAL_MAX_H = envHours("BACKUP_ALERT_LOCAL_MAX_H", 3);
 const REMOTE_MAX_H = envHours("BACKUP_ALERT_REMOTE_MAX_H", 6);
+// Idade não pega dump que roda mas sai vazio/encolhido. Alerta quando o último
+// fica abaixo desta fração da mediana dos anteriores.
+const SIZE_MIN_RATIO = 0.5;
+const SIZE_BASELINE_N = 5;
 
 let timers = [];
-const lastAlertAt = { local: 0, remote: 0 };
+const lastAlertAt = { local: 0, remote: 0, size: 0 };
 const last = {
   lastLocalAgeMin: null,
   lastRemoteAgeMin: null,
+  lastLocalSizeMB: null,
   checkedAt: null,
   error: null,
 };
@@ -47,11 +52,37 @@ async function alertIfStale(kind, age, maxH, label) {
   }
 }
 
+function median(nums) {
+  const s = [...nums].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+// `local` vem do listLocal(): mais novo primeiro.
+async function alertIfShrunk(local) {
+  const base = local.slice(1, 1 + SIZE_BASELINE_N).map(d => d.size);
+  if (base.length < 2) return;
+  const ref = median(base);
+  if (!ref || local[0].size >= ref * SIZE_MIN_RATIO) return;
+  if (Date.now() - lastAlertAt.size < ALERT_THROTTLE_MS) return;
+  lastAlertAt.size = Date.now();
+  const mb = n => (n / 1024 / 1024).toFixed(1);
+  const msg = `último backup local (${local[0].name}) tem ${mb(local[0].size)}MB, abaixo de ${SIZE_MIN_RATIO * 100}% da mediana recente (${mb(ref)}MB) — confira se o dump está completo`;
+  logger.error({ size: local[0].size, ref }, `[backup-monitor] ${msg}`);
+  try {
+    await adminNotifier.notifyError("Backup", new Error(msg));
+  } catch (err) {
+    logger.warn({ err: err.message }, "[backup-monitor] falha ao notificar admin");
+  }
+}
+
 async function check() {
   try {
     const local = await backupApi.listLocal();
     last.lastLocalAgeMin = local.length ? ageMin(local[0].createdAt) : null;
+    last.lastLocalSizeMB = local.length ? Number((local[0].size / 1024 / 1024).toFixed(2)) : null;
     await alertIfStale("local", last.lastLocalAgeMin, LOCAL_MAX_H, "local");
+    await alertIfShrunk(local);
 
     if (backupApi.B2_OK) {
       const remote = await backupApi.listRemote();

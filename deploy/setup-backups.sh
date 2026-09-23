@@ -4,7 +4,6 @@
 #   2. Upload cifrado pro Backblaze B2            -> últimas 48h + 1/dia por 30 dias
 #
 # Tudo roda por UMA linha de cron chamando backend/scripts/backup-all.sh.
-# (A camada Google Drive/rclone foi desativada — ver backup-gdrive.sh.)
 #
 # Rode 1x na VPS, depois de install.sh:
 #   bash deploy/setup-backups.sh

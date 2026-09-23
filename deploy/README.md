@@ -137,8 +137,6 @@ Doc completa em [`../backend/scripts/README.md`](../backend/scripts/README.md). 
 | 1. Dump local em `backend/backups/db-*.sql.gz` | `backup-db.sh` (pg_dump) | 48 snapshots horários (48h) |
 | 2. Upload cifrado pro Backblaze B2 (S3-compatível) | `backup-remote.js` | últimas 48h + 1/dia até 30 dias |
 
-(A 3ª camada Google Drive/rclone está desativada — enviava dumps sem cifra.)
-
 O backend alerta o admin pelo WhatsApp se o backup parar de rodar (`backend/backup/monitor.js`; estado em `GET /healthz` → `checks.backup`). **Guarde a `BACKUP_ENC_KEY` fora do servidor** — sem ela os backups cifrados do B2 são irrecuperáveis.
 
 Restaurar:
