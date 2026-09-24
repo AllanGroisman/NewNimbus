@@ -74,7 +74,13 @@ async function aggregate({ days = 90, q = "" } = {}) {
            MAX(l."createdAt")                              AS ultima,
            COUNT(DISTINCT l."groupId")                     AS campanhas,
            COUNT(DISTINCT l."userId")                      AS usuarios,
-           COUNT(*) FILTER (WHERE l."outcome" = ANY(${OUTCOMES_APROVEITADOS})) AS aproveitados
+           COUNT(*) FILTER (WHERE l."outcome" = ANY(${OUTCOMES_APROVEITADOS})) AS aproveitados,
+           -- O link de produto do ML que chegou com o cupom: é nele que o teste no
+           -- checkout (repasse/checkout-cupom.js) aplica o código. O de um link que
+           -- virou produto vale mais que o de um descartado; entre iguais, o recente.
+           (ARRAY_AGG(COALESCE(l."resolvedUrl", l."rawUrl")
+                      ORDER BY (l."outcome" = ANY(${OUTCOMES_APROVEITADOS})) DESC, l."createdAt" DESC)
+              FILTER (WHERE l."store" = 'Mercado Livre'))[1]  AS link
       FROM "repasse_capture_log" l
      WHERE l."coupon" IS NOT NULL
        AND l."createdAt" >= ${desde}
@@ -125,6 +131,7 @@ async function aggregate({ days = 90, q = "" } = {}) {
       campanhas: Number(r.campanhas),
       usuarios: Number(r.usuarios),
       aproveitados: Number(r.aproveitados),
+      link: r.link || null,
       // null = nunca testado. É diferente de "invalid" (o ML não reconheceu) e de
       // "indeterminado" (o ML não respondeu), e a tela não pode passar um pelo outro.
       verdict: chk?.verdict ?? null,

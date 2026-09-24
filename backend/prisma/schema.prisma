@@ -617,6 +617,24 @@ model RepasseCouponAutotest {
   @@map("repasse_coupon_autotest")
 }
 
+// Um teste de cupom no checkout pedido À MÃO na aba Repasse (task 7): link do
+// produto + código, sem ter passado pela captura. Entra no começo da fila do teste
+// no checkout e sai dela quando `testedAt` é preenchido. O veredito em si mora em
+// `ml_coupon_codes`, como o de qualquer outro teste; aqui fica o pedido.
+model RepasseCupomManual {
+  id        BigInt    @id @default(autoincrement())
+  code      String
+  url       String
+  userId    String?   @map("user_id")
+  createdAt DateTime  @default(now()) @map("created_at")
+  testedAt  DateTime? @map("tested_at")
+  verdict   String?
+  message   String?
+
+  @@index([testedAt])
+  @@map("repasse_coupon_manual")
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // Tutoriais (tela "Tutoriais" do app + Admin › Editar Tutoriais)
 // ────────────────────────────────────────────────────────────────────────

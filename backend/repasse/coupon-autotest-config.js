@@ -19,6 +19,11 @@ const CONFIG_KEY = "repasse-coupon-autotest";
 const DEFAULTS = {
   enabled: true,
 
+  // A fila do teste no checkout (task 7): a aba Repasse pega sozinha um cupom
+  // pendente a cada 30s. Separado do `enabled`, que é a rodada do servidor
+  // (campanha e vitrine): dá pra deixar um sem o outro.
+  checkoutAuto: true,
+
   // Entre rodadas. 15 min com `maxPorRodada: 5` dá ~20 palavras/hora no pior caso
   // — e como o cache de palavra é de 12h, o normal é a rodada não achar trabalho.
   intervaloMs: 15 * 60_000,
@@ -78,7 +83,7 @@ const FAIXAS = {
   pausaAposBloqueioMin: [0, 1440],
 };
 
-const BOOLEANOS = ["enabled", "importarCampanha", "rasparVitrine"];
+const BOOLEANOS = ["enabled", "checkoutAuto", "importarCampanha", "rasparVitrine"];
 
 // Checkbox de formulário chega como "true"/"on"/1 dependendo do caminho; um
 // `!!v` cru transformaria a string "false" em true.

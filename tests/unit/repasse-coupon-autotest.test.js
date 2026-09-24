@@ -196,6 +196,12 @@ describe("config do teste automático", () => {
     expect(cfgStore.sanitize({ enabled: 0 }).enabled).toBe(false);
   });
 
+  it("o automático da fila do checkout nasce ligado e é independente do robô", () => {
+    expect(cfgStore.DEFAULTS.checkoutAuto).toBe(true);
+    expect(cfgStore.sanitize({ checkoutAuto: "false" })).toMatchObject({ checkoutAuto: false, enabled: true });
+    expect(cfgStore.sanitize({ enabled: false })).toMatchObject({ checkoutAuto: true, enabled: false });
+  });
+
   it("prende os números na faixa — zero aqui viraria rajada de Chrome", () => {
     expect(cfgStore.sanitize({ intervaloMs: 0 }).intervaloMs).toBe(cfgStore.FAIXAS.intervaloMs[0]);
     expect(cfgStore.sanitize({ maxPorRodada: -5 }).maxPorRodada).toBe(1);

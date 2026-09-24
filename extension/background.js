@@ -18,6 +18,7 @@ import { props } from "./props.js";
 import { lista, fecharAba } from "./lista.js";
 import { palavra } from "./palavra.js";
 import { checkout, cuponsNoCheckout } from "./checkout.js";
+import { cupomNoCheckout } from "./cupom-checkout.js";
 
 // Cada comando recebe (payload, progresso) e devolve um objeto serializável.
 // A tela consulta esta lista pelo anúncio da ponte: é assim que ela sabe se a
@@ -32,6 +33,9 @@ const COMANDOS = {
   // O mesmo comando; o nome novo só existe para a tela saber que esta cópia entende
   // `rapido`, `semCarrinho` e `tempos` (o lote da sonda) — a velha os ignoraria calada.
   "cupons-checkout-v2": cuponsNoCheckout,
+  // O cupom do repasse testado no checkout do produto, dentro do iframe do modal
+  // "Cupons" (task 7).
+  "cupom-no-checkout": cupomNoCheckout,
   "fechar-aba": fecharAba,
 };
 

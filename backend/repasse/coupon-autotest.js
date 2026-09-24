@@ -39,10 +39,6 @@ const HORA_MS = 3600_000;
 const IMPORT_TIMEOUT_MS = 10 * 60_000;
 const IMPORT_POLL_MS = 3_000;
 
-// Jitter na pausa entre palavras, no mesmo espírito do ml-cupons.js: intervalo
-// exato é assinatura de robô.
-const JITTER_MS = 5_000;
-
 // Não dispara no pico da subida: o boot já tem Baileys, scheduler e scraper
 // acordando juntos, e esta rodada abre Chrome.
 const FIRST_RUN_MS = 4 * 60_000;
@@ -206,61 +202,12 @@ async function runOnce({ manual = false } = {}) {
     }
 
     const linhas = await repasseCoupons.aggregate({ days: cfg.diasDeBusca });
-    const { testes, pesado } = selecionar(linhas, cfg);
+    const { pesado } = selecionar(linhas, cfg);
 
-    // ── As palavras ──
-    for (let i = 0; i < testes.length; i++) {
-      const { code } = testes[i];
-      if (i > 0) await sleep(cfg.pausaEntrePalavrasMs + Math.random() * JITTER_MS);
-
-      const tp = Date.now();
-      try {
-        // Sem `force`: o cache de 12h do checkWord vale, e o job nunca reabre
-        // Chrome numa palavra que o admin acabou de testar na tela.
-        const r = await sync.checkWord(code, { source: "repasse-auto" });
-        const texto = r.message || r.reason || "";
-        const bloqueio = r.verdict === "indeterminado" ? kindDoBloqueio(texto) : null;
-
-        await logAutotest({
-          code,
-          action: ACTION.TEST,
-          ok: r.verdict === "valid",
-          verdict: r.verdict,
-          campaignId: r.campaignId,
-          errorKind: bloqueio,
-          message: r.cached ? `${texto} (resposta guardada do teste anterior)` : texto,
-          durationMs: Date.now() - tp,
-        });
-        resumo.testados += 1;
-
-        if (bloqueio) {
-          // Para a rodada AQUI. A próxima palavra levaria o mesmo CAPTCHA, e cada
-          // tentativa é um Chrome novo na conta do sistema.
-          resumo.bloqueado = true;
-          _status.bloqueadoAte = new Date(Date.now() + cfg.pausaAposBloqueioMin * 60_000).toISOString();
-          await logAutotest({
-            code: "-",
-            action: ACTION.SKIP,
-            ok: false,
-            errorKind: bloqueio,
-            message: `O ML barrou o teste (${bloqueio}). Rodada interrompida; volta depois de ${cfg.pausaAposBloqueioMin} min.`,
-          });
-          break;
-        }
-      } catch (err) {
-        const kind = classifyFromText(err.message) || KIND.DESCONHECIDO;
-        await logAutotest({
-          code, action: ACTION.TEST, ok: false,
-          errorKind: kind, message: err.message, durationMs: Date.now() - tp,
-        });
-        if (BLOCK_KINDS.has(kind)) {
-          resumo.bloqueado = true;
-          _status.bloqueadoAte = new Date(Date.now() + cfg.pausaAposBloqueioMin * 60_000).toISOString();
-          break;
-        }
-      }
-    }
-
+    // As palavras NÃO são mais testadas aqui. O teste de palavra solta em /cupons,
+    // neste Chrome do servidor, voltava "o ML não respondeu" para todo cupom (o ML
+    // barra o Puppeteer). O teste agora é no checkout do produto, na aba do admin
+    // pela extensão — a fila dele é o `pendentesCheckout` abaixo.
     // ── A campanha e a vitrine ──
     // Só se a rodada não bateu numa parede: importar é mais Chrome, e mais longo.
     if (!resumo.bloqueado) {
@@ -307,7 +254,6 @@ async function runOnce({ manual = false } = {}) {
     _running = false;
     _status.lastRunAt = new Date().toISOString();
     _status.lastDuration = Date.now() - t0;
-    _status.testados = resumo.testados;
     _status.importados = resumo.importados;
     _status.vitrines = resumo.vitrines;
     _status.pulada = resumo.pulada;
@@ -334,6 +280,173 @@ async function importarEsperando(sync, campaignId, cfg) {
     return { ok: !!res.ok, produtos: res.produtos ?? null, message: res.reason || res.avisoVitrine || null };
   }
   return { ok: false, message: "A busca da campanha passou do tempo — veja Admin › Cupom › Cupons do ML." };
+}
+
+// ── O teste no checkout (task 7) ─────────────────────────────────────────
+// Quem testa é a aba Admin › Cupom › Repasse, pela extensão: ela pergunta o que
+// está pendente, reivindica um código, roda o comando `cupom-no-checkout` no link
+// do produto e manda o material cru de volta. Mesmo modelo da agenda das etapas
+// (coupons/agenda.js): o servidor sabe O QUE falta, o Chrome do admin FAZ.
+
+// Quanto tempo uma aba segura um código reivindicado. O teste leva de 20s a 1min;
+// com um muro, a extensão espera o humano até 5 min. Passado isso, a aba morreu.
+const RESERVA_MS = 10 * 60_000;
+const _reservas = new Map();   // code → expira em (ms)
+
+function reservado(code, agora = Date.now()) {
+  const ate = _reservas.get(code);
+  if (ate && ate > agora) return true;
+  _reservas.delete(code);
+  return false;
+}
+
+// O teste de palavra do robô antigo não conta como tentativa: aquele
+// "indeterminado" era o Chrome do servidor barrado, não uma resposta sobre o
+// cupom. Sem isto, os cupons que ele já tentou 3 vezes nunca entrariam na fila.
+const FONTES_DO_CHECKOUT = new Set(["repasse-checkout", "repasse-checkout-auto"]);
+function paraAFila(l) {
+  if (l?.verdict === "indeterminado" && !FONTES_DO_CHECKOUT.has(l.source)) {
+    return { ...l, verdict: null, checkCount: 0 };
+  }
+  return l;
+}
+
+// A fila inteira, para a tela ver e para a aba consumir. Sempre devolve a lista —
+// desligar o automático não esconde o que está pendente; quem obedece o `auto` é o
+// laço da aba. Os pedidos manuais vêm primeiro: alguém escolheu aquele link.
+async function pendentesCheckout({ limit = 50 } = {}) {
+  const { prisma } = require("../db");
+  const cfg = cfgStore.readConfig();
+  const teto = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+  const bloqueado = !!(_status.bloqueadoAte && Date.now() < new Date(_status.bloqueadoAte).getTime());
+
+  const manuais = await prisma().repasseCupomManual.findMany({
+    where: { testedAt: null },
+    orderBy: { createdAt: "asc" },
+    take: 200,
+  });
+  const itens = [];
+  const vistos = new Set();
+  for (const m of manuais) {
+    if (vistos.has(m.code)) continue;
+    vistos.add(m.code);
+    itens.push({
+      origem: "manual", manualId: String(m.id), code: m.code, url: m.url,
+      criadoEm: m.createdAt, motivo: "manual", reservado: reservado(m.code),
+    });
+  }
+
+  const linhas = (await repasseCoupons.aggregate({ days: cfg.diasDeBusca })).map(paraAFila);
+  const { testes } = selecionar(linhas.filter(l => l.link), { ...cfg, maxPorRodada: Infinity });
+  for (const t of testes) {
+    if (vistos.has(t.code)) continue;
+    vistos.add(t.code);
+    itens.push({
+      origem: "repasse", code: t.code, url: t.linha.link, motivo: t.motivo,
+      capturas: t.linha.capturas, criadoEm: t.linha.primeira, ultima: t.linha.ultima,
+      reservado: reservado(t.code),
+    });
+  }
+
+  return {
+    itens: itens.slice(0, teto),
+    total: itens.length,
+    auto: cfg.checkoutAuto && !bloqueado,
+    checkoutAuto: cfg.checkoutAuto,
+    bloqueadoAte: bloqueado ? _status.bloqueadoAte : null,
+  };
+}
+
+// Um teste pedido à mão: link do produto + código. Valida aqui, e não só na tela,
+// porque esse link vai ser aberto no Chrome do admin com a conta do ML.
+const CODIGO_RE = /^[A-Z0-9-]{3,30}$/;
+async function adicionarManual({ code, url, userId = null }) {
+  const { prisma } = require("../db");
+  const { detectStore } = require("../scraping/urlGuard");
+  const c = String(code || "").trim().toUpperCase();
+  const u = String(url || "").trim();
+  if (!CODIGO_RE.test(c)) throw Object.assign(new Error("Código inválido: use de 3 a 30 letras, números ou hífen."), { status: 400 });
+  let valida = false;
+  try { valida = /^https?:$/.test(new URL(u).protocol); } catch { valida = false; }
+  if (!valida || detectStore(u) !== "Mercado Livre") {
+    throw Object.assign(new Error("O link precisa ser de um produto do Mercado Livre."), { status: 400 });
+  }
+  const m = await prisma().repasseCupomManual.create({ data: { code: c, url: u, userId } });
+  return { origem: "manual", manualId: String(m.id), code: m.code, url: m.url, criadoEm: m.createdAt, motivo: "manual", reservado: false };
+}
+
+async function removerManual(id) {
+  const { prisma } = require("../db");
+  let chave;
+  try { chave = BigInt(id); } catch { return { removido: 0 }; }
+  const r = await prisma().repasseCupomManual.deleteMany({ where: { id: chave, testedAt: null } });
+  return { removido: r.count };
+}
+
+function reivindicarCheckout(code) {
+  const c = String(code || "").trim().toUpperCase();
+  if (!c) return { ok: false };
+  if (reservado(c)) return { ok: false };
+  _reservas.set(c, Date.now() + RESERVA_MS);
+  return { ok: true, code: c };
+}
+
+// O material que a extensão colheu vira veredito, entra no dicionário de palavras
+// (`ml_coupon_codes`) e no diário do robô. `source` diz se foi o botão Testar ou a
+// fila automática.
+async function registrarCheckout({ code, url = null, material, source = "repasse-checkout", durationMs = null, manualId = null }) {
+  const { interpretar, verdictDe, mensagemDe } = require("./checkout-cupom");
+  const pg = require("../coupons/pg");
+  const c = String(code || "").trim().toUpperCase();
+  if (!c) throw new Error("Código vazio.");
+  const fonte = FONTES_DO_CHECKOUT.has(source) ? source : "repasse-checkout";
+
+  const resultado = interpretar(material, c);
+  const verdict = verdictDe(resultado);
+  const message = mensagemDe(resultado);
+  const linha = await pg.recordCodeCheck({
+    code: c, verdict, campaignId: resultado.campaignId, message, source: fonte,
+    raw: { ...resultado, url, via: "checkout" },
+  });
+  _reservas.delete(c);
+
+  // O pedido manual sai da fila com o desfecho dele.
+  if (manualId != null) {
+    try {
+      await require("../db").prisma().repasseCupomManual.updateMany({
+        where: { id: BigInt(manualId), testedAt: null },
+        data: { testedAt: new Date(), verdict, message },
+      });
+    } catch (err) {
+      console.error(`[repasse] pedido manual ${manualId}: ${err.message}`);
+    }
+  }
+
+  const bloqueio = resultado.bloqueio ? (kindDoBloqueio(resultado.bloqueio) || KIND.CAPTCHA) : null;
+  await logAutotest({
+    code: c, action: ACTION.TEST, ok: verdict === "valid", verdict,
+    campaignId: resultado.campaignId, errorKind: bloqueio, message, durationMs,
+  });
+  _status.testados += 1;
+  _status.lastRunAt = new Date().toISOString();
+
+  // Muro na aba do admin: a fila automática para por um tempo, e o grupo de admin
+  // fica sabendo — a extensão já trouxe a aba pra frente e esperou alguém resolver.
+  if (bloqueio && fonte === "repasse-checkout-auto") {
+    const cfg = cfgStore.readConfig();
+    _status.bloqueadoAte = new Date(Date.now() + cfg.pausaAposBloqueioMin * 60_000).toISOString();
+    require("../notifications/admin-notifier").notifyBlockDetected({
+      alvo: "Cupons do repasse · teste no checkout",
+      motivo: resultado.bloqueio,
+      o_que: `O Mercado Livre pediu verificação ao testar o cupom ${c} na aba do admin, e ninguém resolveu a tempo.`,
+      falhas: 1,
+      desde: new Date().toLocaleString("pt-BR"),
+      clientes: "",
+      o_que_fazer: `Abra o Chrome com a extensão, resolva a verificação no Mercado Livre e aperte "Testar" num cupom. A fila automática volta sozinha em ${cfg.pausaAposBloqueioMin} min.`,
+    }).catch(() => {});
+  }
+
+  return { resultado, verdict, message, linha };
 }
 
 // ── Agenda ───────────────────────────────────────────────────────────────
@@ -374,10 +487,14 @@ function status() {
 // outro, então há como zerá-lo. Exportado p/ testes.
 function _resetEstado() {
   _running = false;
+  _reservas.clear();
   Object.assign(_status, {
     lastRunAt: null, lastDuration: null, testados: 0, importados: 0,
     vitrines: 0, pulada: null, bloqueadoAte: null, lastError: null, nextRunAt: null,
   });
 }
 
-module.exports = { start, stop, status, runOnce, selecionar, kindDoBloqueio, ACTION, _resetEstado };
+module.exports = {
+  start, stop, status, runOnce, selecionar, kindDoBloqueio, ACTION, _resetEstado,
+  pendentesCheckout, reivindicarCheckout, registrarCheckout, adicionarManual, removerManual,
+};

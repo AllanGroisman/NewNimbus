@@ -1,14 +1,16 @@
-// A rodada do robô que testa os cupons do repasse, de ponta a ponta — com o banco
-// de verdade e o Mercado Livre mockado.
+// O robô dos cupons do repasse, de ponta a ponta — com o banco de verdade e o
+// Mercado Livre mockado.
 //
-// O que estes testes protegem não é "o cupom foi testado": é o FREIO. O robô abre
-// um Chrome com a conta do sistema por palavra, então uma rodada que não sabe
-// parar não deixa a tela lenta, deixa a conta bloqueada — e aí o teste manual, que
-// é o caminho que funcionava antes, para de funcionar também.
+// Desde a task 7 ele tem duas metades:
+//   - a FILA do teste no checkout: o servidor diz o que falta testar, a aba do
+//     admin reivindica, roda na extensão e devolve o material (registrarCheckout);
+//   - a rodada do servidor, que só traz a campanha e raspa a vitrine — ela não
+//     testa mais palavra nenhuma no Chrome do servidor.
 //
-// Por isso os casos centrais aqui são: parar no primeiro CAPTCHA, não rodar junto
-// com a rodada do admin, e gravar no diário o que aconteceu inclusive quando nada
-// aconteceu. A parte que DECIDE (pura) fica em unit/repasse-coupon-autotest.test.js.
+// O que estes testes protegem é o FREIO: muro na aba pausa a fila, uma aba não pega
+// o cupom da outra, e o diário conta o que aconteceu inclusive quando nada
+// aconteceu. A parte que DECIDE (pura) fica em unit/repasse-coupon-autotest.test.js
+// e a leitura do material em unit/repasse-checkout-cupom.test.js.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createTestUser, auth as authMod } from "../helpers/app.js";
@@ -29,15 +31,30 @@ let userId;
 let adminReq;
 
 // Uma captura com cupom, como a legenda de um grupo líder produz.
-async function capturado(coupon, { outcome = "queued", groupId = 1n } = {}) {
+async function capturado(coupon, { outcome = "queued", groupId = 1n, store = "Mercado Livre", rawUrl = null } = {}) {
   await prisma().repasseCaptureLog.create({
     data: {
       groupId, userId, waJid: "120363@g.us",
-      rawUrl: `https://mercadolivre.com.br/p/${Math.random()}`,
-      coupon, outcome,
+      rawUrl: rawUrl || `https://mercadolivre.com.br/p/${Math.random()}`,
+      coupon, outcome, store,
     },
   });
 }
+
+// O material que a extensão devolve, nos três desfechos que importam.
+const CARTAO = "Com JBL20\n20% OFF\nCompra mínima R$ 99 | Limite de R$ 60 | Venc. 30/09/2026\nAplicado";
+const MATERIAL = {
+  aplicado: {
+    checkout: { reached: true }, modal: { aberto: true, campo: true },
+    cartaoDepois: { texto: CARTAO, aplicado: true },
+    resumoDepois: "Cupons (1/1 em uso) - R$ 40,00 Você pagará R$ 160,00",
+  },
+  indisponivel: {
+    checkout: { reached: true }, modal: { aberto: true, campo: true },
+    erroCampo: "O cupom não está mais disponível.",
+  },
+  captcha: { muro: "captcha", checkout: { reached: false } },
+};
 
 // A palavra já testada antes, do jeito que o checkWord a deixaria.
 async function palavraTestada(code, { verdict, campaignId = null, checkCount = 1, horasAtras = 0 } = {}) {
@@ -55,6 +72,7 @@ const acoes = (itens) => itens.map(i => i.action);
 
 beforeEach(async () => {
   await prisma().repasseCouponAutotest.deleteMany({});
+  await prisma().repasseCupomManual.deleteMany({});
   await prisma().repasseCaptureLog.deleteMany({});
   await prisma().mlCouponCode.deleteMany({});
   await prisma().mlCoupon.deleteMany({});
@@ -74,129 +92,160 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("a rodada testa as palavras novas", () => {
-  it("testa o cupom nunca testado e registra o veredito no diário", async () => {
-    await capturado("JBL20");
-    const checkWord = vi.spyOn(sync, "checkWord").mockResolvedValue({
-      word: "JBL20", verdict: "valid", campaignId: "42", message: null, coupon: { title: "20% em áudio" },
-    });
-
-    const r = await autotest.runOnce();
-
-    expect(r.testados).toBe(1);
-    // A origem é o que separa "o admin clicou" de "o robô testou" — é ela que faz
-    // a aba escrever "(automático)" ao lado da data.
-    expect(checkWord).toHaveBeenCalledWith("JBL20", { source: "repasse-auto" });
-
-    const log = await logDe("JBL20");
-    expect(log).toHaveLength(1);
-    expect(log[0]).toMatchObject({ action: "test", ok: true, verdict: "valid", campaignId: "42" });
-    expect(log[0].durationMs).toBeGreaterThanOrEqual(0);
+describe("a fila do teste no checkout", () => {
+  it("põe na fila o cupom nunca testado, com o link do ML que chegou com ele", async () => {
+    await capturado("JBL20", { rawUrl: "https://www.mercadolivre.com.br/caixa-jbl/p/MLB111" });
+    const { itens } = await autotest.pendentesCheckout();
+    expect(itens).toEqual([expect.objectContaining({
+      origem: "repasse", code: "JBL20", url: "https://www.mercadolivre.com.br/caixa-jbl/p/MLB111",
+      motivo: "nunca-testado", capturas: 1, reservado: false,
+    })]);
   });
 
-  it("registra o 'não reconheceu' como tentativa concluída, não como erro", async () => {
-    // O cupom continua indo na mensagem do cliente; o valor desta linha é alguém
-    // poder SABER que ele não vale.
+  it("prefere o link que virou produto ao de um descartado", async () => {
+    await capturado("JBL20", { outcome: "queued", rawUrl: "https://www.mercadolivre.com.br/p/BOM" });
+    await capturado("JBL20", { outcome: "discarded", rawUrl: "https://www.mercadolivre.com.br/p/DESCARTADO" });
+    const { itens } = await autotest.pendentesCheckout();
+    expect(itens[0].url).toBe("https://www.mercadolivre.com.br/p/BOM");
+  });
+
+  it("cupom sem link do ML não entra — não há produto onde testar", async () => {
+    await capturado("AMZ10", { store: "Amazon", rawUrl: "https://amzn.to/x" });
+    expect((await autotest.pendentesCheckout()).itens).toEqual([]);
+  });
+
+  it("o 'indeterminado' do teste antigo de palavra volta pra fila, mesmo no teto de tentativas", async () => {
+    // Aquilo era o Chrome do servidor barrado, não uma resposta sobre o cupom.
+    await capturado("VELHO10");
+    await palavraTestada("VELHO10", { verdict: "indeterminado", checkCount: 3 });
+    expect((await autotest.pendentesCheckout()).itens.map(i => i.code)).toEqual(["VELHO10"]);
+  });
+
+  it("não volta num cupom que o ML recusou", async () => {
     await capturado("NAOEXISTE");
-    vi.spyOn(sync, "checkWord").mockResolvedValue({
-      verdict: "invalid", campaignId: null, message: "Confira se o cupom está correto",
+    await palavraTestada("NAOEXISTE", { verdict: "invalid", horasAtras: 500 });
+    expect((await autotest.pendentesCheckout()).itens).toEqual([]);
+  });
+
+  it("uma aba não pega o cupom que a outra reivindicou — e a tela o vê como 'testando'", async () => {
+    await capturado("A1000");
+    await capturado("B1000");
+    expect(autotest.reivindicarCheckout("a1000")).toEqual({ ok: true, code: "A1000" });
+    expect(autotest.reivindicarCheckout("A1000").ok).toBe(false);
+    const { itens } = await autotest.pendentesCheckout();
+    expect(Object.fromEntries(itens.map(i => [i.code, i.reservado]))).toEqual({ A1000: true, B1000: false });
+  });
+
+  it("o pedido manual vem antes do repasse, e o mesmo código não aparece duas vezes", async () => {
+    await capturado("MELIKIDS", { rawUrl: "https://www.mercadolivre.com.br/p/DO-REPASSE" });
+    await capturado("JBL20");
+    await autotest.adicionarManual({ code: "melikids", url: "https://www.mercadolivre.com.br/boneca/p/MLB9" });
+
+    const { itens, total } = await autotest.pendentesCheckout();
+    expect(total).toBe(2);
+    expect(itens[0]).toMatchObject({ origem: "manual", code: "MELIKIDS", url: "https://www.mercadolivre.com.br/boneca/p/MLB9" });
+    expect(itens[0].manualId).toEqual(expect.any(String));
+    expect(itens[1]).toMatchObject({ origem: "repasse", code: "JBL20" });
+  });
+
+  it("o pedido manual sai da fila com o desfecho do teste", async () => {
+    const item = await autotest.adicionarManual({ code: "MELIKIDS", url: "https://www.mercadolivre.com.br/boneca/p/MLB9" });
+    await autotest.registrarCheckout({ code: "MELIKIDS", url: item.url, material: MATERIAL.indisponivel, manualId: item.manualId });
+
+    expect((await autotest.pendentesCheckout()).itens).toEqual([]);
+    const linha = await prisma().repasseCupomManual.findUnique({ where: { id: BigInt(item.manualId) } });
+    expect(linha.testedAt).toBeTruthy();
+    expect(linha.verdict).toBe("invalid");
+  });
+
+  it("recusa código ou link que não servem", async () => {
+    await expect(autotest.adicionarManual({ code: "X", url: "https://www.mercadolivre.com.br/p/MLB1" })).rejects.toThrow(/Código inválido/);
+    await expect(autotest.adicionarManual({ code: "VALE10", url: "https://www.amazon.com.br/dp/B0" })).rejects.toThrow(/Mercado Livre/);
+    await expect(autotest.adicionarManual({ code: "VALE10", url: "não é link" })).rejects.toThrow(/Mercado Livre/);
+  });
+
+  it("remover tira só o pedido que ainda não foi testado", async () => {
+    const item = await autotest.adicionarManual({ code: "MELIKIDS", url: "https://www.mercadolivre.com.br/boneca/p/MLB9" });
+    expect(await autotest.removerManual(item.manualId)).toEqual({ removido: 1 });
+    expect(await autotest.removerManual(item.manualId)).toEqual({ removido: 0 });
+    expect(await autotest.removerManual("lixo")).toEqual({ removido: 0 });
+  });
+
+  it("aplicado no checkout → valid, com as condições na mensagem e no diário", async () => {
+    await capturado("JBL20");
+    const r = await autotest.registrarCheckout({
+      code: "jbl20", url: "https://www.mercadolivre.com.br/p/MLB111",
+      material: MATERIAL.aplicado, source: "repasse-checkout-auto", durationMs: 1234,
     });
+    expect(r.verdict).toBe("valid");
+    expect(r.resultado).toMatchObject({ status: "aplicado_agora", desconto: "20% OFF", compra_minima: 99, limite_desconto: 60 });
 
-    await autotest.runOnce();
+    const chk = await prisma().mlCouponCode.findUnique({ where: { code: "JBL20" } });
+    expect(chk).toMatchObject({ verdict: "valid", source: "repasse-checkout-auto" });
+    expect(chk.message).toMatch(/Aplicado no checkout.*20% OFF/);
+    expect(chk.raw).toMatchObject({ url: "https://www.mercadolivre.com.br/p/MLB111", status: "aplicado_agora" });
 
+    const log = await logDe("JBL20");
+    expect(log[0]).toMatchObject({ action: "test", ok: true, verdict: "valid", durationMs: 1234 });
+    // Testado: sai da fila.
+    expect((await autotest.pendentesCheckout()).itens).toEqual([]);
+  });
+
+  it("'não está mais disponível' → invalid, e o texto do ML fica guardado", async () => {
+    await capturado("NAOEXISTE");
+    const r = await autotest.registrarCheckout({ code: "NAOEXISTE", material: MATERIAL.indisponivel });
+    expect(r.verdict).toBe("invalid");
     const log = await logDe("NAOEXISTE");
     expect(log[0]).toMatchObject({ action: "test", ok: false, verdict: "invalid" });
     expect(log[0].errorKind).toBeNull();
-    expect(log[0].message).toContain("Confira se o cupom");
+    expect(log[0].message).toContain("O cupom não está mais disponível.");
   });
 
-  it("não testa de novo a palavra que o ML já recusou", async () => {
-    await capturado("NAOEXISTE");
-    await palavraTestada("NAOEXISTE", { verdict: "invalid", horasAtras: 500 });
+  it("a rodada do servidor não testa mais palavra nenhuma", async () => {
+    await capturado("JBL20");
     const checkWord = vi.spyOn(sync, "checkWord");
-
-    const r = await autotest.runOnce();
-
-    expect(checkWord).not.toHaveBeenCalled();
-    expect(r.testados).toBe(0);
-  });
-
-  it("respeita o teto de palavras por rodada", async () => {
-    for (const c of ["A1000", "B1000", "C1000", "D1000"]) await capturado(c);
-    const checkWord = vi.spyOn(sync, "checkWord").mockResolvedValue({ verdict: "invalid" });
-
     await autotest.runOnce();
-
-    // O default é 5; aqui o que se confirma é que as 4 couberam e nenhuma repetiu.
-    expect(checkWord).toHaveBeenCalledTimes(4);
-  });
-
-  it("uma exceção numa palavra não derruba a rodada", async () => {
-    await capturado("QUEBRA");
-    await capturado("SEGUE");
-    const checkWord = vi.spyOn(sync, "checkWord").mockImplementation(async (code) => {
-      if (code === "QUEBRA") throw new Error("dados insuficientes");
-      return { verdict: "invalid" };
-    });
-
-    const r = await autotest.runOnce();
-
-    expect(checkWord).toHaveBeenCalledTimes(2);
-    expect(r.testados).toBe(1);
-    const log = await logDe("QUEBRA");
-    expect(log[0]).toMatchObject({ action: "test", ok: false });
-    expect(log[0].errorKind).toBeTruthy();
+    expect(checkWord).not.toHaveBeenCalled();
   });
 });
 
 describe("o freio", () => {
-  it("para na primeira parede do ML e arma o breaker", async () => {
-    for (const c of ["P1000", "P2000", "P3000"]) await capturado(c);
-    const checkWord = vi.spyOn(sync, "checkWord").mockResolvedValue({
-      verdict: "indeterminado", message: "Página de CAPTCHA do Mercado Livre",
-    });
+  it("muro na fila automática pausa a fila e avisa o grupo de admin", async () => {
+    const notifier = require(path.join(backendDir, "notifications", "admin-notifier.js"));
+    const aviso = vi.spyOn(notifier, "notifyBlockDetected").mockResolvedValue();
+    await capturado("P1000");
+    await capturado("P2000");
 
-    await autotest.runOnce();
+    const r = await autotest.registrarCheckout({ code: "P1000", material: MATERIAL.captcha, source: "repasse-checkout-auto" });
 
-    // A segunda palavra levaria o mesmo CAPTCHA, e cada tentativa é um Chrome novo.
-    expect(checkWord).toHaveBeenCalledTimes(1);
+    expect(r.verdict).toBe("indeterminado");
     expect(autotest.status().bloqueadoAte).toBeTruthy();
     expect(new Date(autotest.status().bloqueadoAte) > new Date()).toBe(true);
-
-    // E o diário explica a parada, senão a tela mostraria "1 testada" sem motivo.
-    const skips = (await autotestLog.listAutotestLog({ code: "-" })).items;
-    expect(skips[0].errorKind).toBe("captcha");
-    expect(skips[0].message).toContain("barrou");
+    expect(aviso).toHaveBeenCalledWith(expect.objectContaining({ motivo: "captcha" }));
+    expect((await logDe("P1000"))[0].errorKind).toBe("captcha");
+    // A fila continua à mostra, mas o automático fica parado até a pausa passar.
+    const fila = await autotest.pendentesCheckout();
+    expect(fila).toMatchObject({ auto: false, checkoutAuto: true });
+    expect(fila.bloqueadoAte).toBeTruthy();
+    expect(fila.itens.map(i => i.code)).toContain("P2000");
   });
 
-  it("com o breaker armado, a rodada seguinte não abre navegador nenhum", async () => {
+  it("muro no botão Testar não pausa a fila — foi um pedido de quem está olhando", async () => {
+    const notifier = require(path.join(backendDir, "notifications", "admin-notifier.js"));
+    const aviso = vi.spyOn(notifier, "notifyBlockDetected").mockResolvedValue();
     await capturado("Q1000");
-    vi.spyOn(sync, "checkWord").mockResolvedValue({
-      verdict: "indeterminado", message: "Página de CAPTCHA do Mercado Livre",
-    });
-    await autotest.runOnce();
-
-    const checkWord = vi.spyOn(sync, "checkWord").mockResolvedValue({ verdict: "valid" });
-    const r = await autotest.runOnce();
-
-    expect(r.skipped).toBe("bloqueado");
-    expect(checkWord).not.toHaveBeenCalled();
-    expect(autotest.status().pulada).toContain("barrou");
+    await autotest.registrarCheckout({ code: "Q1000", material: MATERIAL.captcha, source: "repasse-checkout" });
+    expect(autotest.status().bloqueadoAte).toBeNull();
+    expect(aviso).not.toHaveBeenCalled();
   });
 
-  it("'Rodar agora' fura o bloqueio — é um pedido explícito de quem vê o aviso", async () => {
-    await capturado("X1000");
-    vi.spyOn(sync, "checkWord").mockResolvedValue({
-      verdict: "indeterminado", message: "Página de CAPTCHA do Mercado Livre",
-    });
-    await autotest.runOnce();
-    expect(autotest.status().bloqueadoAte).toBeTruthy();
-
-    const checkWord = vi.spyOn(sync, "checkWord").mockResolvedValue({ verdict: "valid" });
-    await autotest.runOnce({ manual: true });
-
-    expect(checkWord).toHaveBeenCalledTimes(1);
-    expect(autotest.status().bloqueadoAte).toBeNull();
+  it("com o automático desligado, a fila continua à mostra mas marcada como parada", async () => {
+    await capturado("U1000");
+    const cfgStore = require(path.join(backendDir, "repasse", "coupon-autotest-config.js"));
+    vi.spyOn(cfgStore, "readConfig").mockReturnValue({ ...cfgStore.DEFAULTS, checkoutAuto: false });
+    const fila = await autotest.pendentesCheckout();
+    expect(fila).toMatchObject({ auto: false, checkoutAuto: false });
+    expect(fila.itens.map(i => i.code)).toEqual(["U1000"]);
   });
 
   it("não roda junto com a rodada de cupons do admin", async () => {
@@ -221,31 +270,30 @@ describe("o freio", () => {
     expect(r.skipped).toBe("import-em-curso");
   });
 
-  it("sem cookie do ML explica no diário em vez de estourar palavra por palavra", async () => {
+  it("sem cookie do ML explica no diário em vez de estourar a cada campanha", async () => {
     await capturado("T1000");
     affiliate.getScraperMLSession.mockReturnValue(null);
-    const checkWord = vi.spyOn(sync, "checkWord");
 
     const r = await autotest.runOnce();
 
     expect(r.skipped).toBe("sem-sessao");
-    expect(checkWord).not.toHaveBeenCalled();
     const skips = (await autotestLog.listAutotestLog({ code: "-" })).items;
     expect(skips[0].message).toContain("Admin › Mercado Livre");
   });
 
   it("desligado não roda; 'Rodar agora' roda mesmo desligado", async () => {
     await capturado("U1000");
+    await palavraTestada("U1000", { verdict: "valid", campaignId: "555" });
     const cfgStore = require(path.join(backendDir, "repasse", "coupon-autotest-config.js"));
     vi.spyOn(cfgStore, "readConfig").mockReturnValue({ ...cfgStore.DEFAULTS, enabled: false });
-    const checkWord = vi.spyOn(sync, "checkWord").mockResolvedValue({ verdict: "invalid" });
+    const startImport = vi.spyOn(sync, "startImport").mockResolvedValue({ already: true });
 
     expect((await autotest.runOnce()).skipped).toBe("desligado");
-    expect(checkWord).not.toHaveBeenCalled();
+    expect(startImport).not.toHaveBeenCalled();
 
     // O botão da tela é um pedido explícito — serve pra conferir a config antes de ligar.
     await autotest.runOnce({ manual: true });
-    expect(checkWord).toHaveBeenCalledTimes(1);
+    expect(startImport).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -280,22 +328,6 @@ describe("trazer a campanha e a vitrine", () => {
     expect((await logDe("VITRINE")).find(l => l.action === "vitrine")).toMatchObject({ ok: true, produtos: 12 });
   });
 
-  it("uma parede no teste cancela o trabalho pesado da rodada", async () => {
-    // Importar é mais Chrome e mais longo; insistir depois de um CAPTCHA é o
-    // caminho mais curto pra queimar a conta.
-    await capturado("W1000");
-    await capturado("VALE20");
-    await palavraTestada("VALE20", { verdict: "valid", campaignId: "999" });
-    vi.spyOn(sync, "checkWord").mockResolvedValue({
-      verdict: "indeterminado", message: "Página de CAPTCHA do Mercado Livre",
-    });
-    const startImport = vi.spyOn(sync, "startImport").mockResolvedValue({ started: true });
-
-    await autotest.runOnce();
-
-    expect(startImport).not.toHaveBeenCalled();
-  });
-
   it("a importação que falha vira linha de erro, não exceção", async () => {
     await capturado("FALHA10");
     await palavraTestada("FALHA10", { verdict: "valid", campaignId: "111" });
@@ -327,9 +359,8 @@ describe("trazer a campanha e a vitrine", () => {
 describe("o diário", () => {
   it("lista do mais recente pro mais antigo e pagina", async () => {
     await capturado("D1000");
-    vi.spyOn(sync, "checkWord").mockResolvedValue({ verdict: "invalid" });
-    await autotest.runOnce();
-    await autotest.runOnce();
+    await autotest.registrarCheckout({ code: "D1000", material: MATERIAL.indisponivel });
+    await autotest.registrarCheckout({ code: "D1000", material: MATERIAL.indisponivel });
 
     const r = await autotestLog.listAutotestLog({ pageSize: 1 });
     expect(r.total).toBeGreaterThanOrEqual(2);
@@ -341,8 +372,7 @@ describe("o diário", () => {
   it("filtra o histórico de um cupom só", async () => {
     await capturado("E1000");
     await capturado("F1000");
-    vi.spyOn(sync, "checkWord").mockResolvedValue({ verdict: "invalid" });
-    await autotest.runOnce();
+    await autotest.registrarCheckout({ code: "E1000", material: MATERIAL.indisponivel });
 
     expect(acoes(await logDe("E1000"))).toEqual(["test"]);
     expect(await logDe("NUNCAVISTO")).toEqual([]);
@@ -370,8 +400,7 @@ describe("as rotas do admin", () => {
 
   it("o log responde paginado, com o id serializável", async () => {
     await capturado("H1000");
-    vi.spyOn(sync, "checkWord").mockResolvedValue({ verdict: "invalid" });
-    await autotest.runOnce({ manual: true });
+    await autotest.registrarCheckout({ code: "H1000", material: MATERIAL.indisponivel });
 
     const r = await adminReq("get", "/api/admin/repasse/coupon-autotest/log?pageSize=5").expect(200);
     expect(r.body.total).toBeGreaterThan(0);
@@ -379,11 +408,55 @@ describe("as rotas do admin", () => {
   });
 
   it("'Rodar agora' responde na hora, sem segurar a conexão", async () => {
-    // A rodada abre um Chrome por palavra e passa do timeout do proxy; a rota
+    // A rodada abre Chrome (campanha, vitrine) e passa do timeout do proxy; a rota
     // dispara solta e responde 202.
-    vi.spyOn(sync, "checkWord").mockResolvedValue({ verdict: "invalid" });
     const r = await adminReq("post", "/api/admin/repasse/coupon-autotest/run").expect(202);
     expect(r.body.started).toBe(true);
+  });
+
+  it("a fila do checkout: pendentes → reivindicar (409 na segunda) → resultado", async () => {
+    await capturado("ROTA10", { rawUrl: "https://www.mercadolivre.com.br/p/MLB222" });
+    // O PUT acima gravou `enabled: false` na config de verdade.
+    const cfgStore = require(path.join(backendDir, "repasse", "coupon-autotest-config.js"));
+    vi.spyOn(cfgStore, "readConfig").mockReturnValue({ ...cfgStore.DEFAULTS, enabled: true });
+
+    const p = await adminReq("get", "/api/admin/repasse/cupom-checkout/pendentes?limit=3").expect(200);
+    expect(p.body.itens).toEqual([expect.objectContaining({ code: "ROTA10", url: "https://www.mercadolivre.com.br/p/MLB222" })]);
+
+    await adminReq("post", "/api/admin/repasse/cupom-checkout/reivindicar").send({ code: "ROTA10" }).expect(200);
+    await adminReq("post", "/api/admin/repasse/cupom-checkout/reivindicar").send({ code: "ROTA10" }).expect(409);
+
+    const r = await adminReq("post", "/api/admin/repasse/cupom-checkout/resultado")
+      .send({ code: "ROTA10", url: "https://www.mercadolivre.com.br/p/MLB222", material: MATERIAL.indisponivel, source: "repasse-checkout-auto" })
+      .expect(200);
+    expect(r.body).toMatchObject({ verdict: "invalid", source: "repasse-checkout-auto", resultado: { status: "falha", motivo: "indisponivel" } });
+    expect(r.body.checkedAt).toBeTruthy();
+  });
+
+  it("o pedido manual pela rota: link fora do ML é 400; certo entra e sai com DELETE", async () => {
+    const ruim = await adminReq("post", "/api/admin/repasse/cupom-checkout/manual")
+      .send({ code: "VALE10", url: "https://www.amazon.com.br/dp/B0" }).expect(400);
+    expect(ruim.body.error).toMatch(/Mercado Livre/);
+
+    const ok = await adminReq("post", "/api/admin/repasse/cupom-checkout/manual")
+      .send({ code: "vale10", url: "https://www.mercadolivre.com.br/p/MLB1" }).expect(200);
+    expect(ok.body).toMatchObject({ origem: "manual", code: "VALE10" });
+
+    await adminReq("delete", `/api/admin/repasse/cupom-checkout/manual/${ok.body.manualId}`).expect(200);
+    await adminReq("delete", `/api/admin/repasse/cupom-checkout/manual/${ok.body.manualId}`).expect(404);
+  });
+
+  it("PUT auto liga e desliga o automático sem mexer no robô do servidor", async () => {
+    const antes = (await adminReq("get", "/api/admin/repasse/coupon-autotest").expect(200)).body.config.enabled;
+    const r = await adminReq("put", "/api/admin/repasse/cupom-checkout/auto").send({ auto: false }).expect(200);
+    expect(r.body).toEqual({ checkoutAuto: false });
+    const depois = (await adminReq("get", "/api/admin/repasse/coupon-autotest").expect(200)).body.config;
+    expect(depois).toMatchObject({ checkoutAuto: false, enabled: antes });
+    await adminReq("put", "/api/admin/repasse/cupom-checkout/auto").send({ auto: true }).expect(200);
+  });
+
+  it("resultado sem material é 400", async () => {
+    await adminReq("post", "/api/admin/repasse/cupom-checkout/resultado").send({ code: "X" }).expect(400);
   });
 
   it("o log de captura diz se o cupom daquela linha foi validado", async () => {

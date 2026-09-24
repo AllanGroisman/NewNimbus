@@ -3344,6 +3344,80 @@ app.get("/api/admin/repasse/coupon-autotest/log", auth.requireAuth, auth.require
   }
 });
 
+// O teste do cupom do repasse NO CHECKOUT do produto que chegou com ele (task 7).
+// Quem anda no ML é a aba Admin › Cupom › Repasse, pela extensão: ela pergunta o
+// que está pendente, reivindica um código e devolve o material cru para cá.
+app.get("/api/admin/repasse/cupom-checkout/pendentes", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const autotest = require("./repasse/coupon-autotest");
+    res.json(await autotest.pendentesCheckout({ limit: req.query.limit }));
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/repasse/cupom-checkout/pendentes" });
+  }
+});
+
+// O "Testar automaticamente" da fila: liga/desliga o laço da aba, sem mexer na
+// rodada do servidor (campanha e vitrine).
+app.put("/api/admin/repasse/cupom-checkout/auto", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const config = couponAutotestConfig.writeConfig({ checkoutAuto: req.body?.auto });
+    if (!await confirmConfigSaved(res)) return;
+    res.json({ checkoutAuto: config.checkoutAuto });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Um teste pedido à mão: link do produto + código. Entra no começo da fila.
+app.post("/api/admin/repasse/cupom-checkout/manual", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const autotest = require("./repasse/coupon-autotest");
+    res.json(await autotest.adicionarManual({ code: req.body?.code, url: req.body?.url, userId: req.user?.id || null }));
+  } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/admin/repasse/cupom-checkout/manual" });
+  }
+});
+
+app.delete("/api/admin/repasse/cupom-checkout/manual/:id", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const r = await require("./repasse/coupon-autotest").removerManual(req.params.id);
+    if (!r.removido) return res.status(404).json({ error: "Esse pedido não está mais na fila." });
+    res.json(r);
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "DELETE /api/admin/repasse/cupom-checkout/manual" });
+  }
+});
+
+app.post("/api/admin/repasse/cupom-checkout/reivindicar", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  const r = require("./repasse/coupon-autotest").reivindicarCheckout(req.body?.code);
+  if (!r.ok) return res.status(409).json({ error: "Esse cupom já está sendo testado (outra aba pode ter pegado)." });
+  res.json(r);
+});
+
+app.post("/api/admin/repasse/cupom-checkout/resultado", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  const { code, url, material, source, durationMs, manualId } = req.body || {};
+  if (!code || !material || typeof material !== "object") return res.status(400).json({ error: "Faltou o código ou o material do teste." });
+  try {
+    const autotest = require("./repasse/coupon-autotest");
+    const r = await autotest.registrarCheckout({ code, url: url || null, material, source, durationMs, manualId: manualId ?? null });
+    res.json({
+      resultado: r.resultado,
+      // O que ficou gravado: um "valid" anterior não é apagado por um engasgo
+      // (coupons/pg.js:recordCodeCheck). O desta tentativa vai em `resultado`.
+      verdict: r.linha?.verdict ?? r.verdict,
+      message: r.linha?.message ?? r.message,
+      raw: r.linha?.raw ?? null,
+      campaignId: r.linha?.campaignId ?? null,
+      checkedAt: r.linha?.checkedAt ?? null,
+      checkCount: r.linha?.checkCount ?? null,
+      source: r.linha?.source ?? null,
+    });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/admin/repasse/cupom-checkout/resultado" });
+  }
+});
+
 // "Quais cupons valem neste produto?" — pelo link (ou pela chave do catálogo).
 // Só o que o sistema já sabe, sem rede: cada cupom vem com a ORIGEM do vínculo,
 // porque "está na prévia" e "está na vitrine completa" não são a mesma garantia.

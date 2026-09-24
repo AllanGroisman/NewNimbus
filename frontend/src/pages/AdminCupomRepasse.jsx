@@ -9,21 +9,25 @@
 // Esta aba junta as duas metades: de um lado o que o repasse viu (quantas vezes,
 // desde quando, em quantas campanhas), do outro o que o sistema sabe da palavra
 // (`ml_coupon_codes` + `ml_coupons`, o dicionário da aba "Descobrir palavra").
-// O teste acontece de dois jeitos, e os dois vivem nesta tela: o botão da linha
-// (sob demanda) e o robô do card do topo (repasse/coupon-autotest.js), que roda em
-// rodadas espaçadas. O que nunca pode acontecer é testar a cada mensagem recebida —
-// cada teste abre um Chrome com a conta do ML, e rajada de Chrome é pedir CAPTCHA.
-import { useState, useEffect, useCallback } from "react";
+// O teste acontece NO CHECKOUT do produto que chegou com o cupom (task 7), na aba
+// do Chrome do admin, pela extensão: abre o produto, "Comprar agora", o modal
+// "Cupons", digita o código e lê a resposta. Dois jeitos, os dois nesta tela: o
+// botão da linha (sob demanda) e a fila automática — enquanto esta aba está aberta
+// com a extensão, ela pega sozinha um cupom pendente a cada 30s. Um de cada vez:
+// o checkout é um só por conta, e dois ao mesmo tempo se atropelariam.
+import { useState, useEffect, useCallback, useRef } from "react";
 import { PRIMARY_DARK } from "../data/constants";
 import {
   adminRepasseCoupons, adminRepasseLogs,
   adminMlCuponsSyncProducts, adminRepasseCouponForget, adminRepasseCouponsClear, errText,
 } from "../data/api";
 import CouponAutotest from "../components/admin/CouponAutotest";
+import FilaCheckoutRepasse from "../components/admin/FilaCheckoutRepasse";
 import Pagination from "../components/ui/Pagination";
 import Modal from "../components/ui/Modal";
 import { ImportarCampanhaModal } from "./AdminCupomPalavra";
 import { testarPalavra } from "../data/cupomPalavra";
+import { extensaoTestaNoCheckout, testarNoCheckout } from "../data/cupomCheckoutRepasse";
 import { VERDICT, OUTCOME_LABEL } from "../data/cupomRotulos";
 import {
   cardStyle, inputStyle, labelStyle, th, td, botaoLink, botaoPerigo, botaoSecundario,
@@ -38,7 +42,24 @@ import {
 const ORIGEM_DO_TESTE = {
   repasse: " (por aqui)",
   "repasse-auto": " (automático)",
+  "repasse-checkout": " (no checkout, por aqui)",
+  "repasse-checkout-auto": " (no checkout, automático)",
 };
+
+// A resposta do servidor ao teste no checkout, no formato da linha.
+function patchDoCheckout(cupom, res) {
+  const mesmaCampanha = (res.campaignId ?? null) === (cupom.campaignId ?? null);
+  return {
+    verdict: res.verdict ?? null,
+    campaignId: res.campaignId ?? null,
+    message: res.message ?? null,
+    checkedAt: res.checkedAt || new Date().toISOString(),
+    checkCount: res.checkCount ?? (cupom.checkCount || 0) + 1,
+    source: res.source || "repasse-checkout",
+    // Campanha nova: o título e o "está no sistema" só o próximo ↻ sabe dizer.
+    ...(mesmaCampanha ? {} : { couponTitle: null, inSystem: null }),
+  };
+}
 
 const SEMAFORO = {
   ...VERDICT,
@@ -78,6 +99,26 @@ export default function CuponsDoRepasse() {
   const [excluindo, setExcluindo] = useState(null);
   const [limpando, setLimpando] = useState(false);
   const [apagando, setApagando] = useState(false);
+  // A extensão instalada sabe testar no checkout? null = ainda não se sabe.
+  const [temCheckout, setTemCheckout] = useState(null);
+  // O cupom que a fila (card de cima) está testando agora.
+  const [naFila, setNaFila] = useState(null);
+
+  useEffect(() => {
+    let vivo = true;
+    extensaoTestaNoCheckout().then(v => { if (vivo) setTemCheckout(!!v); }).catch(() => { if (vivo) setTemCheckout(false); });
+    return () => { vivo = false; };
+  }, []);
+
+  // Um teste no Chrome de cada vez, venha do botão ou da fila.
+  const serieRef = useRef(Promise.resolve());
+  const ocupadoRef = useRef(0);
+  const emSerie = useCallback((fn) => {
+    ocupadoRef.current += 1;
+    const p = serieRef.current.then(fn, fn).finally(() => { ocupadoRef.current -= 1; });
+    serieRef.current = p.catch(() => {});
+    return p;
+  }, []);
 
   const carregar = useCallback(async () => {
     setCarregando(true);
@@ -143,21 +184,39 @@ export default function CuponsDoRepasse() {
     }
   };
 
+  // O que a fila testou vira a linha atualizada aqui embaixo, no lugar.
+  const linhasRef = useRef([]);
+  useEffect(() => { linhasRef.current = dados?.items || []; });
+  const aoTestarNaFila = useCallback((code, res) => {
+    const linha = linhasRef.current.find(l => l.code === code) || { code };
+    setDados(d => d && ({
+      ...d,
+      items: d.items.map(i => (i.code === code ? { ...i, ...patchDoCheckout(linha, res) } : i)),
+    }));
+  }, []);
+
   const items = dados?.items || [];
   const totalPages = Math.max(1, Math.ceil((dados?.total || 0) / PAGE_SIZE));
 
   return (
     <div>
       <CouponAutotest />
+      <FilaCheckoutRepasse
+        temCheckout={temCheckout}
+        emSerie={emSerie}
+        ocupadoRef={ocupadoRef}
+        onTestado={aoTestarNaFila}
+        onTestando={setNaFila}
+      />
       <div style={cardStyle}>
         <div style={{ fontWeight: 500, marginBottom: 4 }}>Cupons capturados pelo repasse</div>
         <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14, lineHeight: 1.5 }}>
           Um por código, com quantas vezes ele apareceu nas legendas dos grupos líderes.
-          O <b>Testar</b> pergunta ao ML a que campanha a palavra pertence — abre um Chrome
-          com a conta do sistema e leva alguns segundos. Quando a palavra vale mas a campanha
-          nunca foi raspada, o <b>Trazer campanha</b> busca ela e os produtos dela.
-          O card acima faz esses dois passos sozinho, em rodadas espaçadas; os botões da linha
-          continuam aqui pra quando você não quer esperar a próxima.
+          O <b>Testar</b> leva o produto que chegou com o cupom até o checkout, numa aba do
+          seu Chrome (pela extensão), digita o código no quadro “Cupons” e lê o que o ML
+          respondeu — sem nunca finalizar a compra. Os que ainda não foram testados estão na
+          fila do card acima. Quando a palavra vale mas a campanha nunca foi raspada, o
+          <b> Trazer campanha</b> busca ela e os produtos dela.
         </div>
 
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
@@ -240,6 +299,9 @@ export default function CuponsDoRepasse() {
                     onPatch={patch => atualizarLinha(c.code, patch)}
                     onImportar={() => setImportando(c)}
                     onExcluir={() => setExcluindo(c)}
+                    temCheckout={temCheckout}
+                    naFila={naFila === c.code}
+                    emSerie={emSerie}
                   />
                 ))}
               </tbody>
@@ -332,7 +394,7 @@ function BotoesDoModal({ apagando, onCancelar, onConfirmar, rotulo: texto }) {
   );
 }
 
-function Linha({ cupom, aberto, onToggle, onPatch, onImportar, onExcluir }) {
+function Linha({ cupom, aberto, onToggle, onPatch, onImportar, onExcluir, temCheckout, naFila, emSerie }) {
   const [testando, setTestando] = useState(false);
   const [raspando, setRaspando] = useState(false);
   const [aviso, setAviso] = useState(null);
@@ -343,6 +405,13 @@ function Linha({ cupom, aberto, onToggle, onPatch, onImportar, onExcluir }) {
     setTestando(true);
     setAviso(null);
     try {
+      // O caminho da task 7: o código no checkout do produto que chegou com ele.
+      if (temCheckout && cupom.link) {
+        const res = await emSerie(() => testarNoCheckout(cupom.code, cupom.link, { source: "repasse-checkout" }));
+        onPatch(patchDoCheckout(cupom, res));
+        return;
+      }
+      // Sem extensão nova ou sem link do ML: o teste antigo, da palavra solta.
       // `force` porque o botão é um pedido explícito de "vai lá agora": sem ele o
       // checkWord devolveria o cache de 12h e o clique não faria nada visível.
       const res = await testarPalavra(cupom.code, { force: true, source: "repasse" });
@@ -426,8 +495,13 @@ function Linha({ cupom, aberto, onToggle, onPatch, onImportar, onExcluir }) {
         </td>
         <td style={td}>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <button onClick={testar} disabled={testando} style={botaoLink}>
-              {testando ? "⟳ testando..." : cupom.verdict ? "Testar de novo" : "Testar"}
+            <button
+              onClick={testar}
+              disabled={testando || naFila}
+              style={botaoLink}
+              title={temCheckout && cupom.link ? "Testa o código no checkout do produto que chegou com ele" : "Testa a palavra solta"}
+            >
+              {testando || naFila ? "⟳ testando..." : cupom.verdict ? "Testar de novo" : "Testar"}
             </button>
             {cupom.verdict === "valid" && cupom.campaignId && !cupom.inSystem && (
               <button onClick={onImportar} style={{ ...botaoLink, borderColor: PRIMARY_DARK, color: PRIMARY_DARK }}>

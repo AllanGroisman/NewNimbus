@@ -10,7 +10,88 @@
 
 6. [x] Quando saio e volto para a aba onde faco a busca de cupons, desaparece a barra e as indicações que ta rodando algo. Quero que volte normalmente onde esta. 
 
-7. [] Quero corrigir a captura de cupons pelo repasse. No momento todos os cupons estão dando que o ML não respondeu.
+7. [] Quero corrigir a captura de cupons pelo repasse. No momento todos os cupons estão dando que o ML não respondeu. Quero que pegue o link de produto que chegou, tente utilizar o cupom e verifique se ele é válido ou não.
+
+FLUXO
+
+1) Página do produto
+   - Abrir a URL do produto (usuário já logado).
+   - Clicar no botão azul "Comprar agora" (coluna da direita, abaixo de "Quantidade").
+
+2) Checkout — tela "Finalize sua compra"
+   - URL: https://www.mercadolivre.com.br/checkout/review/onestep
+   - Na coluna direita, caixa "Resumo da compra", clicar no link azul
+     "Cupons (X/Y em uso)" (ex.: "Cupons (1/1 em uso)"). Ele fica na linha abaixo de "Frete".
+   - NUNCA clicar em "Pagar e finalizar".
+
+3) Modal "Cupons" (abre por cima da página)
+   ATENÇÃO: o conteúdo está dentro de um IFRAME:
+     iframe#bf_coupons_iframe  (src: https://www.mercadolivre.com.br/cupons/cho)
+   Todos os seletores abaixo devem ser buscados DENTRO desse iframe.
+
+   Elementos:
+   - Campo de código:  input#inputcode-textfield-inline  (placeholder "Insira seu código aqui")
+   - Botão:            button com texto "Inserir" (classe andes-button--quiet), à direita do campo
+   - Resumo:           texto "Você está economizando R$ XX,XX com N cupom"
+   - Lista:            seção "Cupons do Mercado Livre", com um cartão por cupom
+   - Fechar:           "X" no canto superior direito do modal
+
+4) VERIFICAR SE O CUPOM JÁ ESTÁ APLICADO
+   Na lista "Cupons do Mercado Livre", procurar um cartão cujo texto contenha "Com MELIKIDS".
+   Ele está aplicado quando:
+     - o cartão tem um ícone com check verde, E
+     - o botão do cartão mostra "Aplicado" e está desabilitado
+       (classe andes-button--disabled / disabled=true).
+   → Se já está aplicado: pular para o passo 6.
+
+5) SE NÃO ESTIVER: ATIVAR PELO CÓDIGO
+   - Clicar no input#inputcode-textfield-inline, limpar o campo e digitar o código
+     (simular digitação real, com eventos input/change).
+   - Clicar em "Inserir" e aguardar ~2s.
+   - Checar se o contêiner do campo (.andes-form-control) tem a classe
+     "andes-form-control--error". Se tiver, ler o texto de erro abaixo do campo:
+
+     • "Este cupom já foi adicionado, mas ainda pode ser usado em produtos selecionados."
+         → status "ja_aplicado". Ir ao passo 6.
+     • "O cupom não está mais disponível."
+         → é a resposta para código INEXISTENTE ou esgotado/expirado
+           (o site não diferencia). Status "falha". Registrar a mensagem e encerrar.
+     • Qualquer outro texto → status "falha", registrar o texto exato.
+
+   - Se NÃO tiver erro: confirmar que surgiu na lista "Cupons do Mercado Livre"
+     um cartão com "Com <CÓDIGO>" e botão "Aplicado" desabilitado,
+     e que "Cupons (N/M em uso)" e o total no Resumo da compra mudaram.
+     → status "aplicado_agora". Ir ao passo 6.
+
+6) EXTRAIR AS CONDIÇÕES DO CARTÃO DO CUPOM
+   Exemplo real do cartão MELIKIDS:
+     - Nome/código:      "Com MELIKIDS"
+     - Desconto:         "15% OFF"
+     - Compra mínima:    "Compra mínima R$ 59"
+     - Limite:           "Limite de R$ 50"
+     - Validade:         "Venc. 27/09/2026"
+     - Alerta:           "Está esgotando!" (texto laranja, opcional)
+     - Status:           "Aplicado" (botão desabilitado)
+   Os campos da linha de condições vêm separados por " | ".
+   Pegar também, fora do iframe, no "Resumo da compra":
+     - "Cupons (N/M em uso)" e o valor de desconto (ex.: "- R$ 40,48")
+     - Total com desconto (ex.: "R$ 229,42"; o preço riscado é o valor sem desconto)
+
+   Saída sugerida (JSON):
+   {
+     "codigo": "MELIKIDS",
+     "status": "ja_aplicado" | "aplicado_agora" | "falha",
+     "desconto": "15% OFF",
+     "compra_minima": 59.00,
+     "limite_desconto": 50.00,
+     "vencimento": "2026-09-27",
+     "alerta": "Está esgotando!",
+     "desconto_no_pedido": 40.48,
+     "total_final": 229.42,
+     "mensagem_site": "<texto de erro/sucesso, se houver>"
+   }
+
+7) Fechar o modal no "X". Não finalizar a compra.
 
 8. [] Quero que toda essa função de abrir o chrome com a extensão ativa e que ele busque os cupons seja feita na vps e não necessariamente no meu computador. Quero ter as duas opções de rodar no navegador onde estou ou na propria vps. Até agora rodei e rodei e não precisei fazer nada de captcha. Mesmo assim, quero ter notificação no whats de admin quando acontecer e a possibilidade de resolver o captcha manualmente para liberar a continuidade. Eu hosteio na hostgator a vps se isso ajuda, acredito poder entrar manualmente por la.
 

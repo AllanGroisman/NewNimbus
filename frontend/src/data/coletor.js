@@ -146,6 +146,12 @@ export function sondarCuponsNoCheckout(url, { onProgresso, timeoutMs, rapido, se
   return pedirAoColetor("cupons-checkout-v2", { url, rapido: !!rapido, semCarrinho: !!semCarrinho, tempos: tempos || null }, { onProgresso, timeoutMs });
 }
 
+// O cupom do repasse no checkout do produto que chegou com ele (task 7): abre o
+// modal "Cupons", digita o código e lê o que o ML respondeu. Material cru.
+export function cupomNoCheckout({ url, code }, { onProgresso, timeoutMs } = {}) {
+  return pedirAoColetor("cupom-no-checkout", { url, code }, { onProgresso, timeoutMs });
+}
+
 // Lê o modelo (JSON do nordic) de uma página do ML. Devolve { props, landing, url, muro }.
 export function lerPropsDaPagina(url, { chaves, onProgresso, timeoutMs } = {}) {
   return pedirAoColetor("props", { url, chaves }, { onProgresso, timeoutMs });

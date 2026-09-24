@@ -32,7 +32,7 @@ const PAYMENT_STEP_RE = /forma de pagamento|formas de pagamento|como (voc[êe] )
 // A última alternativa é a linha do resumo no checkout de página única (sonda de
 // 19/09/2026): "Cupons (1/1 em uso)". O `^cupons?$` sozinho não casava com ela, e a
 // caminhada parava na primeira tela sem nunca abrir o popup.
-const COUPON_OPEN_SRC = "(inserir|adicionar|usar|tenho|aplicar).{0,12}(cupom|cupons|c[óo]digo)|c[óo]digos? de desconto|cupom de desconto|cupons de desconto|^cupons?$|^cupons?\\s*\\(\\s*\\d+\\s*/\\s*\\d+";
+export const COUPON_OPEN_SRC = "(inserir|adicionar|usar|tenho|aplicar).{0,12}(cupom|cupons|c[óo]digo)|c[óo]digos? de desconto|cupom de desconto|cupons de desconto|^cupons?$|^cupons?\\s*\\(\\s*\\d+\\s*/\\s*\\d+";
 // A oferta de seguro que o ML põe ENTRE o "Comprar agora" e o checkout em alguns
 // produtos (sonda de 19/09/2026, porteiro Intelbras): `/protections/hub/attach`. A
 // saída é recusar — "Agora não" —, e a URL do checkout vem no `callback_url` dela,
@@ -44,7 +44,7 @@ const IFRAME_WAIT_MS = 12000;
 
 // Dentro do popup: o caminho para a lista dos cupons que a conta já tem ativos.
 const VER_ATIVOS_SRC = "^(ver|mostrar|conferir)( os| seus| meus)? cupons( ativos| dispon[íi]veis)?|^cupons ativos|^meus cupons";
-const API_RE = "(coupon|cupon|discount|promotion|promocao|promo)";
+export const API_RE = "(coupon|cupon|discount|promotion|promocao|promo)";
 const BUY_NOW_SRC = "^comprar agora";
 const ADD_TO_CART_SRC = "^adicionar ao carrinho$";
 const CONTINUE_SRC = "^continuar( compra)?$";
@@ -73,7 +73,7 @@ const TEMPOS_PADRAO = {
   esperaNavMs: NAV_WAIT_MS,
   esperaIframeMs: IFRAME_WAIT_MS,
 };
-function lerTempos(t) {
+export function lerTempos(t) {
   const saida = { ...TEMPOS_PADRAO };
   for (const k of Object.keys(TEMPOS_PADRAO)) {
     const n = Number(t?.[k]);
@@ -85,7 +85,7 @@ function lerTempos(t) {
 // ── o que roda DENTRO da página ──────────────────────────────────────────
 // Todas serializadas pelo executeScript: auto-contidas, sem fechar sobre nada.
 
-function naPagina_espiao(apiRe) {
+export function naPagina_espiao(apiRe) {
   if (window.__nimbusCupomEspiao) return true;
   const re = new RegExp(apiRe, "i");
   const guardados = [];
@@ -107,7 +107,7 @@ function naPagina_espiao(apiRe) {
   return true;
 }
 
-function naPagina_foto() {
+export function naPagina_foto() {
   const texto = (document.body?.innerText || "").replace(/\s+/g, " ").trim();
   const visivel = (el) => el.offsetParent !== null && (el.textContent || "").trim();
   const titulo = Array.from(document.querySelectorAll("h1, h2, [role='heading']"))
@@ -214,7 +214,7 @@ function naPagina_textoDoIframeDoPopup() {
 // caso comum: sem cupom em uso, clicar em "Inserir código do cupom" só trocava a
 // URL por "#" e nenhum `[role=dialog]` era montado — a caminhada parava ali e a
 // sonda voltava sem resposta nenhuma.
-function naPagina_paginaDosCupons() {
+export function naPagina_paginaDosCupons() {
   const cru = document.documentElement?.outerHTML || "";
   const m = cru.replace(/\\u002F/gi, "/")
     .match(/https?:\/\/[a-z0-9.-]*mercadolivre\.com\.br\/cupons\/cho\?context_id=[A-Za-z0-9]+/i);
@@ -226,7 +226,7 @@ function naPagina_paginaDosCupons() {
 
 // Busca uma página do próprio ML de dentro da aba: mesma origem, mesmos cookies,
 // mesma sessão de checkout. Só a sonda usa, e só para LER.
-async function naPagina_buscarPagina(endereco, tetoHtml) {
+export async function naPagina_buscarPagina(endereco, tetoHtml) {
   const teto = Number(tetoHtml) || 0;
   try {
     const res = await fetch(endereco, { credentials: "include", headers: { Accept: "text/html" } });
@@ -291,7 +291,7 @@ function naPagina_clicarNoPopup(padrao, maxLen) {
   return null;
 }
 
-function naPagina_clicarPorTexto(padrao, maxLen) {
+export function naPagina_clicarPorTexto(padrao, maxLen) {
   const re = new RegExp(padrao, "i");
   for (const el of document.querySelectorAll("button, a, [role='button'], span, div, label")) {
     const txt = (el.textContent || "").replace(/\s+/g, " ").trim();
@@ -406,7 +406,7 @@ function naPagina_temCampoDeCupom() {
 
 // Quem tem o texto costuma ser um <span> lá no fundo, que não escuta clique — o
 // clique útil é o do ancestral. `nivel` diz quantos degraus subir.
-function naPagina_clicarLinhaDoCupom(source, nivel) {
+export function naPagina_clicarLinhaDoCupom(source, nivel) {
   const rx = new RegExp(source, "i");
   const achados = Array.from(document.querySelectorAll("button, [role='button'], a, label, li, div, span"))
     .filter(el => el.offsetParent !== null)
@@ -441,7 +441,7 @@ function naPagina_digitarCupom(valor) {
 // A página onde a gente parou é mesmo a de um produto? Gêmeo do
 // `ml-coupon.js:isProductPage`: link de perfil de afiliado leva pra vitrine do
 // afiliado, cheia de cupons que não são deste produto.
-function ehPaginaDeProduto(finalUrl) {
+export function ehPaginaDeProduto(finalUrl) {
   let u;
   try { u = new URL(String(finalUrl || "")); } catch { return false; }
   const caminho = decodeURIComponent(u.pathname);
@@ -647,7 +647,7 @@ async function esperarCheckoutPronto(foto, ms = CHECKOUT_READY_WAIT_MS) {
 // Da PDP até a tela de checkout. Ordem: o formulário de compra (firme), depois o
 // clique em "Comprar agora" e, por último, o carrinho — que é o único caminho que
 // deixa rastro na conta, e por isso vem depois e obriga a limpeza no fim.
-async function irAoCheckout(tabId, { foto, clicar, progresso, T = TEMPOS_PADRAO, semCarrinho = false }) {
+export async function irAoCheckout(tabId, { foto, clicar, progresso, T = TEMPOS_PADRAO, semCarrinho = false }) {
   let seguro = null;
   let tentouSeguro = false;
   const esperarSaida = async () => {

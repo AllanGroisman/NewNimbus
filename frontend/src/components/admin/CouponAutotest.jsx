@@ -23,7 +23,7 @@ import { cardStyle, inputStyle, labelStyle, botaoSecundario, th, td, segundos } 
 // Uma linha por passo do robô. `skip` é a rodada que desistiu — e ela é a mais
 // importante de todas, porque é a que explica "por que nada aconteceu?".
 const ACTION_LABEL = {
-  test: { label: "testou a palavra", color: "var(--color-text-primary)" },
+  test: { label: "testou o cupom", color: "var(--color-text-primary)" },
   import: { label: "trouxe a campanha", color: PRIMARY_DARK },
   vitrine: { label: "raspou a vitrine", color: PRIMARY_DARK },
   skip: { label: "rodada pulada", color: "var(--color-text-secondary)" },
@@ -32,19 +32,17 @@ const ACTION_LABEL = {
 const VERDICT_LABEL = {
   valid: { label: "✅ existe", color: PRIMARY_DARK },
   invalid: { label: "❌ o ML não reconheceu", color: "var(--danger-text)" },
-  indeterminado: { label: "❓ o ML não respondeu", color: "var(--warn-text)" },
+  indeterminado: { label: "❓ não deu pra testar", color: "var(--warn-text)" },
 };
 
 // Os números que o admin mexe, com a unidade já no rótulo — `intervaloMs` em
 // milissegundos num campo de formulário é convite a errar por mil.
 const CAMPOS = [
-  ["intervaloMinutos", "A cada quantos minutos", "Uma rodada abre um Chrome por palavra."],
-  ["maxPorRodada", "Palavras por rodada", "Cada uma leva de 15 a 50 segundos."],
-  ["pausaEntrePalavrasSegundos", "Pausa entre palavras (s)", "Rajada de Chrome é o que acorda o anti-robô."],
+  ["intervaloMinutos", "A cada quantos minutos", "Rodada de trazer campanha e raspar vitrine (Chrome do servidor)."],
   ["minCapturas", "Só testar com N capturas", "Palavra vista uma vez só raramente paga o teste."],
   ["diasDeBusca", "Janela de captura (dias)", "O mesmo período que a lista abaixo mostra."],
   ["maxImportsPorRodada", "Campanhas por rodada", "Trazer a campanha leva minutos e ativa o cupom na conta do ML."],
-  ["maxTentativas", "Tentativas por palavra", "Vale para quando o ML não responde."],
+  ["maxTentativas", "Tentativas por cupom", "Vale para quando o teste no checkout não chega a uma resposta."],
   ["esperaAposIndeterminadoHoras", "Esperar antes de insistir (h)", "Sem isso o robô reabriria o Chrome na mesma palavra toda rodada."],
   ["pausaAposBloqueioMin", "Pausa após bloqueio (min)", "Depois de um CAPTCHA o robô para e espera este tempo."],
 ];
@@ -248,9 +246,10 @@ export default function CouponAutotest() {
       {open && (
         <div style={{ marginTop: 14 }}>
           <p style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 0 }}>
-            O robô pergunta ao Mercado Livre se a palavra pescada na legenda existe e, quando existe,
-            traz a campanha e a vitrine pro sistema. O cupom continua sendo enviado de qualquer forma —
-            isto aqui é o que faz alguém <em>saber</em> se ele vale.
+            O cupom pescado na legenda é testado no checkout do produto que chegou com ele, na aba
+            do seu Chrome, pela extensão — a fila roda enquanto a aba Repasse está aberta. Quando o
+            cupom existe, o robô traz a campanha e a vitrine pro sistema. O cupom continua sendo
+            enviado de qualquer forma — isto aqui é o que faz alguém <em>saber</em> se ele vale.
           </p>
 
           {carregando && <div style={{ fontSize: 12 }}>Carregando...</div>}

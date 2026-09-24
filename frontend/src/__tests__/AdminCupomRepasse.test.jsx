@@ -28,6 +28,12 @@ vi.mock("../data/api", () => ({
   adminRepasseAutotestSave: vi.fn(),
   adminRepasseAutotestRun: vi.fn(),
   adminRepasseAutotestLog: vi.fn(),
+  adminRepasseCupomCheckoutPendentes: vi.fn(),
+  adminRepasseCupomCheckoutReivindicar: vi.fn(),
+  adminRepasseCupomCheckoutResultado: vi.fn(),
+  adminRepasseCupomCheckoutAuto: vi.fn(),
+  adminRepasseCupomCheckoutManual: vi.fn(),
+  adminRepasseCupomCheckoutManualRemover: vi.fn(),
 }));
 
 // A extensão do Chrome (extension/ na raiz). O teste de palavra prefere ela quando
@@ -35,15 +41,18 @@ vi.mock("../data/api", () => ({
 vi.mock("../data/coletor", () => ({
   coletorEntende: vi.fn(),
   testarPalavraNoChrome: vi.fn(),
+  cupomNoCheckout: vi.fn(),
 }));
 
 import CuponsDoRepasse from "../pages/AdminCupomRepasse.jsx";
-import { coletorEntende, testarPalavraNoChrome } from "../data/coletor";
+import { coletorEntende, testarPalavraNoChrome, cupomNoCheckout } from "../data/coletor";
 import {
   adminRepasseCoupons, adminRepasseLogs, adminMlCuponsTestWord,
   adminMlCuponsSyncProducts, adminMlCuponsImportCampaign, adminMlCuponsImportStatus,
   adminRepasseCouponForget, adminRepasseCouponsClear,
   adminRepasseAutotest, adminRepasseAutotestSave, adminRepasseAutotestRun, adminRepasseAutotestLog,
+  adminRepasseCupomCheckoutPendentes, adminRepasseCupomCheckoutReivindicar, adminRepasseCupomCheckoutResultado,
+  adminRepasseCupomCheckoutAuto, adminRepasseCupomCheckoutManual, adminRepasseCupomCheckoutManualRemover,
 } from "../data/api";
 
 const cupom = (extra = {}) => ({
@@ -55,18 +64,23 @@ const cupom = (extra = {}) => ({
   ...extra,
 });
 
+// A resposta da fila do teste no checkout.
+const fila = (itens, extra = {}) => ({ itens, total: itens.length, auto: true, checkoutAuto: true, bloqueadoAte: null, ...extra });
+
 const lista = (items) => ({ items, total: items.length, totalCapturados: items.length, page: 1, pageSize: 30 });
 
 async function abrir(items) {
   adminRepasseCoupons.mockResolvedValue(lista(items));
   render(<CuponsDoRepasse />);
   await waitFor(() => expect(adminRepasseCoupons).toHaveBeenCalled());
-  return screen.findByText("JBL20");
+  return (await screen.findAllByText("JBL20"))[0];
 }
 
 // A linha da tabela onde aquele código está — as ações são todas por linha.
+// O mesmo código pode estar também no card da fila: a linha certa é a que tem o
+// expansor das capturas.
 function linhaDe(code) {
-  return screen.getByText(code).closest("tr");
+  return screen.getAllByText(code).map(el => el.closest("tr")).find(tr => tr && within(tr).queryByText(/capturas/));
 }
 
 const statusRobo = (extra = {}) => ({
@@ -99,6 +113,8 @@ beforeEach(() => {
   adminRepasseLogs.mockResolvedValue({ items: [] });
   adminRepasseAutotest.mockResolvedValue({ config: configRobo, defaults: configRobo, status: statusRobo() });
   adminRepasseAutotestLog.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 });
+  adminRepasseCupomCheckoutPendentes.mockResolvedValue(fila([]));
+  adminRepasseCupomCheckoutReivindicar.mockResolvedValue({ ok: true });
 });
 
 describe("Admin › Cupom › Repasse", () => {
@@ -383,5 +399,199 @@ describe("Admin › Cupom › Repasse — o card do robô", () => {
     // A rodada segue solta no servidor; o card espera um instante antes de reler
     // pra primeira linha do diário já aparecer no clique. Daí o timeout folgado.
     await waitFor(() => expect(adminRepasseAutotest).toHaveBeenCalledTimes(2), { timeout: 4000 });
+  });
+});
+
+// Task 7: o cupom testado no checkout do produto que chegou com ele, pela extensão.
+describe("Admin › Cupom › Repasse — teste no checkout", () => {
+  const LINK = "https://www.mercadolivre.com.br/caixa-jbl/p/MLB111";
+  const MATERIAL = { checkout: { reached: true }, modal: { aberto: true } };
+  const RESPOSTA = {
+    verdict: "valid", message: "Aplicado no checkout · 20% OFF · mínimo R$ 99",
+    campaignId: null, checkedAt: "2026-09-24T10:00:00Z", checkCount: 1, source: "repasse-checkout",
+    resultado: { status: "aplicado_agora" },
+  };
+  const itemRepasse = (extra = {}) => ({ origem: "repasse", code: "JBL20", url: LINK, motivo: "nunca-testado", capturas: 12, criadoEm: "2026-08-01T10:00:00Z", reservado: false, ...extra });
+  const itemManual = (extra = {}) => ({ origem: "manual", manualId: "7", code: "MELIKIDS", url: "https://www.mercadolivre.com.br/boneca/p/MLB9", motivo: "manual", criadoEm: "2026-09-24T09:00:00Z", reservado: false, ...extra });
+
+  // Com a extensão nova: ela entende "cupom-no-checkout".
+  const comExtensao = () => coletorEntende.mockImplementation(async (cmd) => cmd === "cupom-no-checkout");
+  const cardDaFila = () => screen.getByRole("region", { name: "Fila do teste no checkout" });
+
+  it("Testar da lista leva o código ao checkout do link que chegou com ele", async () => {
+    comExtensao();
+    adminRepasseCupomCheckoutPendentes.mockResolvedValue(fila([], { checkoutAuto: false, auto: false }));
+    cupomNoCheckout.mockResolvedValue(MATERIAL);
+    adminRepasseCupomCheckoutResultado.mockResolvedValue(RESPOSTA);
+    await abrir([cupom({ link: LINK })]);
+    await waitFor(() => expect(coletorEntende).toHaveBeenCalled());
+
+    fireEvent.click(within(linhaDe("JBL20")).getByText("Testar"));
+
+    await waitFor(() => expect(screen.getByText(/Aplicado no checkout · 20% OFF/)).toBeTruthy());
+    expect(cupomNoCheckout).toHaveBeenCalledWith({ url: LINK, code: "JBL20" }, expect.anything());
+    expect(adminRepasseCupomCheckoutResultado).toHaveBeenCalledWith(expect.objectContaining({
+      code: "JBL20", url: LINK, material: MATERIAL, source: "repasse-checkout",
+    }));
+    expect(within(linhaDe("JBL20")).getByText(/no checkout, por aqui/)).toBeTruthy();
+    expect(adminMlCuponsTestWord).not.toHaveBeenCalled();
+    expect(testarPalavraNoChrome).not.toHaveBeenCalled();
+  });
+
+  it("sem link do ML, o Testar da lista cai no teste da palavra", async () => {
+    comExtensao();
+    adminMlCuponsTestWord.mockResolvedValue({ result: { word: "JBL20", verdict: "invalid" } });
+    await abrir([cupom()]);
+    await waitFor(() => expect(coletorEntende).toHaveBeenCalled());
+
+    fireEvent.click(within(linhaDe("JBL20")).getByText("Testar"));
+
+    await waitFor(() => expect(adminMlCuponsTestWord).toHaveBeenCalled());
+    expect(cupomNoCheckout).not.toHaveBeenCalled();
+  });
+
+  it("a fila aparece com código, link e origem", async () => {
+    adminRepasseCupomCheckoutPendentes.mockResolvedValue(fila([itemManual(), itemRepasse()], { checkoutAuto: false, auto: false }));
+    await abrir([cupom()]);
+
+    expect(await screen.findByText("MELIKIDS")).toBeTruthy();
+    const card = cardDaFila();
+    expect(within(card).getByText("manual")).toBeTruthy();
+    expect(within(card).getByText(/repasse · 12 captura/)).toBeTruthy();
+    expect(within(card).getByText(/caixa-jbl/).closest("a").getAttribute("href")).toBe(LINK);
+    expect(within(card).getByText(/Testar todos \(2\)/)).toBeTruthy();
+  });
+
+  it("com o automático ligado, pega o primeiro da fila, reivindica, testa e atualiza a linha", async () => {
+    comExtensao();
+    // A primeira volta chega antes de se saber se há extensão; quem testa é a
+    // volta que vem logo depois da resposta dela.
+    adminRepasseCupomCheckoutPendentes.mockResolvedValue(fila([itemRepasse()]));
+    cupomNoCheckout.mockResolvedValue(MATERIAL);
+    adminRepasseCupomCheckoutResultado.mockResolvedValue({ ...RESPOSTA, source: "repasse-checkout-auto" });
+    await abrir([cupom({ link: LINK })]);
+
+    await waitFor(() => expect(adminRepasseCupomCheckoutResultado).toHaveBeenCalled());
+    expect(adminRepasseCupomCheckoutReivindicar).toHaveBeenCalledWith("JBL20");
+    expect(adminRepasseCupomCheckoutResultado.mock.calls[0][0]).toMatchObject({ code: "JBL20", url: LINK, source: "repasse-checkout-auto" });
+    await waitFor(() => expect(within(linhaDe("JBL20")).getByText(/no checkout, automático/)).toBeTruthy());
+  });
+
+  it("com o automático desligado, a fila aparece mas nada é testado sozinho", async () => {
+    comExtensao();
+    adminRepasseCupomCheckoutPendentes.mockResolvedValue(fila([itemRepasse()], { checkoutAuto: false, auto: false }));
+    await abrir([cupom({ link: LINK })]);
+    await screen.findByText(/Testar todos \(1\)/);
+    await waitFor(() => expect(coletorEntende).toHaveBeenCalled());
+    expect(cupomNoCheckout).not.toHaveBeenCalled();
+    expect(adminRepasseCupomCheckoutReivindicar).not.toHaveBeenCalled();
+  });
+
+  it("a checkbox liga e desliga o automático", async () => {
+    adminRepasseCupomCheckoutPendentes.mockResolvedValue(fila([], { checkoutAuto: false, auto: false }));
+    adminRepasseCupomCheckoutAuto.mockResolvedValue({ checkoutAuto: true });
+    await abrir([cupom()]);
+    const caixa = await screen.findByLabelText("Testar automaticamente");
+    await waitFor(() => expect(caixa.disabled).toBe(false));
+
+    fireEvent.click(caixa);
+    await waitFor(() => expect(adminRepasseCupomCheckoutAuto).toHaveBeenCalledWith(true));
+  });
+
+  it("o Testar de um item testa só aquele, com o manualId do pedido", async () => {
+    comExtensao();
+    adminRepasseCupomCheckoutPendentes.mockResolvedValue(fila([itemManual(), itemRepasse()], { checkoutAuto: false, auto: false }));
+    cupomNoCheckout.mockResolvedValue(MATERIAL);
+    adminRepasseCupomCheckoutResultado.mockResolvedValue({ ...RESPOSTA, message: "Já estava aplicado no checkout" });
+    await abrir([cupom({ link: LINK })]);
+    await screen.findByText("MELIKIDS");
+    await waitFor(() => expect(coletorEntende).toHaveBeenCalled());
+
+    const linhaManual = within(cardDaFila()).getByText("MELIKIDS").closest("tr");
+    await waitFor(() => expect(within(linhaManual).getByText("Testar").disabled).toBe(false));
+    fireEvent.click(within(linhaManual).getByText("Testar"));
+
+    await waitFor(() => expect(adminRepasseCupomCheckoutResultado).toHaveBeenCalledTimes(1));
+    expect(adminRepasseCupomCheckoutResultado.mock.calls[0][0]).toMatchObject({ code: "MELIKIDS", manualId: "7", source: "repasse-checkout" });
+    expect(await screen.findByText(/Já estava aplicado no checkout/)).toBeTruthy();
+  });
+
+  it("Testar todos anda a fila na ordem, um de cada vez", async () => {
+    comExtensao();
+    adminRepasseCupomCheckoutPendentes.mockResolvedValue(fila([itemManual(), itemRepasse()], { checkoutAuto: false, auto: false }));
+    const ordem = [];
+    cupomNoCheckout.mockImplementation(async ({ code }) => { ordem.push(code); return MATERIAL; });
+    adminRepasseCupomCheckoutResultado.mockResolvedValue(RESPOSTA);
+    await abrir([cupom({ link: LINK })]);
+    await waitFor(() => expect(coletorEntende).toHaveBeenCalled());
+    const botao = await screen.findByText(/Testar todos \(2\)/);
+    await waitFor(() => expect(botao.disabled).toBe(false));
+
+    fireEvent.click(botao);
+
+    await waitFor(() => expect(ordem).toEqual(["MELIKIDS", "JBL20"]));
+  });
+
+  it("Parar interrompe o Testar todos depois do cupom atual", async () => {
+    comExtensao();
+    adminRepasseCupomCheckoutPendentes.mockResolvedValue(fila([itemManual(), itemRepasse()], { checkoutAuto: false, auto: false }));
+    let soltar;
+    cupomNoCheckout.mockImplementationOnce(() => new Promise(r => { soltar = () => r(MATERIAL); }));
+    adminRepasseCupomCheckoutResultado.mockResolvedValue(RESPOSTA);
+    await abrir([cupom({ link: LINK })]);
+    await waitFor(() => expect(coletorEntende).toHaveBeenCalled());
+    const botao = await screen.findByText(/Testar todos \(2\)/);
+    await waitFor(() => expect(botao.disabled).toBe(false));
+
+    fireEvent.click(botao);
+    fireEvent.click(await screen.findByText("■ Parar"));
+    await waitFor(() => expect(soltar).toBeTypeOf("function"));
+    soltar();
+
+    await waitFor(() => expect(screen.getByText(/Testar todos/)).toBeTruthy());
+    expect(cupomNoCheckout).toHaveBeenCalledTimes(1);
+  });
+
+  it("+ Adicionar teste manda link e código, e o item entra na fila", async () => {
+    adminRepasseCupomCheckoutManual.mockResolvedValue(itemManual());
+    await abrir([cupom()]);
+
+    fireEvent.click(await screen.findByText("+ Adicionar teste"));
+    fireEvent.change(screen.getByLabelText("Link do produto (Mercado Livre)"), { target: { value: "https://www.mercadolivre.com.br/boneca/p/MLB9" } });
+    fireEvent.change(screen.getByLabelText("Código do cupom"), { target: { value: "melikids" } });
+    adminRepasseCupomCheckoutPendentes.mockResolvedValue(fila([itemManual()], { checkoutAuto: false, auto: false }));
+    fireEvent.click(screen.getByText("Adicionar à fila"));
+
+    await waitFor(() => expect(adminRepasseCupomCheckoutManual).toHaveBeenCalledWith({ code: "MELIKIDS", url: "https://www.mercadolivre.com.br/boneca/p/MLB9" }));
+    expect(await screen.findByText(/MELIKIDS entrou no começo da fila/)).toBeTruthy();
+  });
+
+  it("o erro do servidor aparece no próprio modal", async () => {
+    adminRepasseCupomCheckoutManual.mockRejectedValue(new Error("O link precisa ser de um produto do Mercado Livre."));
+    await abrir([cupom()]);
+
+    fireEvent.click(await screen.findByText("+ Adicionar teste"));
+    fireEvent.change(screen.getByLabelText("Link do produto (Mercado Livre)"), { target: { value: "https://amazon.com.br/x" } });
+    fireEvent.change(screen.getByLabelText("Código do cupom"), { target: { value: "X10" } });
+    fireEvent.click(screen.getByText("Adicionar à fila"));
+
+    expect(await screen.findByText(/precisa ser de um produto do Mercado Livre/)).toBeTruthy();
+  });
+
+  it("Remover tira o pedido manual da fila", async () => {
+    adminRepasseCupomCheckoutPendentes.mockResolvedValue(fila([itemManual()], { checkoutAuto: false, auto: false }));
+    adminRepasseCupomCheckoutManualRemover.mockResolvedValue({ removido: 1 });
+    await abrir([cupom()]);
+
+    fireEvent.click(await screen.findByText("Remover"));
+    await waitFor(() => expect(adminRepasseCupomCheckoutManualRemover).toHaveBeenCalledWith("7"));
+  });
+
+  it("sem a extensão nova, avisa e nada da fila é testado", async () => {
+    adminRepasseCupomCheckoutPendentes.mockResolvedValue(fila([itemRepasse()]));
+    await abrir([cupom({ link: LINK })]);
+    expect(await screen.findByText(/não está instalada nesta aba, ou está desatualizada/)).toBeTruthy();
+    expect(cupomNoCheckout).not.toHaveBeenCalled();
+    expect(adminRepasseCupomCheckoutReivindicar).not.toHaveBeenCalled();
   });
 });

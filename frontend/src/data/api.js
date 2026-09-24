@@ -833,6 +833,33 @@ export async function adminRepasseAutotestLog({ page = 1, pageSize = 20, code = 
   return http("GET", `/api/admin/repasse/coupon-autotest/log?${params}`);
 }
 
+// O teste do cupom no checkout do produto (task 7): a fila que a aba do Repasse
+// consome pela extensão, e o material que ela devolve.
+export async function adminRepasseCupomCheckoutPendentes({ limit = 50 } = {}) {
+  return http("GET", `/api/admin/repasse/cupom-checkout/pendentes?limit=${limit}`);
+}
+
+export async function adminRepasseCupomCheckoutAuto(auto) {
+  return http("PUT", "/api/admin/repasse/cupom-checkout/auto", { auto: !!auto });
+}
+
+// Um teste pedido à mão: link do produto + código. Entra no começo da fila.
+export async function adminRepasseCupomCheckoutManual({ code, url }) {
+  return http("POST", "/api/admin/repasse/cupom-checkout/manual", { code, url });
+}
+
+export async function adminRepasseCupomCheckoutManualRemover(id) {
+  return http("DELETE", `/api/admin/repasse/cupom-checkout/manual/${encodeURIComponent(id)}`);
+}
+
+export async function adminRepasseCupomCheckoutReivindicar(code) {
+  return http("POST", "/api/admin/repasse/cupom-checkout/reivindicar", { code });
+}
+
+export async function adminRepasseCupomCheckoutResultado({ code, url, material, source, durationMs, manualId = null }) {
+  return http("POST", "/api/admin/repasse/cupom-checkout/resultado", { code, url, material, source, durationMs, manualId });
+}
+
 // Resumo da janela (1h/24h/7d): totais por resultado, por motivo e taxa por loja.
 export async function adminRepasseSummary({ hours = 24, userId, groupId, store } = {}) {
   const params = new URLSearchParams();
