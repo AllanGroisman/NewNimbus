@@ -41,6 +41,10 @@ vi.mock("../data/api", () => ({
   // O ImportarCampanhaModal, que a caixa "Trazer campanha por ID" abre.
   adminMlCuponsImportCampaign: vi.fn(),
   adminMlCuponsImportStatus: vi.fn(),
+  // A agenda das etapas (task 3).
+  adminMlCuponsAgendaPendentes: vi.fn(),
+  adminMlCuponsAgendaReivindicar: vi.fn(),
+  adminMlCuponsAgendaFalhou: vi.fn(),
 }));
 
 // A extensão que colhe no Chrome do admin (extension/ na raiz). Aqui ela é
@@ -69,6 +73,7 @@ import {
   adminMlCuponsRodadaFim,
 } from "../data/api";
 import { adminMlCuponsImportCampaign, adminMlCuponsImportStatus } from "../data/api";
+import { adminMlCuponsAgendaPendentes, adminMlCuponsAgendaReivindicar, adminMlCuponsAgendaFalhou } from "../data/api";
 import { coletorInfo, coletorEntende, raparVitrine, paginaDeCupons, fecharAbaDoColetor } from "../data/coletor";
 
 // A extensão instalada, e quais comandos aquela cópia entende. A tela pergunta os
@@ -118,6 +123,9 @@ beforeEach(() => {
   coletorInfo.mockResolvedValue({ instalada: false, versao: null, comandos: [] });
   coletorEntende.mockResolvedValue(false);
   adminMlCuponsImportStatus.mockResolvedValue({ running: false, result: null, error: null });
+  adminMlCuponsAgendaPendentes.mockResolvedValue({ pendentes: [] });
+  adminMlCuponsAgendaReivindicar.mockResolvedValue({ ok: true });
+  adminMlCuponsAgendaFalhou.mockResolvedValue({ ok: true });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1020,5 +1028,27 @@ describe("trazer campanha por ID", () => {
     expect(await screen.findByText(/Não achei um número de campanha/i)).toBeInTheDocument();
     expect(adminMlCupons).not.toHaveBeenCalled();
     expect(screen.queryByText("Essa campanha não está no sistema")).toBeNull();
+  });
+});
+
+// A agenda (task 3): o servidor marca a etapa vencida, e é esta aba que a roda.
+describe("a agenda das etapas", () => {
+  it("etapa vencida com a extensão: a aba pega e aperta o botão sozinha", async () => {
+    coletorInfo.mockResolvedValue(EXTENSAO("raspar", "lista"));
+    adminMlCuponsAgendaPendentes.mockResolvedValue({ pendentes: [{ botao: "lista", slot: "08:00" }] });
+    await abrirTela();
+
+    await waitFor(() => expect(adminMlCuponsAgendaReivindicar).toHaveBeenCalledWith("lista"));
+    await waitFor(() => expect(adminMlCuponsLocalStart).toHaveBeenCalled());
+    expect(adminMlCuponsAgendaFalhou).not.toHaveBeenCalled();
+  });
+
+  it("sem a extensão a aba não finge que rodou: avisa o motivo", async () => {
+    adminMlCuponsAgendaPendentes.mockResolvedValue({ pendentes: [{ botao: "tudo", slot: "03:00" }] });
+    await abrirTela();
+
+    await waitFor(() => expect(adminMlCuponsAgendaFalhou).toHaveBeenCalledWith("tudo", expect.stringMatching(/extensão/)));
+    expect(adminMlCuponsAgendaReivindicar).not.toHaveBeenCalled();
+    expect(adminMlCuponsLocalStart).not.toHaveBeenCalled();
   });
 });

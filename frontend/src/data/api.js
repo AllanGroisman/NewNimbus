@@ -627,6 +627,11 @@ export async function adminMlCuponsLocalFim(body)    { return http("POST", "/api
 // O balanço dos botões 2 e 3 (task 17): o laço é da tela, e o servidor só guarda
 // o que ela manda para o "última vez" de cada botão sobreviver a um F5.
 export async function adminMlCuponsRodadaFim(body)   { return http("POST", "/api/admin/ml-cupons/rodada-fim", body); }
+// A agenda das etapas (backend/coupons/agenda.js): o que venceu, pegar para rodar,
+// ou avisar que esta aba não pôde.
+export async function adminMlCuponsAgendaPendentes()          { return http("GET",  "/api/admin/ml-cupons/agenda/pendentes"); }
+export async function adminMlCuponsAgendaReivindicar(botao)   { return http("POST", "/api/admin/ml-cupons/agenda/reivindicar", { botao }); }
+export async function adminMlCuponsAgendaFalhou(botao, motivo) { return http("POST", "/api/admin/ml-cupons/agenda/falhou", { botao, motivo }); }
 // A palavra testada pela extensão: vai o material cru que a página do ML respondeu,
 // volta o mesmo veredito de sempre. Rápido — quem esperou pelo ML foi o navegador.
 export async function adminMlCuponsLocalPalavra(body) { return http("POST", "/api/admin/ml-cupons/local/palavra", body); }

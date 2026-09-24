@@ -2727,6 +2727,29 @@ app.post("/api/admin/ml-cupons/local/fim", auth.requireAuth, auth.requireAdmin, 
 
 // O balanço dos botões 2 e 3 da aba "Cupons do ML" (task 17). O laço deles roda
 // na tela, então é ela que avisa quando acabou e com que números.
+// A agenda das etapas (coupons/agenda.js). A aba de cupons do admin consulta o que
+// venceu, reivindica e roda — ou avisa que não pôde, e o grupo de admin fica sabendo.
+const cuponsAgenda = require("./coupons/agenda");
+const botaoDaAgenda = (b) => (cuponsAgenda.BOTOES.includes(String(b)) ? String(b) : null);
+
+app.get("/api/admin/ml-cupons/agenda/pendentes", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json({ pendentes: cuponsAgenda.pendentes() });
+});
+
+app.post("/api/admin/ml-cupons/agenda/reivindicar", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  const botao = botaoDaAgenda(req.body?.botao);
+  if (!botao) return res.status(400).json({ error: "Etapa desconhecida." });
+  const r = cuponsAgenda.reivindicar(botao);
+  if (!r.ok) return res.status(409).json({ error: "Essa etapa não está pendente (outra aba pode ter pegado)." });
+  res.json(r);
+});
+
+app.post("/api/admin/ml-cupons/agenda/falhou", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  const botao = botaoDaAgenda(req.body?.botao);
+  if (!botao) return res.status(400).json({ error: "Etapa desconhecida." });
+  res.json(cuponsAgenda.falhou(botao, req.body?.motivo));
+});
+
 app.post("/api/admin/ml-cupons/rodada-fim", auth.requireAuth, auth.requireAdmin, (req, res) => {
   const { botao, ...resto } = req.body || {};
   try {
@@ -4292,6 +4315,9 @@ async function boot() {
     // resultado da última precisa sobreviver ao reboot — senão a tela abre dizendo
     // que nunca rodou.
     mlCupons.loadPersistedStatus();
+    // A agenda das etapas (coupons/agenda.js) marca o que venceu; quem roda é a
+    // aba do admin. Depois do loadPersistedStatus: o "já rodei" sai dele.
+    require("./coupons/agenda").start();
     // O que tem agenda é o teste dos cupons que o repasse pesca nas legendas: ele
     // roda aqui, e não no worker onde o cupom nasce, porque os mutex do
     // coupons/sync.js são por processo — no worker o robô abriria um segundo Chrome

@@ -22,6 +22,7 @@ import {
   adminMlCupons, adminMlCuponsStatus,
   adminMlCuponsProducts, adminMlCuponsClearAll, adminMlCuponsDelete,
   adminMlCuponsAlvosProdutos, adminMlCuponsLocalFim, adminMlCuponsRodadaFim, errText,
+  adminMlCuponsAgendaPendentes, adminMlCuponsAgendaReivindicar, adminMlCuponsAgendaFalhou,
 } from "../data/api";
 import { percorrerLista } from "../data/rodadaNoChrome";
 import { buscarProdutos, buscarTudo } from "../data/produtosNoChrome";
@@ -40,6 +41,7 @@ import { reduzirAndamento } from "../data/andamentoColheita";
 import ExtensaoAusente from "../components/admin/ExtensaoAusente";
 import Numero from "../components/admin/Numero";
 import { LimitesLista, LimitesProdutos, LimitesCiclos } from "../components/admin/LimitesCupons";
+import AgendaEtapa from "../components/admin/AgendaCupons";
 import {
   segundos, brl, dia, desconto, cardStyle, inputStyle, th, td,
   botaoPrimario, botaoSecundario, botaoPerigo, botaoLink,
@@ -727,6 +729,60 @@ export default function CuponsDoML({ buscaInicial = null }) {
   // `startLocalRun`, e deixar o campo ativo é prometer um efeito que não acontece.
   const emRodada = rodandoNoChrome || buscandoProdutos || rodando;
 
+  // A agenda (task 3). O servidor marca a etapa que venceu (backend/coupons/agenda.js)
+  // e é ESTA aba que a roda, apertando o mesmo botão que o admin apertaria — as
+  // etapas só existem no Chrome, pela extensão. O que a volta do intervalo precisa
+  // ler é o AGORA (rodada em curso, extensão, fila), e por isso vai num ref: o efeito
+  // monta uma vez e uma closure dele ficaria olhando a tela da montagem.
+  const agendaRef = useRef(null);
+  const olharRef = useRef(null);
+  useEffect(() => {
+    agendaRef.current = {
+      livre: !emRodada && !limpando,
+      temColetor, colheLista, faltamProdutos, alvosProntos: !!alvos,
+      rodar: { lista: rodarNoChrome, produtos: () => rodarProdutos(), tudo: rodarTudo },
+      logar,
+    };
+  });
+  useEffect(() => {
+    let vivo = true;
+    let ocupado = false;
+    const olhar = async () => {
+      const agora = agendaRef.current;
+      // `temColetor === null` é "ainda não sei": esperar a próxima volta, e não
+      // pular o horário por causa da montagem.
+      if (ocupado || !agora?.livre || agora.temColetor === null) return;
+      ocupado = true;
+      try {
+        const { pendentes = [] } = await adminMlCuponsAgendaPendentes();
+        const p = pendentes[0];
+        const x = agendaRef.current;
+        if (!vivo || !p || !x.livre) return;
+        if (p.botao === "produtos" && !x.alvosProntos) return;
+        const motivo = !x.temColetor || !x.colheLista
+          ? "a extensão do Chrome não está instalada (ou está desatualizada) nesta aba"
+          : p.botao === "produtos" && !x.faltamProdutos
+            ? "não havia cupom esperando produtos — nada a fazer"
+            : null;
+        if (motivo) { await adminMlCuponsAgendaFalhou(p.botao, motivo); return; }
+        // 409 = outra aba pegou antes; o catch engole e esta fica quieta.
+        await adminMlCuponsAgendaReivindicar(p.botao);
+        const rodada = x.rodar[p.botao]();
+        // Depois de disparar: o botão zera o log ao começar.
+        x.logar("ok", `⏰ rodando sozinha — horário agendado das ${p.slot}`);
+        await rodada;
+      } catch { /* a próxima volta tenta de novo */ }
+      finally { ocupado = false; }
+    };
+    olharRef.current = olhar;
+    olhar();
+    const id = setInterval(olhar, 30000);
+    return () => { vivo = false; clearInterval(id); olharRef.current = null; };
+  }, []);
+  // A primeira volta costuma chegar antes de se saber se há extensão — e sem isto
+  // a etapa vencida esperaria mais 30s à toa depois que a resposta chega.
+  useEffect(() => { olharRef.current?.(); }, [temColetor]);
+
   return (
     <div>
       {/* CARD 0 — o que esta tela é, e os números do que já está guardado. O que
@@ -864,6 +920,10 @@ export default function CuponsDoML({ buscaInicial = null }) {
             semTeto={listaSemTeto}
           />
         </details>
+        <details>
+          <summary style={{ cursor: "pointer", fontSize: 12, marginTop: 12 }}>Agenda desta etapa{status?.config?.agenda?.lista?.enabled ? " · ⏰ ligada" : ""}</summary>
+          <AgendaEtapa botao="lista" config={status?.config} proximo={status?.agenda?.proximo?.lista} onSaved={recarregar} />
+        </details>
       </section>
 
       {/* CARD 2 — ETAPA 2. Separada porque ESCREVE na conta do ML. */}
@@ -931,6 +991,10 @@ export default function CuponsDoML({ buscaInicial = null }) {
           <summary style={{ cursor: "pointer", fontSize: 12, marginTop: 12 }}>Limites desta etapa</summary>
           <LimitesProdutos config={status?.config} onSaved={recarregar} desabilitado={emRodada} />
         </details>
+        <details>
+          <summary style={{ cursor: "pointer", fontSize: 12, marginTop: 12 }}>Agenda desta etapa{status?.config?.agenda?.produtos?.enabled ? " · ⏰ ligada" : ""}</summary>
+          <AgendaEtapa botao="produtos" config={status?.config} proximo={status?.agenda?.proximo?.produtos} onSaved={recarregar} />
+        </details>
       </section>
 
       {/* CARD 3 — as duas etapas seguidas, em ciclos, até acabar. */}
@@ -976,6 +1040,10 @@ export default function CuponsDoML({ buscaInicial = null }) {
         <details>
           <summary style={{ cursor: "pointer", fontSize: 12, marginTop: 12 }}>Limites desta etapa</summary>
           <LimitesCiclos config={status?.config} onSaved={recarregar} desabilitado={emRodada} />
+        </details>
+        <details>
+          <summary style={{ cursor: "pointer", fontSize: 12, marginTop: 12 }}>Agenda desta etapa{status?.config?.agenda?.tudo?.enabled ? " · ⏰ ligada" : ""}</summary>
+          <AgendaEtapa botao="tudo" config={status?.config} proximo={status?.agenda?.proximo?.tudo} onSaved={recarregar} />
         </details>
       </section>
 

@@ -83,6 +83,46 @@ const DEFAULT_TEMPLATES = {
     "",
     "{motivo} parou de acontecer — o scraping voltou a passar.",
   ].join("\n"),
+  cuponsListaFim: [
+    "*[Nimbus] 🎟 Cupons · Etapa 1 (lista) concluída*",
+    "📅 {data} · ⏱ {duracao}",
+    "{origem}",
+    "🎟 {cupons} cupons · {novos} novos · {atualizados} atualizados",
+    "✅ {ativados} ativados · {de_loja} de loja",
+    "{bloco_aviso}",
+  ].join("\n"),
+  cuponsProdutosFim: [
+    "*[Nimbus] 🛍 Cupons · Etapa 2 (produtos) concluída*",
+    "📅 {data} · ⏱ {duracao}",
+    "{origem}",
+    "✅ {ativados} ativados · {colhidos} de {tentados} vitrines colhidas",
+    "📦 {produtos} produtos · {parciais} parciais · {vazias} vazias · {falharam} falharam",
+    "{bloco_aviso}",
+  ].join("\n"),
+  cuponsTudoFim: [
+    "*[Nimbus] 🎟 Cupons · Etapa 3 (buscar TUDO) concluída*",
+    "📅 {data} · ⏱ {duracao}",
+    "{origem}",
+    "🎟 {cupons_na_lista} cupons na lista · {ciclos} ciclos",
+    "✅ {ativados} ativados · 📦 {produtos} produtos em {colhidos} vitrines",
+    "⏳ {ficaram_de_fora} ficaram sem vitrine",
+    "{bloco_aviso}",
+  ].join("\n"),
+  cuponsErro: [
+    "*[Nimbus] 🚨 Cupons · {etapa} interrompida*",
+    "📅 {data} · ⏱ {duracao}",
+    "{origem}",
+    "{resumo}",
+    "",
+    "Motivo: {erro}",
+  ].join("\n"),
+  cuponsAgendaPulada: [
+    "*[Nimbus] ⏭ Cupons · {etapa} das {horario} não rodou*",
+    "📅 {data}",
+    "Motivo: {motivo}",
+    "",
+    "A agenda dos cupons roda no Chrome do admin: deixe a aba Admin › Cupom › Cupons do ML aberta, com a extensão instalada.",
+  ].join("\n"),
   test: [
     "*[Nimbus] 🔔 Teste de Notificação*",
     "📅 {data}",
@@ -91,6 +131,14 @@ const DEFAULT_TEMPLATES = {
 };
 
 const TEMPLATE_KEYS = Object.keys(DEFAULT_TEMPLATES);
+
+// As variáveis que todo aviso de fim de etapa de cupons tem.
+const CUPONS_VARS_COMUNS = [
+  { name: "data", desc: "Data/hora do fim da etapa" },
+  { name: "duracao", desc: "Duração da etapa" },
+  { name: "origem", desc: "Agendada (com o horário) ou manual" },
+  { name: "bloco_aviso", desc: "Aviso que a etapa deixou (teto de páginas etc.), quando houver" },
+];
 
 // Descreve cada modelo pra UI: rótulo, variáveis disponíveis e valores de exemplo
 // usados na pré-visualização.
@@ -256,6 +304,87 @@ const TEMPLATE_META = [
     example: { data: "25/08/2026 17:40", alvo: "Repasse · Mercado Livre", motivo: "CAPTCHA" },
   },
   {
+    key: "cuponsListaFim",
+    label: "Cupons — Etapa 1 (lista) concluída",
+    variables: [
+      ...CUPONS_VARS_COMUNS,
+      { name: "cupons", desc: "Cupons lidos na lista" },
+      { name: "novos", desc: "Cupons novos" },
+      { name: "atualizados", desc: "Cupons atualizados" },
+      { name: "ativados", desc: "Cupons ativados (\"Eu quero\")" },
+      { name: "de_loja", desc: "Cupons de uma loja só" },
+    ],
+    example: {
+      data: "23/09/2026 08:00", duracao: "3m 12s", origem: "⏰ Agendada (08:00)",
+      cupons: 1134, novos: 18, atualizados: 1116, ativados: 0, de_loja: 212, bloco_aviso: "",
+    },
+  },
+  {
+    key: "cuponsProdutosFim",
+    label: "Cupons — Etapa 2 (produtos) concluída",
+    variables: [
+      ...CUPONS_VARS_COMUNS,
+      { name: "ativados", desc: "Cupons ativados (\"Eu quero\")" },
+      { name: "tentados", desc: "Vitrines tentadas" },
+      { name: "colhidos", desc: "Vitrines colhidas" },
+      { name: "produtos", desc: "Produtos gravados" },
+      { name: "parciais", desc: "Vitrines lidas pela metade" },
+      { name: "vazias", desc: "Vitrines sem produto" },
+      { name: "falharam", desc: "Vitrines que falharam" },
+    ],
+    example: {
+      data: "23/09/2026 09:00", duracao: "24m 40s", origem: "👆 Manual",
+      ativados: 20, tentados: 60, colhidos: 55, produtos: 8210, parciais: 3, vazias: 4, falharam: 1, bloco_aviso: "",
+    },
+  },
+  {
+    key: "cuponsTudoFim",
+    label: "Cupons — Etapa 3 (buscar TUDO) concluída",
+    variables: [
+      ...CUPONS_VARS_COMUNS,
+      { name: "cupons_na_lista", desc: "Cupons lidos na lista" },
+      { name: "ciclos", desc: "Ciclos da etapa 2" },
+      { name: "ativados", desc: "Cupons ativados (\"Eu quero\")" },
+      { name: "colhidos", desc: "Vitrines colhidas" },
+      { name: "produtos", desc: "Produtos gravados" },
+      { name: "ficaram_de_fora", desc: "Cupons tentados que não deram vitrine" },
+    ],
+    example: {
+      data: "23/09/2026 03:00", duracao: "1h 12m", origem: "⏰ Agendada (03:00)",
+      cupons_na_lista: 1134, ciclos: 4, ativados: 96, colhidos: 310, produtos: 41220, ficaram_de_fora: 7,
+      bloco_aviso: "⚠️ A lista parou no teto de 40 páginas.",
+    },
+  },
+  {
+    key: "cuponsErro",
+    label: "Cupons — etapa interrompida",
+    variables: [
+      ...CUPONS_VARS_COMUNS.filter(v => v.name !== "bloco_aviso"),
+      { name: "etapa", desc: "Qual etapa (1, 2 ou 3)" },
+      { name: "resumo", desc: "O que a etapa chegou a fazer antes de parar" },
+      { name: "erro", desc: "Por que parou (muro de verificação do ML, erro, parada manual…)" },
+    ],
+    example: {
+      data: "23/09/2026 09:00", duracao: "6m 03s", origem: "⏰ Agendada (09:00)", etapa: "Etapa 2 · Produtos",
+      resumo: "✅ 8 ativados · 📦 1.240 produtos em 12 vitrines",
+      erro: "o Mercado Livre pediu verificação e ninguém resolveu a tempo",
+    },
+  },
+  {
+    key: "cuponsAgendaPulada",
+    label: "Cupons — horário agendado não rodou",
+    variables: [
+      { name: "data", desc: "Data/hora do aviso" },
+      { name: "etapa", desc: "Qual etapa (1, 2 ou 3)" },
+      { name: "horario", desc: "O horário agendado que se perdeu" },
+      { name: "motivo", desc: "Por que não rodou" },
+    ],
+    example: {
+      data: "23/09/2026 08:16", etapa: "Etapa 1 · Lista", horario: "08:00",
+      motivo: "a aba de cupons do admin não estava aberta (ou ficou ocupada com outra rodada)",
+    },
+  },
+  {
     key: "afiliadoCookieOk",
     label: "Cookie de afiliado normalizado",
     variables: [
@@ -279,6 +408,7 @@ const DEFAULT_CONFIG = {
     systemOnline: true,
     afiliadoCookie: true,
     bloqueios: true,
+    cupons: true,
   },
   templates: { ...DEFAULT_TEMPLATES },
 };
@@ -541,6 +671,76 @@ async function notifyBlockRecovered(vars = {}) {
   await send(renderTemplate(template, { data: formatDate(new Date().toISOString()), ...vars }));
 }
 
+// ── Cupons do ML (task 4) ──────────────────────────────────────────────────
+
+const ETAPAS_CUPONS = { lista: "Etapa 1 · Lista", produtos: "Etapa 2 · Produtos", tudo: "Etapa 3 · Buscar TUDO" };
+const TEMPLATE_DO_BOTAO = { lista: "cuponsListaFim", produtos: "cuponsProdutosFim", tudo: "cuponsTudoFim" };
+
+const numero = (n) => (Number(n) || 0).toLocaleString("pt-BR");
+
+// Uma linha com o que a etapa fez — é o corpo do aviso de etapa interrompida.
+function resumoCupons(botao, r = {}) {
+  if (botao === "lista") return `🎟 ${numero(r.cupons)} cupons · ${numero(r.novos)} novos · ✅ ${numero(r.ativados)} ativados`;
+  if (botao === "produtos") return `✅ ${numero(r.ativados)} ativados · 📦 ${numero(r.produtos)} produtos em ${numero(r.colhidos)} vitrines`;
+  return `🎟 ${numero(r.cuponsNaLista)} cupons na lista · ✅ ${numero(r.ativados)} ativados · 📦 ${numero(r.produtos)} produtos em ${numero(r.colhidos)} vitrines`;
+}
+
+// As variáveis do aviso de fim de um botão, a partir do balanço dele
+// (`ultimas[botao]` em coupons/sync.js). `slot` é o horário agendado, ou null
+// quando a rodada foi manual.
+function cuponsVars(botao, ultima, { slot = null } = {}) {
+  const r = ultima?.resultado || {};
+  return {
+    data: formatDate(ultima?.at || new Date().toISOString()),
+    duracao: formatDuration(ultima?.duracaoMs),
+    origem: slot ? `⏰ Agendada (${slot})` : "👆 Manual",
+    etapa: ETAPAS_CUPONS[botao] || botao,
+    bloco_aviso: ultima?.erro ? `⚠️ ${ultima.erro}` : "",
+    erro: ultima?.erro || "interrompida",
+    resumo: resumoCupons(botao, r),
+    cupons: numero(r.cupons),
+    novos: numero(r.novos),
+    atualizados: numero(r.atualizados),
+    de_loja: numero(r.cuponsDeLojaIgnorados),
+    ativados: numero(r.ativados),
+    tentados: numero(r.tentados),
+    colhidos: numero(r.colhidos),
+    produtos: numero(r.produtos),
+    parciais: numero(r.parciais),
+    vazias: numero(r.vazias),
+    falharam: numero(r.falharam),
+    cupons_na_lista: numero(r.cuponsNaLista),
+    ciclos: numero(r.ciclos),
+    ficaram_de_fora: numero(r.ficaramDeFora),
+  };
+}
+
+// Qual modelo vai. "Interrompida" é a etapa que PAROU (muro do ML, erro, Parar):
+// um aviso sem parada (o teto de páginas da lista) sai no modelo normal, como bloco.
+function templateDosCupons(botao, ultima) {
+  return ultima?.interrompida ? "cuponsErro" : TEMPLATE_DO_BOTAO[botao];
+}
+
+async function notifyCuponsRodada(botao, ultima, { slot = null } = {}) {
+  const cfg = readConfig();
+  if (!cfg.events.cupons || !TEMPLATE_DO_BOTAO[botao] || !ultima) return;
+  const key = templateDosCupons(botao, ultima);
+  const template = cfg.templates[key] || DEFAULT_TEMPLATES[key];
+  await send(renderTemplate(template, cuponsVars(botao, ultima, { slot })));
+}
+
+async function notifyCuponsAgendaPulada(botao, horario, motivo) {
+  const cfg = readConfig();
+  if (!cfg.events.cupons) return;
+  const template = cfg.templates.cuponsAgendaPulada || DEFAULT_TEMPLATES.cuponsAgendaPulada;
+  await send(renderTemplate(template, {
+    data: formatDate(new Date().toISOString()),
+    etapa: ETAPAS_CUPONS[botao] || botao,
+    horario: horario || "—",
+    motivo: motivo || "—",
+  }));
+}
+
 async function sendTest() {
   const cfg = readConfig();
   const wn = whatsnimbus.readConfig();
@@ -629,5 +829,6 @@ function renderPreview(key, text) {
 
 module.exports = {
   readConfig, writeConfig, notifyMLCookieExpired, notifyMLCookieRecovered, notifyBlockDetected, notifyBlockRecovered, notifyScrapingResult, notifyScrapTesterResult, notifyError, notifySystemOnline, notifyRetryStorm, sendTest,
+  notifyCuponsRodada, notifyCuponsAgendaPulada, cuponsVars, templateDosCupons,
   getTemplates, saveTemplates, renderPreview,
 };

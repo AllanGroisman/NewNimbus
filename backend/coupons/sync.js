@@ -13,6 +13,8 @@ const catalog = require("../catalog");
 const coupons = require("./pg");
 const mlCupons = require("../scraping/ml-cupons");
 const { productKey } = require("../catalog/product-key");
+const schedule = require("../scraping/schedule");
+const agenda = require("./agenda");
 
 const CONFIG_KEY = "ml-cupons-config";
 const STATUS_KEY = "ml-cupons-status";
@@ -103,6 +105,16 @@ const DEFAULT_CONFIG = {
   // padrão que acorda o anti-robô, e o muro vale para a CONTA — que é a do Hub. O
   // teto de 4 é esse freio; se uma aba bater no muro, nenhuma outra começa.
   vitrinesEmParalelo: 2,
+
+  // ── Agenda (task 3) ─────────────────────────────────────────────────────
+  //
+  // Quando cada botão roda sozinho — ver coupons/agenda.js. Mesmo formato do
+  // scraper global (scraping/schedule.js). Quem executa é a aba do admin aberta.
+  agenda: {
+    lista: { enabled: false, scheduleMode: "times", intervalMinutes: 360, times: [] },
+    produtos: { enabled: false, scheduleMode: "times", intervalMinutes: 360, times: [] },
+    tudo: { enabled: false, scheduleMode: "times", intervalMinutes: 720, times: [] },
+  },
 };
 
 // Um "false" em TEXTO é o erro clássico — `!!"false"` é true —, e ele chega de
@@ -204,7 +216,22 @@ function registrarRodada(botao, { duracaoMs = null, resultado = {}, erro = null,
     interrompida: !!interrompida,
   };
   persistStatus();
+  avisarFim(botao);
   return _status.ultimas[botao];
+}
+
+// O fim de um botão vai pro grupo de admin (task 4). Solto: o WhatsApp fora do
+// ar não pode segurar a resposta da rota nem derrubar o balanço.
+function avisarFim(botao) {
+  const slot = agenda.rodadaFechou(botao);
+  require("../notifications/admin-notifier")
+    .notifyCuponsRodada(botao, _status.ultimas[botao], { slot })
+    .catch(err => console.error("[ml-cupons] aviso de fim:", err.message));
+}
+
+// O balanço de cada botão, para a agenda saber quando cada um rodou pela última vez.
+function ultimas() {
+  return _status.ultimas;
 }
 
 // { chave: nome } do que já se viu em alguma rodada. Só leitura — quem escreve é
@@ -317,7 +344,27 @@ function readConfig() {
   if (raw && typeof raw === "object") {
     for (const k of Object.keys(DEFAULT_CONFIG)) if (raw[k] !== undefined) cfg[k] = raw[k];
   }
+  cfg.agenda = normalizarAgenda(cfg.agenda);
   return cfg;
+}
+
+// Cada botão com todos os campos, sempre: um slot salvo pela metade (ou um botão
+// novo que o banco ainda não conhece) cai no default em vez de sumir da tela.
+function normalizarAgenda(raw, base = DEFAULT_CONFIG.agenda) {
+  const out = {};
+  for (const botao of Object.keys(DEFAULT_CONFIG.agenda)) {
+    const atual = { ...DEFAULT_CONFIG.agenda[botao], ...(base?.[botao] || {}) };
+    const novo = raw && typeof raw === "object" && raw[botao] && typeof raw[botao] === "object" ? raw[botao] : {};
+    const m = { ...atual, ...novo };
+    out[botao] = {
+      enabled: booleano(m.enabled, false),
+      scheduleMode: schedule.scheduleMode(m),
+      // 30 min de piso: cada rodada é a conta do ML inteira sendo lida (ou escrita).
+      intervalMinutes: inteiro(m.intervalMinutes, { min: 30, max: 10080, padrao: DEFAULT_CONFIG.agenda[botao].intervalMinutes }),
+      times: schedule.normalizeTimes(m.times),
+    };
+  }
+  return out;
 }
 
 // Tetos com pé no chão: a conta tem milhares de cupons e cada vitrine é mais uma
@@ -331,7 +378,10 @@ function inteiro(v, { min, max, padrao }) {
 }
 
 function writeConfig(cfg) {
-  const merged = { ...readConfig(), ...cfg };
+  const atual = readConfig();
+  const merged = { ...atual, ...cfg };
+  // Merge por botão: salvar a agenda de uma etapa não apaga a das outras.
+  merged.agenda = normalizarAgenda(cfg?.agenda, atual.agenda);
   merged.categorias = Array.isArray(merged.categorias)
     ? merged.categorias.map(g => String(g?.key ?? g)).filter(Boolean).slice(0, 20)
     : [];
@@ -355,6 +405,7 @@ function writeConfig(cfg) {
   merged.paginasDeListaEmParalelo = inteiro(merged.paginasDeListaEmParalelo, { min: 1, max: 8, padrao: DEFAULT_CONFIG.paginasDeListaEmParalelo });
   merged.activateCoupons = booleano(merged.activateCoupons, DEFAULT_CONFIG.activateCoupons);
   appConfig.set(CONFIG_KEY, merged);
+  agenda.reagendar();
   return merged;
 }
 
@@ -408,6 +459,7 @@ function status() {
     // Quem está tocando a rodada: o servidor (Puppeteer) ou o Chrome do admin.
     // A tela precisa saber para não oferecer "cancelar" de um laço que é dela.
     local: !!_local,
+    agenda: agenda.status(),
   };
 }
 
@@ -1346,6 +1398,7 @@ function resumoDoFim(local, { vitrines, produtos, cancelada }) {
       erro: resumo.avisos.length ? resumo.avisos.join(" ") : null,
       interrompida: !!cancelada,
     };
+    avisarFim("lista");
   }
   logar(cancelada ? "aviso" : "ok", cancelada
     ? "rodada no seu Chrome interrompida"
@@ -1764,6 +1817,7 @@ module.exports = {
   pedirProximas,
   fimLocalRun,
   registrarRodada,
+  ultimas,
   localAtivo,
   status,
   readConfig,

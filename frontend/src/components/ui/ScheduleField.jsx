@@ -13,6 +13,9 @@ export default function ScheduleField({
   intervalMinutes,
   times,
   minInterval = 5,
+  // Mais de um na mesma tela (a agenda das três etapas de cupons) precisa de ids
+  // distintos, senão o label de um aponta pro input do outro.
+  idPrefix = "sched",
   onChange,
 }) {
   const list = Array.isArray(times) ? times : [];
@@ -37,9 +40,9 @@ export default function ScheduleField({
 
       {mode !== "times" ? (
         <div style={{ maxWidth: 280 }}>
-          <label style={labelStyle} htmlFor="sched-interval">Intervalo (minutos)</label>
+          <label style={labelStyle} htmlFor={`${idPrefix}-interval`}>Intervalo (minutos)</label>
           <input
-            id="sched-interval"
+            id={`${idPrefix}-interval`}
             type="number" min={minInterval} max={10080}
             value={intervalMinutes ?? ""}
             onChange={e => onChange({ intervalMinutes: e.target.value === "" ? "" : parseInt(e.target.value) })}
