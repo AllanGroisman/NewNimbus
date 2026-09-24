@@ -663,6 +663,18 @@ describe("categoria dos cupons", () => {
     expect(await screen.findByText("Eletrônicos · Moda")).toBeInTheDocument();
   });
 
+  it("passando de duas categorias, mostra as duas primeiras e +N, com a lista inteira no title", async () => {
+    // Escrever todas na célula empurrava a tabela para a rolagem lateral.
+    adminMlCupons.mockResolvedValue({
+      ...VAZIO, total: 1,
+      items: [cupom({ groupings: ["ce_vertical", "tb_vertical", "xx_vertical", "yy_vertical"] })],
+    });
+    await abrirTela();
+
+    const celula = await screen.findByRole("cell", { name: "Eletrônicos · Moda +2" });
+    expect(celula).toHaveAttribute("title", "Eletrônicos · Moda · xx_vertical · yy_vertical");
+  });
+
   it("cupom de loja tem categoria própria, com o nome do vendedor", async () => {
     // "Em produtos de Agrotrator" é a categoria que mais importa para quem olha a
     // tabela: ele vale só para os produtos daquele vendedor.

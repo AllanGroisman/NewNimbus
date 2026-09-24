@@ -28,3 +28,15 @@ export function categoriasDoCupom(c, labels) {
   if (c?.scope === "store") return `Loja${c.sellerName ? ` · ${c.sellerName}` : ""}`;
   return nomes.length ? nomes.join(" · ") : "—";
 }
+
+// A mesma linha, cortada para caber na tabela: as `max` primeiras categorias e
+// quantas ficaram de fora. Cupom que aparece em cinco verticais escrevia as cinco
+// na célula e empurrava a tabela para a rolagem lateral; o resto vai para o
+// `title`, que é o `categoriasDoCupom` inteiro.
+export function resumoCategorias(c, labels, max = 2) {
+  const completo = categoriasDoCupom(c, labels);
+  if (c?.scope === "store") return { texto: completo, resto: 0, completo };
+  const nomes = (Array.isArray(c?.groupings) ? c.groupings : []).map(k => rotuloCategoria(k, labels)).filter(Boolean);
+  if (nomes.length <= max) return { texto: completo, resto: 0, completo };
+  return { texto: nomes.slice(0, max).join(" · "), resto: nomes.length - max, completo };
+}

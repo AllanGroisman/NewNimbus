@@ -27,7 +27,7 @@ import {
 import { percorrerLista } from "../data/rodadaNoChrome";
 import { buscarProdutos, buscarTudo } from "../data/produtosNoChrome";
 import { coletorInfo, fecharAbaDoColetor } from "../data/coletor";
-import { rotuloCategoria, categoriasDoCupom } from "../data/cupomCategorias";
+import { rotuloCategoria, resumoCategorias } from "../data/cupomCategorias";
 import { campanhaDoTexto } from "../data/cupomId";
 // O mesmo modal da aba "Descobrir palavra" — lá ele traz a campanha que uma palavra
 // apontou, aqui a que alguém digitou. É a importação que a aba "Repasse" já faz
@@ -1125,13 +1125,10 @@ export default function CuponsDoML({ buscaInicial = null }) {
               <thead>
                 <tr style={{ textAlign: "left", color: "var(--color-text-secondary)" }}>
                   <th style={th}>Cupom</th>
-                  <th style={th}>Categoria</th>
+                  <th style={th}>Onde vale</th>
                   <th style={th}>Desconto</th>
-                  <th style={th}>Mín / Teto</th>
-                  <th style={th}>Tipo</th>
                   <th style={th}>Vence</th>
                   <th style={th}>Produtos</th>
-                  <th style={th}>No catálogo</th>
                   <th style={th}>Palavra</th>
                   <th style={th}></th>
                 </tr>
@@ -1142,21 +1139,28 @@ export default function CuponsDoML({ buscaInicial = null }) {
                   // produtos são dois <tr> irmãos para o mesmo item da lista.
                   <Fragment key={c.campaignId}>
                     <tr style={{ borderTop: "0.5px solid var(--color-border-tertiary)" }}>
-                      <td style={td}>
+                      <td style={{ ...td, minWidth: 200 }}>
                         <div style={{ fontWeight: 500 }}>{c.title}</div>
                         {c.subtitle && <div style={{ color: "var(--color-text-secondary)" }}>{c.subtitle}</div>}
                         <NumeroDaCampanha id={c.campaignId} />
+                        {!c.activated && <div style={{ fontSize: 11, color: "var(--warn-text)" }}>não ativado</div>}
                       </td>
-                      <td style={{ ...td, color: "var(--color-text-secondary)" }}>{categoriasDoCupom(c, labelsCategoria)}</td>
-                      <td style={td}>{desconto(c)}</td>
-                      <td style={td}>{c.minPurchase ? brl(c.minPurchase) : "sem mínimo"}{c.maxDiscount ? ` / ${brl(c.maxDiscount)}` : ""}</td>
-                      <td style={td}>{c.scope === "store" ? `loja${c.sellerName ? ` (${c.sellerName})` : ""}` : "campanha"}{!c.activated && " · não ativado"}</td>
-                      <td style={td}>{dia(c.expiresAt)}</td>
+                      <OndeVale cupom={c} labels={labelsCategoria} />
+                      <td style={td}>
+                        <div style={{ fontWeight: 500 }}>{desconto(c)}</div>
+                        <div style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap" }}>
+                          {c.minPurchase ? `mín ${brl(c.minPurchase)}` : "sem mínimo"}
+                        </div>
+                        {c.maxDiscount && (
+                          <div style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap" }}>teto {brl(c.maxDiscount)}</div>
+                        )}
+                      </td>
+                      <td style={{ ...td, whiteSpace: "nowrap" }}>{dia(c.expiresAt)}</td>
                       <td style={td}>
                         <div>{c.products || 0}</div>
+                        <div style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap" }}>{c.inCatalog || 0} no catálogo</div>
                         <EstadoProdutos cupom={c} />
                       </td>
-                      <td style={td}>{c.inCatalog || 0}</td>
                       <td style={td}>
                         <div style={{ fontFamily: "monospace" }}>{c.code || "—"}</div>
                         {c.code && FONTE_PALAVRA[c.codeSource] && (
@@ -1166,7 +1170,10 @@ export default function CuponsDoML({ buscaInicial = null }) {
                         )}
                       </td>
                       <td style={td}>
-                        <div style={{ display: "flex", gap: 6 }}>
+                        {/* Os botões quebram linha em vez de alargar a tabela:
+                            eram a coluna mais larga, e a que empurrava a rolagem
+                            lateral. */}
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxWidth: 150 }}>
                           <button onClick={() => verProdutos(c.campaignId)} style={botaoLink}>
                             {aberto === c.campaignId ? "fechar" : "produtos"}
                           </button>
@@ -1213,7 +1220,7 @@ export default function CuponsDoML({ buscaInicial = null }) {
                     </tr>
                     {aberto === c.campaignId && (
                       <tr>
-                        <td colSpan={10} style={{ ...td, background: "var(--color-background-secondary)" }}>
+                        <td colSpan={7} style={{ ...td, background: "var(--color-background-secondary)" }}>
                           <Produtos dados={produtos[c.campaignId]} />
                         </td>
                       </tr>
@@ -1315,6 +1322,19 @@ const ORIGEM = {
 // Em que pé está a lista de produtos do cupom. `productsSyncedAt` só é escrito
 // quando a vitrine inteira foi raspada; vínculo sem ele é pedaço (vitrine
 // parcial, checkout) — o "parcial" que o checkbox dos botões 2 e 3 pula.
+// A coluna "Onde vale": categoria e tipo juntos, porque respondiam a mesma
+// pergunta — e no cupom de loja as duas repetiam o vendedor. Passando de duas
+// categorias, mostra as duas primeiras e "+N"; a lista inteira fica no `title`.
+function OndeVale({ cupom, labels }) {
+  const { texto, resto, completo } = resumoCategorias(cupom, labels);
+  return (
+    <td style={{ ...td, color: "var(--color-text-secondary)", maxWidth: 180 }} title={resto ? completo : undefined}>
+      {texto}
+      {resto > 0 && <span style={{ marginLeft: 4, fontSize: 11, whiteSpace: "nowrap" }}>+{resto}</span>}
+    </td>
+  );
+}
+
 function EstadoProdutos({ cupom }) {
   const [texto, cor] = cupom.productsSyncedAt
     ? ["completa", "var(--success-text)"]
