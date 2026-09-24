@@ -75,6 +75,7 @@ import {
 import { adminMlCuponsImportCampaign, adminMlCuponsImportStatus } from "../data/api";
 import { adminMlCuponsAgendaPendentes, adminMlCuponsAgendaReivindicar, adminMlCuponsAgendaFalhou } from "../data/api";
 import { coletorInfo, coletorEntende, raparVitrine, paginaDeCupons, fecharAbaDoColetor } from "../data/coletor";
+import { _zerarParaTestes } from "../data/rodadaCupons";
 
 // A extensão instalada, e quais comandos aquela cópia entende. A tela pergunta os
 // dois: uma cópia da versão 1.0 responde ao ping e não conhece "lista".
@@ -111,6 +112,8 @@ async function abrirTela() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // A rodada vive no módulo (task 6) e duraria de um teste para o outro.
+  _zerarParaTestes();
   // O checkbox dos parciais é lembrado no navegador: sem limpar, um teste herdaria o do outro.
   localStorage.clear();
   adminMlCuponsStatus.mockResolvedValue({ config: {}, running: false });
@@ -1062,5 +1065,76 @@ describe("a agenda das etapas", () => {
     await waitFor(() => expect(adminMlCuponsAgendaFalhou).toHaveBeenCalledWith("tudo", expect.stringMatching(/extensão/)));
     expect(adminMlCuponsAgendaReivindicar).not.toHaveBeenCalled();
     expect(adminMlCuponsLocalStart).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Sair da aba e voltar (task 6)
+// ─────────────────────────────────────────────────────────────────────────
+// A aba é montada do zero a cada troca (AdminCupom.jsx). O laço continua rodando
+// no Chrome enquanto isso — e a tela que volta tem de encontrá-lo, não recomeçar.
+describe("sair da aba e voltar no meio de uma rodada", () => {
+  const PAGINA1 = { url: "https://www.mercadolivre.com.br/cupons/filter?all=true&page=1", grouping: null, pagina: 1 };
+  const PAGINA2 = { ...PAGINA1, url: "https://www.mercadolivre.com.br/cupons/filter?all=true&page=2", pagina: 2 };
+
+  // A primeira página fica pendurada até o teste soltá-la: é a rodada "no meio".
+  const listaPendurada = () => {
+    coletorInfo.mockResolvedValue(EXTENSAO("raspar", "lista"));
+    adminMlCuponsLocalStart.mockResolvedValue({ config: {}, ativa: false, categorias: [null], proxima: PAGINA1 });
+    let soltar;
+    paginaDeCupons.mockReturnValueOnce(new Promise(r => { soltar = r; }));
+    // A lista acaba na página 2. Sem esse fim, uma `paginaDeCupons` que outro teste
+    // deixou respondendo faria o laço girar para sempre depois de soltar a primeira.
+    paginaDeCupons.mockResolvedValue({ tabId: 7, props: { p: 2 }, muro: null, clicados: 0, semBotao: [] });
+    adminMlCuponsLocalPagina
+      .mockResolvedValueOnce({ cupons: 30, novos: 30, de: 2, proxima: PAGINA2, alvos: null })
+      .mockResolvedValue({ cupons: 45, novos: 15, de: 2, proxima: null, alvos: null, resumo: { cupons: 45, novos: 45 } });
+    return () => soltar({ tabId: 7, props: { p: 1 }, muro: null, clicados: 0, semBotao: [] });
+  };
+
+  // O botão nasce desligado e só liga quando a extensão responde: clicar antes disso
+  // não faz nada, e a suíte inteira em paralelo deixava essa resposta atrasar.
+  const iniciarLista = async () => {
+    const botao = await screen.findByRole("button", { name: BOTAO_LISTA });
+    await waitFor(() => expect(botao).toBeEnabled());
+    fireEvent.click(botao);
+    await screen.findByRole("button", { name: /Parar a varredura/ });
+  };
+
+  it("a barra, o log e o Parar continuam lá — e o Parar ainda para", async () => {
+    const soltar = listaPendurada();
+    const { unmount } = render(<PageCuponsML />);
+    await iniciarLista();
+
+    unmount();
+    await abrirTela();
+
+    const card1 = screen.getByRole("region", { name: /1 · Cupons e condições/i });
+    expect(within(card1).getByRole("button", { name: /Parar a varredura/ })).toBeInTheDocument();
+    expect(within(card1).getByText(/O que está acontecendo agora/)).toBeInTheDocument();
+    // Os vizinhos continuam travados: a rodada de antes ainda é a dona do Chrome.
+    expect(screen.queryByRole("button", { name: BOTAO_TUDO })).toBeNull();
+
+    fireEvent.click(within(card1).getByRole("button", { name: /Parar a varredura/ }));
+    soltar();
+
+    // Parou depois da página 1, sem abrir a 2 — e o balanço cai na tela NOVA.
+    expect(await within(card1).findByText(/Varredura interrompida/)).toBeInTheDocument();
+    expect(paginaDeCupons).toHaveBeenCalledTimes(1);
+    expect(adminMlCuponsLocalFim).toHaveBeenCalledWith({ cancelada: true });
+  });
+
+  it("voltar não deixa disparar uma segunda rodada por cima da primeira", async () => {
+    const soltar = listaPendurada();
+    const { unmount } = render(<PageCuponsML />);
+    await iniciarLista();
+
+    unmount();
+    await abrirTela();
+
+    expect(screen.queryByRole("button", { name: BOTAO_LISTA })).toBeNull();
+    expect(adminMlCuponsLocalStart).toHaveBeenCalledTimes(1);
+    soltar();
+    await waitFor(() => expect(adminMlCuponsLocalFim).toHaveBeenCalled());
   });
 });

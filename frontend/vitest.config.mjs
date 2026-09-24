@@ -22,6 +22,12 @@ export default defineConfig({
     setupFiles: ["./src/__tests__/setup.js"],
     include: ["src/**/*.test.js", "src/**/*.test.jsx"],
     testTimeout: 10000,
+    // No máximo 2 processos. A máquina de desenvolvimento é um notebook de 4 threads
+    // e 3,7 GB, e desligou sozinho com a suíte ocupando os 4 núcleos junto com o
+    // backend e o editor. Fica mais lenta, mas sobra CPU para o resto. Para uma
+    // rodada pontual mais rápida: `npx vitest run --maxWorkers=4`.
+    maxWorkers: 2,
+    minWorkers: 1,
     reporters: ["default"],
   },
 });
