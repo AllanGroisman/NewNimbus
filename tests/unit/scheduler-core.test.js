@@ -110,6 +110,23 @@ describe("scheduler.windowGate — sem janela a campanha fica parada", () => {
   });
 });
 
+describe("queueEmptyAlert", () => {
+  it("envio instantâneo nunca avisa fila vazia — ela esvazia a cada produto", () => {
+    expect(scheduler.queueEmptyAlert({ scraping: { autoSend: true } }, true, 0)).toBe(false);
+  });
+
+  it("sem envio instantâneo avisa fila vazia dentro da janela", () => {
+    expect(scheduler.queueEmptyAlert({}, true, 0)).toBe(true);
+    // Só o true explícito liga o envio instantâneo.
+    expect(scheduler.queueEmptyAlert({ scraping: { autoSend: "sim" } }, true, 0)).toBe(true);
+  });
+
+  it("fora da janela ou com itens na fila não avisa", () => {
+    expect(scheduler.queueEmptyAlert({}, false, 0)).toBe(false);
+    expect(scheduler.queueEmptyAlert({}, true, 3)).toBe(false);
+  });
+});
+
 describe("scheduler.shuffleArray / shuffleAfterRefill — misturar a fila", () => {
   it("shuffleArray devolve os mesmos itens, sem mexer no array original", () => {
     const orig = [1, 2, 3, 4, 5, 6, 7, 8];

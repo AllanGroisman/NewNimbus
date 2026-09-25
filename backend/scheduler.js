@@ -67,6 +67,13 @@ function windowGate(group) {
   return { ok: false, reason: "nenhuma janela de envio configurada" };
 }
 
+// Envio instantâneo esvazia a fila a cada produto — fila vazia é o normal,
+// avisar seria um aviso por produto. Só avisa em campanha que envia por janela.
+function queueEmptyAlert(group, inWindow, queueLen) {
+  if (group?.scraping?.autoSend === true) return false;
+  return inWindow && queueLen === 0;
+}
+
 function cooldownMinutes(schedule) {
   if (!schedule) return 0;
   const v = Number(schedule.cooldownValue) || 0;
@@ -1049,7 +1056,7 @@ async function processGroup(userId, group, whatsappGroups, numbers, planPaused) 
   // Fila vazia dentro de uma janela de envio (edge-trigger). Usa a queue já
   // considerando o refill acima.
   const effQueueLen = (updates.queue !== undefined ? updates.queue : (group.queue || [])).length;
-  userNotifier.onQueueEmpty(userId, group.id, group.name, inWindow && effQueueLen === 0).catch(() => {});
+  userNotifier.onQueueEmpty(userId, group.id, group.name, queueEmptyAlert(group, inWindow, effQueueLen)).catch(() => {});
 
   // Dispatch (só consome de queue — pending precisa de aprovação manual)
   const groupForDispatch = updates.queue ? { ...group, queue: updates.queue } : group;
@@ -1324,7 +1331,7 @@ module.exports = {
   // poder cobrir esse caminho sem subir WhatsApp.
   sendItem,
   // Funções puras exportadas só pra teste unitário (tests/unit/scheduler-core.test.js).
-  inWindow, activeWindow, windowGate, cooldownMinutes, renderTemplate,
+  inWindow, activeWindow, windowGate, queueEmptyAlert, cooldownMinutes, renderTemplate,
   affiliateGate,
   sortMode, batchSize, refillMode, refillThreshold, refillTimes, autoRefillDue, markAutoRefill,
   shuffleArray, shuffleAfterRefill,

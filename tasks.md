@@ -119,3 +119,7 @@ Geral:
 17. [] Quero criar uma aba de Cupons logo após a aba Produtos que tem na area de ADMIN onde eu consigo ver todos os cupons, navegar entre eles, ver um resumo, os produtos de cada um, filtrar os cupons, filtrar depois dentro nos seus produtos, etc... Pensa em algo legal e de fácil utilização. 
 
 18. [] Cria um botão na extensão que busca os cupons para limpar meu carrinho do mercado livre.
+
+19. [] Adiciona os cupons na busca de produtos das campanhas. Deve aparecer os cupons nos cards dos produtos e deve aparecer filtros para pesquisar por cupom, filtrar pelo menor preço final com cupom incluso, etc... Verifique como fazer da melhor forma e com as features necessarias para ficar bom para o usu do usuario.
+
+20. [x] Se a campanha de repasse esta com envio imediato ativado quero que automaticamente a notificação de fila vazia seja desativado. Não faz sentido a cada produto receber um aviso que a fila esta vazia.

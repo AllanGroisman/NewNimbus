@@ -2989,7 +2989,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                   <div style={{ fontWeight: 500, marginBottom: 4 }}>Envio instantâneo</div>
                   <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
                     {scraping.autoSend === true
-                      ? "Tudo que entra na fila é enviado na hora, ignorando as janelas de envio."
+                      ? "Tudo que entra na fila é enviado na hora, ignorando as janelas de envio. O aviso de fila vazia fica desligado nesta campanha."
                       : "Os envios respeitam as janelas e o intervalo configurados."}
                   </div>
                 </div>
