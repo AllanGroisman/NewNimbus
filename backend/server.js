@@ -2676,7 +2676,7 @@ app.put("/api/admin/ml-cupons/config", auth.requireAuth, auth.requireAdmin, asyn
 app.get("/api/admin/ml-cupons/alvos-produtos", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
     res.json(await mlCupons.alvosDeProdutos({
-      limit: Number(req.query.limit) || 500,
+      limit: Number(req.query.limit) || null,
       campaignIds: req.query.campaignId ? [String(req.query.campaignId)] : null,
       soSemProdutos: req.query.soSemProdutos === "1",
     }));

@@ -100,6 +100,10 @@ const DEFAULT_CONFIG = {
   // e nenhuma vitrine chegava a ser aberta. Com lote, parar perde no máximo o lote
   // em andamento.
   tamanhoLoteProdutos: 20,
+  // Teto de cupons por rodada da etapa 2 (task 21). 0 = sem teto: vai a fila
+  // inteira. O corte vem DEPOIS da ordenação, então os que já têm vitrine (sem
+  // escrita na conta do ML) são os primeiros a entrar.
+  limiteCuponsProdutos: 0,
   // Quantas vitrines a etapa 2 abre AO MESMO TEMPO no Chrome do admin (task 14).
   // Era uma por vez, de propósito: várias abas batendo no ML com a mesma conta é o
   // padrão que acorda o anti-robô, e o muro vale para a CONTA — que é a do Hub. O
@@ -396,6 +400,7 @@ function writeConfig(cfg) {
   merged.pausaEntreCiclosMs = inteiro(merged.pausaEntreCiclosMs, { min: 5000, max: 600000, padrao: DEFAULT_CONFIG.pausaEntreCiclosMs });
   merged.maxCiclos = inteiro(merged.maxCiclos, { min: 1, max: 200, padrao: DEFAULT_CONFIG.maxCiclos });
   merged.tamanhoLoteProdutos = inteiro(merged.tamanhoLoteProdutos, { min: 1, max: 200, padrao: DEFAULT_CONFIG.tamanhoLoteProdutos });
+  merged.limiteCuponsProdutos = inteiro(merged.limiteCuponsProdutos, { min: 0, max: 2000, padrao: DEFAULT_CONFIG.limiteCuponsProdutos });
   merged.vitrinesEmParalelo = inteiro(merged.vitrinesEmParalelo, { min: 1, max: 4, padrao: DEFAULT_CONFIG.vitrinesEmParalelo });
   merged.carimbarCategorias = booleano(merged.carimbarCategorias, DEFAULT_CONFIG.carimbarCategorias);
   merged.skipStoreCoupons = booleano(merged.skipStoreCoupons, DEFAULT_CONFIG.skipStoreCoupons);
@@ -1562,9 +1567,14 @@ async function carimbarCatalogo() {
 // clique em "Aplicar" na lista do ML, que é ESCRITA irreversível na conta do
 // sistema. A tela mostra os dois números antes de o Allan apertar o botão, e a
 // config decide se o segundo grupo entra.
-async function alvosDeProdutos({ limit = 500, campaignIds = null, soSemProdutos = false } = {}) {
+//
+// O tamanho da fila sai da config (`limiteCuponsProdutos`), como os outros knobs:
+// era um 500 fixo, e um teto de 600 na tela virava 500 sem ninguém saber. Sem teto
+// (0) vale o máximo da fila. `limit` explícito só para testes e usos pontuais.
+async function alvosDeProdutos({ limit = null, campaignIds = null, soSemProdutos = false } = {}) {
   const cfg = readConfig();
-  const r = await coupons.couponsSemVitrine({ limit, campaignIds, soSemProdutos });
+  const tamanhoFila = Number(limit) || Number(cfg.limiteCuponsProdutos) || coupons.TETO_FILA_PRODUTOS;
+  const r = await coupons.couponsSemVitrine({ limit: tamanhoFila, campaignIds, soSemProdutos });
   const ativa = booleano(cfg.activateCoupons, DEFAULT_CONFIG.activateCoupons);
   return {
     ...r,
@@ -1580,6 +1590,7 @@ async function alvosDeProdutos({ limit = 500, campaignIds = null, soSemProdutos 
       pausaEntreCiclosMs: Number(cfg.pausaEntreCiclosMs) || DEFAULT_CONFIG.pausaEntreCiclosMs,
       maxCiclos: Number(cfg.maxCiclos) || DEFAULT_CONFIG.maxCiclos,
       tamanhoLoteProdutos: Number(cfg.tamanhoLoteProdutos) || DEFAULT_CONFIG.tamanhoLoteProdutos,
+      limiteCuponsProdutos: Number(cfg.limiteCuponsProdutos) || 0,
       vitrinesEmParalelo: Math.min(4, Math.max(1, Number(cfg.vitrinesEmParalelo) || DEFAULT_CONFIG.vitrinesEmParalelo)),
       activateCoupons: ativa,
       // Três valores distintos, e a tela precisa dos três separados: `0` é

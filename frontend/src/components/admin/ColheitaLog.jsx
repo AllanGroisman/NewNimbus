@@ -26,15 +26,22 @@ const hora = (at) => {
 };
 
 export default function ColheitaLog({ eventos, resumo, rodando = false, titulo = "O que está acontecendo", vazio = null }) {
-  const fim = useRef(null);
+  const caixa = useRef(null);
+  const grudado = useRef(true);
 
-  // Rolar sozinho só ENQUANTO roda. Depois que termina, o admin está lendo o log
-  // pra achar o que deu errado, e puxar a rolagem embaixo do dedo dele é hostil.
+  // Rolar sozinho só ENQUANTO roda, e só DENTRO da caixa do log. Era um
+  // `scrollIntoView` no fim da lista, que rolava a PÁGINA inteira a cada evento
+  // novo: mexer na tela durante a rodada puxava a vista de volta pro log (task 21).
+  // E só se o admin já estava no fim da caixa — subiu pra ler algo, fica lá.
   useEffect(() => {
-    // O `?.` na função também: jsdom não implementa scrollIntoView, e rolar não
-    // é motivo pra derrubar a tela em ambiente nenhum.
-    if (rodando) fim.current?.scrollIntoView?.({ block: "nearest" });
+    const el = caixa.current;
+    if (rodando && el && grudado.current) el.scrollTop = el.scrollHeight;
   }, [eventos?.length, rodando]);
+
+  const aoRolar = (e) => {
+    const el = e.currentTarget;
+    grudado.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  };
 
   const temEventos = !!eventos?.length;
   if (!temEventos && !resumo) return vazio;
@@ -47,6 +54,8 @@ export default function ColheitaLog({ eventos, resumo, rodando = false, titulo =
             {rodando ? `⟳ ${titulo}` : titulo}
           </div>
           <div
+            ref={caixa}
+            onScroll={aoRolar}
             style={{
               maxHeight: 220, overflowY: "auto", fontSize: 12, lineHeight: 1.6,
               background: "var(--color-background-secondary)", borderRadius: 8,
@@ -60,7 +69,6 @@ export default function ColheitaLog({ eventos, resumo, rodando = false, titulo =
                 <span style={{ flex: 1, wordBreak: "break-word" }}>{e.texto}</span>
               </div>
             ))}
-            <div ref={fim} />
           </div>
         </>
       )}

@@ -740,8 +740,12 @@ async function setVitrineTotal(campaignId, total) {
 // parcial, checkout) mas não a vitrine fechada. É o "começa por quem não tem nada".
 // O vínculo do repasse não conta: é o grupo quem diz, e a campanha segue sem nada
 // que o ML tenha confirmado.
-async function couponsSemVitrine({ limit = 500, campaignIds = null, soSemProdutos = false } = {}) {
-  const teto = Math.min(2000, Math.max(1, Number(limit) || 500));
+// O maior tamanho de fila que uma rodada da etapa 2 pode pedir — o mesmo máximo do
+// `limiteCuponsProdutos`, e o que vale quando ele é 0 (sem teto).
+const TETO_FILA_PRODUTOS = 2000;
+
+async function couponsSemVitrine({ limit = TETO_FILA_PRODUTOS, campaignIds = null, soSemProdutos = false } = {}) {
+  const teto = Math.min(TETO_FILA_PRODUTOS, Math.max(1, Number(limit) || TETO_FILA_PRODUTOS));
   const alvo = Array.isArray(campaignIds) && campaignIds.length
     ? { campaignId: { in: campaignIds.map(String) } }
     : {};
@@ -754,10 +758,12 @@ async function couponsSemVitrine({ limit = 500, campaignIds = null, soSemProduto
   const semNadaDoMl = { products: { none: { origem: { not: "repasse" } } } };
   const base = soSemProdutos ? { ...semVitrine, ...semNadaDoMl } : semVitrine;
 
-  const [prontos, precisamAtivar, total, incompletos, semNada] = await Promise.all([
+  const ondeProntos = { ...base, containerUrl: { not: null } };
+  const ondeAtivar = { ...base, containerUrl: null, scope: "campaign", activated: false };
+  const [prontos, precisamAtivar, total, incompletos, semNada, totalProntos, totalPrecisamAtivar] = await Promise.all([
     // Campanha antes de loja ("campaign" < "store"), o visto por último primeiro.
     prisma().mlCoupon.findMany({
-      where: { ...base, containerUrl: { not: null } },
+      where: ondeProntos,
       select: { campaignId: true, title: true, containerUrl: true },
       orderBy: [{ scope: "asc" }, { lastSeenAt: "desc" }],
       take: teto,
@@ -766,7 +772,7 @@ async function couponsSemVitrine({ limit = 500, campaignIds = null, soSemProduto
     // loja sem `containerUrl` é cupom que o ML não deu vitrine nenhuma, e clicar
     // não muda isso.
     prisma().mlCoupon.findMany({
-      where: { ...base, containerUrl: null, scope: "campaign", activated: false },
+      where: ondeAtivar,
       select: { campaignId: true, title: true },
       orderBy: { lastSeenAt: "desc" },
       take: teto,
@@ -776,11 +782,15 @@ async function couponsSemVitrine({ limit = 500, campaignIds = null, soSemProduto
     // escolhida — é o número que a tela mostra ao lado de cada opção.
     prisma().mlCoupon.count({ where: semVitrine }),
     prisma().mlCoupon.count({ where: { ...semVitrine, ...semNadaDoMl } }),
+    // O tamanho de cada grupo SEM o `take`: é como a tela sabe que a fila veio
+    // cortada no teto e avisa, em vez de prometer menos do que existe.
+    prisma().mlCoupon.count({ where: ondeProntos }),
+    prisma().mlCoupon.count({ where: ondeAtivar }),
   ]);
   // Quantos o filtro deixou de fora, pra ninguém achar que a fila encolheu sozinha.
   const parciaisFora = soSemProdutos ? incompletos - semNada : 0;
 
-  return { prontos, precisamAtivar, total, parciaisFora, incompletos, semNada };
+  return { prontos, precisamAtivar, total, parciaisFora, incompletos, semNada, totalProntos, totalPrecisamAtivar };
 }
 
 
@@ -911,6 +921,7 @@ module.exports = {
   clearAll,
   deleteCoupon,
   couponsSemVitrine,
+  TETO_FILA_PRODUTOS,
   vincularPorCheckout,
   vincularDoRepasse,
   restampCodesFromChecks,

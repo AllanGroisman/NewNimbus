@@ -17,7 +17,7 @@ vi.mock("../data/api", () => api);
 vi.mock("../data/rodadaNoChrome", () => lista);
 vi.mock("../data/coletor", () => coletor);
 
-import { umCiclo } from "../data/produtosNoChrome";
+import { umCiclo, planoDaRodada, linhasDoPlano } from "../data/produtosNoChrome";
 
 const cupom = (i, extra = {}) => ({ campaignId: `C${i}`, title: `Cupom ${i}`, ...extra });
 const config = { tamanhoLoteProdutos: 20, activateCoupons: true, maxActivationsPerRun: null, pausaEntreVitrinesMs: 1 };
@@ -109,6 +109,26 @@ describe("umCiclo em lotes", () => {
 
     expect(lista.percorrerLista).toHaveBeenCalledTimes(1);
     expect(lista.percorrerLista.mock.calls[0][0].ativarApenas).toHaveLength(10);
+  });
+
+  it("o teto de cupons da rodada (task 21) corta a fila, com os prontos na frente", async () => {
+    const prontos = Array.from({ length: 5 }, (_, i) => cupom(i, { containerUrl: `https://ml/${i}` }));
+    api.adminMlCuponsAlvosProdutos.mockResolvedValue({ prontos, precisamAtivar: [], config: { ...config, limiteCuponsProdutos: 3 } });
+
+    await umCiclo({});
+
+    expect(api.adminMlCuponsImportVitrine.mock.calls.map(c => c[0])).toEqual(["C0", "C1", "C2"]);
+  });
+
+  it("com o teto maior que os prontos, só a sobra vai para a ativação", async () => {
+    const prontos = [cupom(90, { containerUrl: "https://ml/90" }), cupom(91, { containerUrl: "https://ml/91" })];
+    const precisamAtivar = Array.from({ length: 5 }, (_, i) => cupom(i));
+    api.adminMlCuponsAlvosProdutos.mockResolvedValue({ prontos, precisamAtivar, config: { ...config, limiteCuponsProdutos: 3 } });
+
+    await umCiclo({});
+
+    expect(lista.percorrerLista).toHaveBeenCalledTimes(1);
+    expect(lista.percorrerLista.mock.calls[0][0].ativarApenas).toEqual(["C0"]);
   });
 });
 
@@ -282,5 +302,51 @@ describe("umCiclo em paralelo (task 14)", () => {
     expect(r.parado).toMatch(/interrompido/i);
     expect(api.adminMlCuponsLocalFim).toHaveBeenCalledWith({ cancelada: true });
     expect(coletor.fecharAbaDoColetor).toHaveBeenCalledWith(9);
+  });
+});
+
+describe("planoDaRodada — o que a rodada vai fazer, com os tetos", () => {
+  const com = (vitrine, ativar) => ({ containerUrl: vitrine ? "u" : null, ativar });
+  const prontos = [1, 2, 3].map(i => cupom(i, com(true)));
+  const semVitrine = [4, 5, 6].map(i => cupom(i));
+
+  it("sem teto nenhum, vai a fila inteira e só a linha de resumo aparece", () => {
+    const p = planoDaRodada({ prontos, precisamAtivar: semVitrine, config: { ...config, maxProductsPerCoupon: 500, maxPaginasVitrine: 11 } });
+    expect(p).toMatchObject({ total: 6, prontos: 3, aAtivar: 3, lotes: 1, foraPorAtivacao: 0 });
+    expect(linhasDoPlano(p)).toEqual([
+      "Até 6 cupom(ns) (3 com vitrine + 3 a ativar), em 1 lote(s) de até 20, 1 vitrine(s) por vez; máx. 500 produtos / 11 página(s) por cupom.",
+    ]);
+  });
+
+  it("o teto da rodada corta depois de pôr os que já têm vitrine na frente", () => {
+    const p = planoDaRodada({ prontos, precisamAtivar: semVitrine, config: { ...config, limiteCuponsProdutos: 4 } });
+    expect(p.fila.map(c => c.campaignId)).toEqual(["C1", "C2", "C3", "C4"]);
+    expect(linhasDoPlano(p)).toContain("Cortado pelo teto da rodada: 4 de 6.");
+  });
+
+  it("teto de ativações e ativação desligada dizem quantos ficaram de fora", () => {
+    const comTeto = planoDaRodada({ prontos, precisamAtivar: semVitrine, config: { ...config, maxActivationsPerRun: 1 } });
+    expect(comTeto).toMatchObject({ aAtivar: 1, foraPorAtivacao: 2, tetoAtivacao: 1 });
+    expect(linhasDoPlano(comTeto)).toContain("2 sem vitrine ficam de fora pelo teto de 1 ativação(ões) por rodada.");
+
+    const desligada = planoDaRodada({ prontos: [], precisamAtivar: semVitrine, config: { ...config, activateCoupons: false } });
+    expect(desligada.total).toBe(0);
+    expect(linhasDoPlano(desligada)[1]).toMatch(/3 cupom\(ns\) sem vitrine .* ativação está desligada/);
+  });
+
+  it("o corte feito no servidor entra na conta pelos totais", () => {
+    // Com teto: o servidor já mandou só 3, mas a fila tem 10 — é o teto que cortou.
+    const comTeto = planoDaRodada({ prontos, precisamAtivar: [], totalProntos: 10, totalPrecisamAtivar: 0, config: { ...config, limiteCuponsProdutos: 3 } });
+    expect(linhasDoPlano(comTeto)).toContain("Cortado pelo teto da rodada: 3 de 10.");
+    // Sem teto: o que passou do máximo fica para a próxima.
+    const semTeto = planoDaRodada({ prontos, precisamAtivar: [], totalProntos: 2010, totalPrecisamAtivar: 0, config });
+    expect(linhasDoPlano(semTeto).at(-1)).toBe("A fila tem 2010; o máximo por rodada é 3 — o resto fica para a próxima.");
+  });
+
+  it("o ciclo abre o log com o mesmo resumo", async () => {
+    api.adminMlCuponsAlvosProdutos.mockResolvedValue({ prontos: [cupom(1, { containerUrl: "https://ml/1" })], precisamAtivar: [], config });
+    const log = vi.fn();
+    await umCiclo({ log });
+    expect(log).toHaveBeenCalledWith("info", expect.stringMatching(/^Até 1 cupom\(ns\) \(1 com vitrine\)/));
   });
 });

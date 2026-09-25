@@ -113,6 +113,25 @@ describe("alvosDeProdutos — a fila da etapa 2", () => {
     expect(r.config).toHaveProperty("maxActivationsPerRun");
   });
 
+  it("o tamanho da fila segue o teto da rodada da config, e o total diz quantos existem", async () => {
+    // Era um 500 fixo: um teto de 600 na tela virava 500 sem ninguém saber.
+    await coupons.upsertCoupons([
+      { ...base, campaignId: "9920011", title: "Pronto 2", scope: "campaign", activated: true, containerUrl: "https://lista.mercadolivre.com.br/_Container_9920011" },
+    ]);
+    sync.writeConfig({ limiteCuponsProdutos: 1 });
+    try {
+      const r = await sync.alvosDeProdutos({});
+      expect(r.prontos).toHaveLength(1);
+      expect(r.totalProntos).toBe(2);
+      expect(r.totalPrecisamAtivar).toBe(1);
+    } finally {
+      sync.writeConfig({ limiteCuponsProdutos: 0 });
+    }
+    // Sem teto, vem a fila inteira.
+    const todos = await sync.alvosDeProdutos({});
+    expect(todos.prontos).toHaveLength(2);
+  });
+
   it("com a ativação desligada, o teto vai a zero em vez de mentir", async () => {
     sync.writeConfig({ activateCoupons: false });
     try {

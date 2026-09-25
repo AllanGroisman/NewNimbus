@@ -223,6 +223,32 @@ describe("as duas etapas são dois botões", () => {
     expect(screen.queryByText(/Está desligada/i)).not.toBeInTheDocument();
   });
 
+  it("o resumo da rodada fica sempre à vista, com os tetos aplicados", async () => {
+    // O botão promete o que a rodada FAZ: teto da rodada, teto de aceites e o corte
+    // do servidor entram no número e viram uma linha cada no aviso.
+    coletorInfo.mockResolvedValue(EXTENSAO("raspar", "lista"));
+    adminMlCuponsAlvosProdutos.mockResolvedValue({
+      ...filaCom(
+        [1, 2, 3].map(i => ({ campaignId: String(i), title: `P${i}`, containerUrl: `u${i}` })),
+        [4, 5, 6].map(i => ({ campaignId: String(i), title: `A${i}` })),
+      ),
+      totalProntos: 503, totalPrecisamAtivar: 3,
+      config: {
+        ...SEM_ALVO.config, activateCoupons: true, maxActivationsPerRun: 2,
+        limiteCuponsProdutos: 4, maxProductsPerCoupon: 300, tamanhoLoteProdutos: 20,
+      },
+    });
+    await abrirTela();
+
+    expect(await screen.findByRole("button", { name: "Buscar produtos (4)" })).toBeInTheDocument();
+    const plano = screen.getByTestId("plano-produtos");
+    expect(plano).toHaveTextContent(/Até 4 cupom\(ns\) \(3 com vitrine \+ 1 a ativar\)/);
+    expect(plano).toHaveTextContent(/máx\. 300 produtos \/ 6 página\(s\) por cupom/);
+    // 503 com vitrine + 2 dos 3 a ativar (teto de 2) = 505 na fila, cortados em 4.
+    expect(plano).toHaveTextContent(/teto da rodada: 4 de 505/);
+    expect(plano).toHaveTextContent(/1 sem vitrine ficam de fora pelo teto de 2/);
+  });
+
   it("com a ativação desligada, o aviso diz que está desligada", async () => {
     coletorInfo.mockResolvedValue(EXTENSAO("raspar", "lista"));
     adminMlCuponsAlvosProdutos.mockResolvedValue({
@@ -866,7 +892,7 @@ describe("o balanço da última vez de cada botão", () => {
     expect(await screen.findByText(/1 · Cupons e condições — última vez/)).toBeInTheDocument();
     expect(screen.getByText("Cupons").previousSibling).toHaveTextContent("120");
     expect(screen.getByText("Novos").previousSibling).toHaveTextContent("7");
-    expect(screen.getByText("Duração").previousSibling).toHaveTextContent("92s");
+    expect(screen.getByText("Duração").previousSibling).toHaveTextContent("1min e 32s");
     // Sem balanço dos outros botões, nada deles aparece.
     expect(screen.queryByText(/2 · Buscar Produtos Dos Cupons — última vez/)).toBe(null);
   });

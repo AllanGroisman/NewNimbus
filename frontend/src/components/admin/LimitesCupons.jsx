@@ -17,7 +17,7 @@ import { inputStyle, labelStyle, botaoSecundario, botaoLink } from "./cupomEstil
 // listas discordando é como um campo passa a ser editável numa tela e não salvar em
 // nenhuma.
 const CHAVES_LISTA = ["maxPaginasLista", "limiteCupons", "carimbarCategorias", "maxPaginasPorCategoria", "categorias", "paginasDeListaEmParalelo"];
-const CHAVES_PRODUTOS = ["maxProductsPerCoupon", "maxPaginasVitrine", "pausaEntreVitrinesMs", "vitrinesEmParalelo", "tamanhoLoteProdutos", "activateCoupons", "maxActivationsPerRun"];
+const CHAVES_PRODUTOS = ["maxProductsPerCoupon", "maxPaginasVitrine", "pausaEntreVitrinesMs", "vitrinesEmParalelo", "limiteCuponsProdutos", "tamanhoLoteProdutos", "activateCoupons", "maxActivationsPerRun"];
 
 const linha = { display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", marginTop: 10 };
 const nota = { fontSize: 11, color: "var(--color-text-secondary)", marginTop: 8, lineHeight: 1.5 };
@@ -220,8 +220,10 @@ export function LimitesProdutos({ config, onSaved, desabilitado = false, comTitu
         <Numerico cfg={cfg} setCfg={setCfg} chave="pausaEntreVitrinesMs" label="Pausa entre vitrines (ms)" min={500} max={30000} largura={140} desabilitado={desabilitado} />
         <Numerico cfg={cfg} setCfg={setCfg} chave="vitrinesEmParalelo" label="Vitrines em paralelo" min={1} max={4} desabilitado={desabilitado}
           dica="Quantas vitrines abrem ao mesmo tempo (1 a 4). Mais abas é mais rápido, e também mais chance de o ML pedir verificação: o primeiro pedido para todas." />
+        <Numerico cfg={cfg} setCfg={setCfg} chave="limiteCuponsProdutos" label="Cupons por rodada" min={0} max={2000} desabilitado={desabilitado}
+          dica="Quantos cupons esta etapa busca por rodada. 0 = todos os que faltam (até 500 por rodada). Os que já têm vitrine vão primeiro." />
         <Numerico cfg={cfg} setCfg={setCfg} chave="tamanhoLoteProdutos" label="Cupons por lote" min={1} max={200} desabilitado={desabilitado}
-          dica="Ativa, colhe e grava este tanto de cupons antes de passar aos próximos. Parar no meio perde no máximo o lote em andamento." />
+          dica="Cada cupom é gravado no banco assim que sua vitrine é colhida. O lote é a unidade de trabalho: ativa este tanto de cupons, colhe e carimba o catálogo antes de passar aos próximos." />
         <Marcador cfg={cfg} setCfg={setCfg} chave="activateCoupons" label="aceitar os cupons automaticamente (“Eu quero”)" desabilitado={desabilitado} />
         <Numerico cfg={cfg} setCfg={setCfg} chave="maxActivationsPerRun" label="Aceites por rodada" min={0} max={500} desabilitado={desabilitado}
           dica="0 = sem teto (aceita todos). Para não aceitar nenhum, desmarque a caixa acima." />

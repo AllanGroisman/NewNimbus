@@ -22,6 +22,99 @@ import {
   adminMlCuponsAlvosProdutos, adminMlCuponsImportVitrine, adminMlCuponsLocalFim, adminMlCuponsCarimbar,
 } from "./api";
 
+// O que uma rodada da etapa 2 VAI fazer, calculado da resposta do `/alvos-produtos`.
+// É a fonte única do corte da fila: o `umCiclo` monta a fila por aqui, e a tela usa
+// o mesmo cálculo para o número do botão e o aviso — prometer um número e fazer
+// outro era o que acontecia quando os tetos só existiam dentro do laço.
+//
+// Os filtros são os do ciclo (cupom pedido, já tentado nesta execução); a tela não
+// passa nenhum.
+export function planoDaRodada(alvos, { filtroVitrine = () => true, filtroAtivacao = () => true } = {}) {
+  const cfg = alvos?.config || {};
+  const prontosLista = (alvos?.prontos || []).filter(filtroVitrine);
+  const semVitrine = (alvos?.precisamAtivar || []).filter(filtroAtivacao);
+  const ativacaoDesligada = !cfg.activateCoupons;
+
+  // O teto de ativações continua valendo por CICLO, não por lote: o servidor o
+  // aplica a cada varredura, e cada lote é uma varredura — sem cortar aqui, um teto
+  // de 10 viraria 10 por lote.
+  const tetoAtivacao = ativacaoDesligada ? 0
+    : cfg.maxActivationsPerRun == null ? Infinity : Number(cfg.maxActivationsPerRun) || 0;
+  const aAtivarNoCiclo = ativacaoDesligada ? [] : semVitrine.slice(0, tetoAtivacao);
+
+  // Os que já têm vitrine vão na frente: não custam escrita na conta do ML, e são
+  // produto no banco mais cedo.
+  const filaInteira = [
+    ...prontosLista.map(c => ({ ...c, ativar: false })),
+    ...aAtivarNoCiclo.map(c => ({ ...c, ativar: true })),
+  ];
+  // Teto de cupons da rodada (task 21), 0 = sem teto. Corta depois de ordenar, pra
+  // que os que já têm vitrine continuem na frente.
+  const limite = Number(cfg.limiteCuponsProdutos) || 0;
+  const fila = limite > 0 ? filaInteira.slice(0, limite) : filaInteira;
+
+  const tamanhoLote = Math.max(1, Number(cfg.tamanhoLoteProdutos) || 20);
+  // O servidor já manda cada grupo cortado no teto da rodada (ou no máximo de 2000,
+  // sem teto); os `total*` dizem quantos existem de verdade. É com eles que o aviso
+  // conta o tamanho real da fila — senão o corte feito lá seria invisível aqui.
+  const aMais = (lista, total) => (total != null && total > lista.length ? total - lista.length : 0);
+  const existentesSemVitrine = semVitrine.length + aMais(alvos?.precisamAtivar || [], alvos?.totalPrecisamAtivar);
+  const ativaveis = ativacaoDesligada ? 0 : Math.min(existentesSemVitrine, tetoAtivacao);
+  const existentes = prontosLista.length + aMais(alvos?.prontos || [], alvos?.totalProntos) + ativaveis;
+
+  return {
+    fila,
+    total: fila.length,
+    prontos: fila.filter(c => !c.ativar).length,
+    aAtivar: fila.filter(c => c.ativar).length,
+    // Quantos entrariam sem o teto da rodada (já com o teto de ativações aplicado).
+    filaInteira: Math.max(filaInteira.length, existentes),
+    limite,
+    ativacaoDesligada,
+    tetoAtivacao: tetoAtivacao === Infinity ? null : tetoAtivacao,
+    // Sem vitrine e fora da rodada: pela ativação desligada ou pelo teto dela.
+    foraPorAtivacao: existentesSemVitrine - ativaveis,
+    maxProdutos: cfg.maxProductsPerCoupon ?? null,
+    maxPaginas: cfg.maxPaginasVitrine ?? null,
+    tamanhoLote,
+    lotes: Math.ceil(fila.length / tamanhoLote),
+    paralelo: Math.max(1, Math.min(4, Number(cfg.vitrinesEmParalelo) || 1)),
+  };
+}
+
+// O plano em frases, na ordem em que a tela e o log as mostram: a primeira é o
+// resumo, as outras só aparecem quando um limite cortou alguma coisa.
+export function linhasDoPlano(p) {
+  if (!p.total) {
+    const linhas = ["Nada a buscar nesta rodada."];
+    if (p.foraPorAtivacao && p.ativacaoDesligada) {
+      linhas.push(`${p.foraPorAtivacao} cupom(ns) sem vitrine precisam do “Eu quero”, mas a ativação está desligada.`);
+    }
+    return linhas;
+  }
+  const partes = [`${p.prontos} com vitrine`];
+  if (p.aAtivar) partes.push(`${p.aAtivar} a ativar`);
+  const tetos = [
+    p.maxProdutos != null && `máx. ${p.maxProdutos} produtos`,
+    p.maxPaginas != null && `${p.maxPaginas} página(s)`,
+  ].filter(Boolean);
+  const linhas = [
+    `Até ${p.total} cupom(ns) (${partes.join(" + ")}), em ${p.lotes} lote(s) de até ${p.tamanhoLote}, `
+      + `${p.paralelo} vitrine(s) por vez${tetos.length ? `; ${tetos.join(" / ")} por cupom` : ""}.`,
+  ];
+  if (p.filaInteira > p.total) {
+    linhas.push(p.limite > 0
+      ? `Cortado pelo teto da rodada: ${p.total} de ${p.filaInteira}.`
+      : `A fila tem ${p.filaInteira}; o máximo por rodada é ${p.total} — o resto fica para a próxima.`);
+  }
+  if (p.foraPorAtivacao) {
+    linhas.push(p.ativacaoDesligada
+      ? `${p.foraPorAtivacao} sem vitrine ficam de fora: a ativação está desligada.`
+      : `${p.foraPorAtivacao} sem vitrine ficam de fora pelo teto de ${p.tetoAtivacao} ativação(ões) por rodada.`);
+  }
+  return linhas;
+}
+
 // Devolve { feitos, ativados, parado, muro, lotes }. `feitos` é uma linha por cupom
 // tentado: { campaignId, title, ok, produtos, parcial, vazia, erro }.
 //
@@ -65,22 +158,12 @@ export async function umCiclo({
 
   const alvos = await pedirAlvos();
   const cfg = alvos.config || {};
-  const tamanho = Math.max(1, Number(cfg.tamanhoLoteProdutos) || 20);
-
-  // O teto de ativações continua valendo por CICLO, não por lote: o servidor o
-  // aplica a cada varredura, e cada lote é uma varredura — sem cortar aqui, um teto
-  // de 10 viraria 10 por lote.
-  const aAtivarNoCiclo = cfg.activateCoupons
-    ? alvos.precisamAtivar.filter(pedido).filter(inedito("ativacao"))
-    : [];
-  const tetoAtivacao = cfg.maxActivationsPerRun == null ? Infinity : Number(cfg.maxActivationsPerRun) || 0;
-
-  // Os que já têm vitrine vão na frente: não custam escrita na conta do ML, e são
-  // produto no banco mais cedo.
-  const fila = [
-    ...alvos.prontos.filter(pedido).filter(inedito("vitrine")).map(c => ({ ...c, ativar: false })),
-    ...aAtivarNoCiclo.slice(0, tetoAtivacao).map(c => ({ ...c, ativar: true })),
-  ];
+  const plano = planoDaRodada(alvos, {
+    filtroVitrine: (c) => pedido(c) && inedito("vitrine")(c),
+    filtroAtivacao: (c) => pedido(c) && inedito("ativacao")(c),
+  });
+  const { fila, tamanhoLote: tamanho } = plano;
+  if (fila.length) log("info", linhasDoPlano(plano).join(" "));
 
   if (!fila.length) {
     log("aviso", "nenhum cupom com vitrine pendente — todos já têm produtos");
@@ -91,7 +174,7 @@ export async function umCiclo({
   for (let i = 0; i < fila.length; i += tamanho) lotes.push(fila.slice(i, i + tamanho));
   // Quantas vitrines ao mesmo tempo (task 14). Sem o número — servidor antigo — é
   // uma por vez, como sempre foi: paralelismo é opt-in, porque o muro é da CONTA.
-  const paralelo = Math.max(1, Math.min(4, Number(cfg.vitrinesEmParalelo) || 1));
+  const { paralelo } = plano;
   const sobrepoe = lotes.length > 1 && lotes.slice(1).some(l => l.some(c => c.ativar));
   log("info", `${fila.length} cupom(ns) em ${lotes.length} lote(s) de até ${tamanho} — cada lote é gravado antes do próximo`);
   if (paralelo > 1 || sobrepoe) {

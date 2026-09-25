@@ -30,6 +30,7 @@ import {
   rodarProdutos as rodarProdutosDoStore,
 } from "../data/rodadaCupons";
 import { coletorInfo } from "../data/coletor";
+import { planoDaRodada, linhasDoPlano } from "../data/produtosNoChrome";
 import { rotuloCategoria, resumoCategorias } from "../data/cupomCategorias";
 import { campanhaDoTexto } from "../data/cupomId";
 // O mesmo modal da aba "Descobrir palavra" — lá ele traz a campanha que uma palavra
@@ -406,7 +407,10 @@ export default function CuponsDoML({ buscaInicial = null }) {
   // Quantos cupons ainda esperam produtos. Vem do servidor, não da página da
   // tabela: o botão percorre TODOS os que faltam, e prometer o número da página
   // seria mentir sobre o que ele vai fazer.
-  const faltamProdutos = (alvos?.prontos?.length || 0) + (alvos?.config?.activateCoupons ? (alvos?.precisamAtivar?.length || 0) : 0);
+  // O mesmo cálculo que o laço usa para montar a fila (`planoDaRodada`): com os
+  // tetos da config já aplicados, o número do botão é o que a rodada faz.
+  const plano = alvos ? planoDaRodada(alvos) : null;
+  const faltamProdutos = plano?.total || 0;
   const precisamAtivar = alvos?.config?.activateCoupons ? (alvos?.precisamAtivar?.length || 0) : 0;
   // Três valores, e a diferença importa: `0` é ativação desligada, `null` é ligada
   // e sem teto, número é o teto por rodada. Antes eram dois 0 querendo dizer coisas
@@ -754,6 +758,19 @@ export default function CuponsDoML({ buscaInicial = null }) {
             </span>
           </label>
         </fieldset>
+
+        {/* O resumo da rodada, sempre à vista: quantos cupons, quantos produtos por
+            cupom e qual limite deixou quem de fora. É o mesmo texto que abre o log
+            quando a rodada começa. */}
+        {plano && (() => {
+          const [resumo, ...cortes] = linhasDoPlano(plano);
+          return (
+            <div data-testid="plano-produtos" style={{ marginTop: 8, fontSize: 11, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+              <b>Esta rodada:</b> {resumo}
+              {cortes.map((l, i) => <div key={i}>· {l}</div>)}
+            </div>
+          );
+        })()}
 
         {/* O aviso do que esta etapa vai escrever na conta. Fica FORA do title do
             botão de propósito: "ativar" é irreversível, e um aviso que só aparece
