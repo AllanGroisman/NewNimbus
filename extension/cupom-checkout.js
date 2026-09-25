@@ -17,10 +17,12 @@ import { sleep, abrir, irPara, fechar, avaliar, esperarHumano, classificarMuro }
 import {
   API_RE, COUPON_OPEN_SRC, lerTempos, ehPaginaDeProduto, irAoCheckout,
   naPagina_espiao, naPagina_foto, naPagina_clicarPorTexto, naPagina_clicarLinhaDoCupom,
-  naPagina_paginaDosCupons, naPagina_buscarPagina,
+  naPagina_paginaDosCupons, naPagina_buscarPagina, naPagina_irParaProduto,
 } from "./checkout.js";
 
 const INSERIR_ESPERA_MS = 2000;
+const VARIACAO_ESPERA_MS = 2000;
+const VARIACAO_VOLTAS = 3;
 const RESPOSTA_ESPERA_MS = 8000;
 const MODAL_ESPERA_MS = 15000;
 const TETO_HTML_CUPONS = 400_000;
@@ -122,8 +124,12 @@ export function naPagina_modalCupons(acao, codigo) {
   const ctl = (campo && campo.closest(".andes-form-control")) || doc.querySelector(".andes-form-control--error");
   let erroCampo = null;
   if (ctl && /andes-form-control--error/.test(ctl.className || "")) {
-    const msg = ctl.querySelector(".andes-form-control__message, .andes-form-control__bottom");
-    erroCampo = limpa(textoDe(msg || ctl)).slice(0, 300) || null;
+    // Só o texto da mensagem: o Andes põe antes dela um rótulo "Erro" escondido
+    // (leitor de tela) e um ícone, e o innerText do bloco trazia "Erro O cupom…".
+    const msg = ctl.querySelector(".andes-form-control__message") || ctl.querySelector(".andes-form-control__bottom");
+    const copia = (msg || ctl).cloneNode(true);
+    copia.querySelectorAll(".andes-visually-hidden, [class*='visually-hidden'], svg, [class*='icon' i]").forEach(el => el.remove());
+    erroCampo = limpa(textoDe(copia)).replace(/^Erro[:\s]+(?=\p{Lu})/u, "").slice(0, 300) || null;
   }
 
   const texto = limpa(textoDe(doc.body));
@@ -139,6 +145,125 @@ export function naPagina_modalCupons(acao, codigo) {
   };
 }
 
+// Os dados do produto, lidos na PDP antes de sair dela: se o cupom valer, o
+// servidor põe o produto no catálogo com ele (repasse/coupon-autotest.js
+// :garantirNoCatalogo). Mesmos seletores do scraper do servidor
+// (backend/scraping/scraper.js, o evaluate da PDP do ML) — tudo lido dentro da
+// caixa de preço do produto principal, nunca do carrossel de recomendações.
+export function naPagina_produto() {
+  const limpa = (t) => String(t || "").replace(/\s+/g, " ").trim();
+  const meta = (sel) => document.querySelector(sel)?.getAttribute("content")?.trim() || null;
+  const moneyIn = (root, sel) => {
+    const frac = root?.querySelector(`${sel} .andes-money-amount__fraction`);
+    if (!frac) return null;
+    const cents = root.querySelector(`${sel} .andes-money-amount__cents`);
+    const v = parseFloat(`${frac.textContent.trim().replace(/\./g, "")}.${cents ? cents.textContent.trim() : "00"}`);
+    return Number.isFinite(v) ? v : null;
+  };
+
+  const name = limpa(document.querySelector("h1.ui-pdp-title, .ui-pdp-title")?.textContent)
+    || meta('meta[property="og:title"]') || null;
+  const caixa = document.querySelector(".ui-pdp-price__main-container")
+    || document.querySelector("#price_container")
+    || document.querySelector(".ui-pdp-container__row--price")
+    || document.querySelector(".ui-pdp-price");
+
+  let price = moneyIn(caixa, ".andes-money-amount:not(.andes-money-amount--previous)");
+  if (price == null) {
+    const v = parseFloat(String(meta('meta[itemprop="price"]') || "").replace(",", "."));
+    if (Number.isFinite(v)) price = v;
+  }
+  if (price == null) {
+    for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
+      try {
+        const json = JSON.parse(s.textContent);
+        const offers = [].concat(json.offers || json["@graph"]?.flatMap(g => g.offers || []) || []);
+        const v = parseFloat(offers.find(o => o && o.price != null)?.price);
+        if (Number.isFinite(v)) { price = v; break; }
+      } catch { /* JSON-LD malformado */ }
+    }
+  }
+  const originalPrice = moneyIn(caixa, ".andes-money-amount--previous");
+  const pct = caixa?.querySelector(".andes-money-amount__discount")?.textContent.match(/(\d+)%/);
+  const imgEl = document.querySelector(".ui-pdp-gallery__figure img, figure.ui-pdp-gallery__figure img, .ui-pdp-image");
+  const img = imgEl?.getAttribute("data-zoom") || meta('meta[property="og:image"]') || imgEl?.getAttribute("src") || null;
+  const sold = (document.body?.innerText || document.body?.textContent || "")
+    .match(/\+?\s*[\d.,]+\s*(?:mil\s*|mi\s*)?vendid[oa]s?/i);
+
+  return {
+    name,
+    price,
+    originalPrice,
+    discount: pct ? parseInt(pct[1], 10) : null,
+    img,
+    sold: sold ? sold[0] : null,
+  };
+}
+
+// As variações do produto (tamanho, cor, voltagem…). Sem uma opção escolhida em
+// cada grupo, o "Comprar agora" não sai da página e o ML mostra "Escolha Tamanho
+// para continuar com sua compra.". `clicar` = escolhe a PRIMEIRA opção disponível
+// de cada grupo que ainda não tem escolha; sem ele, só lê.
+//
+// O clique é sempre no ELEMENTO: a página rola sozinha depois de escolher, e
+// coordenada fixa acertaria outra coisa (o seletor de quantidade fica logo acima).
+export function naPagina_variacoes(clicar) {
+  const limpa = (t) => String(t || "").normalize("NFC").replace(/\s+/g, " ").trim();
+  const OPCAO = ".ui-pdp-outside_variations__thumbnails__item";
+  const nomeDa = (el) => {
+    const t = limpa(el.textContent);
+    if (t) return t;
+    const a = limpa(el.getAttribute("aria-label"));
+    return a.includes(",") ? limpa(a.slice(a.indexOf(",") + 1)) : a;
+  };
+  const indisponivel = (el) => /--DISABLED|--disabled|--unavailable/.test(el.className || "")
+    || el.getAttribute("aria-disabled") === "true";
+
+  const grupos = [];
+  for (const g of document.querySelectorAll(".ui-pdp-outside_variations__picker")) {
+    const opcoes = Array.from(g.querySelectorAll(OPCAO));
+    // O rótulo é o texto do grupo sem o das opções ("Tamanho: Escolha").
+    const copia = g.cloneNode(true);
+    copia.querySelectorAll(OPCAO).forEach(el => el.remove());
+    const rotulo = limpa(copia.textContent).slice(0, 80);
+    const escolhida = opcoes.find(o => /--SELECTED/.test(o.className || ""));
+    const pedeEscolha = /\bescolha\b/i.test(rotulo);
+    let clicou = null;
+    if (clicar && (!escolhida || pedeEscolha)) {
+      const alvo = opcoes.find(o => !indisponivel(o) && !/--SELECTED/.test(o.className || ""));
+      if (alvo) { alvo.click(); clicou = nomeDa(alvo); }
+    }
+    grupos.push({ rotulo, escolhida: escolhida ? nomeDa(escolhida) : null, clicou, opcoes: opcoes.length });
+  }
+
+  const texto = limpa(document.body?.textContent);
+  const alerta = texto.match(/Escolha [^.]{1,40}? para continuar com sua compra\.?/i);
+  return {
+    grupos,
+    faltando: grupos.filter(g => (!g.escolhida || /\bescolha\b/i.test(g.rotulo)) && !g.clicou).map(g => g.rotulo),
+    alerta: alerta ? alerta[0] : null,
+  };
+}
+
+// O link do Resumo da compra que abre o modal "Cupons". Tem dois textos:
+// "Cupons (N/M em uso)" com cupom aplicado e "Inserir código do cupom" sem nenhum —
+// e aí o código com certeza não está aplicado.
+export function naPagina_linkDosCupons() {
+  const limpa = (t) => String(t || "").normalize("NFC").replace(/\s+/g, " ").trim();
+  for (const el of document.querySelectorAll("a, button, [role='button']")) {
+    const t = limpa(el.textContent);
+    if (/^cupons?\s*\(/i.test(t) || /^inserir c[óo]digo do cupom$/i.test(t)) {
+      el.click();
+      return { texto: t.slice(0, 60), semCupom: /^inserir/i.test(t) };
+    }
+  }
+  return null;
+}
+
+function ehLanding(url) {
+  try { return /^\/social\//i.test(decodeURIComponent(new URL(String(url || "")).pathname)); } catch { return false; }
+}
+
 // ── o comando ────────────────────────────────────────────────────────────
 
 export async function cupomNoCheckout({ url, code, tempos = null }, progresso) {
@@ -152,11 +277,14 @@ export async function cupomNoCheckout({ url, code, tempos = null }, progresso) {
     code: codigo,
     finalUrl: null, muro: null, motivo: null, notProductPage: false,
     checkout: { attempted: false, reached: false, via: null, url: null, blockedReason: null, variacao: null, seguro: null },
-    modal: { aberto: false, onde: null, campo: false, tentativas: [], planoB: false },
+    modal: { aberto: false, onde: null, campo: false, link: null, semCupom: false, tentativas: [], planoB: false },
     cartaoAntes: null, cartaoDepois: null, erroCampo: null, economia: null,
     digitou: null, inseriu: null,
+    variacao: null, variacaoFaltando: null,
     resumoAntes: "", resumoDepois: "", textoDoModal: "",
     htmlCupons: null,
+    produto: null,
+    landing: null,
   };
 
   const foto = () => avaliar(tabId, naPagina_foto, [], { mundoDaPagina: true })
@@ -177,28 +305,88 @@ export async function cupomNoCheckout({ url, code, tempos = null }, progresso) {
       const t = await foto();
       return { muro: classificarMuro(t.url, t.texto, t.tituloDaAba) };
     };
-    const muro = (await olharMuro()).muro;
-    if (muro) {
+    // false = o muro ficou sem resolver e o material já diz isso.
+    const passarDoMuro = async () => {
+      const muro = (await olharMuro()).muro;
+      if (!muro) return true;
       const resolvido = await esperarHumano(tabId, olharMuro, () => progresso({ tipo: "muro", muro }));
       if (!resolvido) {
         material.muro = muro;
         material.motivo = "o Mercado Livre pediu verificação e ela não foi resolvida";
-        return material;
+        return false;
       }
       tela = await foto();
       material.finalUrl = tela.url;
+      return true;
+    };
+    if (!(await passarDoMuro())) return material;
+
+    // Link de afiliado (meli.la → /social/…): a landing não é o produto. Vai até a
+    // PDP pelo "Ir para o produto" (ou pelo card em destaque), como o repasse faz.
+    if (ehLanding(tela.url)) {
+      const ir = await avaliar(tabId, naPagina_irParaProduto, [], { mundoDaPagina: true }).catch(() => null);
+      material.landing = { de: tela.url, via: ir?.via || null, falhou: false };
+      if (ir?.href) await irPara(tabId, ir.href);
+      await sleep(T.settleMs);
+      tela = await foto();
+      material.finalUrl = tela.url;
+      if (!(await passarDoMuro())) return material;
     }
 
     if (!ehPaginaDeProduto(tela.url)) {
       material.notProductPage = true;
+      if (material.landing) material.landing.falhou = true;
       return material;
     }
+
+    // Antes das variações e do "Comprar agora": é aqui que a PDP está inteira.
+    material.produto = await avaliar(tabId, naPagina_produto, [], { mundoDaPagina: true }).catch(() => null) || null;
+
+    // ── as variações, antes do "Comprar agora" ──
+    // Os grupos podem depender um do outro (a cor libera tamanhos), por isso em
+    // voltas, até ninguém mais precisar de escolha.
+    const escolhidos = new Set();
+    const prefixo = (rotulo) => String(rotulo || "").split(":")[0].trim();
+    const lerVariacoes = () => avaliar(tabId, naPagina_variacoes, [false], { mundoDaPagina: true })
+      .then(r => r || { grupos: [], faltando: [], alerta: null });
+    const escolherVariacoes = async () => {
+      for (let volta = 0; volta < VARIACAO_VOLTAS; volta++) {
+        const r = await avaliar(tabId, naPagina_variacoes, [true], { mundoDaPagina: true }) || { grupos: [] };
+        const clicados = (r.grupos || []).filter(g => g.clicou);
+        if (!clicados.length) break;
+        for (const g of clicados) escolhidos.add(prefixo(g.rotulo));
+        progresso({ tipo: "variacao", escolhas: clicados.map(g => g.clicou) });
+        await sleep(VARIACAO_ESPERA_MS);   // a página não recarrega, mas repinta
+      }
+      const final = await lerVariacoes();
+      const escolha = (final.grupos || [])
+        .filter(g => g.escolhida && escolhidos.has(prefixo(g.rotulo)))
+        .map(g => (g.rotulo.includes(g.escolhida) ? g.rotulo : `${prefixo(g.rotulo)}: ${g.escolhida}`));
+      material.variacao = escolha.length ? escolha.join(" · ") : null;
+      return final;
+    };
+    await escolherVariacoes();
 
     // ── até o checkout ──
     // Sem o carrinho: ele é o único caminho que deixa rastro na conta, e o cupom
     // do carrinho combinado não é a resposta para ESTE produto.
     material.checkout.attempted = true;
-    const ida = await irAoCheckout(tabId, { foto, clicar, progresso, T, semCarrinho: true });
+    let ida = await irAoCheckout(tabId, { foto, clicar, progresso, T, semCarrinho: true });
+    // Ficou na página do produto pedindo variação ("Escolha Tamanho para
+    // continuar…"): escolhe de novo e tenta mais uma vez.
+    if (!ida.reached && ehPaginaDeProduto((await foto()).url)) {
+      const trava = await lerVariacoes();
+      if (trava.alerta || trava.faltando?.length) {
+        await escolherVariacoes();
+        ida = await irAoCheckout(tabId, { foto, clicar, progresso, T, semCarrinho: true });
+        if (!ida.reached) {
+          const ainda = await lerVariacoes();
+          if (ainda.alerta || ainda.faltando?.length) {
+            material.variacaoFaltando = ainda.alerta || `Escolha: ${ainda.faltando.join(", ")}`;
+          }
+        }
+      }
+    }
     Object.assign(material.checkout, ida);
     if (!ida.reached) return material;
 
@@ -215,6 +403,18 @@ export async function cupomNoCheckout({ url, code, tempos = null }, progresso) {
     // ── o modal "Cupons" ──
     progresso({ tipo: "cupons-modal" });
     let estado = await modal("estado");
+    if (!estado.pronto) {
+      const link = await avaliar(tabId, naPagina_linkDosCupons, [], { mundoDaPagina: true });
+      if (link) {
+        material.modal.link = link.texto;
+        material.modal.semCupom = !!link.semCupom;
+        for (let i = 0; i < Math.ceil(MODAL_ESPERA_MS / 500); i++) {
+          await sleep(500);
+          estado = await modal("estado");
+          if (estado.pronto) break;
+        }
+      }
+    }
     for (let nivel = 0; nivel <= 2 && !estado.pronto; nivel++) {
       const clicou = await avaliar(tabId, naPagina_clicarLinhaDoCupom, [COUPON_OPEN_SRC, nivel], { mundoDaPagina: true });
       material.modal.tentativas.push({ nivel, clicou: clicou?.texto || null });
@@ -242,7 +442,8 @@ export async function cupomNoCheckout({ url, code, tempos = null }, progresso) {
     if (!estado.pronto) return material;
 
     // ── o cupom já está aplicado? ──
-    material.cartaoAntes = estado.cartao || null;
+    // "Inserir código do cupom" = nenhum cupom aplicado: vai direto digitar.
+    material.cartaoAntes = material.modal.semCupom ? null : (estado.cartao || null);
     material.economia = estado.economia || null;
     if (!material.cartaoAntes?.aplicado && estado.campo) {
       // ── ativar pelo código ──

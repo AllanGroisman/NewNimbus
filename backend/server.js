@@ -2891,6 +2891,9 @@ app.post("/api/admin/ml-cupons/:campaignId/vitrine-local", auth.requireAuth, aut
       parcial: body.parcial === true || body.parcial === "true",
       // Padrão true: só a etapa 2 em lote adia o carimbo, e ela chama o /carimbar.
       carimbar: !(body.carimbar === false || body.carimbar === "false"),
+      // Quantos produtos a vitrine diz ter. Só um inteiro ≥ 0 vale; o resto é "não sei".
+      total: Number.isInteger(Number(body.total)) && body.total !== null && body.total !== "" && Number(body.total) >= 0
+        ? Number(body.total) : null,
     });
     res.json(r);
   } catch (err) {
@@ -3403,6 +3406,7 @@ app.post("/api/admin/repasse/cupom-checkout/resultado", auth.requireAuth, auth.r
     const r = await autotest.registrarCheckout({ code, url: url || null, material, source, durationMs, manualId: manualId ?? null });
     res.json({
       resultado: r.resultado,
+      vinculo: r.vinculo ?? null,
       // O que ficou gravado: um "valid" anterior não é apagado por um engasgo
       // (coupons/pg.js:recordCodeCheck). O desta tentativa vai em `resultado`.
       verdict: r.linha?.verdict ?? r.verdict,

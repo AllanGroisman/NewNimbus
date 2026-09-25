@@ -155,6 +155,21 @@ describe("paginaLocal", () => {
     expect(r.ignoradosLoja).toBe(3);
   });
 
+  it("o descarte de loja SALVO vale também no \"tudo o que o ML tiver\"", async () => {
+    // O caminho real: a tela salva a escolha na config, e o botão 1 sem teto só manda
+    // `semTeto`. O "sem teto" solta os TETOS — o filtro de loja não é teto.
+    sync.writeConfig({ skipStoreCoupons: true });
+    try {
+      const r0 = sync.startLocalRun({ semTeto: true, carimbarCategorias: false });
+      expect(r0.config.skipStoreCoupons).toBe(true);
+      const r = await sync.paginaLocal({ props: PROPS });
+      expect(r.cupons).toBe(5);
+      expect(r.ignoradosLoja).toBe(3);
+    } finally {
+      sync.writeConfig({ skipStoreCoupons: false });
+    }
+  });
+
   it("batido o teto de cupons, a varredura acaba e os cupons são gravados", async () => {
     sync.startLocalRun({ limiteCupons: 3, carimbarCategorias: false });
     const r = await sync.paginaLocal({ grouping: null, props: PROPS });

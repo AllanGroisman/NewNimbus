@@ -494,6 +494,10 @@ model MlCoupon {
   firstSeenAt      DateTime  @default(now())
   lastSeenAt       DateTime  @default(now())
   productsSyncedAt DateTime?
+  // Quantos produtos a vitrine diz ter (a busca do ML declara o total), lido pela
+  // extensão na etapa 2 — o "200" do "45/200" da tabela.
+  vitrineTotal     Int?
+  vitrineTotalAt   DateTime?
   code             String?
   origin           String    @default("page")
   // Da varredura pela landing (removida): sem uso, mantidas para não apagar dado.

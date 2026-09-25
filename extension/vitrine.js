@@ -23,7 +23,8 @@ export function urlDaPagina(url, n) {
 
 const colherAba = (tabId) => injetarArquivo(tabId, "colher.js").then(r => r || { produtos: [], muro: null });
 
-// Devolve { produtos, parcial, motivo, paginas }.
+// Devolve { produtos, parcial, motivo, paginas, total }. `total` é quantos produtos a
+// vitrine diz ter (lido da página 1), ou `null` quando ela não disse.
 //
 // São DOIS tetos e os dois são necessários: `paginas` limita quantas abas se abre
 // (o custo na conta do ML), `maxProdutos` limita quanto se traz. O segundo entrou
@@ -38,6 +39,7 @@ export async function raspar({ containerUrl, paginas = PAGINAS_MAX, maxProdutos 
   const produtos = [];
   let parcial = false;
   let motivo = null;
+  let total = null;
   let n = 0;
 
   try {
@@ -50,6 +52,8 @@ export async function raspar({ containerUrl, paginas = PAGINAS_MAX, maxProdutos 
         if (!resolvido) { parcial = true; motivo = "o Mercado Livre pediu verificação e ela não foi resolvida"; break; }
         r = await colherAba(tabId);
       }
+
+      if (n === 1 && Number.isFinite(r.total)) total = r.total;
 
       // Página sem card é o fim da lista — o ML não diz quantas páginas tem.
       if (!r.produtos.length) break;
@@ -87,5 +91,5 @@ export async function raspar({ containerUrl, paginas = PAGINAS_MAX, maxProdutos 
     await fechar(tabId);
   }
 
-  return { produtos, parcial, motivo, paginas: Math.min(n, paginas) };
+  return { produtos, parcial, motivo, paginas: Math.min(n, paginas), total };
 }

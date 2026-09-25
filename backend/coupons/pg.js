@@ -574,7 +574,15 @@ async function stats() {
     prisma().mlCoupon.findFirst({ orderBy: { lastSeenAt: "desc" }, select: { lastSeenAt: true } }),
   ]);
   const catalogo = await prisma().catalogProduct.count({ where: { couponCampaignId: { not: null } } });
-  return { cupons, validos, comVitrine, vinculos, parciais, comCodigo, catalogo, ultimaColeta: ultimo?.lastSeenAt || null, porCategoria: await countByGrouping() };
+  // Os cupons repartidos pelo que já têm de produto — o resumo do card "Buscar
+  // Produtos Dos Cupons". São três grupos que somam `cupons`: vitrine fechada
+  // (carimbada), algum vínculo sem a vitrine fechada, e nada.
+  const [parciaisCupons, semNada] = await Promise.all([
+    prisma().mlCoupon.count({ where: { productsSyncedAt: null, products: { some: {} } } }),
+    prisma().mlCoupon.count({ where: { productsSyncedAt: null, products: { none: {} } } }),
+  ]);
+  const produtosPorCupom = { completos: comVitrine, parciais: parciaisCupons, semNada };
+  return { cupons, validos, comVitrine, vinculos, parciais, comCodigo, catalogo, produtosPorCupom, ultimaColeta: ultimo?.lastSeenAt || null, porCategoria: await countByGrouping() };
 }
 
 // Quantos cupons GUARDADOS há em cada categoria do ML. É diferente do `count` que
@@ -669,6 +677,15 @@ async function recoverCodesFromCoupons() {
   return { recuperados: Number(n || 0) };
 }
 
+// Quantos produtos a vitrine do cupom diz ter (o "200" do "45/200" da tabela), e
+// quando isso foi lido.
+async function setVitrineTotal(campaignId, total) {
+  await prisma().mlCoupon.update({
+    where: { campaignId: String(campaignId) },
+    data: { vitrineTotal: total, vitrineTotalAt: new Date() },
+  });
+}
+
 // Os cupons que ainda NÃO têm vitrine raspada, separados pelo que falta em cada um.
 //
 // A separação é o ponto: `containerUrl` só existe depois do "Eu quero", então os
@@ -696,7 +713,7 @@ async function couponsSemVitrine({ limit = 500, campaignIds = null, soSemProduto
   };
   const base = soSemProdutos ? { ...semVitrine, products: { none: {} } } : semVitrine;
 
-  const [prontos, precisamAtivar, total] = await Promise.all([
+  const [prontos, precisamAtivar, total, incompletos, semNada] = await Promise.all([
     // Campanha antes de loja ("campaign" < "store"), o visto por último primeiro.
     prisma().mlCoupon.findMany({
       where: { ...base, containerUrl: { not: null } },
@@ -714,14 +731,15 @@ async function couponsSemVitrine({ limit = 500, campaignIds = null, soSemProduto
       take: teto,
     }),
     prisma().mlCoupon.count({ where: base }),
+    // O tamanho da fila em cada uma das duas escolhas, qualquer que seja a
+    // escolhida — é o número que a tela mostra ao lado de cada opção.
+    prisma().mlCoupon.count({ where: semVitrine }),
+    prisma().mlCoupon.count({ where: { ...semVitrine, products: { none: {} } } }),
   ]);
-  // Quantos o filtro deixou de fora — é o número que a tela mostra ao lado do
-  // checkbox, pra ninguém achar que a fila encolheu sozinha.
-  const parciaisFora = soSemProdutos
-    ? await prisma().mlCoupon.count({ where: { ...semVitrine, products: { some: {} } } })
-    : 0;
+  // Quantos o filtro deixou de fora, pra ninguém achar que a fila encolheu sozinha.
+  const parciaisFora = soSemProdutos ? incompletos - semNada : 0;
 
-  return { prontos, precisamAtivar, total, parciaisFora };
+  return { prontos, precisamAtivar, total, parciaisFora, incompletos, semNada };
 }
 
 
@@ -830,6 +848,7 @@ module.exports = {
   listCodeChecks,
   findCodeCheck,
   stats,
+  setVitrineTotal,
   countByGrouping,
   campanhasComCategoria,
   pruneExpired,

@@ -75,7 +75,8 @@ export default function FilaCheckoutRepasse({ temCheckout, emSerie, ocupadoRef, 
     try {
       const res = await emSerie(() => testarNoCheckout(item.code, item.url, { source, manualId: item.manualId || null }));
       onTestado?.(item.code, res);
-      const texto = res.message || res.verdict;
+      // A mensagem já diz "ligado ao produto"; a campanha nova só o vínculo sabe.
+      const texto = `${res.message || res.verdict}${res.vinculo?.cuponsNovos ? " · campanha nova no sistema" : ""}`;
       setResultados(rs => [{ code: item.code, url: item.url, verdict: res.verdict, texto, em: new Date().toISOString() },
         ...rs.filter(r => r.code !== item.code)].slice(0, 20));
       setAviso(null);

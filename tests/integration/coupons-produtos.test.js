@@ -143,6 +143,23 @@ describe("soSemProdutos — a fila sem os parciais (task 11)", () => {
     expect(so.parciaisFora).toBe(1);
   });
 
+  it("devolve o tamanho da fila nas duas escolhas, qualquer que seja o filtro", async () => {
+    await coupons.replaceCouponProducts(PRONTO, [{ productKey: productKey(produto), productUrl: produto.link }], { origem: "parcial" });
+    for (const soSemProdutos of [false, true]) {
+      const r = await sync.alvosDeProdutos({ soSemProdutos });
+      expect(r.incompletos).toBe(2);
+      expect(r.semNada).toBe(1);
+    }
+  });
+
+  it("stats reparte os cupons em completos, parciais e sem nada — e os três somam o total", async () => {
+    await coupons.replaceCouponProducts(PRONTO, [{ productKey: productKey(produto), productUrl: produto.link }], { origem: "parcial" });
+    const s = await coupons.stats();
+    expect(s.produtosPorCupom).toEqual({ completos: 1, parciais: 1, semNada: 1 });
+    const { completos, parciais, semNada } = s.produtosPorCupom;
+    expect(completos + parciais + semNada).toBe(s.cupons);
+  });
+
   it("a rota lê o filtro da query", async () => {
     await coupons.replaceCouponProducts(PRONTO, [{ productKey: productKey(produto), productUrl: produto.link }], { origem: "parcial" });
     const { user, auth } = await createTestUser();
@@ -205,6 +222,27 @@ describe("gravarVitrineLocal — o teto de produtos corta, e o corte é parcial"
     name: `Produto ${i}`, link: `https://www.mercadolivre.com.br/p/MLB99${String(i).padStart(4, "0")}`,
     price: 10 + i, store: "Mercado Livre",
   }));
+
+  it("grava o total que a vitrine declara — e sem ele não apaga o que já tinha", async () => {
+    await sync.gravarVitrineLocal(PRONTO, vitrine(3), { parcial: true, total: 200 });
+    expect((await coupons.getCoupon(PRONTO)).vitrineTotal).toBe(200);
+
+    await sync.gravarVitrineLocal(PRONTO, vitrine(3), { parcial: true });
+    expect((await coupons.getCoupon(PRONTO)).vitrineTotal).toBe(200);
+  });
+
+  it("a rota aceita o total só como inteiro — lixo vira \"não sei\"", async () => {
+    const { user, auth } = await createTestUser();
+    await authMod.setUserRole(user.id, "admin");
+
+    let r = await auth("post", `/api/admin/ml-cupons/${PRONTO}/vitrine-local`).send({ products: vitrine(2), parcial: true, total: "abc" });
+    expect(r.status).toBe(200);
+    expect((await coupons.getCoupon(PRONTO)).vitrineTotal).toBe(null);
+
+    r = await auth("post", `/api/admin/ml-cupons/${PRONTO}/vitrine-local`).send({ products: vitrine(2), parcial: true, total: 45 });
+    expect(r.status).toBe(200);
+    expect((await coupons.getCoupon(PRONTO)).vitrineTotal).toBe(45);
+  });
 
   it("cabendo no teto, entra como lista fechada", async () => {
     sync.writeConfig({ maxProductsPerCoupon: 10 });

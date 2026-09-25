@@ -14,7 +14,7 @@
 import { useSyncExternalStore } from "react";
 import { adminMlCuponsLocalFim, adminMlCuponsRodadaFim, errText } from "./api";
 import { percorrerLista } from "./rodadaNoChrome";
-import { buscarProdutos, buscarTudo } from "./produtosNoChrome";
+import { buscarProdutos } from "./produtosNoChrome";
 import { fecharAbaDoColetor } from "./coletor";
 import { reduzirAndamento } from "./andamentoColheita";
 import { segundos } from "../components/admin/cupomEstilos";
@@ -25,7 +25,7 @@ const INICIAL = {
   // A etapa 2 (os produtos). Separado porque os dois botões são independentes.
   buscandoProdutos: false,
   colhendo: null,        // campaignId sendo colhido pelo botão da linha
-  // De quem é o painel do "agora": "lista" | "produtos" | "tudo" | null. Não zera
+  // De quem é o painel do "agora": "lista" | "produtos" | null. Não zera
   // quando a rodada acaba, de propósito: o resumo do que acabou de acontecer é a
   // resposta daquele card.
   painelDe: null,
@@ -47,8 +47,8 @@ const ouvintes = new Set();
 // O "Parar". Lido pelo laço a cada volta — por isso não é estado de React.
 let parado = false;
 // Uma rodada por vez. É flag própria, e não `rodandoNoChrome || buscandoProdutos`,
-// porque o botão 3 tem um vão entre a lista e os produtos em que nenhum dos dois
-// está ligado.
+// porque ela cobre a rodada inteira, inclusive os vãos em que nenhum dos dois está
+// ligado.
 let emCurso = false;
 
 function set(patch) {
@@ -114,20 +114,10 @@ const exclusiva = (fn) => async (...args) => {
 //
 // O laço mora em `rodadaNoChrome.js` porque a busca de UMA campanha (o "trazer
 // campanha" do teste de palavra) é a mesma varredura. Aqui fica o log e o resumo.
-//
-// `tudo` solta o teto de páginas da lista geral (quem decide o número é o
-// servidor). `resumir: false` é o encadeamento do botão 3: o resumo de lá é o dos
-// dois passos somados, e escrever este por cima faria a tela piscar um balanço que
-// some meio segundo depois.
-async function varrerLista({ tudo = false, semTeto = false, resumir = true } = {}) {
+async function varrerLista({ semTeto = false } = {}) {
   parado = false;
-  set({ rodandoNoChrome: true });
-  // `resumir: false` é o botão 3 chamando esta etapa por dentro: o card dono do
-  // painel continua sendo o dele, e não o do botão 1.
-  if (resumir) {
-    set({ painelDe: "lista", eventos: [], resumoColheita: null });
-    andar({ tipo: "reiniciar" });
-  }
+  set({ rodandoNoChrome: true, painelDe: "lista", eventos: [], resumoColheita: null });
+  andar({ tipo: "reiniciar" });
   const t0 = Date.now();
   // Uma aba por trabalhador (task 21): com `paginasDeListaEmParalelo` em 1 é a
   // mesma aba única de sempre, e aí esta lista tem um item só.
@@ -137,7 +127,6 @@ async function varrerLista({ tudo = false, semTeto = false, resumir = true } = {
 
   try {
     const r = await percorrerLista({
-      tudo,
       semTeto,
       parou: () => parado,
       log: logar,
@@ -158,13 +147,12 @@ async function varrerLista({ tudo = false, semTeto = false, resumir = true } = {
     // processo reiniciar.
     await adminMlCuponsLocalFim({ cancelada: !!interrompida }).catch(() => {});
     set({ rodandoNoChrome: false });
-    if (resumir) andar({ tipo: "encerrar" });
+    andar({ tipo: "encerrar" });
     fim();
   }
 
   logar(interrompida ? "aviso" : "ok",
     `${interrompida ? `${interrompida}. ` : ""}${resumoLista?.cupons ?? 0} cupom(ns) na lista`);
-  if (!resumir) return { parado: interrompida, resumo: resumoLista };
   set({
     resumoColheita: {
       botao: "lista",
@@ -184,7 +172,6 @@ async function varrerLista({ tudo = false, semTeto = false, resumir = true } = {
       ],
     },
   });
-  return { parado: interrompida, resumo: resumoLista };
 }
 
 export const rodarLista = exclusiva(({ semTeto = false } = {}) => varrerLista({ semTeto }));
@@ -278,109 +265,6 @@ export const rodarProdutos = exclusiva(async ({ campaignIds = null, soSemProduto
         f.ok
           ? (f.parcial ? "colhida (parcial)" : "colhida")
           : (f.vazia ? `vitrine vazia${f.erro ? ` — ${f.erro}` : ""}` : f.erro),
-      ]),
-    },
-  });
-});
-
-// O "buscar TUDO": a etapa 1 sem teto de páginas e depois a etapa 2 em ciclos,
-// até a fila esvaziar. É um botão só porque a pergunta que ele responde é uma só
-// ("traz tudo"), e porque parar no meio das duas etapas deixa cupom guardado sem
-// produto nenhum — que é exatamente o estado que ele existe para desfazer.
-export const rodarTudo = exclusiva(async ({ soSemProdutos = false } = {}) => {
-  parado = false;
-  set({ painelDe: "tudo", eventos: [], resumoColheita: null });
-  andar({ tipo: "reiniciar" });
-  const t0 = Date.now();
-
-  // `tudo: true` já implica o "sem teto" no servidor — e continua sendo outra
-  // coisa: é ele que diz que esta passada é a do botão 3.
-  const lista = await varrerLista({ tudo: true, resumir: false });
-  if (lista?.parado || parado) {
-    andar({ tipo: "encerrar" });
-    adminMlCuponsRodadaFim({
-      botao: "tudo",
-      duracaoMs: Date.now() - t0,
-      interrompida: true,
-      erro: `${lista?.parado || "Interrompido por você"} (ainda na lista)`,
-      resultado: { cuponsNaLista: lista?.resumo?.cupons ?? 0 },
-    }).then(recarregar, () => {});
-    set({
-      resumoColheita: {
-        botao: "tudo",
-        titulo: "Interrompido na lista",
-        tom: "aviso",
-        nota: `${lista?.parado || "Interrompido por você"}. Os cupons que já entraram estão gravados; os produtos ficaram para o botão 2.`,
-        numeros: [{ label: "Cupons na lista", valor: lista?.resumo?.cupons ?? 0 }],
-      },
-    });
-    return;
-  }
-
-  // O servidor avisa quando a lista geral parou no teto de páginas em vez de no
-  // fim que o ML declarou. Num "buscar TUDO" isso não pode ficar só numa linha do
-  // meio do log: é a diferença entre "trouxe tudo" e "trouxe o que coube".
-  const teto = (lista?.resumo?.avisos || []).find(a => /teto de \d+ p[áa]ginas/i.test(a)) || null;
-
-  set({ buscandoProdutos: true, salvo: null });
-  let r = { ciclos: 0, feitos: [], ativados: 0, parado: null, motivo: null };
-  try {
-    r = await buscarTudo({
-      soSemProdutos,
-      parou: () => parado,
-      log: logar,
-      onCiclo: ({ ciclo, maxCiclos }) => andar({ tipo: "ciclo", ciclo, maxCiclos }),
-      onProgresso: avisarMuro,
-    });
-  } catch (err) {
-    r.parado = errText(err, "A busca em ciclos parou com um erro.");
-    logar("erro", r.parado);
-  } finally {
-    set({ buscandoProdutos: false });
-    andar({ tipo: "encerrar" });
-    fim();
-  }
-
-  const ok = r.feitos.filter(f => f.ok);
-  const produtosTotal = ok.reduce((n, f) => n + (f.produtos || 0), 0);
-  // Os que foram tentados e não vieram. Precisam aparecer: o contador "(N)" do
-  // botão 2 NÃO vai zerar por causa deles, e sem essa linha parece que o "até
-  // acabar" desistiu no meio.
-  const sobraram = r.feitos.filter(f => !f.ok);
-  adminMlCuponsRodadaFim({
-    botao: "tudo",
-    duracaoMs: Date.now() - t0,
-    interrompida: !!r.parado,
-    erro: [teto, r.motivo ? `Parou porque ${r.motivo}.` : null].filter(Boolean).join(" ") || null,
-    resultado: {
-      cuponsNaLista: lista?.resumo?.cupons ?? 0, ciclos: r.ciclos, lotes: r.lotes || 0,
-      ativados: r.ativados, colhidos: ok.length, produtos: produtosTotal, ficaramDeFora: sobraram.length,
-    },
-  }).then(recarregar, () => {});
-  set({
-    resumoColheita: {
-      botao: "tudo",
-      titulo: r.parado ? "Buscar tudo — interrompido" : "Buscar tudo — terminado",
-      tom: r.parado || teto ? "aviso" : "ok",
-      nota: [
-        teto,
-        r.motivo ? `Parou porque ${r.motivo}.` : null,
-        sobraram.length ? `${sobraram.length} cupom(ns) foram tentados e não deram vitrine — eles continuam contando no botão 2.` : null,
-      ].filter(Boolean).join(" ") || null,
-      numeros: [
-        { label: "Cupons na lista", valor: lista?.resumo?.cupons ?? 0 },
-        { label: "Ciclos", valor: r.ciclos },
-        { label: "Lotes salvos", valor: r.lotes || 0 },
-        { label: "Cupons ativados", valor: r.ativados },
-        { label: "Vitrines colhidas", valor: ok.length },
-        { label: "Produtos gravados", valor: produtosTotal },
-        { label: "Ficaram de fora", valor: sobraram.length },
-        { label: "Duração", valor: segundos(Date.now() - t0) },
-      ],
-      colunas: sobraram.length ? ["Cupom", "Desfecho"] : null,
-      linhas: sobraram.map(f => [
-        f.title || f.campaignId,
-        f.vazia ? `vitrine vazia${f.erro ? ` — ${f.erro}` : ""}` : f.erro,
       ]),
     },
   });

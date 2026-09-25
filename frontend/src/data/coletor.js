@@ -103,10 +103,12 @@ export function pedirAoColetor(tipo, payload = {}, { onProgresso, timeoutMs = TI
   });
 }
 
-// Pede a coleta de UMA vitrine. Devolve { produtos, parcial, motivo, paginas }.
+// Pede a coleta de UMA vitrine. Devolve { produtos, parcial, motivo, paginas, total }.
+// `total` é quantos produtos a vitrine diz ter; `null` quando ela não disse (ou a
+// extensão é anterior à 2.4.4).
 export function raparVitrine(containerUrl, { paginas, maxProdutos, onProgresso, timeoutMs } = {}) {
   return pedirAoColetor("raspar", { containerUrl, paginas, maxProdutos }, { onProgresso, timeoutMs })
-    .then(r => ({ produtos: r.produtos || [], parcial: !!r.parcial, motivo: r.motivo || null, paginas: r.paginas || 0 }));
+    .then(r => ({ produtos: r.produtos || [], parcial: !!r.parcial, motivo: r.motivo || null, paginas: r.paginas || 0, total: Number.isFinite(r.total) ? r.total : null }));
 }
 
 // Uma página da lista de cupons, na aba da rodada. Ver `extension/lista.js`: com

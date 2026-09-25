@@ -32,7 +32,8 @@ const aba = {
 };
 vi.mock("../../extension/aba.js", () => aba);
 
-const { naPagina_modalCupons, cupomNoCheckout } = await import("../../extension/cupom-checkout.js");
+const { naPagina_modalCupons, naPagina_variacoes, naPagina_linkDosCupons, naPagina_produto, cupomNoCheckout } = await import("../../extension/cupom-checkout.js");
+const { naPagina_irParaProduto } = await import("../../extension/checkout.js");
 
 // ── o DOM ──────────────────────────────────────────────────────────────────
 
@@ -101,6 +102,15 @@ describe("naPagina_modalCupons — dentro do iframe", () => {
     expect(naPagina_modalCupons("estado", "X1").erroCampo).toBe("O cupom não está mais disponível.");
   });
 
+  it("tira o rótulo \"Erro\" escondido que o Andes põe antes da mensagem", () => {
+    const doc = montarCheckout();
+    const ctl = doc.querySelector(".andes-form-control");
+    ctl.classList.add("andes-form-control--error");
+    ctl.insertAdjacentHTML("beforeend",
+      `<span class="andes-form-control__message"><svg class="andes-icon"></svg><span class="andes-visually-hidden">Erro</span>O cupom não está mais disponível.</span>`);
+    expect(naPagina_modalCupons("estado", "X1").erroCampo).toBe("O cupom não está mais disponível.");
+  });
+
   it("digita com o setter nativo e eventos de input, dentro do iframe", () => {
     const doc = montarCheckout();
     const campo = doc.getElementById("inputcode-textfield-inline");
@@ -139,17 +149,167 @@ describe("naPagina_modalCupons — dentro do iframe", () => {
   });
 });
 
+// ── as variações e o link dos cupons, na página de cima ─────────────────────
+
+function montarVariacoes() {
+  document.body.innerHTML = `
+    <div class="ui-pdp-outside_variations__picker">
+      <p>Cor: <span>Sortido</span></p>
+      <a class="ui-pdp-outside_variations__thumbnails__item ui-pdp-outside_variations__thumbnails__item--SELECTED">Sortido</a>
+    </div>
+    <div class="ui-pdp-outside_variations__picker">
+      <p>Tamanho: <span>Escolha</span></p>
+      <a class="ui-pdp-outside_variations__thumbnails__item ui-pdp-outside_variations__thumbnails__item--NONE ui-pdp-outside_variations__thumbnails__item--DISABLED" aria-label="Botón 1 de 3, PP (34)">PP (34)</a>
+      <a class="ui-pdp-outside_variations__thumbnails__item ui-pdp-outside_variations__thumbnails__item--NONE" aria-label="Botón 2 de 3, G/GG (40-42)">G/GG (40-42)</a>
+      <a class="ui-pdp-outside_variations__thumbnails__item ui-pdp-outside_variations__thumbnails__item--NONE" aria-label="Botón 3 de 3, P/M (36-38)">P/M (36-38)</a>
+    </div>`;
+}
+
+describe("naPagina_variacoes", () => {
+  beforeEach(() => { document.body.innerHTML = ""; });
+
+  it("só lendo: diz o que falta escolher e não clica", () => {
+    montarVariacoes();
+    const clique = vi.fn();
+    document.querySelectorAll("a").forEach(a => a.addEventListener("click", clique));
+    const r = naPagina_variacoes(false);
+    expect(r.grupos.map(g => g.rotulo)).toEqual(["Cor: Sortido", "Tamanho: Escolha"]);
+    expect(r.grupos[0].escolhida).toBe("Sortido");
+    expect(r.faltando).toEqual(["Tamanho: Escolha"]);
+    expect(clique).not.toHaveBeenCalled();
+  });
+
+  it("escolhe a primeira opção disponível do grupo sem escolha — e não mexe no que já está escolhido", () => {
+    montarVariacoes();
+    const clicados = [];
+    document.querySelectorAll("a").forEach(a => a.addEventListener("click", () => clicados.push(a.textContent)));
+    const r = naPagina_variacoes(true);
+    // A PP está esgotada; a Cor já vinha escolhida.
+    expect(clicados).toEqual(["G/GG (40-42)"]);
+    expect(r.grupos[1].clicou).toBe("G/GG (40-42)");
+    expect(r.faltando).toEqual([]);
+  });
+
+  it("lê o balão de \"Escolha … para continuar\"", () => {
+    montarVariacoes();
+    document.body.insertAdjacentHTML("beforeend", "<div>Escolha Tamanho para continuar com sua compra.</div>");
+    expect(naPagina_variacoes(false).alerta).toBe("Escolha Tamanho para continuar com sua compra.");
+  });
+
+  it("produto sem variação: nada a fazer", () => {
+    document.body.innerHTML = "<h1>Boneca</h1>";
+    expect(naPagina_variacoes(true)).toEqual({ grupos: [], faltando: [], alerta: null });
+  });
+});
+
+describe("naPagina_produto", () => {
+  const preco = (cls, frac, cents) => `<span class="andes-money-amount ${cls}"><span class="andes-money-amount__fraction">${frac}</span>${cents ? `<span class="andes-money-amount__cents">${cents}</span>` : ""}</span>`;
+
+  it("lê nome, preço, riscado, % OFF e foto só da caixa do produto principal", () => {
+    document.head.innerHTML = `<meta property="og:image" content="https://http2.mlstatic.com/og.jpg">`;
+    document.body.innerHTML = `
+      <h1 class="ui-pdp-title">  Jogo De Cama King  </h1>
+      <figure class="ui-pdp-gallery__figure"><img data-zoom="https://http2.mlstatic.com/zoom.jpg" src="mini.jpg"></figure>
+      <div class="ui-pdp-price__main-container">
+        ${preco("andes-money-amount--previous", "499", "90")}
+        ${preco("", "1.359", "")}
+        <span class="andes-money-amount__discount">28% OFF</span>
+      </div>
+      <div class="carrossel">${preco("", "19", "99")} <span class="andes-money-amount__discount">70% OFF</span></div>
+      <span>+1.000 vendidos</span>`;
+    expect(naPagina_produto()).toEqual({
+      name: "Jogo De Cama King", price: 1359, originalPrice: 499.9, discount: 28,
+      img: "https://http2.mlstatic.com/zoom.jpg", sold: "+1.000 vendidos",
+    });
+  });
+
+  it("sem caixa de preço, cai no JSON-LD", () => {
+    document.head.innerHTML = "";
+    document.body.innerHTML = `<h1 class="ui-pdp-title">Boneca</h1>
+      <script type="application/ld+json">{"offers":{"price":"89.9"}}</script>`;
+    expect(naPagina_produto()).toMatchObject({ name: "Boneca", price: 89.9, originalPrice: null, discount: null });
+  });
+});
+
+describe("naPagina_irParaProduto (landing de afiliado)", () => {
+  const fs = createRequire(import.meta.url)("fs");
+  const landingReal = fs.readFileSync(new URL("../fixtures/ml-social-landing.html", import.meta.url), "utf8");
+  const scriptDoEstado = landingReal.match(/<script[^>]*>(_n\.ctx\.r=[\s\S]*?)<\/script>/)[1];
+  const comEstado = (js) => {
+    document.body.innerHTML = "<div>Produto compartilhado</div>";
+    const s = document.createElement("script");
+    s.type = "text/plain";   // só o texto importa; não roda
+    s.textContent = js;
+    document.body.appendChild(s);
+  };
+
+  it("o botão \"Ir para o produto\" que é link: devolve o endereço e não clica", () => {
+    document.body.innerHTML = `<a href="https://www.mercadolivre.com.br/controle/p/MLB52371739" target="_blank">Ir para o produto</a>`;
+    const clique = vi.fn();
+    document.querySelector("a").addEventListener("click", clique);
+    expect(naPagina_irParaProduto()).toEqual({ href: "https://www.mercadolivre.com.br/controle/p/MLB52371739", via: "botao" });
+    expect(clique).not.toHaveBeenCalled();
+  });
+
+  it("botão sem link: clica", () => {
+    document.body.innerHTML = "<button>Ir para produto</button>";
+    const clique = vi.fn();
+    document.querySelector("button").addEventListener("click", clique);
+    expect(naPagina_irParaProduto()).toEqual({ clicou: true, via: "botao" });
+    expect(clique).toHaveBeenCalledTimes(1);
+  });
+
+  it("sem botão: o produto em destaque do estado embutido (landing real), não o do carrossel", () => {
+    comEstado(scriptDoEstado);
+    const r = naPagina_irParaProduto();
+    expect(r.via).toBe("estado");
+    expect(r.href).toMatch(/^https:\/\/www\.mercadolivre\.com\.br\/controle-sem-fio-xbox-series-sx-robot-white-branco\/p\/MLB52371739/);
+  });
+
+  it("dois produtos em destaque é ambiguidade: null", () => {
+    const estado = { appProps: { pageProps: { data: { components: [{ id: "card-featured", recommendation_data: { recommendation_info: {
+      polycards: [{ metadata: { url: "www.mercadolivre.com.br/a/p/MLB1" } }, { metadata: { url: "www.mercadolivre.com.br/b/p/MLB2" } }],
+    } } }] } } } };
+    comEstado(`_n.ctx.r=${JSON.stringify(estado)};_n.ctx.l={}`);
+    expect(naPagina_irParaProduto()).toBeNull();
+  });
+});
+
+describe("naPagina_linkDosCupons", () => {
+  it.each([
+    ["Cupons (1/1 em uso)", false],
+    ["Inserir código do cupom", true],
+  ])("acha e clica em \"%s\"", (texto, semCupom) => {
+    document.body.innerHTML = `<div>Resumo da compra <span>Frete</span> <a href="#">${texto}</a></div>`;
+    const clique = vi.fn();
+    document.querySelector("a").addEventListener("click", clique);
+    expect(naPagina_linkDosCupons()).toEqual({ texto, semCupom });
+    expect(clique).toHaveBeenCalled();
+  });
+
+  it("sem o link, null", () => {
+    document.body.innerHTML = "<div>Resumo da compra</div>";
+    expect(naPagina_linkDosCupons()).toBeNull();
+  });
+});
+
 // ── o comando ──────────────────────────────────────────────────────────────
 
 const PDP = "https://www.mercadolivre.com.br/boneca/p/MLB123456";
+const LANDING = "https://www.mercadolivre.com.br/social/fulano?matt_word=fulano&ref=abc";
 const CHECKOUT = "https://www.mercadolivre.com.br/checkout/review/onestep";
 
 // Um ML de mentira, respondendo por nome da função injetada.
-function mlDeMentira({ modalAbre = true, resposta = "aplicado" } = {}) {
-  const st = { url: PDP, modal: false, digitou: false, inseriu: false, fechou: false, cliques: [] };
+// `variacao`: null (sem variação) | "ok" (escolher resolve) | "presa" (nunca sai).
+// `link`: o texto do link dos cupons no resumo. `aplicadoAntes`: o cartão já vem
+// aplicado ao abrir o modal.
+function mlDeMentira({ modalAbre = true, resposta = "aplicado", variacao = null, link = "Cupons (1/1 em uso)", aplicadoAntes = false, landing = null } = {}) {
+  const st = { url: landing ? LANDING : PDP, modal: false, digitou: false, inseriu: false, fechou: false, cliques: [], tamanho: null, tentouComprar: false, cliquesVariacao: 0 };
+  aba.irPara.mockImplementation(async (_tab, url) => { st.url = url; });
   aba.avaliar.mockImplementation(async (_tab, func, args) => {
     switch (func.name) {
       case "naPagina_espiao": return true;
+      case "naPagina_irParaProduto": return landing === "botao" ? { href: PDP, via: "botao" } : null;
       case "naPagina_foto": return {
         url: st.url, titulo: "", tituloDaAba: "",
         texto: st.url === CHECKOUT ? "Finalize sua compra Resumo da compra Cupons (1/1 em uso) - R$ 40,48 Você pagará R$ 229,42" : "Boneca Comprar agora",
@@ -158,8 +318,32 @@ function mlDeMentira({ modalAbre = true, resposta = "aplicado" } = {}) {
       case "naPagina_formDeCompra": return null;
       case "naPagina_clicarPorTexto":
         st.cliques.push(args[0]);
-        if (/comprar agora/.test(args[0])) { st.url = CHECKOUT; return "Comprar agora"; }
+        if (/comprar agora/.test(args[0])) {
+          if (variacao && !st.tamanho) { st.tentouComprar = true; return "Comprar agora"; }   // fica na PDP
+          st.url = CHECKOUT;
+          return "Comprar agora";
+        }
         return null;
+      case "naPagina_variacoes": {
+        if (!variacao) return { grupos: [], faltando: [], alerta: null };
+        const [clicar] = args;
+        let clicou = null;
+        if (clicar && !st.tamanho) {
+          st.cliquesVariacao += 1;
+          clicou = "P/M (36-38)";
+          if (variacao === "ok") st.tamanho = clicou;
+        }
+        const rotulo = st.tamanho ? `Tamanho: ${st.tamanho}` : "Tamanho: Escolha";
+        return {
+          grupos: [{ rotulo, escolhida: st.tamanho, clicou, opcoes: 2 }],
+          faltando: !st.tamanho && !clicou ? ["Tamanho: Escolha"] : [],
+          alerta: !st.tamanho && st.tentouComprar ? "Escolha Tamanho para continuar com sua compra." : null,
+        };
+      }
+      case "naPagina_linkDosCupons":
+        if (!link) return null;
+        if (modalAbre) st.modal = true;
+        return { texto: link, semCupom: /^inserir/i.test(link) };
       case "naPagina_paginaDosCupons": return "https://www.mercadolivre.com.br/cupons/cho?context_id=abc";
       case "naPagina_clicarLinhaDoCupom":
         if (modalAbre) st.modal = true;
@@ -175,7 +359,7 @@ function mlDeMentira({ modalAbre = true, resposta = "aplicado" } = {}) {
         return {
           onde: "iframe", pronto: true, campo: true,
           erroCampo: depois && resposta === "erro" ? "O cupom não está mais disponível." : null,
-          cartao: depois && resposta === "aplicado" ? { texto: "Com MELIKIDS 15% OFF", aplicado: true } : null,
+          cartao: (depois && resposta === "aplicado") || aplicadoAntes ? { texto: "Com MELIKIDS 15% OFF", aplicado: true } : null,
           economia: null, texto: "Cupons",
         };
       }
@@ -205,6 +389,25 @@ describe("cupomNoCheckout — o caminho", () => {
     expect(st.cliques.some(c => /pagar|finalizar|carrinho/i.test(c))).toBe(false);
   });
 
+  it("link de afiliado (meli.la → /social/): segue o \"Ir para o produto\" na mesma aba e testa na PDP", async () => {
+    const st = mlDeMentira({ landing: "botao" });
+    const m = await cupomNoCheckout({ url: "https://meli.la/1fjPN8C", code: "MELIKIDS" }, () => {});
+    expect(aba.irPara).toHaveBeenCalledWith(7, PDP);
+    expect(m.landing).toEqual({ de: LANDING, via: "botao", falhou: false });
+    expect(m.finalUrl).toBe(PDP);
+    expect(m.notProductPage).toBe(false);
+    expect(m.checkout.reached).toBe(true);
+    expect(st.inseriu).toBe(true);
+  });
+
+  it("landing sem saída: não é produto, e diz que foi a landing", async () => {
+    mlDeMentira({ landing: "presa" });
+    const m = await cupomNoCheckout({ url: "https://meli.la/1fjPN8C", code: "X1" }, () => {});
+    expect(m.notProductPage).toBe(true);
+    expect(m.landing).toMatchObject({ via: null, falhou: true });
+    expect(m.checkout.attempted).toBe(false);
+  });
+
   it("devolve o erro do campo quando o ML recusa", async () => {
     mlDeMentira({ resposta: "erro" });
     const m = await cupomNoCheckout({ url: PDP, code: "X1" }, () => {});
@@ -226,6 +429,39 @@ describe("cupomNoCheckout — o caminho", () => {
     expect(m.muro).toBe("captcha");
     expect(m.checkout.attempted).toBe(false);
     expect(aba.fechar).toHaveBeenCalledWith(7);
+  });
+
+  it("produto com variação: escolhe antes do Comprar agora e registra a escolha", async () => {
+    const st = mlDeMentira({ variacao: "ok" });
+    const m = await cupomNoCheckout({ url: PDP, code: "MELIKIDS" }, () => {});
+    expect(st.cliquesVariacao).toBe(1);
+    expect(m.variacao).toBe("Tamanho: P/M (36-38)");
+    expect(m.checkout.reached).toBe(true);
+    expect(m.variacaoFaltando).toBeNull();
+  });
+
+  it("variação que não sai: tenta de novo, desiste e diz o porquê, sem abrir o modal", async () => {
+    const st = mlDeMentira({ variacao: "presa" });
+    const m = await cupomNoCheckout({ url: PDP, code: "MELIKIDS" }, () => {});
+    expect(m.checkout.reached).toBe(false);
+    expect(m.variacaoFaltando).toBe("Escolha Tamanho para continuar com sua compra.");
+    expect(st.digitou).toBe(false);
+    expect(aba.fechar).toHaveBeenCalledWith(7);
+  });
+
+  it("link \"Inserir código do cupom\": vai direto digitar, mesmo que o cartão pareça aplicado", async () => {
+    const st = mlDeMentira({ link: "Inserir código do cupom", aplicadoAntes: true });
+    const m = await cupomNoCheckout({ url: PDP, code: "MELIKIDS" }, () => {});
+    expect(m.modal).toMatchObject({ link: "Inserir código do cupom", semCupom: true });
+    expect(m.cartaoAntes).toBeNull();
+    expect(st.digitou && st.inseriu).toBe(true);
+  });
+
+  it("link \"Cupons (1/1 em uso)\" com o cartão já aplicado: não digita", async () => {
+    const st = mlDeMentira({ aplicadoAntes: true });
+    const m = await cupomNoCheckout({ url: PDP, code: "MELIKIDS" }, () => {});
+    expect(m.cartaoAntes).toMatchObject({ aplicado: true });
+    expect(st.digitou).toBe(false);
   });
 
   it("sem link ou sem código, nem abre aba", async () => {

@@ -21,12 +21,12 @@ import { PRIMARY_DARK } from "../data/constants";
 import {
   adminMlCupons, adminMlCuponsStatus,
   adminMlCuponsProducts, adminMlCuponsClearAll, adminMlCuponsDelete,
-  adminMlCuponsAlvosProdutos, errText,
+  adminMlCuponsAlvosProdutos, adminMlCuponsSaveConfig, errText,
   adminMlCuponsAgendaPendentes, adminMlCuponsAgendaReivindicar, adminMlCuponsAgendaFalhou,
 } from "../data/api";
 import {
   useRodadaCupons, parar, rodarLista, logarNaRodada,
-  rodarProdutos as rodarProdutosDoStore, rodarTudo as rodarTudoDoStore,
+  rodarProdutos as rodarProdutosDoStore,
 } from "../data/rodadaCupons";
 import { coletorInfo } from "../data/coletor";
 import { rotuloCategoria, resumoCategorias } from "../data/cupomCategorias";
@@ -41,7 +41,7 @@ import ColheitaLog from "../components/admin/ColheitaLog";
 import ProgressoColheita from "../components/admin/ProgressoColheita";
 import ExtensaoAusente from "../components/admin/ExtensaoAusente";
 import Numero from "../components/admin/Numero";
-import { LimitesLista, LimitesProdutos, LimitesCiclos } from "../components/admin/LimitesCupons";
+import { LimitesLista, LimitesProdutos } from "../components/admin/LimitesCupons";
 import AgendaEtapa from "../components/admin/AgendaCupons";
 import {
   segundos, brl, dia, desconto, cardStyle, inputStyle, th, td,
@@ -50,9 +50,8 @@ import {
 
 // O balanço da última vez de CADA botão, guardado no servidor — é o que sobrevive
 // a um F5 e ao restart do backend (`status.ultimas`, backend/coupons/sync.js).
-// Um por botão (task 17) porque os três fazem coisas diferentes: com um slot só,
-// a ativação de um lote do botão 2 sobrescrevia o balanço da lista do botão 1, e
-// os botões 2 e 3 nem deixavam o deles.
+// Um por botão (task 17) porque eles fazem coisas diferentes: com um slot só, a
+// ativação de um lote do botão 2 sobrescrevia o balanço da lista do botão 1.
 const BALANCOS = [
   {
     chave: "lista",
@@ -66,7 +65,7 @@ const BALANCOS = [
   },
   {
     chave: "produtos",
-    nome: "2 · Produtos dos que faltam",
+    nome: "2 · Buscar Produtos Dos Cupons",
     numeros: (r) => [
       { label: "Lotes salvos", valor: r.lotes },
       { label: "Cupons ativados", valor: r.ativados },
@@ -76,19 +75,6 @@ const BALANCOS = [
       { label: "…destas, parciais", valor: r.parciais },
       { label: "Vitrine vazia", valor: r.vazias },
       { label: "Falharam", valor: r.falharam },
-    ],
-  },
-  {
-    chave: "tudo",
-    nome: "3 · Buscar TUDO",
-    numeros: (r) => [
-      { label: "Cupons na lista", valor: r.cuponsNaLista },
-      { label: "Ciclos", valor: r.ciclos },
-      { label: "Lotes salvos", valor: r.lotes },
-      { label: "Cupons ativados", valor: r.ativados },
-      { label: "Vitrines colhidas", valor: r.colhidos },
-      { label: "Produtos gravados", valor: r.produtos },
-      { label: "Ficaram de fora", valor: r.ficaramDeFora },
     ],
   },
 ];
@@ -184,7 +170,7 @@ export default function CuponsDoML({ buscaInicial = null }) {
   // responde ao ping e não conhece "lista" — sem esta pergunta a tela ficaria
   // esperando um timeout de cinco minutos.
   const [colheLista, setColheLista] = useState(false);
-  // "Só os que não têm nenhum produto": tira da fila do botão 2 (e do 3) os
+  // "Só os que não têm nenhum produto": tira da fila do botão 2 os
   // PARCIAIS, que já têm prévia. Lembrado por navegador — é preferência de quem
   // opera, não estado do sistema.
   const [soSemProdutos, setSoSemProdutos] = useState(() => {
@@ -203,6 +189,10 @@ export default function CuponsDoML({ buscaInicial = null }) {
   useEffect(() => {
     try { localStorage.setItem("cupons.listaSemTeto", listaSemTeto ? "1" : "0"); } catch { /* sem storage, só não lembra */ }
   }, [listaSemTeto]);
+  // "Ignorar cupons de loja": a escolha fica na config do servidor (é ela que a
+  // varredura lê), e aqui só o valor do clique enquanto o status não relê — sem
+  // isso a caixa voltaria por um instante ao valor antigo depois de marcada.
+  const [pulaLojaLocal, setPulaLojaLocal] = useState(null);
   const [produtos, setProdutos] = useState({});      // campaignId → { items, total }
   const [confirmarLimpeza, setConfirmarLimpeza] = useState(false);
   const [limpando, setLimpando] = useState(false);
@@ -336,12 +326,22 @@ export default function CuponsDoML({ buscaInicial = null }) {
     return () => { vivo = false; };
   }, [tick, soSemProdutos]);
 
-  // As três rodadas moram em `data/rodadaCupons.js` (task 6): esta aba é montada do
+  // As rodadas moram em `data/rodadaCupons.js` (task 6): esta aba é montada do
   // zero a cada troca de aba, e a rodada precisa sobreviver a isso. Aqui fica só o
   // que é da tela — o erro some ao começar, e as preferências vão junto.
+  const alternarLoja = async (valor) => {
+    setPulaLojaLocal(valor);
+    setErro(null);
+    try {
+      await adminMlCuponsSaveConfig({ skipStoreCoupons: valor });
+      recarregar();
+    } catch (err) {
+      setPulaLojaLocal(null);
+      setErro(errText(err, "Não deu pra salvar a escolha dos cupons de loja."));
+    }
+  };
   const rodarNoChrome = () => { setErro(null); return rodarLista({ semTeto: listaSemTeto }); };
   const rodarProdutos = (campaignIds = null) => { setErro(null); return rodarProdutosDoStore({ campaignIds, soSemProdutos }); };
-  const rodarTudo = () => { setErro(null); return rodarTudoDoStore({ soSemProdutos }); };
 
   const apagarUm = async () => {
     const c = confirmarExclusao;
@@ -435,6 +435,7 @@ export default function CuponsDoML({ buscaInicial = null }) {
   // Os limites não se editam no meio de uma rodada: o `cfg` dela foi congelado lá no
   // `startLocalRun`, e deixar o campo ativo é prometer um efeito que não acontece.
   const emRodada = rodandoNoChrome || buscandoProdutos || rodando;
+  const pulaLoja = pulaLojaLocal ?? !!status?.config?.skipStoreCoupons;
 
   // A agenda (task 3). O servidor marca a etapa que venceu (backend/coupons/agenda.js)
   // e é ESTA aba que a roda, apertando o mesmo botão que o admin apertaria — as
@@ -447,7 +448,7 @@ export default function CuponsDoML({ buscaInicial = null }) {
     agendaRef.current = {
       livre: !emRodada && !limpando,
       temColetor, colheLista, faltamProdutos, alvosProntos: !!alvos,
-      rodar: { lista: rodarNoChrome, produtos: () => rodarProdutos(), tudo: rodarTudo },
+      rodar: { lista: rodarNoChrome, produtos: () => rodarProdutos() },
       logar: logarNaRodada,
     };
   });
@@ -466,7 +467,11 @@ export default function CuponsDoML({ buscaInicial = null }) {
         const x = agendaRef.current;
         if (!vivo || !p || !x.livre) return;
         if (p.botao === "produtos" && !x.alvosProntos) return;
-        const motivo = !x.temColetor || !x.colheLista
+        // Etapa que não existe mais nesta tela (o antigo botão 3): falha em vez de
+        // ficar pendurada até a graça vencer.
+        const motivo = !x.rodar[p.botao]
+          ? "essa etapa foi removida da tela"
+          : !x.temColetor || !x.colheLista
           ? "a extensão do Chrome não está instalada (ou está desatualizada) nesta aba"
           : p.botao === "produtos" && !x.faltamProdutos
             ? "não havia cupom esperando produtos — nada a fazer"
@@ -493,25 +498,22 @@ export default function CuponsDoML({ buscaInicial = null }) {
   return (
     <div>
       {/* CARD 0 — o que esta tela é, e os números do que já está guardado. O que
-          vale para as três etapas mora aqui; o que é de uma etapa só mora no card
+          vale para as duas etapas mora aqui; o que é de uma etapa só mora no card
           dela (task 19). */}
       <div style={cardStyle}>
         <div style={{ fontWeight: 500, marginBottom: 4 }}>Puxar os cupons do Mercado Livre</div>
         <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12, lineHeight: 1.5 }}>
-          Três caminhos, um card para cada — com os limites e o “última vez” de cada um lá dentro.
+          Dois caminhos, um card para cada — com os limites e o “última vez” de cada um lá dentro.
           O <b>1</b> abre a lista geral do ML numa aba deste Chrome e guarda todos os cupons com as
           condições de cada um: é só leitura, não mexe na sua conta. O <b>2</b> busca os produtos de
           cada cupom, e precisa aceitar (“Eu quero”) os que ainda não foram aceitos — sem isso o ML
-          não mostra a vitrine. O <b>3</b> faz os dois seguidos e repete a busca de produtos em
-          ciclos até não sobrar cupom sem eles. Todos demoram minutos e vão se atualizando sozinhos.
+          não mostra a vitrine. Os dois demoram minutos e vão se atualizando sozinhos.
         </div>
 
         {s && (
           <div style={{ display: "flex", gap: 18, flexWrap: "wrap", fontSize: 12, marginBottom: 12 }}>
             <Numero label="Cupons guardados" valor={s.cupons} />
             <Numero label="Ainda válidos" valor={s.validos} />
-            <Numero label="Com vitrine raspada" valor={s.comVitrine} />
-            <Numero label="Sem produtos ainda" valor={faltamProdutos} />
             <Numero label="Vínculos cupom↔produto" valor={s.vinculos} />
             {/* Quanto do número acima é pedaço de vitrine (ou checkout) e
                 não vitrine fechada. Fica ao lado de propósito: sem ele, "3.000
@@ -522,7 +524,7 @@ export default function CuponsDoML({ buscaInicial = null }) {
           </div>
         )}
 
-        {/* Sem a extensão os três botões ficam cinza — e é aqui que se diz por quê.
+        {/* Sem a extensão os botões ficam cinza — e é aqui que se diz por quê.
             Morando no card da tabela, a explicação ficava a três cards de distância
             do botão que ela explica. */}
         {temColetor === false && (
@@ -615,6 +617,33 @@ export default function CuponsDoML({ buscaInicial = null }) {
           )}
         </fieldset>
 
+        {/* Cupom de loja (task: tirar dos limites). Em destaque, e fora do "Limites
+            desta etapa", porque não é teto: diz O QUE colher, e por isso vale nas
+            duas escolhas de cima — inclusive em "tudo o que o ML tiver". Salva no
+            clique: é uma escolha só, sem o "salvar" dos limites. */}
+        <label style={{
+          marginTop: 12, padding: "8px 10px", borderRadius: 8, fontSize: 12,
+          display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap",
+          border: "0.5px solid var(--color-border-secondary)",
+          background: pulaLoja ? "var(--color-background-secondary)" : "transparent",
+        }}>
+          <input
+            type="checkbox"
+            checked={pulaLoja}
+            disabled={emRodada || !status?.config}
+            onChange={e => alternarLoja(e.target.checked)}
+          />
+          <span>
+            <b>Ignorar cupons de loja</b>
+            <span style={{ color: "var(--color-text-secondary)" }}>
+              {" "}— {pulaLoja
+                ? "a busca descarta os cupons de loja e guarda só os de campanha. Os de loja já guardados continuam na tabela."
+                : "a busca guarda os cupons de loja junto com os de campanha."}
+              {" "}Vale nas duas opções acima.
+            </span>
+          </span>
+        </label>
+
         {painelDaEtapa("lista")}
 
         <details>
@@ -634,11 +663,25 @@ export default function CuponsDoML({ buscaInicial = null }) {
       </section>
 
       {/* CARD 2 — ETAPA 2. Separada porque ESCREVE na conta do ML. */}
-      <section style={cardStyle} role="region" aria-label="2 · Produtos dos que faltam">
-        <div style={{ fontWeight: 500, marginBottom: 4 }}>2 · Produtos dos que faltam</div>
+      <section style={cardStyle} role="region" aria-label="2 · Buscar Produtos Dos Cupons">
+        <div style={{ fontWeight: 500, marginBottom: 4 }}>2 · Buscar Produtos Dos Cupons</div>
         <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 10, lineHeight: 1.5 }}>
-          Abre a vitrine de cada cupom que ainda não tem produtos e guarda o que ela lista. Precisa
-          aceitar (“Eu quero”) os cupons ainda não aceitos: sem isso o ML não revela a vitrine.
+          Abre a vitrine de cada cupom que ainda não tem todos os produtos e guarda o que ela lista.
+          Precisa aceitar (“Eu quero”) os cupons ainda não aceitos: sem isso o ML não revela a vitrine.
+        </div>
+
+        {/* O resumo rápido: todos os cupons guardados, repartidos pelo que já têm de
+            produto. Os três grupos somam o total (backend/coupons/pg.js:stats). */}
+        {s?.produtosPorCupom && (
+          <div role="group" aria-label="Resumo dos produtos" style={{ display: "flex", gap: 18, flexWrap: "wrap", fontSize: 12, marginBottom: 4 }}>
+            <Numero label="Cupons no sistema" valor={s.cupons} />
+            <Numero label="Sem nenhum produto" valor={s.produtosPorCupom.semNada} />
+            <Numero label="Parciais" valor={s.produtosPorCupom.parciais} />
+            <Numero label="Completos" valor={s.produtosPorCupom.completos} />
+          </div>
+        )}
+        <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 10 }}>
+          A busca pula os cupons vencidos — por isso as filas abaixo podem ser menores que o resumo.
         </div>
 
         {buscandoProdutos ? (
@@ -656,29 +699,41 @@ export default function CuponsDoML({ buscaInicial = null }) {
                 ? "Todos os cupons guardados já têm produtos."
                 : `Abre a vitrine de ${faltamProdutos} cupom(ns), uma aba por vez.${precisamAtivar ? ` ${precisamAtivar} deles ainda não foram aceitos — o ML só mostra a vitrine depois do “Eu quero”, então ${quantosAtiva} vão ser ativados na sua conta.` : ""}`}
           >
-            2 · Buscar produtos dos que faltam{faltamProdutos ? ` (${faltamProdutos})` : ""}
+            Buscar produtos{faltamProdutos ? ` (${faltamProdutos})` : ""}
           </button>
         )}
 
         {/* O filtro da fila (task 11). Mora AQUI, e não nos filtros da tabela, porque
-            muda o que este botão vai buscar — a tabela continua mostrando todos. O
-            botão 3 reusa a mesma escolha, e por isso o card dele a ecoa em vez de
-            oferecer uma segunda caixa: dois controles sobre a mesma preferência é a
-            cara do problema que a task 19 veio resolver. */}
-        <label style={{ marginTop: 10, fontSize: 12, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-          <input
-            type="checkbox"
-            checked={soSemProdutos}
-            disabled={buscandoProdutos || rodandoNoChrome}
-            onChange={e => setSoSemProdutos(e.target.checked)}
-          />
-          só os que não têm nenhum produto (pula os parciais)
-          {soSemProdutos && alvos?.parciaisFora > 0 && (
-            <span style={{ color: "var(--color-text-secondary)" }}>
-              · {alvos.parciaisFora} parcial(is) ficam de fora
+            muda o que este botão vai buscar — a tabela continua mostrando todos. Rádio e
+            não caixa de marcar, como o "Até onde ir na lista" do card 1: as duas filas
+            ficam escritas lado a lado, cada uma com o seu tamanho. */}
+        <fieldset style={{ border: "none", padding: 0, margin: "12px 0 0" }}>
+          <legend style={{ fontSize: 12, fontWeight: 500, padding: 0, marginBottom: 6 }}>Buscar produtos para</legend>
+          <label style={{ fontSize: 12, display: "flex", alignItems: "baseline", gap: 6, marginBottom: 4 }}>
+            <input
+              type="radio" name="fila-de-produtos"
+              checked={!soSemProdutos}
+              disabled={buscandoProdutos || rodandoNoChrome}
+              onChange={() => setSoSemProdutos(false)}
+            />
+            <span>
+              todos os que faltam{alvos?.incompletos != null ? ` (${alvos.incompletos})` : ""}
+              <span style={{ color: "var(--color-text-secondary)" }}> — os sem nenhum produto e os parciais.</span>
             </span>
-          )}
-        </label>
+          </label>
+          <label style={{ fontSize: 12, display: "flex", alignItems: "baseline", gap: 6 }}>
+            <input
+              type="radio" name="fila-de-produtos"
+              checked={soSemProdutos}
+              disabled={buscandoProdutos || rodandoNoChrome}
+              onChange={() => setSoSemProdutos(true)}
+            />
+            <span>
+              só os que não têm nenhum produto{alvos?.semNada != null ? ` (${alvos.semNada})` : ""}
+              <span style={{ color: "var(--color-text-secondary)" }}> — pula os parciais.</span>
+            </span>
+          </label>
+        </fieldset>
 
         {/* O aviso do que esta etapa vai escrever na conta. Fica FORA do title do
             botão de propósito: "ativar" é irreversível, e um aviso que só aparece
@@ -704,59 +759,9 @@ export default function CuponsDoML({ buscaInicial = null }) {
         </details>
       </section>
 
-      {/* CARD 3 — as duas etapas seguidas, em ciclos, até acabar. */}
-      <section style={cardStyle} role="region" aria-label="3 · Buscar TUDO">
-        <div style={{ fontWeight: 500, marginBottom: 4 }}>3 · Buscar TUDO (até acabar)</div>
-        <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 10, lineHeight: 1.5 }}>
-          Faz a etapa 1 e depois repete a etapa 2 em ciclos, até não sobrar cupom sem produtos. É um
-          botão só porque a pergunta que ele responde é uma só — e porque parar entre as duas deixa
-          cupom guardado sem produto nenhum, que é o estado que ele existe para desfazer.
-        </div>
-
-        {/* Some enquanto qualquer uma das duas roda: o "Parar" que aparece no card
-            delas já interrompe este também, porque é o mesmo `parar()`. */}
-        {rodandoNoChrome || buscandoProdutos ? (
-          painelDe === "tudo" ? (
-            <button onClick={parar} style={botaoSecundario}>
-              Parar
-            </button>
-          ) : null
-        ) : (
-          <button
-            onClick={rodarTudo}
-            disabled={!colheLista || !temColetor || rodando}
-            style={botaoPrimario(!colheLista || !temColetor || rodando)}
-            title={!colheLista || !temColetor
-              ? "Precisa da extensão do Chrome instalada."
-              : `Varre a lista inteira e depois busca os produtos em ciclos, até não sobrar nenhum. Ativa ${semTetoAtivacao ? "todos os cupons" : `até ${tetoAtivacao} cupons por ciclo`} na sua conta do ML.`}
-          >
-            3 · Buscar TUDO (até acabar)
-          </button>
-        )}
-
-        {/* O que ele herda dos outros dois cards. Eco somente-leitura, não uma
-            segunda cópia dos controles: um controle, um dono. */}
-        <div style={{ marginTop: 10, fontSize: 11, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
-          Usa a lista <b>sem teto</b> sempre · o filtro do card 2 ({soSemProdutos ? "só os sem nenhum produto" : "todos os que faltam"}){" "}
-          · {semTetoAtivacao ? "aceita todos os cupons" : `até ${tetoAtivacao} aceites`} por ciclo
-          {status?.config?.maxCiclos ? ` · até ${status.config.maxCiclos} ciclos` : ""}.
-        </div>
-
-        {painelDaEtapa("tudo")}
-
-        <details>
-          <summary style={{ cursor: "pointer", fontSize: 12, marginTop: 12 }}>Limites desta etapa</summary>
-          <LimitesCiclos config={status?.config} onSaved={recarregar} desabilitado={emRodada} />
-        </details>
-        <details>
-          <summary style={{ cursor: "pointer", fontSize: 12, marginTop: 12 }}>Agenda desta etapa{status?.config?.agenda?.tudo?.enabled ? " · ⏰ ligada" : ""}</summary>
-          <AgendaEtapa botao="tudo" config={status?.config} proximo={status?.agenda?.proximo?.tudo} onSaved={recarregar} />
-        </details>
-      </section>
-
-      {/* CARD 4 — trazer UMA campanha pelo número dela (task 32). É a quarta forma
+      {/* CARD 3 — trazer UMA campanha pelo número dela (task 32). É outra forma
           de um cupom entrar, mas não é etapa: não tem limite, não tem "última vez" e
-          não tem Parar. Fica entre os três botões e a tabela, que é a ponte entre
+          não tem Parar. Fica entre os dois botões e a tabela, que é a ponte entre
           "puxar do ML" e "o que está guardado". */}
       <div style={cardStyle}>
         <div style={{ fontWeight: 500, marginBottom: 8 }}>Trazer uma campanha pelo número</div>
@@ -864,7 +869,14 @@ export default function CuponsDoML({ buscaInicial = null }) {
                       </td>
                       <td style={{ ...td, whiteSpace: "nowrap" }}>{dia(c.expiresAt)}</td>
                       <td style={td}>
-                        <div>{c.products || 0}</div>
+                        {/* "45/200": guardados / o total que a vitrine do ML declara.
+                            Sem o total (vitrine nunca aberta, extensão antiga) fica
+                            só o que foi guardado, como antes. */}
+                        <div title={c.vitrineTotal != null
+                          ? `${c.products || 0} guardados de ${c.vitrineTotal} que a vitrine do ML mostra`
+                          : undefined}>
+                          {c.products || 0}{c.vitrineTotal != null ? `/${c.vitrineTotal}` : ""}
+                        </div>
                         <div style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap" }}>{c.inCatalog || 0} no catálogo</div>
                         <EstadoProdutos cupom={c} />
                       </td>
@@ -928,7 +940,13 @@ export default function CuponsDoML({ buscaInicial = null }) {
                     {aberto === c.campaignId && (
                       <tr>
                         <td colSpan={7} style={{ ...td, background: "var(--color-background-secondary)" }}>
-                          <Produtos dados={produtos[c.campaignId]} />
+                          {/* width 0 + minWidth 100%: a lista não conta na largura
+                              da tabela. Sem isso a URL de um produto sem nome
+                              alargava a tabela toda e empurrava os botões do
+                              cupom para fora da tela. */}
+                          <div style={{ width: 0, minWidth: "100%" }}>
+                            <Produtos dados={produtos[c.campaignId]} />
+                          </div>
                         </td>
                       </tr>
                     )}
@@ -1073,15 +1091,16 @@ function Produtos({ dados }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {dados.items.map(p => (
           <div key={p.productKey} style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 12 }}>
-            {p.catalog?.img && <img src={p.catalog.img} alt="" width={34} height={34} style={{ objectFit: "contain", borderRadius: 6 }} />}
-            <a href={p.productUrl} target="_blank" rel="noreferrer" style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "inherit" }}>
+            {p.catalog?.img && <img src={p.catalog.img} alt="" width={34} height={34} style={{ objectFit: "contain", borderRadius: 6, flexShrink: 0 }} />}
+            {/* Só o nome encolhe (cortado com "…"); o resto tem tamanho fixo. */}
+            <a href={p.productUrl} target="_blank" rel="noreferrer" title={p.catalog?.name || p.productUrl} style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "inherit" }}>
               {p.catalog?.name || p.productUrl}
             </a>
-            <span style={{ color: "var(--color-text-secondary)" }}>{brl(p.catalog?.price)}</span>
-            <span style={{ color: "var(--color-text-secondary)" }}>
+            <span style={{ color: "var(--color-text-secondary)", flexShrink: 0, whiteSpace: "nowrap" }}>{brl(p.catalog?.price)}</span>
+            <span style={{ color: "var(--color-text-secondary)", flexShrink: 0, whiteSpace: "nowrap" }}>
               {ORIGEM[p.origem] || p.origem || "vitrine"}
             </span>
-            <span style={{ color: p.inCatalog ? PRIMARY_DARK : "var(--color-text-secondary)" }}>
+            <span style={{ color: p.inCatalog ? PRIMARY_DARK : "var(--color-text-secondary)", flexShrink: 0, whiteSpace: "nowrap" }}>
               {p.inCatalog ? "no catálogo" : "fora do catálogo"}
             </span>
           </div>

@@ -89,6 +89,8 @@ function campanhaDoCodigo(html, codigo, cond = {}) {
 const MOTIVOS = {
   muro: "O ML pediu verificação e ela não foi resolvida.",
   "nao-e-produto": "O link não abriu a página de um produto.",
+  landing: "Link de afiliado: o \"Ir para o produto\" não abriu a página do produto.",
+  variacao: "Variação obrigatória não selecionada.",
   "sem-checkout": "Não chegou ao checkout do produto.",
   "modal-nao-abriu": "Chegou ao checkout, mas o quadro \"Cupons\" não abriu.",
   "sem-campo": "O quadro \"Cupons\" abriu sem o campo do código.",
@@ -111,6 +113,7 @@ function interpretar(material, code) {
     desconto_no_pedido: null,
     total_final: null,
     cupons_em_uso: null,
+    variacao: m.variacao || null,
     mensagem_site: null,
     motivo: null,
     bloqueio: null,
@@ -118,7 +121,12 @@ function interpretar(material, code) {
   };
 
   if (m.muro) { r.motivo = "muro"; r.bloqueio = m.muro; return r; }
-  if (m.notProductPage) { r.motivo = "nao-e-produto"; return r; }
+  if (m.notProductPage) { r.motivo = m.landing ? "landing" : "nao-e-produto"; return r; }
+  if (m.variacaoFaltando && !m.checkout?.reached) {
+    r.motivo = "variacao";
+    r.mensagem_site = String(m.variacaoFaltando).slice(0, 200);
+    return r;
+  }
   if (!m.checkout?.reached) {
     r.motivo = "sem-checkout";
     r.mensagem_site = m.checkout?.blockedReason || null;
@@ -128,7 +136,8 @@ function interpretar(material, code) {
 
   const antes = m.cartaoAntes || null;
   const depois = m.cartaoDepois || null;
-  const erro = String(m.erroCampo || "").replace(/\s+/g, " ").trim() || null;
+  // "Erro" é o rótulo visual do campo (o Andes o põe escondido antes da mensagem).
+  const erro = String(m.erroCampo || "").replace(/\s+/g, " ").trim().replace(/^Erro[:\s]+(?=\p{Lu})/u, "") || null;
 
   if (antes?.aplicado) {
     r.status = "ja_aplicado";
@@ -176,6 +185,7 @@ function mensagemDe(r) {
     if (r.limite_desconto != null) partes.push(`limite R$ ${r.limite_desconto}`);
     if (r.vencimento) partes.push(`vence ${r.vencimento.split("-").reverse().join("/")}`);
     if (r.desconto_no_pedido != null) partes.push(`-R$ ${r.desconto_no_pedido.toFixed(2).replace(".", ",")} no pedido`);
+    if (r.variacao) partes.push(`variação: ${r.variacao}`);
     return partes.join(" · ");
   }
   const base = r.motivo === "muro" ? `O ML pediu verificação (${r.bloqueio}) e ela não foi resolvida.` : (MOTIVOS[r.motivo] || "Falhou.");

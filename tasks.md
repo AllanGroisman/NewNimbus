@@ -10,7 +10,7 @@
 
 6. [x] Quando saio e volto para a aba onde faco a busca de cupons, desaparece a barra e as indicações que ta rodando algo. Quero que volte normalmente onde esta. 
 
-7. [] Quero corrigir a captura de cupons pelo repasse. No momento todos os cupons estão dando que o ML não respondeu. Quero que pegue o link de produto que chegou, tente utilizar o cupom e verifique se ele é válido ou não.
+7. [x] Quero corrigir a captura de cupons pelo repasse. No momento todos os cupons estão dando que o ML não respondeu. Quero que pegue o link de produto que chegou, tente utilizar o cupom e verifique se ele é válido ou não.
 
 FLUXO
 
@@ -98,3 +98,19 @@ FLUXO
 9. [] Quero um historico expansivel em cada um dos botões de captura de cupons e seus produtos. Dessa forma consigo ver de onde vieram as coisas.
 
 10. [] Pq os cupons de loja estão sendo puxados mesmo marcando para ignorar cupom de loja? quando marco em "tudo o que o ML tiver", ele ignora a marcação que está la nos limites desta etapa?
+
+11. [] Nos cupons que chegam no repasse quero que o sistema tire prints da pagina final que chegou dos cupons que não derem certo para que eu possa verificar as situações depois. 
+
+12. [x] Nos cupons guardados, quando abro os produtos, se o link é muito grande, tenho que arrastar pra direita pra chegar nos botões do cupom. Deidxa o tamanho fixo nas coisas aqui, se cortar os textos não tem problema, só tem que aparecer tudo na tela. 
+
+
+DOWNLOADER:
+
+13. [] Filtro mais vistos
+14. [] Shopee
+15. [] Como editar os templates padrão
+
+
+Geral:
+
+16. [] Site com as promoções

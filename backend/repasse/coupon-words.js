@@ -101,6 +101,9 @@ function writeConfig(patch) {
 // regex ficasse presa na primeira compilação, só um restart mudaria a detecção.
 let _cache = null;
 
+// O que pode separar gatilho e código (ver compile).
+const SEP = "[^\\p{L}\\p{N}]{0,10}";
+
 function compile(cfg) {
   const conf = sanitize(cfg);
   const chave = JSON.stringify(conf);
@@ -116,9 +119,15 @@ function compile(cfg) {
     // palavra maior que o limite chega inteira lá e é RECUSADA, em vez de vir
     // cortada no tamanho certo e passar. Cupom truncado é pior que cupom
     // nenhum — ia parar na mensagem enviada ao cliente como código inválido.
+    //
+    // Entre o gatilho e o código aceita qualquer coisa que não seja letra nem
+    // número, com teto curto: a legenda real vem como "Cupom: *X*", "cupom 👉 X",
+    // "cupom `X`", "cupom \"X\"". Antes só passava espaço, ":" ou "-", e o negrito
+    // do WhatsApp sozinho já fazia o cupom sumir. A flag "u" é o que faz um emoji
+    // contar como um caractere só nesse teto.
     re: new RegExp(
-      `(?:${gatilhos})\\s*(?:de\\s+desconto\\s*)?[:\\-]?\\s*([A-Za-z0-9][A-Za-z0-9._-]{1,${conf.maxLen}})`,
-      "gi",
+      `(?:${gatilhos})${SEP}(?:de\\s+desconto${SEP})?([A-Za-z0-9][A-Za-z0-9._-]{1,${conf.maxLen}})`,
+      "giu",
     ),
     ignore: new Set(conf.ignore.map(w => semAcento(w).toLowerCase())),
     minLen: conf.minLen,

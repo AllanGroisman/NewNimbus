@@ -14,11 +14,6 @@
 // Terminado o lote, tudo dele já está no banco — é isso que faz um Parar no meio
 // não jogar a varredura fora.
 //
-// O `buscarTudo` repete o ciclo até a fila esvaziar. Ele existe porque um ciclo
-// só nunca termina o serviço: a fila vem em lotes e um cupom recém-ativado só
-// ganha `containerUrl` depois — então "pegar tudo" era clicar o botão à mão, olhar
-// o contador cair e clicar de novo.
-//
 // Como sempre nesta pasta: quem decide é o servidor. Os alvos, os tetos e as pausas
 // vêm do `/alvos-produtos`; aqui só se abre página e se devolve o que veio.
 import { percorrerLista } from "./rodadaNoChrome";
@@ -39,7 +34,7 @@ import {
 // (`onProgresso({ tipo: "lote-salvo" })`) — o que a tela mostra é o que está no banco.
 //
 // `pular` é `{ ativacao: Set, vitrine: Set }` — os campaignIds que esta execução já
-// tentou, separados por ETAPA. Só o `buscarTudo` preenche. Precisam ser dois
+// tentou, separados por ETAPA. Quem chama ciclos seguidos preenche. Precisam ser dois
 // conjuntos e não um: o cupom recém-ativado tem que entrar na colheita de vitrine
 // do mesmo lote, então marcá-lo na ativação não pode escondê-lo da vitrine.
 //
@@ -317,7 +312,7 @@ async function colherVitrines(fila, { cfg, paralelo = 1, freio = null, pular, pa
         // `parcial` viaja intacto: coleta que parou no muro ou no teto de páginas
         // não pode entrar como lista fechada, senão o sistema passa a dizer "fora
         // da vitrine" para produto que o cupom cobre.
-        await adminMlCuponsImportVitrine(c.campaignId, { products: r.produtos, parcial: r.parcial, carimbar: false });
+        await adminMlCuponsImportVitrine(c.campaignId, { products: r.produtos, parcial: r.parcial, carimbar: false, total: r.total });
         feito = { campaignId: c.campaignId, title: c.title, ok: true, produtos: r.produtos.length, parcial: r.parcial };
         log("ok", `💾 ${c.title}: ${r.produtos.length} produtos gravados${r.parcial ? " (parcial)" : ""}`);
       }
@@ -361,73 +356,4 @@ async function colherVitrines(fila, { cfg, paralelo = 1, freio = null, pular, pa
 // nome antigo porque é o contrato que a tela já usa.
 export function buscarProdutos(opcoes = {}) {
   return umCiclo(opcoes);
-}
-
-// O "buscar TUDO": cicla até não sobrar cupom sem produtos.
-//
-// Devolve { ciclos, feitos, ativados, parado, motivo, lotes } — `feitos` somado de todos
-// os ciclos, e `motivo` dizendo por que parou (é o que o resumo da tela mostra:
-// um laço que termina sozinho sem dizer por quê parece que desistiu).
-export async function buscarTudo({
-  soSemProdutos = false,
-  parou = () => false,
-  log = () => {},
-  onProgresso = () => {},
-  onCiclo = () => {},
-} = {}) {
-  // Os que esta execução já tentou. É a trava que o modo cíclico OBRIGA a existir:
-  // vitrine que volta vazia não chega a gravar nada, então `productsSyncedAt` fica
-  // nulo e o cupom reaparece no `/alvos-produtos` do ciclo seguinte. Num clique só
-  // isso é inofensivo; em ciclo é abrir a mesma aba para sempre. Vale igual para o
-  // cupom que o `aAtivar` recusa (vencido, rótulo repetido entre duas campanhas):
-  // ele nunca vai ganhar `containerUrl`, e sem esta lista todo ciclo repetiria a
-  // varredura inteira da lista para clicar em zero botões.
-  const tentados = { ativacao: new Set(), vitrine: new Set() };
-  const feitos = [];
-  let ativados = 0;
-  let lotes = 0;
-  let ciclos = 0;
-  let parado = null;
-  // Sem valor inicial de propósito: todo caminho de saída do laço abaixo atribui um
-  // motivo antes do `break`, e um `= null` aqui só esconderia o dia em que um deles
-  // deixar de atribuir.
-  let motivo;
-  let maxCiclos = 20;      // sobrescrito pelo servidor no primeiro ciclo
-
-  for (;;) {
-    if (parou()) { parado = "Interrompido por você"; motivo = parado; break; }
-
-    ciclos++;
-    onCiclo({ ciclo: ciclos, maxCiclos, tentados: tentados.vitrine.size });
-    log("info", `— ciclo ${ciclos} —`);
-
-    const r = await umCiclo({ soSemProdutos, pular: tentados, parou, log, onProgresso });
-    feitos.push(...r.feitos);
-    ativados += r.ativados;
-    lotes += r.lotes || 0;
-
-    // O muro é da CONTA: o próximo ciclo encontraria o mesmo muro, só que uma aba
-    // mais tarde.
-    if (r.muro) { parado = r.parado; motivo = "o Mercado Livre pediu verificação"; break; }
-    if (r.parado) { parado = r.parado; motivo = r.parado; break; }
-
-    // Nada se moveu: nem ativou nem colheu. O próximo ciclo faria exatamente o
-    // mesmo, então isto é o fim normal — a fila acabou, ou o que sobrou nela é o
-    // que o `tentados` já descartou.
-    if (!r.ativados && !r.feitos.length) { motivo = "a fila acabou"; break; }
-
-    // A config vem do servidor a cada `/alvos-produtos`; ler do último ciclo é o
-    // suficiente e evita mais uma chamada só para saber a pausa.
-    const cfg = (await adminMlCuponsAlvosProdutos({ soSemProdutos })).config || {};
-    maxCiclos = Number(cfg.maxCiclos) || maxCiclos;
-    if (ciclos >= maxCiclos) { motivo = `parei no teto de ${maxCiclos} ciclos`; break; }
-
-    const pausa = Number(cfg.pausaEntreCiclosMs) || 60000;
-    log("info", `pausa de ${Math.round(pausa / 1000)}s antes do próximo ciclo`);
-    onProgresso({ tipo: "pausa", ms: pausa, motivo: "entre ciclos" });
-    await new Promise(r => setTimeout(r, pausa));
-  }
-
-  log(parado ? "aviso" : "ok", `fim: ${ciclos} ciclo(s) — ${motivo}`);
-  return { ciclos, feitos, ativados, parado, motivo, lotes };
 }

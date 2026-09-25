@@ -1,4 +1,4 @@
-// Os limites das três etapas da colheita de cupons, uma peça por etapa.
+// Os limites das duas etapas da colheita de cupons, uma peça por etapa.
 //
 // Moravam dentro de `AdminCupomML` num bloco só, embaixo dos três botões — e era
 // exatamente essa pilha de quatorze campos sem dono que virou o "tá tudo meio
@@ -16,9 +16,8 @@ import { inputStyle, labelStyle, botaoSecundario, botaoLink } from "./cupomEstil
 // As chaves de cada etapa. Uma lista só, ao lado dos campos que as desenham: duas
 // listas discordando é como um campo passa a ser editável numa tela e não salvar em
 // nenhuma.
-const CHAVES_LISTA = ["maxPaginasLista", "limiteCupons", "carimbarCategorias", "maxPaginasPorCategoria", "skipStoreCoupons", "categorias", "paginasDeListaEmParalelo"];
+const CHAVES_LISTA = ["maxPaginasLista", "limiteCupons", "carimbarCategorias", "maxPaginasPorCategoria", "categorias", "paginasDeListaEmParalelo"];
 const CHAVES_PRODUTOS = ["maxProductsPerCoupon", "maxPaginasVitrine", "pausaEntreVitrinesMs", "vitrinesEmParalelo", "tamanhoLoteProdutos", "activateCoupons", "maxActivationsPerRun"];
-const CHAVES_CICLOS = ["pausaEntreCiclosMs", "maxCiclos"];
 
 const linha = { display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", marginTop: 10 };
 const nota = { fontSize: 11, color: "var(--color-text-secondary)", marginTop: 8, lineHeight: 1.5 };
@@ -160,8 +159,6 @@ export function LimitesLista({ config, labels, onSaved, desabilitado = false, se
         <Numerico cfg={cfg} setCfg={setCfg} chave="maxPaginasPorCategoria" label="Páginas por categoria" min={1} max={200}
           desabilitado={desabilitado || semTeto}
           dica="Também 30 por página. A maior vertical da conta tem ~1.170 cupons: 40 páginas cobrem 1.200. Cupom além deste teto fica sem categoria." />
-        <Marcador cfg={cfg} setCfg={setCfg} chave="skipStoreCoupons" label="ignorar cupom de loja"
-          desabilitado={desabilitado} />
       </div>
       <div style={nota}>
         A coleta é a <b>lista geral</b> (<code>?all=true</code>), que traz todos os cupons da conta.
@@ -170,10 +167,9 @@ export function LimitesLista({ config, labels, onSaved, desabilitado = false, se
         a gente pede na URL. Sem elas a coluna Categoria fica vazia. <b>Quais</b> categorias existem
         a rodada descobre sozinha, na primeira página: o ML manda a lista delas em toda página da
         lista de cupons, e é por isso que a caixa abaixo pode ficar em branco sem prejuízo.
-        Cupom de <b>loja</b> agora entra por padrão e aparece separado na tabela; ligar o último
-        marcador volta ao comportamento antigo, em que ele era descartado. Cupom de loja não entra
-        em vertical nenhuma no ML — a Categoria dele é “—” por natureza, e quem o identifica é a
-        coluna Tipo.
+        Cupom de <b>loja</b> não entra em vertical nenhuma no ML — a Categoria dele é “—” por
+        natureza, e quem o identifica é a coluna Tipo. Ignorá-lo é uma escolha do card 1, fora
+        destes limites.
       </div>
 
       {verticais.length > 0 && (
@@ -246,29 +242,7 @@ export function LimitesProdutos({ config, onSaved, desabilitado = false, comTitu
   );
 }
 
-// BOTÃO 3 — os ciclos. Os dois únicos números que são só dele.
-export function LimitesCiclos({ config, onSaved, desabilitado = false, comTitulo = false }) {
-  const { cfg, setCfg, salvar, salvando } = useRascunho(config, CHAVES_CICLOS, onSaved);
-  if (!cfg) return null;
-
-  return (
-    <Moldura titulo={comTitulo ? "Buscar TUDO — os ciclos" : "Limites desta etapa"}>
-      <div style={linha}>
-        <Numerico cfg={cfg} setCfg={setCfg} chave="pausaEntreCiclosMs" label="Pausa entre ciclos (ms)" min={5000} max={600000} largura={150} desabilitado={desabilitado} />
-        <Numerico cfg={cfg} setCfg={setCfg} chave="maxCiclos" label="Máximo de ciclos" min={1} max={200} desabilitado={desabilitado} />
-      </div>
-      <div style={nota}>
-        O botão 3 repete a etapa 2 até a fila esvaziar. Ele já para sozinho quando não sobra
-        cupom, quando o ML pede verificação e quando um ciclo inteiro não move nada — o
-        <b> máximo de ciclos</b> é só rede de segurança. A pausa entre ciclos é o intervalo em que
-        a sua conta fica quieta; é maior que a pausa entre vitrines de propósito.
-      </div>
-      <Salvar o_que="dos ciclos" salvar={salvar} salvando={salvando} desabilitado={desabilitado} />
-    </Moldura>
-  );
-}
-
-// As três de uma vez, para a aba "Config" — lá elas moram num card só, e aí os
+// As duas de uma vez, para a aba "Config" — lá elas moram num card só, e aí os
 // subtítulos por etapa voltam a fazer falta.
 export function Config({ config, labels, onSaved }) {
   if (!config) return null;
@@ -276,13 +250,12 @@ export function Config({ config, labels, onSaved }) {
     <div style={{ marginTop: 16, borderTop: "0.5px solid var(--color-border-tertiary)", paddingTop: 12 }}>
       <div style={{ fontWeight: 500, marginBottom: 2 }}>Limites</div>
       <div style={nota}>
-        Tudo o que as três etapas fazem cabe aqui, e cada uma tem o seu <b>salvar</b>. Cada página
+        Tudo o que as duas etapas fazem cabe aqui, e cada uma tem o seu <b>salvar</b>. Cada página
         aberta é uma visita ao ML com a sua conta — a mesma do Hub de Afiliados —, então subir muito
         estes números aumenta a chance de o ML pedir verificação.
       </div>
       <LimitesLista config={config} labels={labels} onSaved={onSaved} comTitulo />
       <LimitesProdutos config={config} onSaved={onSaved} comTitulo />
-      <LimitesCiclos config={config} onSaved={onSaved} comTitulo />
     </div>
   );
 }

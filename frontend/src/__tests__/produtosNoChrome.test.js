@@ -32,6 +32,15 @@ beforeEach(() => {
 });
 
 describe("umCiclo em lotes", () => {
+  it("o total que a vitrine declara vai junto para o servidor", async () => {
+    api.adminMlCuponsAlvosProdutos.mockResolvedValue({ prontos: [cupom(1, { containerUrl: "https://ml/1" })], precisamAtivar: [], config });
+    coletor.raparVitrine.mockResolvedValue({ produtos: [{ name: "x" }], parcial: true, total: 200 });
+
+    await umCiclo({});
+
+    expect(api.adminMlCuponsImportVitrine).toHaveBeenCalledWith("C1", expect.objectContaining({ total: 200 }));
+  });
+
   it("45 prontos com lote de 20 viram 3 lotes, cada um anunciado como salvo", async () => {
     const prontos = Array.from({ length: 45 }, (_, i) => cupom(i, { containerUrl: `https://ml/${i}` }));
     api.adminMlCuponsAlvosProdutos.mockResolvedValue({ prontos, precisamAtivar: [], config });

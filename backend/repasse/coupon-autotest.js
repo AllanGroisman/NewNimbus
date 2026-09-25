@@ -403,10 +403,15 @@ async function registrarCheckout({ code, url = null, material, source = "repasse
 
   const resultado = interpretar(material, c);
   const verdict = verdictDe(resultado);
-  const message = mensagemDe(resultado);
+  const vinculo = verdict === "valid" && resultado.campaignId
+    ? await ligarAoProduto({ material, url, campaignId: resultado.campaignId, pg })
+    : null;
+  let message = mensagemDe(resultado);
+  if (vinculo?.noCatalogo) message += " · adicionado ao catálogo";
+  else if (vinculo?.vinculados) message += " · ligado ao produto";
   const linha = await pg.recordCodeCheck({
     code: c, verdict, campaignId: resultado.campaignId, message, source: fonte,
-    raw: { ...resultado, url, via: "checkout" },
+    raw: { ...resultado, url, via: "checkout", vinculo },
   });
   _reservas.delete(c);
 
@@ -426,6 +431,7 @@ async function registrarCheckout({ code, url = null, material, source = "repasse
   await logAutotest({
     code: c, action: ACTION.TEST, ok: verdict === "valid", verdict,
     campaignId: resultado.campaignId, errorKind: bloqueio, message, durationMs,
+    produtos: vinculo?.vinculados ?? null,
   });
   _status.testados += 1;
   _status.lastRunAt = new Date().toISOString();
@@ -446,7 +452,63 @@ async function registrarCheckout({ code, url = null, material, source = "repasse
     }).catch(() => {});
   }
 
-  return { resultado, verdict, message, linha };
+  return { resultado, verdict, message, linha, vinculo };
+}
+
+// O cupom valeu no checkout DESTE produto: é a prova mais forte que existe de que
+// ele vale aqui. Vira vínculo `origem: "checkout"` pelo mesmo caminho da sonda
+// (coupons/pg.js:vincularPorCheckout), que também cria a campanha se ela faltar e
+// carimba o catálogo. Os dados do cupom saem da própria página dos cupons.
+// Falhar aqui não desfaz o veredito — só fica sem o vínculo.
+async function ligarAoProduto({ material, url, campaignId, pg }) {
+  try {
+    const { parseCheckoutCupons } = require("../coupons/checkout-list");
+    const { chavesCandidatas } = require("../coupons/quick-check");
+    const pagina = parseCheckoutCupons(material?.htmlCupons);
+    const cupom = pagina.ok ? pagina.cupons.find(x => String(x.campaignId) === String(campaignId)) : null;
+    if (!cupom) return null;
+    // A página final é a canônica do ML; o link do repasse costuma ser de afiliado.
+    const final = material?.finalUrl && !material.notProductPage ? material.finalUrl : null;
+    const productUrl = final || url;
+    const productKeys = chavesCandidatas(productUrl);
+    if (!productUrl || !productKeys.length) return null;
+    const { criado } = await garantirNoCatalogo({ produto: material?.produto, productUrl, productKeys });
+    const r = await pg.vincularPorCheckout({ productKeys, productUrl, cupons: [cupom] });
+    return { ...r, noCatalogo: criado };
+  } catch (err) {
+    console.error(`[repasse] vínculo do cupom ${campaignId} ao produto: ${err.message}`);
+    return { erro: err.message };
+  }
+}
+
+// O produto do repasse quase nunca passou pelo scraping, e o `vincularPorCheckout`
+// só carimba linhas do catálogo que JÁ existem — o cupom ficava ligado a um
+// produto que ninguém via. Então, se o anúncio ainda não está no catálogo, ele
+// entra com os dados que a extensão leu na PDP (cupom-checkout.js:naPagina_produto).
+// Se já está, a linha fica como está: quem a atualiza é o scraping.
+async function garantirNoCatalogo({ produto, productUrl, productKeys }) {
+  const { prisma } = require("../db");
+  const { mlAnuncioIdFromUrl } = require("../catalog/product-key");
+  const anuncio = mlAnuncioIdFromUrl(productUrl);
+  const existe = await prisma().catalogProduct.findFirst({
+    where: { OR: [{ key: { in: productKeys } }, ...(anuncio ? [{ mlAnuncioId: anuncio }] : [])] },
+    select: { key: true },
+  });
+  if (existe || !produto?.name) return { criado: false };
+
+  const { upgradeMLImageUrl, normalizeSoldText } = require("../scraping/scraper");
+  const r = await require("../catalog/pg").upsertProducts([{
+    name: String(produto.name).trim(),
+    link: productUrl,
+    img: produto.img ? upgradeMLImageUrl(produto.img) : null,
+    price: produto.price ?? null,
+    originalPrice: produto.originalPrice ?? null,
+    discount: produto.discount ?? null,
+    sold: normalizeSoldText(produto.sold),
+    store: "Mercado Livre",
+    category: null,
+  }]);
+  return { criado: r.inserted > 0 };
 }
 
 // ── Agenda ───────────────────────────────────────────────────────────────

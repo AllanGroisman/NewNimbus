@@ -452,6 +452,59 @@ export function ehPaginaDeProduto(finalUrl) {
       || /^produto\./i.test(u.hostname);
 }
 
+// Landing de afiliado (`/social/…`, onde desemboca o meli.la): o caminho até a
+// PDP, do mesmo jeito que o repasse faz no servidor (scraping/scraper.js
+// :clickGoToProductML e scraping/ml-social.js:parseSocialLanding).
+//   1. o "Ir para o produto": se for link, devolve o href SEM clicar — o
+//      target=_blank abriria outra aba, e o teste segue nesta;
+//   2. sem botão (landing renderizada por JS), o estado embutido `_n.ctx.r`: o
+//      produto compartilhado é o `card-featured` do primeiro nível. O carrossel
+//      "quem viu também comprou" mora aninhado e é de OUTROS produtos — por isso
+//      só vale exatamente um card, e ambiguidade é null.
+export function naPagina_irParaProduto() {
+  const RE = /ir\s+para\s+o?\s*produto|ver\s+produto/i;
+  const el = Array.from(document.querySelectorAll("a, button")).find(e => RE.test((e.textContent || "").trim()));
+  if (el) {
+    const href = el.tagName === "A" ? el.href : null;
+    if (href && /^https?:/i.test(href)) return { href, via: "botao" };
+    el.click();
+    return { clicou: true, via: "botao" };
+  }
+
+  const MARCA = "_n.ctx.r=";
+  const script = Array.from(document.querySelectorAll("script")).find(s => (s.textContent || "").includes(MARCA));
+  if (!script) return null;
+  const texto = script.textContent;
+  const inicio = texto.indexOf("{", texto.indexOf(MARCA) + MARCA.length);
+  if (inicio < 0) return null;
+  let fim = -1, prof = 0, emString = false, escapado = false;
+  for (let i = inicio; i < texto.length; i++) {
+    const c = texto[i];
+    if (emString) {
+      if (escapado) escapado = false;
+      else if (c === "\\") escapado = true;
+      else if (c === '"') emString = false;
+      continue;
+    }
+    if (c === '"') emString = true;
+    else if (c === "{") prof++;
+    else if (c === "}" && --prof === 0) { fim = i; break; }
+  }
+  if (fim < 0) return null;
+  let estado;
+  try { estado = JSON.parse(texto.slice(inicio, fim + 1)); } catch { return null; }
+  const componentes = estado?.appProps?.pageProps?.data?.components;
+  const info = Array.isArray(componentes)
+    ? componentes.find(c => c?.id === "card-featured")?.recommendation_data?.recommendation_info
+    : null;
+  const cards = Array.isArray(info?.polycards) ? info.polycards : [];
+  if (cards.length !== 1) return null;
+  const url = cards[0]?.metadata?.url;
+  if (!url) return null;
+  const href = /^https?:\/\//i.test(url) ? url : `${info.polycard_context?.url_prefix || "https://"}${url}`;
+  return { href, via: "estado" };
+}
+
 // `rapido` e `semCarrinho` são do lote da sonda (frontend/src/data/sondaLote.js):
 // o primeiro encerra assim que a página dos cupons foi lida, o segundo proíbe o
 // plano B do carrinho — com várias abas ao mesmo tempo, o carrinho da conta é um

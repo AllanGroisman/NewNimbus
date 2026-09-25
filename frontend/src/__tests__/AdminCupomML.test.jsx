@@ -98,8 +98,9 @@ const filaCom = (prontos = [], precisamAtivar = []) => ({
 });
 
 const BOTAO_LISTA = /1 · Buscar cupons e condições/i;
-const BOTAO_PRODUTOS = /2 · Buscar produtos dos que faltam/i;
-const BOTAO_TUDO = /3 · Buscar TUDO/i;
+// Sensível a maiúscula de propósito: o botão da linha é "buscar produtos".
+const BOTAO_PRODUTOS = /^Buscar produtos( \(\d+\))?$/;
+const CARD_PRODUTOS = /2 · Buscar Produtos Dos Cupons/i;
 
 async function abrirTela() {
   render(<PageCuponsML />);
@@ -114,7 +115,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   // A rodada vive no módulo (task 6) e duraria de um teste para o outro.
   _zerarParaTestes();
-  // O checkbox dos parciais é lembrado no navegador: sem limpar, um teste herdaria o do outro.
+  // A escolha dos parciais é lembrada no navegador: sem limpar, um teste herdaria o do outro.
   localStorage.clear();
   adminMlCuponsStatus.mockResolvedValue({ config: {}, running: false });
   adminMlCupons.mockResolvedValue(VAZIO);
@@ -151,22 +152,37 @@ describe("as duas etapas são dois botões", () => {
     ));
     await abrirTela();
 
-    expect(await screen.findByRole("button", { name: /2 · Buscar produtos dos que faltam \(3\)/i })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Buscar produtos (3)" })).toBeInTheDocument();
   });
 
-  it("o checkbox dos parciais refaz a fila e diz quantos ficam de fora", async () => {
+  it("a escolha \"só os sem nenhum produto\" refaz a fila, e cada opção diz o seu tamanho", async () => {
     coletorInfo.mockResolvedValue(EXTENSAO("raspar", "lista"));
+    const contagens = { incompletos: 5, semNada: 1 };
     adminMlCuponsAlvosProdutos.mockImplementation(async ({ soSemProdutos } = {}) => (soSemProdutos
-      ? { ...filaCom([{ campaignId: "1", title: "A", containerUrl: "u1" }]), parciaisFora: 4 }
-      : filaCom([1, 2, 3, 4, 5].map(i => ({ campaignId: String(i), title: `C${i}`, containerUrl: `u${i}` })))));
+      ? { ...filaCom([{ campaignId: "1", title: "A", containerUrl: "u1" }]), ...contagens, parciaisFora: 4 }
+      : { ...filaCom([1, 2, 3, 4, 5].map(i => ({ campaignId: String(i), title: `C${i}`, containerUrl: `u${i}` }))), ...contagens }));
     await abrirTela();
-    expect(await screen.findByRole("button", { name: /Buscar produtos dos que faltam \(5\)/i })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Buscar produtos (5)" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /todos os que faltam \(5\)/i })).toBeChecked();
 
-    fireEvent.click(screen.getByRole("checkbox", { name: /não têm nenhum produto/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /só os que não têm nenhum produto \(1\)/i }));
 
-    expect(await screen.findByRole("button", { name: /Buscar produtos dos que faltam \(1\)/i })).toBeInTheDocument();
-    expect(screen.getByText(/4 parcial\(is\) ficam de fora/)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Buscar produtos (1)" })).toBeInTheDocument();
     expect(adminMlCuponsAlvosProdutos).toHaveBeenCalledWith({ soSemProdutos: true });
+  });
+
+  it("o resumo reparte os cupons em sem nenhum produto, parciais e completos", async () => {
+    adminMlCuponsStatus.mockResolvedValue({
+      config: {}, running: false,
+      stats: { cupons: 10, porCategoria: [], produtosPorCupom: { semNada: 3, parciais: 2, completos: 5 } },
+    });
+    await abrirTela();
+
+    const resumo = await screen.findByRole("group", { name: "Resumo dos produtos" });
+    expect(within(resumo).getByText("Cupons no sistema").previousSibling).toHaveTextContent("10");
+    expect(within(resumo).getByText("Sem nenhum produto").previousSibling).toHaveTextContent("3");
+    expect(within(resumo).getByText("Parciais").previousSibling).toHaveTextContent("2");
+    expect(within(resumo).getByText("Completos").previousSibling).toHaveTextContent("5");
   });
 
   it("sem nada faltando, o botão dos produtos fica desligado", async () => {
@@ -306,7 +322,7 @@ describe("etapa 1 — buscar cupons e condições", () => {
       const card1 = screen.getByRole("region", { name: /1 · Cupons e condições/i });
       expect(await within(card1).findByText(/Varredura terminada/)).toBeInTheDocument();
       // E não no card do vizinho.
-      const card2 = screen.getByRole("region", { name: /2 · Produtos dos que faltam/i });
+      const card2 = screen.getByRole("region", { name: CARD_PRODUTOS });
       expect(within(card2).queryByText(/Varredura terminada/)).toBeNull();
     });
 
@@ -315,7 +331,7 @@ describe("etapa 1 — buscar cupons e condições", () => {
       await abrirTela();
 
       const card1 = screen.getByRole("region", { name: /1 · Cupons e condições/i });
-      const card2 = screen.getByRole("region", { name: /2 · Produtos dos que faltam/i });
+      const card2 = screen.getByRole("region", { name: CARD_PRODUTOS });
       expect(within(card1).getByLabelText("Páginas da lista geral")).toBeInTheDocument();
       expect(within(card1).queryByLabelText("Aceites por rodada")).toBeNull();
       expect(within(card2).getByLabelText("Aceites por rodada")).toBeInTheDocument();
@@ -346,8 +362,37 @@ describe("etapa 1 — buscar cupons e condições", () => {
       expect(await screen.findByLabelText("Páginas da lista geral")).toBeDisabled();
       expect(screen.getByLabelText("Teto de cupons (0 = todos)")).toBeDisabled();
       expect(screen.getByLabelText("Páginas por categoria")).toBeDisabled();
-      // O que NÃO é teto continua valendo: eles dizem o que colher, não até onde ir.
-      expect(screen.getByRole("checkbox", { name: /ignorar cupom de loja/i })).not.toBeDisabled();
+      // O que NÃO é teto continua valendo: ele diz o que colher, não até onde ir.
+      expect(screen.getByRole("checkbox", { name: /Ignorar cupons de loja/i })).not.toBeDisabled();
+    });
+  });
+
+  describe("ignorar cupons de loja", () => {
+    it("mora em destaque no card 1, fora dos limites da etapa", async () => {
+      await abrirTela();
+      const card1 = screen.getByRole("region", { name: /1 · Cupons e condições/i });
+      expect(within(card1).getByRole("checkbox", { name: /Ignorar cupons de loja/i })).toBeInTheDocument();
+      // E só existe uma caixa: a dos limites saiu.
+      expect(screen.getAllByRole("checkbox", { name: /cupons? de loja/i })).toHaveLength(1);
+    });
+
+    it("marcar salva na hora, só a chave dela — e vale no \"tudo o que o ML tiver\"", async () => {
+      adminMlCuponsSaveConfig.mockResolvedValue({});
+      await abrirTela();
+
+      fireEvent.click(await screen.findByRole("radio", { name: /tudo o que o ML tiver/i }));
+      const caixa = screen.getByRole("checkbox", { name: /Ignorar cupons de loja/i });
+      expect(caixa).not.toBeChecked();
+      fireEvent.click(caixa);
+
+      await waitFor(() => expect(adminMlCuponsSaveConfig).toHaveBeenCalledWith({ skipStoreCoupons: true }));
+      expect(caixa).toBeChecked();
+    });
+
+    it("mostra o que está salvo no servidor", async () => {
+      adminMlCuponsStatus.mockResolvedValue({ config: { skipStoreCoupons: true }, running: false });
+      await abrirTela();
+      expect(await screen.findByRole("checkbox", { name: /Ignorar cupons de loja/i })).toBeChecked();
     });
   });
 
@@ -592,6 +637,24 @@ describe("etapa 2 — buscar os produtos", () => {
 // ─────────────────────────────────────────────────────────────────────────
 // Apagar
 // ─────────────────────────────────────────────────────────────────────────
+describe("produtos na linha do cupom", () => {
+  const linha = (extra) => ({ campaignId: "5", title: "Um cupom", scope: "campaign", activated: true, kind: "percent", value: 10, inCatalog: 0, ...extra });
+
+  it("com o total da vitrine, mostra guardados/total", async () => {
+    adminMlCupons.mockResolvedValue({ ...VAZIO, total: 1, items: [linha({ products: 45, vitrineTotal: 200 })] });
+    await abrirTela();
+    expect(await screen.findByText("45/200")).toHaveAttribute("title", expect.stringMatching(/45 guardados de 200/));
+  });
+
+  it("sem o total, fica só o que foi guardado", async () => {
+    adminMlCupons.mockResolvedValue({ ...VAZIO, total: 1, items: [linha({ products: 45, vitrineTotal: null })] });
+    await abrirTela();
+    await screen.findByText("Um cupom");
+    expect(screen.getByText("45")).toBeInTheDocument();
+    expect(screen.queryByText(/45\//)).toBeNull();
+  });
+});
+
 describe("apagar cupons", () => {
   const cupom = {
     campaignId: "42", title: "Um cupom", scope: "campaign", activated: true,
@@ -779,7 +842,7 @@ describe("categoria dos cupons", () => {
 });
 
 // O balanço da última vez de cada botão vem do servidor e sobrevive a um F5 — o
-// log ao vivo não. Um por botão (task 17): os três fazem coisas diferentes.
+// log ao vivo não. Um por botão (task 17): eles fazem coisas diferentes.
 describe("o balanço da última vez de cada botão", () => {
   it("terminada a varredura, o resumo vira números em vez de uma frase corrida", async () => {
     adminMlCuponsStatus.mockResolvedValue({
@@ -789,7 +852,7 @@ describe("o balanço da última vez de cada botão", () => {
           at: "2026-08-31T12:00:00.000Z", duracaoMs: 92000, erro: null, interrompida: false,
           resultado: { cupons: 120, novos: 7, atualizados: 100, cuponsDeLojaIgnorados: 12 },
         },
-        produtos: null, tudo: null,
+        produtos: null,
       },
       log: [],
     });
@@ -800,7 +863,7 @@ describe("o balanço da última vez de cada botão", () => {
     expect(screen.getByText("Novos").previousSibling).toHaveTextContent("7");
     expect(screen.getByText("Duração").previousSibling).toHaveTextContent("92s");
     // Sem balanço dos outros botões, nada deles aparece.
-    expect(screen.queryByText(/2 · Produtos dos que faltam — última vez/)).toBe(null);
+    expect(screen.queryByText(/2 · Buscar Produtos Dos Cupons — última vez/)).toBe(null);
   });
 
   it("cada botão mostra o seu, com o aviso de quem foi interrompido", async () => {
@@ -810,160 +873,15 @@ describe("o balanço da última vez de cada botão", () => {
       ultimas: {
         lista: { at, duracaoMs: 1000, resultado: { cupons: 5 }, erro: null, interrompida: false },
         produtos: { at, duracaoMs: 2000, resultado: { tentados: 4, colhidos: 3 }, erro: "Interrompido por você", interrompida: true },
-        tudo: { at, duracaoMs: 3000, resultado: { ciclos: 2, ficaramDeFora: 1 }, erro: null, interrompida: false },
       },
       log: [],
     });
     await abrirTela();
 
     expect(await screen.findByText(/1 · Cupons e condições — última vez/)).toBeInTheDocument();
-    expect(screen.getByText(/2 · Produtos dos que faltam — última vez .*\(interrompida\)/)).toBeInTheDocument();
-    expect(screen.getByText(/3 · Buscar TUDO — última vez/)).toBeInTheDocument();
+    expect(screen.getByText(/2 · Buscar Produtos Dos Cupons — última vez .*\(interrompida\)/)).toBeInTheDocument();
     expect(screen.getByText("Interrompido por você")).toBeInTheDocument();
-    expect(screen.getByText("Ciclos").previousSibling).toHaveTextContent("2");
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────
-// ETAPA 3 — "buscar TUDO", os ciclos
-// ─────────────────────────────────────────────────────────────────────────
-//
-// O botão 3 é a etapa 1 sem teto de páginas seguida da etapa 2 repetida até a
-// fila esvaziar. O que estes testes protegem é a TERMINAÇÃO: um laço que abre
-// abas no ML com a conta do Hub não pode depender de alguém estar olhando.
-describe("etapa 3 — buscar TUDO (até acabar)", () => {
-  const produto = { name: "Boneco", link: "https://www.mercadolivre.com.br/x/p/MLB1", price: 25.9 };
-  const pronto = (id) => ({ campaignId: id, title: `Cupom ${id}`, containerUrl: `https://lista.mercadolivre.com.br/_Container_${id}` });
-
-  // A etapa 1 mais curta possível: uma página e acabou.
-  const listaDeUmaPagina = () => {
-    adminMlCuponsLocalStart.mockResolvedValue({
-      config: {}, ativa: false, categorias: [null],
-      proxima: { url: "https://www.mercadolivre.com.br/cupons/filter?all=true&page=1", grouping: null, pagina: 1 },
-    });
-    paginaDeCupons.mockResolvedValue({ tabId: 7, props: { p: 1 }, muro: null, clicados: 0, semBotao: [] });
-    adminMlCuponsLocalPagina.mockResolvedValue({
-      cupons: 1, novos: 1, de: 1, proxima: null, alvos: null, resumo: { cupons: 1, novos: 1, avisos: [] },
-    });
-  };
-
-  beforeEach(() => {
-    coletorInfo.mockResolvedValue(EXTENSAO("raspar", "lista"));
-    adminMlCuponsImportVitrine.mockResolvedValue({ ok: true, produtos: 1, parcial: false });
-    listaDeUmaPagina();
-  });
-
-  it("varre a lista SEM teto de páginas — o flag é do servidor, não um número da tela", async () => {
-    adminMlCuponsAlvosProdutos.mockResolvedValue(SEM_ALVO);
-    await abrirTela();
-
-    fireEvent.click(await screen.findByRole("button", { name: BOTAO_TUDO }));
-
-    // `tudo: true`, e não `maxPaginasLista: 200`: quem sabe qual é o teto é o
-    // servidor, e `startLocalRun` espalha overrides sem passar pelos clamps.
-    await waitFor(() => expect(adminMlCuponsLocalStart).toHaveBeenCalledWith({ tudo: true }));
-  });
-
-  it("cicla até a fila esvaziar e para sozinho", async () => {
-    adminMlCuponsAlvosProdutos.mockResolvedValue(filaCom([pronto("13471229")]));
-    raparVitrine.mockResolvedValue({ produtos: [produto], parcial: false, motivo: null, paginas: 1 });
-    await abrirTela();
-
-    fireEvent.click(await screen.findByRole("button", { name: BOTAO_TUDO }));
-
-    await screen.findByText(/Buscar tudo — terminado/i);
-    // O balanço do botão 3 é dele: não é o do botão 2, nem o da lista.
-    expect(adminMlCuponsRodadaFim).toHaveBeenCalledTimes(1);
-    expect(adminMlCuponsRodadaFim).toHaveBeenCalledWith(expect.objectContaining({
-      botao: "tudo", resultado: expect.objectContaining({ colhidos: 1, cuponsNaLista: 1 }),
-    }));
-    // A vitrine foi aberta UMA vez, embora o `/alvos-produtos` continue devolvendo
-    // o mesmo cupom: o segundo ciclo o reconhece como já tentado e encerra.
-    expect(raparVitrine).toHaveBeenCalledTimes(1);
-    expect(adminMlCuponsImportVitrine).toHaveBeenCalledTimes(1);
-  });
-
-  it("não repete o cupom cuja vitrine veio vazia — era o laço infinito", async () => {
-    // Vitrine vazia não grava nada, então `productsSyncedAt` fica nulo e o cupom
-    // volta na fila do ciclo seguinte. Num clique só isso é inofensivo; em ciclo
-    // seria abrir a mesma aba no ML para sempre, com a conta do Hub.
-    adminMlCuponsAlvosProdutos.mockResolvedValue(filaCom([pronto("13471229")]));
-    raparVitrine.mockResolvedValue({ produtos: [], parcial: false, motivo: "sem cards", paginas: 1 });
-    await abrirTela();
-
-    fireEvent.click(await screen.findByRole("button", { name: BOTAO_TUDO }));
-
-    await screen.findByText(/Buscar tudo — terminado/i);
-    expect(raparVitrine).toHaveBeenCalledTimes(1);
-    expect(adminMlCuponsImportVitrine).not.toHaveBeenCalled();
-    // E o resumo DIZ que ele ficou de fora: o contador do botão 2 não vai zerar
-    // por causa dele, e sem essa linha parece que o "até acabar" desistiu.
-    expect(await screen.findByText(/foram tentados e não deram vitrine/i)).toBeInTheDocument();
-  });
-
-  it("não repete a passada de ativação por quem o servidor recusa ativar", async () => {
-    // O `aAtivar` recusa cupom vencido e rótulo repetido entre duas campanhas.
-    // Esse cupom nunca ganha `containerUrl` — e sem a trava, todo ciclo repetiria
-    // a varredura INTEIRA da lista para clicar em zero botões.
-    adminMlCuponsAlvosProdutos.mockResolvedValue(filaCom([], [{ campaignId: "13373945", title: "Ambíguo" }]));
-    adminMlCuponsLocalPagina.mockResolvedValue({
-      cupons: 1, novos: 1, de: 1, proxima: null, alvos: null, resumo: { cupons: 1, novos: 1, ativados: 0, avisos: [] },
-    });
-    await abrirTela();
-
-    fireEvent.click(await screen.findByRole("button", { name: BOTAO_TUDO }));
-
-    await screen.findByText(/Buscar tudo — terminado/i);
-    // Uma varredura da lista (a etapa 1) + uma passada de ativação. A terceira
-    // chamada seria o ciclo 2 tentando de novo o que já foi recusado.
-    expect(adminMlCuponsLocalStart).toHaveBeenCalledTimes(2);
-    expect(adminMlCuponsLocalStart).toHaveBeenLastCalledWith({ ativarApenas: ["13373945"] });
-  });
-
-  it("o muro do ML encerra tudo — não só aquele cupom", async () => {
-    adminMlCuponsAlvosProdutos.mockResolvedValue(filaCom([pronto("1"), pronto("2")]));
-    raparVitrine.mockImplementation((_url, { onProgresso }) => {
-      onProgresso({ tipo: "muro", muro: "captcha", pagina: 1 });
-      return Promise.resolve({ produtos: [produto], parcial: true, motivo: null, paginas: 1 });
-    });
-    await abrirTela();
-
-    fireEvent.click(await screen.findByRole("button", { name: BOTAO_TUDO }));
-
-    await screen.findByText(/Buscar tudo — interrompido/i);
-    // Parou no primeiro: o muro é estado da CONTA (a mesma do Hub), não daquela
-    // vitrine — seguir para o segundo só queima a conta mais rápido.
-    expect(raparVitrine).toHaveBeenCalledTimes(1);
-  });
-
-  it("o teto de ciclos é a rede de segurança para o caso que ninguém previu", async () => {
-    // Uma fila que nunca repete: sem o teto, este laço não terminaria.
-    let n = 0;
-    adminMlCuponsAlvosProdutos.mockImplementation(() => Promise.resolve(filaCom([pronto(`c${n++}`)])));
-    raparVitrine.mockResolvedValue({ produtos: [produto], parcial: false, motivo: null, paginas: 1 });
-    await abrirTela();
-
-    fireEvent.click(await screen.findByRole("button", { name: BOTAO_TUDO }));
-
-    // A frase sai no log E no resumo; o que importa é a do RESUMO, que é a que
-    // sobra na tela depois que o log é limpo.
-    expect(await screen.findByText(/Parou porque parei no teto de 2 ciclos/i)).toBeInTheDocument();
-    expect(raparVitrine).toHaveBeenCalledTimes(2);
-  });
-
-  it("a lista que parou no teto de páginas vira aviso, não uma linha perdida no log", async () => {
-    // A diferença entre "trouxe tudo" e "trouxe o que coube" é a única coisa que
-    // este botão não pode deixar implícita.
-    adminMlCuponsLocalPagina.mockResolvedValue({
-      cupons: 1200, novos: 1200, de: 40, proxima: null, alvos: null,
-      resumo: { cupons: 1200, novos: 1200, avisos: ["Parei no teto de 40 páginas da lista geral — suba o limite se faltou cupom."] },
-    });
-    adminMlCuponsAlvosProdutos.mockResolvedValue(SEM_ALVO);
-    await abrirTela();
-
-    fireEvent.click(await screen.findByRole("button", { name: BOTAO_TUDO }));
-
-    expect(await screen.findByText(/Parei no teto de 40 páginas da lista geral/i)).toBeInTheDocument();
+    expect(screen.getByText("Colhidos").previousSibling).toHaveTextContent("3");
   });
 });
 
@@ -971,7 +889,7 @@ describe("etapa 3 — buscar TUDO (até acabar)", () => {
 // Trazer uma campanha pelo ID (task 32)
 // ─────────────────────────────────────────────────────────────────────────
 //
-// A quarta forma de um cupom entrar aqui — e a única que parte de um número que veio
+// Outra forma de um cupom entrar aqui — e a única que parte de um número que veio
 // de fora (um link, um print). O que estes testes protegem é a ORDEM: olhar primeiro
 // no que já está guardado, e só então oferecer o ML. Trazer uma campanha abre um
 // Chrome com a conta do sistema e varre a lista de cupons dela; fazer isso por uma
@@ -1059,12 +977,26 @@ describe("a agenda das etapas", () => {
   });
 
   it("sem a extensão a aba não finge que rodou: avisa o motivo", async () => {
+    adminMlCuponsAgendaPendentes.mockResolvedValue({ pendentes: [{ botao: "lista", slot: "03:00" }] });
+    await abrirTela();
+
+    await waitFor(() => expect(adminMlCuponsAgendaFalhou).toHaveBeenCalledWith("lista", expect.stringMatching(/extensão/)));
+    expect(adminMlCuponsAgendaReivindicar).not.toHaveBeenCalled();
+    expect(adminMlCuponsLocalStart).not.toHaveBeenCalled();
+  });
+
+  it("a etapa \"tudo\" (o antigo botão 3) falha em vez de ficar pendurada", async () => {
+    coletorInfo.mockResolvedValue(EXTENSAO("raspar", "lista"));
     adminMlCuponsAgendaPendentes.mockResolvedValue({ pendentes: [{ botao: "tudo", slot: "03:00" }] });
     await abrirTela();
 
-    await waitFor(() => expect(adminMlCuponsAgendaFalhou).toHaveBeenCalledWith("tudo", expect.stringMatching(/extensão/)));
+    await waitFor(() => expect(adminMlCuponsAgendaFalhou).toHaveBeenCalledWith("tudo", expect.stringMatching(/removida/)));
     expect(adminMlCuponsAgendaReivindicar).not.toHaveBeenCalled();
-    expect(adminMlCuponsLocalStart).not.toHaveBeenCalled();
+  });
+
+  it("não existe mais o botão 3", async () => {
+    await abrirTela();
+    expect(screen.queryByRole("region", { name: /Buscar TUDO/i })).toBeNull();
   });
 });
 
@@ -1113,7 +1045,7 @@ describe("sair da aba e voltar no meio de uma rodada", () => {
     expect(within(card1).getByRole("button", { name: /Parar a varredura/ })).toBeInTheDocument();
     expect(within(card1).getByText(/O que está acontecendo agora/)).toBeInTheDocument();
     // Os vizinhos continuam travados: a rodada de antes ainda é a dona do Chrome.
-    expect(screen.queryByRole("button", { name: BOTAO_TUDO })).toBeNull();
+    expect(screen.getByRole("button", { name: BOTAO_PRODUTOS })).toBeDisabled();
 
     fireEvent.click(within(card1).getByRole("button", { name: /Parar a varredura/ }));
     soltar();

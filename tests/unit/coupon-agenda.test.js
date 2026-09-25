@@ -60,6 +60,14 @@ describe("config da agenda", () => {
 });
 
 describe("pendências", () => {
+  it("a etapa \"tudo\" (o antigo botão 3) não dispara mais, nem ligada", async () => {
+    sync.writeConfig({ agenda: { tudo: { enabled: true, scheduleMode: "times", times: ["08:00"] } } });
+    agenda.reagendar();
+    expect(agenda.status().proximo).not.toHaveProperty("tudo");
+    await vi.advanceTimersByTimeAsync(60 * 1000);
+    expect(agenda.pendentes()).toEqual([]);
+  });
+
   it("o horário vencido vira pendência, com o horário dele", async () => {
     agendaDaLista();
     expect(agenda.status().proximo.lista).toBe(new Date(2026, 8, 23, 8, 0).toISOString());

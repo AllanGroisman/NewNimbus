@@ -137,12 +137,31 @@
     return null;
   }
 
+  // Quantos produtos a vitrine tem NO TOTAL — o "200" do "45/200" da tabela. A
+  // vitrine é uma página de busca do ML, e busca diz quantos resultados deu. Duas
+  // fontes, na ordem: o `paging.total` do estado que a página carrega (número
+  // cru), e o texto "1.234 resultados" do topo. Nenhuma das duas é garantida —
+  // sem elas o total fica `null` e a tabela mostra só o que foi guardado.
+  function totalDaVitrine(doc) {
+    for (const s of doc.querySelectorAll("script")) {
+      const m = /"paging"\s*:\s*\{[^{}]*?"total"\s*:\s*(\d+)/.exec(s.textContent || "");
+      if (m) return parseInt(m[1], 10);
+    }
+    const m = /([\d.]+)\s*resultados?/i.exec(txt(doc.querySelector(".ui-search-search-result__quantity-results")) || "");
+    if (m) {
+      const n = parseInt(m[1].replace(/\./g, ""), 10);
+      if (Number.isFinite(n)) return n;
+    }
+    return null;
+  }
+
   // O que a extensão recebe de volta. `executeScript` pega o valor da última
   // expressão do arquivo — por isso o IIFE devolve o objeto direto.
   const produtos = colherDo(document);
   return {
     produtos,
     url: location.href,
+    total: totalDaVitrine(document),
     muro: produtos.length ? null : muro(document, location.href),
   };
 })();

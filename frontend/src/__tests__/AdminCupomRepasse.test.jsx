@@ -516,6 +516,23 @@ describe("Admin › Cupom › Repasse — teste no checkout", () => {
     expect(await screen.findByText(/Já estava aplicado no checkout/)).toBeTruthy();
   });
 
+  it("o resultado diz quando o cupom foi ligado ao produto e a campanha é nova", async () => {
+    comExtensao();
+    adminRepasseCupomCheckoutPendentes.mockResolvedValue(fila([itemManual()], { checkoutAuto: false, auto: false }));
+    cupomNoCheckout.mockResolvedValue(MATERIAL);
+    adminRepasseCupomCheckoutResultado.mockResolvedValue({
+      ...RESPOSTA, message: "Aplicado no checkout · 15% OFF · ligado ao produto", vinculo: { vinculados: 1, cuponsNovos: 1 },
+    });
+    await abrir([cupom()]);
+    await waitFor(() => expect(coletorEntende).toHaveBeenCalled());
+    const linhaManual = within(cardDaFila()).getByText("MELIKIDS").closest("tr");
+    await waitFor(() => expect(within(linhaManual).getByText("Testar").disabled).toBe(false));
+
+    fireEvent.click(within(linhaManual).getByText("Testar"));
+
+    expect(await screen.findByText(/ligado ao produto · campanha nova no sistema/)).toBeTruthy();
+  });
+
   it("Testar todos anda a fila na ordem, um de cada vez", async () => {
     comExtensao();
     adminRepasseCupomCheckoutPendentes.mockResolvedValue(fila([itemManual(), itemRepasse()], { checkoutAuto: false, auto: false }));

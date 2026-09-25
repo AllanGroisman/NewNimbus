@@ -665,8 +665,9 @@ export async function adminMlCuponsSyncProducts(campaignId) {
 // A vitrine colhida pela extensão no Chrome do admin (extension/ na raiz). O
 // `parcial` é o campo caro: coleta interrompida (muro, teto de páginas) não pode
 // entrar como lista fechada — o backend grava origem "landing" quando ele vem.
-export async function adminMlCuponsImportVitrine(campaignId, { products, parcial = false, carimbar = true } = {}) {
-  return http("POST", `/api/admin/ml-cupons/${encodeURIComponent(campaignId)}/vitrine-local`, { products, parcial, carimbar }, { timeoutMs: SLOW_TIMEOUT_MS });
+// `total` é quantos produtos a vitrine diz ter — o "200" do "45/200" da tabela.
+export async function adminMlCuponsImportVitrine(campaignId, { products, parcial = false, carimbar = true, total = null } = {}) {
+  return http("POST", `/api/admin/ml-cupons/${encodeURIComponent(campaignId)}/vitrine-local`, { products, parcial, carimbar, total }, { timeoutMs: SLOW_TIMEOUT_MS });
 }
 // O carimbo do catálogo que a etapa 2 adia com `carimbar: false` — uma vez por lote.
 export async function adminMlCuponsCarimbar() {

@@ -56,6 +56,17 @@ describe("extractCoupon", () => {
     expect(capture.extractCoupon("código de desconto BLACK25")).toBe("BLACK25");
   });
 
+  it("atravessa formatação do WhatsApp, emoji e aspas entre gatilho e código", () => {
+    expect(capture.extractCoupon("🎟️ Cupom: *QUEIMADEESTOQUE24*")).toBe("QUEIMADEESTOQUE24");
+    expect(capture.extractCoupon("Use o cupom `QUEIMADEESTOQUE24`")).toBe("QUEIMADEESTOQUE24");
+    expect(capture.extractCoupon("Cupom de desconto: _BLACK25_")).toBe("BLACK25");
+    expect(capture.extractCoupon("CUPOM 🎟️ JBL20")).toBe("JBL20");
+    expect(capture.extractCoupon("Cupom 👉 JBL20")).toBe("JBL20");
+    expect(capture.extractCoupon("Cupom: ~JBL20~")).toBe("JBL20");
+    expect(capture.extractCoupon("Cupom \"JBL20\"")).toBe("JBL20");
+    expect(capture.extractCoupon("Cupom:\nJBL20")).toBe("JBL20");
+  });
+
   it("normaliza pra maiúsculas e tira pontuação nas pontas", () => {
     expect(capture.extractCoupon("use o cupom promo15!")).toBe("PROMO15");
     expect(capture.extractCoupon("cupom: desc-20.")).toBe("DESC-20");

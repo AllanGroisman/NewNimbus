@@ -1,4 +1,4 @@
-// Agenda das três etapas de cupons (1 · lista, 2 · produtos, 3 · tudo).
+// Agenda das etapas de cupons (1 · lista, 2 · produtos). O antigo 3 · tudo saiu.
 //
 // O servidor NÃO roda as etapas: elas moram no Chrome do admin, pela extensão,
 // porque o ML responde ao Puppeteer com CAPTCHA (scraping/README.md). O que este
@@ -15,7 +15,8 @@
 // rodada manual também conta, e isso sobrevive ao restart.
 const schedule = require("../scraping/schedule");
 
-const BOTOES = ["lista", "produtos", "tudo"];
+// "tudo" (o antigo botão 3) saiu da tela; o rótulo fica para os balanços antigos.
+const BOTOES = ["lista", "produtos"];
 const ROTULOS = { lista: "Etapa 1 · Lista", produtos: "Etapa 2 · Produtos", tudo: "Etapa 3 · Buscar TUDO" };
 // Mesmo teto do scraper global: timer de horas erra o alvo com drift de relógio
 // ou máquina suspensa, e em horário fixo errar é perder o slot.

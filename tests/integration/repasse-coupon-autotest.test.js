@@ -14,6 +14,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createTestUser, auth as authMod } from "../helpers/app.js";
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
@@ -206,6 +207,106 @@ describe("a fila do teste no checkout", () => {
     const checkWord = vi.spyOn(sync, "checkWord");
     await autotest.runOnce();
     expect(checkWord).not.toHaveBeenCalled();
+  });
+});
+
+describe("cupom que valeu vira vínculo com o produto", () => {
+  // A captura real da página de cupons (campanha 14167118, 25% OFF, mínimo R$ 25,
+  // teto R$ 20). O modelo não traz o código: a campanha sai das condições do cartão.
+  const htmlCupons = fs.readFileSync(path.resolve(__dirname, "..", "fixtures", "ml-checkout-cupons-iframe.html"), "utf8");
+  const PRODUTO = "https://www.mercadolivre.com.br/porteiro/p/MLB12345";
+  const valeu = (extra = {}) => ({
+    finalUrl: PRODUTO,
+    checkout: { reached: true }, modal: { aberto: true, campo: true },
+    cartaoDepois: { texto: "Com CASA25\n25% OFF\nCompra mínima R$ 25 | Limite de R$ 20\nAplicado", aplicado: true },
+    htmlCupons,
+    ...extra,
+  });
+
+  beforeEach(async () => {
+    await prisma().mlCouponProduct.deleteMany({});
+    await prisma().catalogProduct.deleteMany({});
+  });
+
+  it("cria a campanha e liga ela ao produto testado", async () => {
+    const r = await autotest.registrarCheckout({ code: "CASA25", url: "https://meli.la/abc", material: valeu() });
+
+    expect(r.verdict).toBe("valid");
+    expect(r.resultado.campaignId).toBe("14167118");
+    expect(r.vinculo.vinculados).toBeGreaterThanOrEqual(1);
+    expect(r.message).toMatch(/ligado ao produto/);
+
+    const cupom = await prisma().mlCoupon.findUnique({ where: { campaignId: "14167118" } });
+    expect(cupom).toMatchObject({ origin: "checkout", code: "CASA25" });
+    const vinculos = await prisma().mlCouponProduct.findMany({ where: { campaignId: "14167118" } });
+    expect(vinculos.length).toBeGreaterThanOrEqual(1);
+    // A página final do ML, não o link de afiliado que chegou no grupo.
+    expect(vinculos.every(v => v.origem === "checkout" && v.productUrl === PRODUTO)).toBe(true);
+    expect((await logDe("CASA25"))[0].produtos).toBe(r.vinculo.vinculados);
+  });
+
+  // O que a extensão leu na PDP (cupom-checkout.js:naPagina_produto).
+  const PDP = "https://produto.mercadolivre.com.br/MLB-5175399912-jogo-de-cama-king-_JM?searchVariation=1#polycard_client=x";
+  const LIDO = { name: "Jogo De Cama King Percal 400 Fios", price: 359, originalPrice: 499.9, discount: 28, img: "https://http2.mlstatic.com/D_NQ_NP_1-O.webp", sold: "+1.000 vendidos" };
+
+  it("produto fora do catálogo entra nele, já com o cupom", async () => {
+    const r = await autotest.registrarCheckout({ code: "CASA25", material: valeu({ finalUrl: PDP, produto: LIDO }) });
+
+    expect(r.vinculo.noCatalogo).toBe(true);
+    expect(r.message).toMatch(/adicionado ao catálogo/);
+    const linhas = await prisma().catalogProduct.findMany({ where: { mlAnuncioId: "MLB5175399912" } });
+    expect(linhas).toHaveLength(1);
+    expect(linhas[0]).toMatchObject({
+      name: LIDO.name, price: 359, originalPrice: 499.9, discount: 28,
+      store: "Mercado Livre", couponCampaignId: "14167118",
+    });
+  });
+
+  it("produto que já está no catálogo não é duplicado nem reescrito, só ganha o cupom", async () => {
+    const catalog = require(path.join(backendDir, "catalog", "pg.js"));
+    // O mesmo anúncio, por outro link — como o scraping o teria gravado.
+    await catalog.upsertProducts([{ name: "Nome do scraping", link: "https://produto.mercadolivre.com.br/MLB-5175399912-outro-slug-_JM", price: 400, store: "Mercado Livre", category: "casa" }]);
+
+    const r = await autotest.registrarCheckout({ code: "CASA25", material: valeu({ finalUrl: PDP, produto: LIDO }) });
+
+    expect(r.vinculo.noCatalogo).toBe(false);
+    expect(r.message).toMatch(/ligado ao produto/);
+    const linhas = await prisma().catalogProduct.findMany({ where: { mlAnuncioId: "MLB5175399912" } });
+    expect(linhas).toHaveLength(1);
+    expect(linhas[0]).toMatchObject({ name: "Nome do scraping", price: 400, category: "casa", couponCampaignId: "14167118" });
+  });
+
+  it("sem os dados do produto (extensão antiga) não cria linha no catálogo", async () => {
+    const r = await autotest.registrarCheckout({ code: "CASA25", material: valeu({ finalUrl: PDP }) });
+    expect(r.vinculo.noCatalogo).toBe(false);
+    expect(await prisma().catalogProduct.count()).toBe(0);
+  });
+
+  it("vínculo de vitrine que já existia continua vitrine", async () => {
+    await autotest.registrarCheckout({ code: "CASA25", material: valeu() });
+    await prisma().mlCouponProduct.updateMany({ where: { campaignId: "14167118" }, data: { origem: "vitrine" } });
+
+    await autotest.registrarCheckout({ code: "CASA25", material: valeu() });
+
+    const vinculos = await prisma().mlCouponProduct.findMany({ where: { campaignId: "14167118" } });
+    expect(vinculos.every(v => v.origem === "vitrine")).toBe(true);
+  });
+
+  it("cupom recusado não cria nada", async () => {
+    const r = await autotest.registrarCheckout({ code: "CASA25", material: valeu({ cartaoDepois: null, erroCampo: "O cupom não está mais disponível." }) });
+    expect(r.vinculo).toBeNull();
+    expect(await prisma().mlCoupon.count()).toBe(0);
+    expect(await prisma().mlCouponProduct.count()).toBe(0);
+  });
+
+  it("valeu mas a campanha não foi achada: fica só a palavra", async () => {
+    const r = await autotest.registrarCheckout({
+      code: "OUTRO15",
+      material: valeu({ cartaoDepois: { texto: "Com OUTRO15\n15% OFF\nCompra mínima R$ 59 | Limite de R$ 50", aplicado: true } }),
+    });
+    expect(r.verdict).toBe("valid");
+    expect(r.vinculo).toBeNull();
+    expect(await prisma().mlCouponProduct.count()).toBe(0);
   });
 });
 

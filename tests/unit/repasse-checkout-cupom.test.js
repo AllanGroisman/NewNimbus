@@ -100,6 +100,27 @@ describe("interpretar", () => {
     expect(mensagemDe(r)).toMatch(/não está disponível.*ML: "O cupom não está mais disponível\."/);
   });
 
+  it("tira o rótulo \"Erro\" que vem grudado na mensagem do campo", () => {
+    const r = interpretar(chegou({ erroCampo: "Erro O cupom não está mais disponível." }), "X1");
+    expect(r).toMatchObject({ motivo: "indisponivel", mensagem_site: "O cupom não está mais disponível." });
+    expect(verdictDe(r)).toBe("invalid");
+    // "Erro ao …" é a própria mensagem, não o rótulo.
+    expect(interpretar(chegou({ erroCampo: "Erro ao aplicar o cupom" }), "X1").mensagem_site).toBe("Erro ao aplicar o cupom");
+  });
+
+  it("variação obrigatória que não saiu → falha com esse motivo, indeterminado", () => {
+    const r = interpretar({ checkout: { reached: false }, variacaoFaltando: "Escolha Tamanho para continuar com sua compra." }, "X1");
+    expect(r).toMatchObject({ status: "falha", motivo: "variacao", mensagem_site: "Escolha Tamanho para continuar com sua compra." });
+    expect(verdictDe(r)).toBe("indeterminado");
+    expect(mensagemDe(r)).toMatch(/Variação obrigatória não selecionada/);
+  });
+
+  it("a variação escolhida aparece no resultado e na mensagem", () => {
+    const r = interpretar(chegou({ variacao: "Tamanho: P/M (36-38)", cartaoAntes: { texto: CARTAO_MELIKIDS, aplicado: true } }), "MELIKIDS");
+    expect(r.variacao).toBe("Tamanho: P/M (36-38)");
+    expect(mensagemDe(r)).toMatch(/variação: Tamanho: P\/M \(36-38\)/);
+  });
+
   it("outra frase do ML → falha, mas indeterminado (não se sabe se o cupom existe)", () => {
     const r = interpretar(chegou({ erroCampo: "Não foi possível adicionar o cupom agora." }), "X1");
     expect(r).toMatchObject({ status: "falha", motivo: "erro-do-site", mensagem_site: "Não foi possível adicionar o cupom agora." });
@@ -115,6 +136,7 @@ describe("interpretar", () => {
   it.each([
     ["muro", { muro: "captcha" }, "muro"],
     ["não é produto", { notProductPage: true }, "nao-e-produto"],
+    ["landing de afiliado sem saída", { notProductPage: true, landing: { via: null, falhou: true } }, "landing"],
     ["não chegou ao checkout", { checkout: { reached: false, blockedReason: "O botão de compra está desabilitado nesta página." } }, "sem-checkout"],
     ["modal não abriu", { checkout: { reached: true }, modal: { aberto: false } }, "modal-nao-abriu"],
   ])("%s → indeterminado, com o porquê", (_, material, motivo) => {

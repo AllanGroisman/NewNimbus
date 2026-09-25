@@ -1527,7 +1527,7 @@ function validarProdutosDaVitrine(lista) {
 // varre a tabela de vínculos inteira, e rodá-lo a cada vitrine era a mesma conta
 // repetida — com gravações concorrentes, disputando o banco. A tela carimba uma
 // vez por lote (`carimbarCatalogo`).
-async function gravarVitrineLocal(campaignId, lista, { parcial = false, carimbar = true } = {}) {
+async function gravarVitrineLocal(campaignId, lista, { parcial = false, carimbar = true, total = null } = {}) {
   const cupom = await coupons.getCoupon(campaignId);
   if (!cupom) throw new Error("Esse cupom não está no sistema — puxe os cupons primeiro.");
 
@@ -1543,6 +1543,9 @@ async function gravarVitrineLocal(campaignId, lista, { parcial = false, carimbar
     parcial: !!parcial || cortou,
     carimbar,
   });
+  // O total que a vitrine declara. Só se escreve quando veio: uma extensão antiga
+  // (ou página que não disse) não apaga o que uma rodada anterior leu.
+  if (Number.isInteger(total) && total >= 0) await coupons.setVitrineTotal(campaignId, total);
   return { ...r, descartados: descartados.length, cortadosPeloTeto: cortou ? produtos.length - teto : 0 };
 }
 
