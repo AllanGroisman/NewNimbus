@@ -135,6 +135,14 @@ describe("Admin › Cupom › Repasse", () => {
     expect(within(linha).queryByText(/não reconheceu/)).toBeNull();
   });
 
+  it("cupom que só veio com link de outra loja mostra a loja e não oferece teste", async () => {
+    await abrir([cupom({ soOutraLoja: true, lojas: ["Amazon"] })]);
+    const linha = linhaDe("JBL20");
+    expect(within(linha).getByText(/Amazon — sem teste/)).toBeTruthy();
+    expect(within(linha).queryByText(/nunca testado/)).toBeNull();
+    expect(within(linha).queryByRole("button", { name: /^Testar/ })).toBeNull();
+  });
+
   it("mostra o que o repasse viu: capturas, quantas foram pra fila e desde quando", async () => {
     await abrir([cupom()]);
     const linha = linhaDe("JBL20");

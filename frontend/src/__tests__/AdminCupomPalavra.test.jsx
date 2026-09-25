@@ -20,6 +20,7 @@ vi.mock("../data/api", () => ({
   adminMlCuponsCodes: vi.fn(),
   adminMlCuponsImportCampaign: vi.fn(),
   adminMlCuponsImportStatus: vi.fn(),
+  adminMlCuponsClearCodes: vi.fn(),
 }));
 
 // A extensão do Chrome (extension/ na raiz). O teste de palavra prefere ela quando
@@ -46,6 +47,7 @@ import {
   adminMlCuponsLocalFim,
   adminMlCuponsImportCampaign,
   adminMlCuponsImportStatus,
+  adminMlCuponsClearCodes,
 } from "../data/api";
 import { _zerarParaTestes as zerarPrefsAdmin } from "../data/preferenciasAdmin";
 
@@ -256,6 +258,32 @@ describe("palavras já testadas", () => {
     fireEvent.click(screen.getByRole("button", { name: /buscar e adicionar/i }));
 
     await waitFor(() => expect(adminMlCuponsImportCampaign).toHaveBeenCalledWith("13907402", true));
+  });
+
+  // Limpar apaga o dicionário no BANCO, não só a lista da tela. Por isso passa por
+  // uma confirmação, e cancelar não pode chegar ao servidor.
+  it("limpar a lista pede confirmação e apaga as palavras", async () => {
+    adminMlCuponsCodes.mockResolvedValueOnce({ codes: historico }).mockResolvedValue({ codes: [] });
+    adminMlCuponsClearCodes.mockResolvedValue({ ok: true, palavras: 2 });
+    await abrirTela();
+
+    fireEvent.click(await screen.findByRole("button", { name: /limpar lista/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /apagar palavras/i }));
+
+    await waitFor(() => expect(adminMlCuponsClearCodes).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByText("Palavras já testadas")).not.toBeInTheDocument());
+    expect(screen.queryByText("REPASSE10")).not.toBeInTheDocument();
+  });
+
+  it("cancelar a limpeza não apaga nada", async () => {
+    adminMlCuponsCodes.mockResolvedValue({ codes: historico });
+    await abrirTela();
+
+    fireEvent.click(await screen.findByRole("button", { name: /limpar lista/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /cancelar/i }));
+
+    expect(adminMlCuponsClearCodes).not.toHaveBeenCalled();
+    expect(screen.getByText("REPASSE10")).toBeInTheDocument();
   });
 });
 

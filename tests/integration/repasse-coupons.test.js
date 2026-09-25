@@ -29,12 +29,12 @@ let userId;
 
 // Uma linha do log de captura. Só os campos que a agregação lê; o resto do
 // pipeline não interessa aqui.
-async function capturado(coupon, { groupId = 1n, outcome = "queued", quando = new Date(), user = userId } = {}) {
+async function capturado(coupon, { groupId = 1n, outcome = "queued", quando = new Date(), user = userId, store } = {}) {
   await prisma().repasseCaptureLog.create({
     data: {
       groupId, userId: user, waJid: "120363@g.us",
       rawUrl: `https://mercadolivre.com.br/p/${Math.random()}`,
-      coupon, outcome, createdAt: quando,
+      coupon, outcome, createdAt: quando, store: store ?? null,
     },
   });
 }
@@ -68,6 +68,28 @@ describe("cupons capturados pelo repasse", () => {
     // tela não pode contá-la como produto que entrou.
     expect(jbl.aproveitados).toBe(2);
     expect(new Date(jbl.primeira) < new Date(jbl.ultima)).toBe(true);
+  });
+
+  // O TUDOPOR59 veio com um link da Centauro: a captura descartou o link ("loja
+  // não suportada"), mas o código entrava na lista mesmo assim.
+  it("código que só veio em link descartado não é cupom", async () => {
+    await capturado("TUDOPOR59", { outcome: "discarded" });
+    await capturado("TUDOPOR59", { outcome: "discarded", groupId: 2n });
+    await capturado("JBL20");
+
+    const r = await repasseCoupons.listCapturedCoupons({});
+    expect(acha(r, "TUDOPOR59")).toBeUndefined();
+    expect(acha(r, "JBL20")).toBeDefined();
+  });
+
+  it("uma captura que virou produto basta, e as descartadas continuam contadas", async () => {
+    await capturado("FRETE10", { outcome: "discarded" });
+    // Produto válido que só não foi pra fila agora — não é descarte.
+    await capturado("FRETE10", { outcome: "cooldown" });
+
+    const frete = acha(await repasseCoupons.listCapturedCoupons({}), "FRETE10");
+    expect(frete).toBeDefined();
+    expect(frete.capturas).toBe(2);
   });
 
   it("cupom nunca testado vem com verdict null — não com 'invalid'", async () => {
@@ -130,6 +152,32 @@ describe("cupons capturados pelo repasse", () => {
     // "valid mas fora do sistema": VALIDA aponta uma campanha que ninguém raspou.
     const semCampanha = await repasseCoupons.listCapturedCoupons({ status: "sem-campanha" });
     expect(semCampanha.items.map(i => i.code)).toEqual(["VALIDA"]);
+  });
+
+  it("aprovado sem campanha identificada tem filtro próprio, fora do 'trazer campanha'", async () => {
+    await capturado("SEMID");
+    await capturado("COMID");
+    await coupons.recordCodeCheck({ code: "SEMID", verdict: "valid", campaignId: null });
+    await coupons.recordCodeCheck({ code: "COMID", verdict: "valid", campaignId: "9920004" });
+
+    const semCampanha = await repasseCoupons.listCapturedCoupons({ status: "sem-campanha" });
+    expect(semCampanha.items.map(i => i.code)).toEqual(["COMID"]);
+    const semId = await repasseCoupons.listCapturedCoupons({ status: "sem-id" });
+    expect(semId.items.map(i => i.code)).toEqual(["SEMID"]);
+  });
+
+  it("cupom que só veio com link de outra loja sai do 'nunca testado' e ganha a loja", async () => {
+    await capturado("AMZ10", { store: "Amazon" });
+    await capturado("ML10", { store: "Mercado Livre" });
+
+    const todos = await repasseCoupons.listCapturedCoupons({});
+    expect(acha(todos, "AMZ10")).toMatchObject({ soOutraLoja: true, lojas: ["Amazon"] });
+    expect(acha(todos, "ML10")).toMatchObject({ soOutraLoja: false, lojas: ["Mercado Livre"] });
+
+    const naoTestados = await repasseCoupons.listCapturedCoupons({ status: "nao-testado" });
+    expect(naoTestados.items.map(i => i.code)).toEqual(["ML10"]);
+    const outraLoja = await repasseCoupons.listCapturedCoupons({ status: "outra-loja" });
+    expect(outraLoja.items.map(i => i.code)).toEqual(["AMZ10"]);
   });
 
   it("respeita o período e o filtro por código", async () => {

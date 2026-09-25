@@ -535,9 +535,16 @@ async function pruneBeforeDate(cutoffDate, { keepCouponLinked = false } = {}) {
 }
 
 // Apaga TODO o catálogo (usado pelo botão "Apagar todos" do admin).
+//
+// As sondas do checkout em lote (`ml_checkout_probes`) vão junto: são por produto,
+// e o lote pula por 7 dias quem foi sondado há pouco. Sem isto, os produtos que o
+// próximo scraping trouxer de volta — com a mesma chave — ficariam de fora da fila.
 async function clearAll() {
-  const r = await prisma().catalogProduct.deleteMany({});
-  return { removed: r.count };
+  const [sondas, r] = await prisma().$transaction([
+    prisma().mlCheckoutProbe.deleteMany({}),
+    prisma().catalogProduct.deleteMany({}),
+  ]);
+  return { removed: r.count, sondas: sondas.count };
 }
 
 module.exports = {

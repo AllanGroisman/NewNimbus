@@ -25,10 +25,22 @@ const PAGE_SIZE_MAX = 200;
 // aparece em link descartado não vale o teste.
 const OUTCOMES_APROVEITADOS = ["queued", "pending"];
 
+// Os desfechos que fazem o código CONTAR como cupom: o link passou pela loja, pelo
+// afiliado e pelo scrape, e virou produto. `cooldown` e `duplicate` entram porque
+// são produto válido que só não foi pra fila agora. Fica de fora o `discarded` —
+// loja desconhecida (o TUDOPOR59 veio com um link da Centauro), CAPTCHA, link que
+// não é produto — e o `error`. A loja não precisa de condição própria: nenhum
+// destes desfechos acontece sem loja suportada.
+const OUTCOMES_CUPOM = ["queued", "pending", "cooldown", "duplicate"];
+
 // Estados que a tela filtra. `nao-testado` é o mais comum e o mais importante:
 // é a fila de trabalho de quem abre a aba. `sem-campanha` é o passo seguinte —
-// o ML confirmou a palavra, mas a campanha nunca foi raspada pra cá.
-const STATUS = ["todos", "nao-testado", "valid", "invalid", "indeterminado", "sem-campanha"];
+// o ML confirmou a palavra, mas a campanha nunca foi raspada pra cá. `sem-id` é o
+// aprovado no checkout sem a campanha identificada (o cupom entrou no resumo, mas
+// o cartão não foi lido) — não há campanha a trazer, só a retestar. `outra-loja`
+// é o código que só veio com link de Amazon/Shopee: o teste é no checkout do ML,
+// então ele nunca sai de "nunca testado" e não pode ficar misturado à fila.
+const STATUS = ["todos", "nao-testado", "valid", "invalid", "indeterminado", "sem-campanha", "sem-id", "outra-loja"];
 
 function sanitizeDays(v) {
   if (v == null || v === "" || v === "tudo") return null;
@@ -42,11 +54,13 @@ function sanitizeDays(v) {
 // SQL exigiria um LEFT JOIN com `ml_coupon_codes` só pra repetir esta regra.
 function matchStatus(linha, status) {
   switch (status) {
-    case "nao-testado":   return linha.verdict == null;
+    case "nao-testado":   return linha.verdict == null && !linha.soOutraLoja;
     case "valid":         return linha.verdict === "valid";
     case "invalid":       return linha.verdict === "invalid";
     case "indeterminado": return linha.verdict === "indeterminado";
-    case "sem-campanha":  return linha.verdict === "valid" && !linha.inSystem;
+    case "sem-campanha":  return linha.verdict === "valid" && !!linha.campaignId && !linha.inSystem;
+    case "sem-id":        return linha.verdict === "valid" && !linha.campaignId;
+    case "outra-loja":    return linha.verdict == null && linha.soOutraLoja;
     default:              return true;
   }
 }
@@ -82,12 +96,17 @@ async function aggregate({ days = 90, q = "" } = {}) {
                       ORDER BY (l."outcome" = ANY(${OUTCOMES_APROVEITADOS})) DESC, l."createdAt" DESC)
               FILTER (WHERE l."store" = 'Mercado Livre'))[1]  AS link,
            COUNT(DISTINCT COALESCE(l."resolvedUrl", l."rawUrl"))
-              FILTER (WHERE l."store" = 'Mercado Livre')    AS links
+              FILTER (WHERE l."store" = 'Mercado Livre')    AS links,
+           ARRAY_AGG(DISTINCT l."store")
+              FILTER (WHERE l."outcome" = ANY(${OUTCOMES_CUPOM}) AND l."store" IS NOT NULL) AS lojas
       FROM "repasse_capture_log" l
      WHERE l."coupon" IS NOT NULL
        AND l."createdAt" >= ${desde}
        ${filtroTermo}
      GROUP BY l."coupon"
+    -- HAVING, e não WHERE: o código que vale continua contando todas as capturas,
+    -- inclusive as descartadas; só o código que NUNCA virou produto some.
+    HAVING COUNT(*) FILTER (WHERE l."outcome" = ANY(${OUTCOMES_CUPOM})) > 0
      ORDER BY MAX(l."createdAt") DESC
   `;
 
@@ -146,6 +165,10 @@ async function aggregate({ days = 90, q = "" } = {}) {
       link: r.link || null,
       // Quantos produtos do ML diferentes chegaram com o cupom (linksDoCupom).
       links: Number(r.links || 0),
+      // As lojas dos links que viraram produto com o código. Sem link do ML, não há
+      // onde testar: a tela mostra a loja em vez de "nunca testado".
+      lojas: r.lojas || [],
+      soOutraLoja: !r.link && (r.lojas || []).length > 0,
       // null = nunca testado. É diferente de "invalid" (o ML não reconheceu) e de
       // "indeterminado" (o ML não respondeu), e a tela não pode passar um pelo outro.
       verdict: chk?.verdict ?? null,
@@ -254,6 +277,57 @@ async function linksDoCupom(code) {
   });
 }
 
+// O link em que RETESTAR cada código. O `link` do aggregate é sempre o mesmo (o
+// aproveitado mais recente), e quando o teste falhou por culpa DELE — landing de
+// afiliado, variação obrigatória, página que não é produto — retestar ali só
+// queimava as tentativas do código. Aqui a vez é do link ainda não testado; entre
+// os já testados, do que foi testado há mais tempo. Uma consulta de cada lado
+// para todos os códigos da fila.
+async function proximosLinks(codes, { days = 90 } = {}) {
+  const alvo = [...new Set((codes || []).map(c => String(c ?? "").trim().toUpperCase()).filter(Boolean))];
+  const resposta = new Map();
+  if (!alvo.length) return resposta;
+  const dias = sanitizeDays(days);
+  const desde = dias ? new Date(Date.now() - dias * 86400000) : new Date(0);
+
+  const [links, testes] = await Promise.all([
+    prisma().$queryRaw`
+      SELECT l."coupon" AS code,
+             COALESCE(l."resolvedUrl", l."rawUrl") AS url,
+             BOOL_OR(l."outcome" = ANY(${OUTCOMES_APROVEITADOS})) AS aproveitado,
+             MAX(l."createdAt") AS ultima
+        FROM "repasse_capture_log" l
+       WHERE l."coupon" = ANY(${alvo})
+         AND l."store" = 'Mercado Livre'
+         AND l."createdAt" >= ${desde}
+       GROUP BY 1, 2
+    `,
+    prisma().$queryRaw`
+      SELECT t."code", t."url", MAX(t."created_at") AS em
+        FROM "repasse_coupon_autotest" t
+       WHERE t."code" = ANY(${alvo})
+         AND t."action" = 'test'
+         AND t."url" IS NOT NULL
+       GROUP BY 1, 2
+    `,
+  ]);
+  const testadoEm = new Map(testes.map(t => [`${t.code}\n${t.url}`, new Date(t.em).getTime()]));
+  const porCodigo = new Map();
+  for (const l of links) {
+    if (!l.url) continue;
+    if (!porCodigo.has(l.code)) porCodigo.set(l.code, []);
+    porCodigo.get(l.code).push({ ...l, testado: testadoEm.get(`${l.code}\n${l.url}`) ?? null });
+  }
+  for (const [code, ls] of porCodigo) {
+    ls.sort((a, b) =>
+      (a.testado ?? -Infinity) - (b.testado ?? -Infinity) ||
+      Number(!!b.aproveitado) - Number(!!a.aproveitado) ||
+      new Date(b.ultima) - new Date(a.ultima));
+    resposta.set(code, ls[0].url);
+  }
+  return resposta;
+}
+
 // Qual vínculo cada link tem com a campanha do código. Pelas chaves candidatas do
 // link mais a canônica do catálogo — a mesma conta de quem gravou
 // (coupons/pg.js:vincularDoRepasse e vincularPorCheckout). Havendo mais de uma,
@@ -336,9 +410,11 @@ module.exports = {
   forgetCoupons,
   forgetFiltered,
   linksDoCupom,
+  proximosLinks,
   // A fila de trabalho do coupon-autotest.js. Exportado (e não recriado lá) pra
   // tela e job lerem exatamente o mesmo cruzamento log × ml_coupon_codes.
   aggregate,
   STATUS,
   OUTCOMES_APROVEITADOS,
+  OUTCOMES_CUPOM,
 };

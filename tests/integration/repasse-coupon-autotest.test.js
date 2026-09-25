@@ -122,6 +122,37 @@ describe("a fila do teste no checkout", () => {
     expect((await autotest.pendentesCheckout()).itens.map(i => i.code)).toEqual(["VELHO10"]);
   });
 
+  it("o primeiro teste no checkout de um código do robô antigo recomeça a contagem", async () => {
+    // Sem isso as 3 tentativas do robô antigo + 1 estouravam o teto numa ida só.
+    await capturado("VELHO10");
+    await palavraTestada("VELHO10", { verdict: "indeterminado", checkCount: 3 });
+    await autotest.registrarCheckout({ code: "VELHO10", url: "https://www.mercadolivre.com.br/p/MLB1", material: { checkout: { reached: false } } });
+    expect((await prisma().mlCouponCode.findUnique({ where: { code: "VELHO10" } })).checkCount).toBe(1);
+    // O segundo, já do checkout, soma.
+    await autotest.registrarCheckout({ code: "VELHO10", url: "https://www.mercadolivre.com.br/p/MLB1", material: { checkout: { reached: false } } });
+    expect((await prisma().mlCouponCode.findUnique({ where: { code: "VELHO10" } })).checkCount).toBe(2);
+  });
+
+  it("o reteste vai para um link ainda não testado do cupom", async () => {
+    await capturado("TROCA10", { rawUrl: "https://www.mercadolivre.com.br/p/MLB-A" });
+    await capturado("TROCA10", { rawUrl: "https://www.mercadolivre.com.br/p/MLB-B" });
+    const primeiro = (await autotest.pendentesCheckout()).itens[0].url;
+    // Falhou por culpa do link (não chegou ao checkout).
+    await autotest.registrarCheckout({ code: "TROCA10", url: primeiro, material: { checkout: { reached: false } } });
+    await prisma().mlCouponCode.update({ where: { code: "TROCA10" }, data: { checkedAt: new Date(Date.now() - 30 * 3600_000) } });
+
+    const [item] = (await autotest.pendentesCheckout()).itens;
+    expect(item).toMatchObject({ code: "TROCA10", motivo: "indeterminado" });
+    expect(item.url).not.toBe(primeiro);
+    expect(["https://www.mercadolivre.com.br/p/MLB-A", "https://www.mercadolivre.com.br/p/MLB-B"]).toContain(item.url);
+  });
+
+  it("aprovado de novo sem campanha não apaga a campanha já achada", async () => {
+    await palavraTestada("ACHADA", { verdict: "valid", campaignId: "777" });
+    await autotest.registrarCheckout({ code: "ACHADA", url: "https://www.mercadolivre.com.br/p/MLB1", material: MATERIAL.aplicado });
+    expect((await prisma().mlCouponCode.findUnique({ where: { code: "ACHADA" } })).campaignId).toBe("777");
+  });
+
   it("não volta num cupom que o ML recusou", async () => {
     await capturado("NAOEXISTE");
     await palavraTestada("NAOEXISTE", { verdict: "invalid", horasAtras: 500 });
@@ -305,7 +336,8 @@ describe("cupom que valeu vira vínculo com o produto", () => {
     data: {
       groupId: 1n, userId, waJid: "120363@g.us", rawUrl: "https://meli.la/2ZLewRA", resolvedUrl: DO_GRUPO,
       store: "Mercado Livre", coupon, outcome: "queued",
-      productName: "Kit 3 Calças Legging", price: 89.9, originalPrice: 129.9, discount: 30, ...extra,
+      productName: "Kit 3 Calças Legging", productImg: "https://http2.mlstatic.com/D_NQ_NP_kit-O.webp",
+      price: 89.9, originalPrice: 129.9, discount: 30, ...extra,
     },
   });
 

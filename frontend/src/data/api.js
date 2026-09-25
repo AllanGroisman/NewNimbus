@@ -643,6 +643,7 @@ export async function adminMlCuponsDelete(campaignId) {
   return http("DELETE", `/api/admin/ml-cupons/${encodeURIComponent(campaignId)}`, undefined, { timeoutMs: SLOW_TIMEOUT_MS });
 }
 export async function adminMlCuponsCodes(limit = 50) { return http("GET",  `/api/admin/ml-cupons/codes?limit=${limit}`); }
+export async function adminMlCuponsClearCodes()        { return http("DELETE", "/api/admin/ml-cupons/codes"); }
 // `source` marca de onde veio a palavra (`ml_coupon_codes.source`): "admin" quando
 // alguém digitou, "repasse" quando a aba Repasse mandou testar um código pescado
 // de grupo líder.

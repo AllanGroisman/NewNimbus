@@ -115,3 +115,5 @@ DOWNLOADER:
 Geral:
 
 16. [] Site com as promoções
+
+17. [] Quero criar uma aba de Cupons logo após a aba Produtos que tem na area de ADMIN onde eu consigo ver todos os cupons, navegar entre eles, ver um resumo, os produtos de cada um, filtrar os cupons, filtrar depois dentro nos seus produtos, etc... Pensa em algo legal e de fácil utilização. 

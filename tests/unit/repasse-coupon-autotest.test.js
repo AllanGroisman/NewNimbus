@@ -158,6 +158,27 @@ describe("selecionar — a campanha e a vitrine", () => {
     expect(r.pesado).toEqual([]);
   });
 
+  it("aprovado sem campanha volta pro reteste, com a espera e o teto do indeterminado", () => {
+    const semId = (over) => linha({ code: "SEMID", verdict: "valid", campaignId: null, checkCount: 1, ...over });
+    // Recém-testado: espera.
+    expect(autotest.selecionar([semId({ checkedAt: new Date(AGORA - HORA) })], CFG, AGORA).testes).toEqual([]);
+    // Passada a espera: reteste, com motivo próprio.
+    const r = autotest.selecionar([semId({ checkedAt: new Date(AGORA - 30 * HORA) })], CFG, AGORA);
+    expect(r.testes.map(t => t.motivo)).toEqual(["sem-campanha-id"]);
+    // Tentativas esgotadas: sai.
+    expect(autotest.selecionar([semId({ checkCount: CFG.maxTentativas, checkedAt: new Date(AGORA - 30 * HORA) })], CFG, AGORA).testes).toEqual([]);
+  });
+
+  it("ordem da fila: nunca testado, aprovado sem campanha, indeterminado", () => {
+    const velho = new Date(AGORA - 30 * HORA);
+    const r = autotest.selecionar([
+      linha({ code: "ENGASGOU", verdict: "indeterminado", checkCount: 1, checkedAt: velho, aproveitados: 99 }),
+      linha({ code: "SEMID", verdict: "valid", checkCount: 1, checkedAt: velho, aproveitados: 50 }),
+      linha({ code: "NOVA", aproveitados: 0 }),
+    ], CFG, AGORA);
+    expect(codigos(r.testes)).toEqual(["NOVA", "SEMID", "ENGASGOU"]);
+  });
+
   it("os dois knobs desligam cada passo por conta própria", () => {
     expect(autotest.selecionar([valida()], { ...CFG, importarCampanha: false }, AGORA).pesado).toEqual([]);
     expect(

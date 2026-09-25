@@ -19,6 +19,10 @@ const { prisma } = require("../db");
 // entra com os dados que se tem dele: os que a extensão leu na PDP
 // (cupom-checkout.js:naPagina_produto) ou os da captura do repasse.
 // Se já está, a linha fica como está: quem a atualiza é o scraping.
+//
+// Só cria com nome, foto e preço — a mesma régua do capture.js pra aceitar um
+// link como produto. Linha do catálogo sem preço nem foto não serve pra envio e
+// só polui a vitrine. `existe` diz se o produto está (ou ficou) no catálogo.
 async function garantirNoCatalogo({ produto, productUrl, productKeys }) {
   const { mlAnuncioIdFromUrl } = require("../catalog/product-key");
   const anuncio = mlAnuncioIdFromUrl(productUrl);
@@ -26,7 +30,8 @@ async function garantirNoCatalogo({ produto, productUrl, productKeys }) {
     where: { OR: [{ key: { in: productKeys } }, ...(anuncio ? [{ mlAnuncioId: anuncio }] : [])] },
     select: { key: true },
   });
-  if (existe || !produto?.name) return { criado: false };
+  if (existe) return { criado: false, existe: true };
+  if (!produto?.name || !produto.img || produto.price == null) return { criado: false, existe: false };
 
   const { upgradeMLImageUrl, normalizeSoldText } = require("../scraping/scraper");
   const r = await require("../catalog/pg").upsertProducts([{
@@ -40,7 +45,7 @@ async function garantirNoCatalogo({ produto, productUrl, productKeys }) {
     store: "Mercado Livre",
     category: null,
   }]);
-  return { criado: r.inserted > 0 };
+  return { criado: r.inserted > 0, existe: true };
 }
 
 // Um por link, com os dados da captura mais recente que os tiver.
@@ -84,7 +89,7 @@ async function ligarProdutosDoRepasse(code, { dias = 90 } = {}) {
     if (!l.url || !mlUrlSpace(l.url)) continue;
     const productKeys = chavesCandidatas(l.url);
     if (!productKeys.length) continue;
-    const { criado } = await garantirNoCatalogo({
+    const { criado, existe } = await garantirNoCatalogo({
       produto: {
         name: l.productName, img: l.productImg, price: l.price,
         originalPrice: l.originalPrice, discount: l.discount, sold: l.sold,
@@ -92,6 +97,10 @@ async function ligarProdutosDoRepasse(code, { dias = 90 } = {}) {
       productUrl: l.url,
       productKeys,
     });
+    // Link que não é (nem virou) produto do catálogo não ganha vínculo: o CAPTCHA,
+    // a landing e o "sem oferta" chegam aqui sem dados, e o vínculo apontaria pro
+    // nada — inflando o "N produtos" da campanha.
+    if (!existe) continue;
     if (criado) noCatalogo += 1;
     itens.push({ productKeys, productUrl: l.url });
   }
@@ -115,7 +124,8 @@ function ligarEmSegundoPlano(code) {
     try {
       do {
         _emCurso.set(c, false);
-        await ligarProdutosDoRepasse(c);
+        // O mesmo período da rodada do robô: a config é a da aba, não um 90 fixo.
+        await ligarProdutosDoRepasse(c, { dias: require("./coupon-autotest-config").readConfig().diasDeBusca });
       } while (_emCurso.get(c));
     } catch (err) {
       console.error(`[repasse] produtos do repasse no cupom ${c}: ${err.message}`);

@@ -148,9 +148,11 @@ function extractCoupon(text, cfg) {
     // Palavra que o admin marcou como "não é código" ("use o cupom AQUI"). Sem
     // acento e em minúsculas dos dois lados: "DESCRIÇÃO" e "descricao" são a mesma.
     if (ignore.has(couponWords.semAcento(code).toLowerCase())) continue;
-    // Precisa ter dígito, hífen ou pelo menos uma maiúscula — senão é só uma palavra
-    // comum da frase ("cupom aqui", "código abaixo"), não um código de fato.
-    if (!/\d/.test(code) && !/-/.test(code) && !/[A-Z]/.test(code)) continue;
+    // Precisa ter dígito, hífen ou pelo menos DUAS maiúsculas — senão é só uma
+    // palavra comum da frase ("cupom aqui", "código abaixo"). Uma maiúscula só não
+    // basta: é a palavra em Title Case ("Cupom Exclusivo", "Cupom Shopee de R$20"),
+    // e ela ia parar na mensagem do cliente como código.
+    if (!/\d/.test(code) && !/-/.test(code) && (code.match(/[A-Z]/g) || []).length < 2) continue;
     return code.toUpperCase();
   }
   return null;
@@ -555,8 +557,9 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null, text 
             groupId, userId, waJid,
             rawUrl: base.rawUrl, resolvedUrl: base.link, store: base.store,
             sourceAllowed: true, affiliateConfigured: base.affiliateConfigured, scrapeOk: base.scrapeOk,
-            productName: base.name, coupon: base.coupon,
-          outcome: r.target === "queue" ? "queued" : "pending", stage: STAGE.QUEUE,
+            productName: base.name, productImg: base.img, price: base.price, originalPrice: base.originalPrice,
+            discount: base.discount, sold: base.sold, coupon: base.coupon,
+            outcome: r.target === "queue" ? "queued" : "pending", stage: STAGE.QUEUE,
           });
           // Recarrega o grupo pra refletir a inserção anterior (dedup correto).
           const fresh = await storage.loadState(userId);
@@ -567,8 +570,9 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null, text 
             groupId, userId, waJid,
             rawUrl: base.rawUrl, resolvedUrl: base.link, store: base.store,
             sourceAllowed: true, affiliateConfigured: base.affiliateConfigured, scrapeOk: base.scrapeOk,
-            productName: base.name, coupon: base.coupon,
-          outcome: "cooldown", stage: STAGE.QUEUE,
+            productName: base.name, productImg: base.img, price: base.price, originalPrice: base.originalPrice,
+            discount: base.discount, sold: base.sold, coupon: base.coupon,
+            outcome: "cooldown", stage: STAGE.QUEUE,
           });
         }
       } catch (err) {

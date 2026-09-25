@@ -9,7 +9,7 @@ import path from "path";
 import crypto from "crypto";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
-import { catalog } from "../helpers/app.js";
+import { catalog, prisma, createTestUser, auth as authMod } from "../helpers/app.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -291,5 +291,74 @@ describe("listCoupons — a procedência da palavra de cada cupom", () => {
     const c = await acharCupom(DO_TITULO);
     expect(c.code).toBe(PALAVRA_TITULO);
     expect(c.codeSource).toBe("titulo");
+  });
+});
+
+// O "Limpar lista" da aba Descobrir palavra: o inverso do `clearAll`. Some o
+// dicionário palavra → campanha; a palavra que já foi carimbada no cupom fica.
+describe("clearCodeChecks — apagar as palavras testadas", () => {
+  beforeEach(async () => {
+    await semear();
+    await coupons.recordCodeCheck({ code: PALAVRA, verdict: "valid", campaignId: CAMPANHA, source: "admin" });
+  });
+
+  it("apaga o dicionário e mantém a palavra no cupom", async () => {
+    expect((await coupons.getCoupon(CAMPANHA)).code).toBe(PALAVRA);
+
+    const r = await coupons.clearCodeChecks();
+    expect(r.palavras).toBeGreaterThan(0);
+
+    expect(await coupons.listCodeChecks({ limit: 50 })).toEqual([]);
+    expect((await coupons.getCoupon(CAMPANHA)).code).toBe(PALAVRA);
+    expect((await coupons.stats()).cupons).toBeGreaterThan(0);
+  });
+
+  // A rota mora ao lado de DELETE /ml-cupons/:campaignId. Na ordem errada, "codes"
+  // vira o id e o pedido apaga um cupom em vez das palavras.
+  it("DELETE /api/admin/ml-cupons/codes apaga as palavras, não um cupom", async () => {
+    const { user, auth } = await createTestUser();
+    await authMod.setUserRole(user.id, "admin");
+
+    const r = await auth("delete", "/api/admin/ml-cupons/codes");
+    expect(r.status).toBe(200);
+    expect(r.body.palavras).toBeGreaterThan(0);
+
+    expect(await coupons.listCodeChecks({ limit: 50 })).toEqual([]);
+    expect(await coupons.getCoupon(CAMPANHA)).not.toBe(null);
+  });
+
+  it("não é para quem não é admin", async () => {
+    const { auth } = await createTestUser();
+    const r = await auth("delete", "/api/admin/ml-cupons/codes");
+    expect(r.status).toBe(403);
+    expect((await coupons.listCodeChecks({ limit: 50 })).length).toBeGreaterThan(0);
+  });
+});
+
+// As sondas do checkout em lote são por produto, e o lote pula por 7 dias quem foi
+// sondado há pouco. Os dois "Apagar todos" têm que levá-las junto, senão os
+// produtos que voltarem no próximo scraping ficam fora da fila.
+describe("Apagar todos — as sondas do checkout vão junto", () => {
+  const sondar = () => prisma().mlCheckoutProbe.create({
+    data: { productKey: productKey(produto), productUrl: produto.link, ok: true, cupons: 1, campaignIds: [CAMPANHA] },
+  });
+
+  beforeEach(async () => {
+    await semear();
+    await sondar();
+  });
+
+  it("apagar os cupons apaga as sondas", async () => {
+    const r = await coupons.clearAll();
+    expect(r.sondas).toBe(1);
+    expect(await prisma().mlCheckoutProbe.count()).toBe(0);
+  });
+
+  it("apagar o catálogo apaga produtos e sondas", async () => {
+    const r = await catalog.clearAll();
+    expect(r.removed).toBeGreaterThan(0);
+    expect(r.sondas).toBe(1);
+    expect(await prisma().catalogProduct.count()).toBe(0);
+    expect(await prisma().mlCheckoutProbe.count()).toBe(0);
   });
 });

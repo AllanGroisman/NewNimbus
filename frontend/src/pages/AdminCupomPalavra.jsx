@@ -12,7 +12,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   adminMlCuponsCodes, adminMlCuponsImportVitrine, adminMlCuponsLocalFim,
-  adminMlCuponsImportCampaign, adminMlCuponsImportStatus, errText,
+  adminMlCuponsImportCampaign, adminMlCuponsImportStatus, adminMlCuponsClearCodes, errText,
 } from "../data/api";
 import Modal from "../components/ui/Modal";
 import { testarPalavra } from "../data/cupomPalavra";
@@ -267,6 +267,8 @@ export default function DescobrirPalavra({ onVerCupom = null }) {
   // A campanha importada só aparece na aba "Cupons do ML" — sem esta linha, o modal
   // fecha e parece que nada aconteceu.
   const [importada, setImportada] = useState(null);
+  const [confirmarLimpeza, setConfirmarLimpeza] = useState(false);
+  const [limpando, setLimpando] = useState(false);
 
   const [tick, setTick] = useState(0);
   const carregar = useCallback(() => setTick(t => t + 1), []);
@@ -299,6 +301,22 @@ export default function DescobrirPalavra({ onVerCupom = null }) {
       setErro(errText(err, "Não deu pra testar essa palavra."));
     } finally {
       setRodando(false);
+    }
+  };
+
+  const limparLista = async () => {
+    setConfirmarLimpeza(false);
+    setErro(null);
+    setLimpando(true);
+    try {
+      await adminMlCuponsClearCodes();
+      setHistorico([]);
+      setRes(null);
+      carregar();
+    } catch (err) {
+      setErro(errText(err, "Não deu pra limpar a lista de palavras."));
+    } finally {
+      setLimpando(false);
     }
   };
 
@@ -373,7 +391,12 @@ export default function DescobrirPalavra({ onVerCupom = null }) {
 
       {historico.length > 0 && (
         <div style={{ marginTop: 14 }}>
-          <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 6 }}>Palavras já testadas</div>
+          <div style={{ display: "flex", gap: 10, alignItems: "baseline", marginBottom: 6 }}>
+            <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Palavras já testadas</span>
+            <button onClick={() => setConfirmarLimpeza(true)} disabled={limpando} style={botaoLink}>
+              {limpando ? "apagando..." : "🗑 Limpar lista"}
+            </button>
+          </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             {historico.map(h => (
               <div key={h.code} style={{ display: "flex", gap: 10, fontSize: 12, alignItems: "baseline", flexWrap: "wrap" }}>
@@ -396,6 +419,25 @@ export default function DescobrirPalavra({ onVerCupom = null }) {
             ))}
           </div>
         </div>
+      )}
+
+      {confirmarLimpeza && (
+        <Modal title="Apagar todas as palavras testadas?" onClose={() => setConfirmarLimpeza(false)} danger>
+          <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+            Todas as palavras testadas serão apagadas do sistema, não só desta lista. Testar uma delas de novo
+            abre o Chrome com a conta do sistema, e a aba <b>Repasse</b> deixa de mostrar o resultado
+            dos códigos já testados. A palavra que já está no cupom (aba <b>Cupons do ML</b>)
+            <strong style={{ color: "var(--color-text-primary)" }}> continua lá</strong>.
+            Esta ação não pode ser desfeita.
+          </p>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button onClick={() => setConfirmarLimpeza(false)} style={botaoSecundario}>Cancelar</button>
+            <button
+              onClick={limparLista}
+              style={{ padding: "8px 16px", borderRadius: 8, background: "#E24B4A", color: "#fff", border: "none", fontSize: 13, fontWeight: 500, cursor: "pointer" }}
+            >Apagar palavras</button>
+          </div>
+        </Modal>
       )}
 
       {importar && (

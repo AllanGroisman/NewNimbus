@@ -292,7 +292,11 @@ async function syncCatalogCoupons() {
 // Uma palavra testada no ML. O histórico é por palavra (PK), com contador — a
 // mesma palavra costuma chegar de novo pelo repasse, e o que interessa é o
 // veredito mais recente sem perder desde quando ela é conhecida.
-async function recordCodeCheck({ code, verdict, campaignId = null, message = null, responseCode = null, source = "admin", raw = {} }) {
+//
+// `recomecarContagem` grava `checkCount: 1` em vez de somar: é o primeiro teste de
+// um jeito novo (o checkout), e as tentativas do jeito antigo não podem contar
+// contra o `maxTentativas` dele.
+async function recordCodeCheck({ code, verdict, campaignId = null, message = null, responseCode = null, source = "admin", raw = {}, recomecarContagem = false }) {
   if (!code) return null;
   const agora = nowish();
 
@@ -304,13 +308,19 @@ async function recordCodeCheck({ code, verdict, campaignId = null, message = nul
   // registra só que houve mais uma tentativa.
   const anterior = await prisma().mlCouponCode.findUnique({ where: { code } });
   const preservar = verdict === "indeterminado" && anterior?.verdict === "valid";
+  // Aprovado de novo sem saber a campanha (o checkout viu o cupom entrar, mas não
+  // leu o cartão) não apaga a campanha que um teste anterior já tinha achado.
+  const campanha = verdict === "valid" && !campaignId && anterior?.verdict === "valid"
+    ? anterior.campaignId ?? null
+    : campaignId;
+  const checkCount = recomecarContagem ? 1 : { increment: 1 };
 
   const r = await prisma().mlCouponCode.upsert({
     where: { code },
     create: { code, verdict, campaignId, message, responseCode, source, raw: raw || {}, checkedAt: agora, checkCount: 1, firstSeenAt: agora },
     update: preservar
-      ? { checkedAt: agora, checkCount: { increment: 1 } }
-      : { verdict, campaignId, message, responseCode, source, raw: raw || {}, checkedAt: agora, checkCount: { increment: 1 } },
+      ? { checkedAt: agora, checkCount }
+      : { verdict, campaignId: campanha, message, responseCode, source, raw: raw || {}, checkedAt: agora, checkCount },
   });
 
   // A palavra resolveu para uma campanha: carimba nela, que é o que fecha o ciclo
@@ -636,16 +646,35 @@ async function pruneExpired(days = 30) {
 // pra cupom inexistente até lá, e isso é inofensivo: não existe FK, e quem lê
 // (`findCodeCheck`) usa a palavra como chave.
 //
+// As sondas do checkout em lote (`ml_checkout_probes`) também somem: elas guardam
+// que cupons valeram em cada produto, e o lote pula por 7 dias quem já foi sondado.
+// Mantê-las faria a próxima busca de cupons passar por cima desses produtos.
+//
 // A ordem dentro da transação importa: o carimbo do catálogo é COLUNA solta, sem
 // FK — ninguém limpa isso por cascata, e apagar o cupom antes deixaria
 // `couponCampaignId` apontando pro nada.
 async function clearAll() {
-  const [catalogo, vinculos, cupons] = await prisma().$transaction([
+  const [catalogo, vinculos, cupons, sondas] = await prisma().$transaction([
     prisma().catalogProduct.updateMany({ where: { couponCampaignId: { not: null } }, data: { couponCampaignId: null } }),
     prisma().mlCouponProduct.deleteMany({}),
     prisma().mlCoupon.deleteMany({}),
+    prisma().mlCheckoutProbe.deleteMany({}),
   ]);
-  return { cupons: cupons.count, vinculos: vinculos.count, catalogoLimpo: catalogo.count };
+  return { cupons: cupons.count, vinculos: vinculos.count, catalogoLimpo: catalogo.count, sondas: sondas.count };
+}
+
+// Apaga TODAS as palavras testadas (o "Limpar lista" da aba Descobrir palavra).
+//
+// O que some: o dicionário palavra → campanha inteiro. Com ele vão o cache de 12h
+// (a próxima vez que uma palavra for testada, é um Chrome aberto de novo), o veredito que a aba
+// Repasse mostra de cada código e o que o `restampCodesFromChecks` usaria para
+// devolver a palavra a um cupom importado depois.
+//
+// O que NÃO some: `ml_coupons.code`. A palavra que já foi carimbada no cupom fica
+// nele — é coluna do cupom, sem FK para cá.
+async function clearCodeChecks() {
+  const { count } = await prisma().mlCouponCode.deleteMany({});
+  return { palavras: count };
 }
 
 // Devolve aos cupons a palavra que já foi descoberta por teste. O `recordCodeCheck`
@@ -898,6 +927,7 @@ module.exports = {
   couponsListForKeys,
   getCoupon,
   listCodeChecks,
+  clearCodeChecks,
   findCodeCheck,
   stats,
   setVitrineTotal,

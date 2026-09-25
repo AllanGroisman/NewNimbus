@@ -517,7 +517,7 @@ export default function PageAdminScraper() {
       {confirmClear && (
         <Modal title="Apagar todo o catálogo?" onClose={() => setConfirmClear(false)} danger>
           <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
-            Todos os <strong style={{ color: "var(--color-text-primary)" }}>{catTotal}</strong> produtos do catálogo central serão apagados. As campanhas ficam sem produtos até o próximo scraping. Esta ação não pode ser desfeita.
+            Todos os <strong style={{ color: "var(--color-text-primary)" }}>{catTotal}</strong> produtos do catálogo central serão apagados, junto com o registro dos produtos já sondados no checkout (o lote volta a sondar todos). As campanhas ficam sem produtos até o próximo scraping. Esta ação não pode ser desfeita.
           </p>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button onClick={() => setConfirmClear(false)} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>

@@ -93,10 +93,15 @@ function selecionar(linhas, cfg, agora = Date.now()) {
     // A espera é obrigatória, não cosmética: coupons/pg.js:findCodeCheck devolve
     // null pra indeterminado, ou seja isto NÃO entra no cache de 12h do checkWord.
     // Sem a espera o job reabriria Chrome na mesma palavra a cada rodada.
-    if (l.verdict === "indeterminado") {
+    // Aprovado sem a campanha: o checkout viu o cupom entrar no resumo mas não leu
+    // o cartão. A palavra vale, só que sem a campanha nada se vincula nem se
+    // importa — então volta pra fila (noutro link, ver pendentesCheckout) sob a
+    // mesma espera e o mesmo teto do indeterminado.
+    const semCampanha = l.verdict === "valid" && !l.campaignId;
+    if (l.verdict === "indeterminado" || semCampanha) {
       const idade = l.checkedAt ? agora - new Date(l.checkedAt).getTime() : Infinity;
       if ((l.checkCount || 0) < cfg.maxTentativas && idade >= cfg.esperaAposIndeterminadoHoras * HORA_MS) {
-        testes.push({ code: l.code, motivo: "indeterminado", linha: l });
+        testes.push({ code: l.code, motivo: semCampanha ? "sem-campanha-id" : "indeterminado", linha: l });
       }
       continue;
     }
@@ -136,12 +141,11 @@ function selecionar(linhas, cfg, agora = Date.now()) {
     (b.linha.aproveitados || 0) - (a.linha.aproveitados || 0) ||
     new Date(b.linha.ultima || 0) - new Date(a.linha.ultima || 0);
 
-  testes.sort((a, b) => {
-    // Nunca testado antes de reteste: a primeira resposta vale mais que a segunda
-    // opinião sobre um engasgo.
-    if (a.motivo !== b.motivo) return a.motivo === "nunca-testado" ? -1 : 1;
-    return porValor(a, b);
-  });
+  // Nunca testado antes de reteste: a primeira resposta vale mais que a segunda
+  // opinião sobre um engasgo. O aprovado sem campanha fica no meio: a palavra já
+  // vale, falta só o dado que destrava o vínculo.
+  const ORDEM_MOTIVO = { "nunca-testado": 0, "sem-campanha-id": 1, indeterminado: 2 };
+  testes.sort((a, b) => (ORDEM_MOTIVO[a.motivo] - ORDEM_MOTIVO[b.motivo]) || porValor(a, b));
   importacoes.sort(porValor);
   vitrines.sort(porValor);
 
@@ -177,7 +181,7 @@ async function runOnce({ manual = false } = {}) {
   const sync = require("../coupons/sync");
   const affiliate = require("../scraping/affiliate");
 
-  const resumo = { testados: 0, importados: 0, vitrines: 0, produtosRepasse: 0, bloqueado: false, pulada: null };
+  const resumo = { importados: 0, vitrines: 0, produtosRepasse: 0, pulada: null };
   const pular = async (motivo, message) => {
     resumo.pulada = message;
     await logAutotest({ code: "-", action: ACTION.SKIP, ok: false, message });
@@ -233,38 +237,35 @@ async function runOnce({ manual = false } = {}) {
     // barra o Puppeteer). O teste agora é no checkout do produto, na aba do admin
     // pela extensão — a fila dele é o `pendentesCheckout` abaixo.
     // ── A campanha e a vitrine ──
-    // Só se a rodada não bateu numa parede: importar é mais Chrome, e mais longo.
-    if (!resumo.bloqueado) {
-      for (const alvo of pesado) {
-        try {
-          if (alvo.action === ACTION.IMPORT) {
-            const r = await importarEsperando(sync, alvo.campaignId, cfg);
-            await logAutotest({
-              code: alvo.code, action: ACTION.IMPORT,
-              ok: !!r.ok, campaignId: alvo.campaignId,
-              produtos: r.produtos ?? null,
-              message: r.message || null,
-            });
-            if (r.ok) resumo.importados += 1;
-          } else {
-            // A vitrine da página do cupom, no Chrome do servidor.
-            const r = await sync.syncOneCoupon(alvo.campaignId);
-            const produtos = r?.produtos ?? r?.vinculos ?? null;
-            await logAutotest({
-              code: alvo.code, action: ACTION.VITRINE,
-              ok: !!produtos, campaignId: alvo.campaignId, produtos,
-              message: produtos ? null : "O ML não devolveu produto nenhum pra essa campanha.",
-            });
-            if (produtos) resumo.vitrines += 1;
-          }
-        } catch (err) {
+    for (const alvo of pesado) {
+      try {
+        if (alvo.action === ACTION.IMPORT) {
+          const r = await importarEsperando(sync, alvo.campaignId, cfg);
           await logAutotest({
-            code: alvo.code, action: alvo.action, ok: false,
-            campaignId: alvo.campaignId,
-            errorKind: classifyFromText(err.message),
-            message: err.message,
+            code: alvo.code, action: ACTION.IMPORT,
+            ok: !!r.ok, campaignId: alvo.campaignId,
+            produtos: r.produtos ?? null,
+            message: r.message || null,
           });
+          if (r.ok) resumo.importados += 1;
+        } else {
+          // A vitrine da página do cupom, no Chrome do servidor.
+          const r = await sync.syncOneCoupon(alvo.campaignId);
+          const produtos = r?.produtos ?? r?.vinculos ?? null;
+          await logAutotest({
+            code: alvo.code, action: ACTION.VITRINE,
+            ok: !!produtos, campaignId: alvo.campaignId, produtos,
+            message: produtos ? null : "O ML não devolveu produto nenhum pra essa campanha.",
+          });
+          if (produtos) resumo.vitrines += 1;
         }
+      } catch (err) {
+        await logAutotest({
+          code: alvo.code, action: alvo.action, ok: false,
+          campaignId: alvo.campaignId,
+          errorKind: classifyFromText(err.message),
+          message: err.message,
+        });
       }
     }
 
@@ -362,11 +363,17 @@ async function pendentesCheckout({ limit = 50 } = {}) {
 
   const linhas = (await repasseCoupons.aggregate({ days: cfg.diasDeBusca })).map(paraAFila);
   const { testes } = selecionar(linhas.filter(l => l.link), { ...cfg, maxPorRodada: Infinity });
+  // Reteste vai para o link que ainda não foi testado (ou o testado há mais
+  // tempo): se a falha foi do link, insistir nele queimaria as tentativas.
+  const retestes = testes.filter(t => t.motivo !== "nunca-testado" && !vistos.has(t.code)).map(t => t.code);
+  const outroLink = retestes.length
+    ? await repasseCoupons.proximosLinks(retestes, { days: cfg.diasDeBusca })
+    : new Map();
   for (const t of testes) {
     if (vistos.has(t.code)) continue;
     vistos.add(t.code);
     itens.push({
-      origem: "repasse", code: t.code, url: t.linha.link, motivo: t.motivo,
+      origem: "repasse", code: t.code, url: outroLink.get(t.code) || t.linha.link, motivo: t.motivo,
       capturas: t.linha.capturas, criadoEm: t.linha.primeira, ultima: t.linha.ultima,
       reservado: reservado(t.code),
     });
@@ -433,9 +440,15 @@ async function registrarCheckout({ code, url = null, material, source = "repasse
   let message = mensagemDe(resultado);
   if (vinculo?.noCatalogo) message += " · adicionado ao catálogo";
   else if (vinculo?.vinculados) message += " · ligado ao produto";
+  // O primeiro teste no checkout de um código que só o robô antigo tinha tentado
+  // recomeça a contagem: senão as 3 tentativas dele (Chrome do servidor barrado,
+  // não resposta sobre o cupom) já estouravam o `maxTentativas` e o código saía da
+  // fila depois de UMA ida ao checkout.
+  const anterior = await require("../db").prisma().mlCouponCode.findUnique({ where: { code: c }, select: { source: true } });
   const linha = await pg.recordCodeCheck({
     code: c, verdict, campaignId: resultado.campaignId, message, source: fonte,
     raw: { ...resultado, url, via: "checkout", vinculo },
+    recomecarContagem: !!anterior && !FONTES_DO_CHECKOUT.has(anterior.source),
   });
   _reservas.delete(c);
 
@@ -518,19 +531,26 @@ async function ligarAoProduto({ material, url, campaignId, pg }) {
 }
 
 // ── Agenda ───────────────────────────────────────────────────────────────
-function agendar(cfg) {
-  _status.nextRunAt = new Date(Date.now() + cfg.intervaloMs).toISOString();
+// `setTimeout` encadeado, e não `setInterval`: o intervalo é relido da config a
+// cada rodada (mudar na tela vale sem restart) e o `nextRunAt` que a tela mostra é
+// a hora em que o próximo disparo de fato acontece.
+function armar(ms) {
+  const t = setTimeout(() => {
+    runOnce().finally(() => {
+      if (!timers.length) return; // stop() no meio da rodada
+      const cfg = cfgStore.readConfig();
+      armar(cfg.intervaloMs);
+    });
+  }, ms);
+  t.unref?.();
+  timers = [t];
+  _status.nextRunAt = new Date(Date.now() + ms).toISOString();
 }
 
 function start() {
   if (process.env.NODE_ENV === "test") return;
   if (timers.length) return;
-  const cfg = cfgStore.readConfig();
-  const first = setTimeout(() => { runOnce().finally(() => agendar(cfgStore.readConfig())); }, FIRST_RUN_MS);
-  const loop = setInterval(() => { runOnce().finally(() => agendar(cfgStore.readConfig())); }, cfg.intervaloMs);
-  for (const t of [first, loop]) t.unref?.();
-  timers = [first, loop];
-  agendar(cfg);
+  armar(FIRST_RUN_MS);
 }
 
 function stop() {

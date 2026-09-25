@@ -71,6 +71,8 @@ const FILTROS_STATUS = [
   ["todos", "Todos"],
   ["nao-testado", "Nunca testados"],
   ["sem-campanha", "Falta trazer a campanha"],
+  ["sem-id", "Aprovado, campanha não identificada"],
+  ["outra-loja", "Outras lojas (sem teste)"],
   ["valid", "Palavra existe"],
   ["invalid", "O ML não reconheceu"],
   ["indeterminado", "O ML não respondeu"],
@@ -413,7 +415,12 @@ function Linha({ cupom, aberto, onToggle, onPatch, onImportar, onExcluir, temChe
   const [raspando, setRaspando] = useState(false);
   const [aviso, setAviso] = useState(null);
 
-  const sem = SEMAFORO[cupom.verdict] || SEMAFORO["nao-testado"];
+  // Só veio com link de Amazon/Shopee: o teste é no checkout do ML, então não há
+  // onde testar — mostra a loja em vez de um "nunca testado" que nunca muda.
+  const outraLoja = !cupom.verdict && cupom.soOutraLoja;
+  const sem = outraLoja
+    ? { label: `🏷️ ${(cupom.lojas || []).join(", ")} — sem teste`, color: "var(--color-text-secondary)" }
+    : SEMAFORO[cupom.verdict] || SEMAFORO["nao-testado"];
   // O produto do teste no checkout não conta: só a vitrine lida diz que ela foi lida.
   // Sem a URL da vitrine (campanha nascida no checkout), quem a acha é o "Trazer campanha".
   const semVitrine = (cupom.produtosVitrine ?? cupom.produtos ?? 0) === 0;
@@ -512,14 +519,16 @@ function Linha({ cupom, aberto, onToggle, onPatch, onImportar, onExcluir, temChe
         </td>
         <td style={td}>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <button
-              onClick={testar}
-              disabled={testando || naFila}
-              style={botaoLink}
-              title={temCheckout && cupom.link ? "Testa o código no checkout do produto que chegou com ele" : "Testa a palavra solta"}
-            >
-              {testando || naFila ? "⟳ testando..." : cupom.verdict ? "Testar de novo" : "Testar"}
-            </button>
+            {!outraLoja && (
+              <button
+                onClick={testar}
+                disabled={testando || naFila}
+                style={botaoLink}
+                title={temCheckout && cupom.link ? "Testa o código no checkout do produto que chegou com ele" : "Testa a palavra solta"}
+              >
+                {testando || naFila ? "⟳ testando..." : cupom.verdict ? "Testar de novo" : "Testar"}
+              </button>
+            )}
             {cupom.verdict === "valid" && cupom.campaignId && (!cupom.inSystem || (semVitrine && cupom.temVitrine === false)) && (
               <button onClick={onImportar} style={{ ...botaoLink, borderColor: PRIMARY_DARK, color: PRIMARY_DARK }}>
                 Trazer campanha

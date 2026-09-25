@@ -54,8 +54,8 @@ beforeEach(() => {
     cupom: { expiresAt: new Date(Date.now() + 864e5) },
     noCatalogo: null,
     links: [
-      { url: A, productName: "Tênis adidas", productImg: null, price: 199.9, originalPrice: 299.9, discount: 33, sold: 120 },
-      { url: B, productName: "Airfryer WAP", productImg: null, price: 349, originalPrice: null, discount: null, sold: null },
+      { url: A, productName: "Tênis adidas", productImg: "https://http2.mlstatic.com/D_1-O.jpg", price: 199.9, originalPrice: 299.9, discount: 33, sold: 120 },
+      { url: B, productName: "Airfryer WAP", productImg: "https://http2.mlstatic.com/D_2-O.jpg", price: 349, originalPrice: null, discount: null, sold: null },
     ],
     vinculou: [],
     catalogo: [],
@@ -100,6 +100,18 @@ describe("ligarProdutosDoRepasse", () => {
     await ligarProdutosDoRepasse("MELHORCUPOM");
     expect(estado.vinculou[0].itens.map(i => i.productUrl)).toEqual([A]);
     expect(estado.catalogo.map(p => p.link)).toEqual([A]);
+  });
+
+  it("link sem foto/preço que o catálogo não tem não vira produto nem vínculo", async () => {
+    // O CAPTCHA, a landing e o "sem oferta" chegam do log sem os dados do produto.
+    estado.links = [
+      { ...estado.links[0], productImg: null },
+      { ...estado.links[1], price: null },
+    ];
+    const r = await ligarProdutosDoRepasse("MELHORCUPOM");
+    expect(estado.catalogo).toEqual([]);
+    expect(r.produtos).toBe(0);
+    expect(estado.vinculou[0]?.itens || []).toEqual([]);
   });
 
   it.each([

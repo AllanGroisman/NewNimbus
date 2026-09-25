@@ -2807,6 +2807,20 @@ app.delete("/api/admin/ml-cupons", auth.requireAuth, auth.requireAdmin, async (r
   }
 });
 
+// Apaga TODAS as palavras testadas (o "Limpar lista" da aba Descobrir palavra).
+// Fica ANTES da rota de apagar um cupom: depois dela, o "codes" viraria o
+// `:campaignId` e o pedido apagaria um cupom chamado "codes".
+app.delete("/api/admin/ml-cupons/codes", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  if (mlCupons.status().running) {
+    return res.status(409).json({ error: "Tem uma rodada de cupons rodando — espere ela terminar." });
+  }
+  try {
+    res.json({ ok: true, ...await couponsStore.clearCodeChecks() });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "DELETE /api/admin/ml-cupons/codes" });
+  }
+});
+
 // Apaga UM cupom (o 🗑 da linha da tabela). Mesma recusa do "apagar todos": mexer
 // na lista no meio de uma varredura é apagar o que ela está gravando.
 app.delete("/api/admin/ml-cupons/:campaignId", auth.requireAuth, auth.requireAdmin, async (req, res) => {
@@ -3699,7 +3713,7 @@ app.get("/api/admin/repasse/logs", auth.requireAuth, auth.requireAdmin, async (r
 app.delete("/api/admin/catalog", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
     const r = await catalog.clearAll();
-    res.json({ ok: true, removed: r.removed });
+    res.json({ ok: true, removed: r.removed, sondas: r.sondas });
   } catch (err) {
     httpErrors.serverError(res, err, { req, ctx: "DELETE /api/admin/catalog" });
   }

@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, categoryIcon } from "../data/constants";
-import { adminCatalog, adminScraperConfig, adminRunScraper, adminScraperStatus, errText} from "../data/api";
+import { adminCatalog, adminScraperConfig, adminRunScraper, adminScraperStatus, adminClearCatalog, errText} from "../data/api";
 import { ProductGridCard } from "../components/ui/ProductCard";
 import Pagination from "../components/ui/Pagination";
+import Modal from "../components/ui/Modal";
 
 const STATUS_POLL_MS = 4000;
 
@@ -32,6 +33,8 @@ export default function PageProducts() {
 
   const [scraperStatus, setScraperStatus] = useState(null);
   const [runError, setRunError] = useState(null);
+  const [clearing, setClearing] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
 
   // Carrega categorias/lojas disponíveis do backend (via config do admin)
   useEffect(() => {
@@ -103,6 +106,21 @@ export default function PageProducts() {
       await refreshStatus();
     } catch (err) {
       setRunError(errText(err, "Não foi possível carregar os produtos."));
+    }
+  }
+
+  async function clearCatalog() {
+    setConfirmClear(false);
+    setError(null);
+    setClearing(true);
+    try {
+      await adminClearCatalog();
+      setPage(1);
+      await loadCatalog();
+    } catch (err) {
+      setError(errText(err, "Não foi possível apagar os produtos."));
+    } finally {
+      setClearing(false);
     }
   }
 
@@ -188,6 +206,14 @@ ${cards}
             style={{ padding: "7px 14px", borderRadius: 8, background: "transparent", color: "var(--color-text-primary)", border: "0.5px solid var(--color-border-secondary)", fontSize: 13, cursor: "pointer", fontWeight: 500 }}
           >
             ⟳ Atualizar
+          </button>
+          <button
+            onClick={() => setConfirmClear(true)}
+            disabled={clearing || isRunning}
+            style={{ padding: "7px 14px", borderRadius: 8, background: "transparent", color: "var(--danger-text)", border: "0.5px solid var(--danger-text)", fontSize: 13, cursor: clearing || isRunning ? "not-allowed" : "pointer", fontWeight: 500, opacity: clearing || isRunning ? 0.5 : 1 }}
+            title={isRunning ? "Espere o scraping terminar" : "Apaga todo o catálogo de produtos"}
+          >
+            {clearing ? "Apagando..." : "🗑 Apagar todos"}
           </button>
           <button
             onClick={runScraper}
@@ -375,6 +401,17 @@ ${cards}
 
           <Pagination page={page} totalPages={totalPages} onChange={setPage} />
         </>
+      )}
+      {confirmClear && (
+        <Modal title="Apagar todo o catálogo?" onClose={() => setConfirmClear(false)} danger>
+          <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+            <strong style={{ color: "var(--color-text-primary)" }}>Todos</strong> os produtos do catálogo central serão apagados, não só os do filtro atual. O registro dos produtos já sondados no checkout também some, e o lote volta a sondar todos. As campanhas ficam sem produtos até o próximo scraping. Esta ação não pode ser desfeita.
+          </p>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button onClick={() => setConfirmClear(false)} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+            <button onClick={clearCatalog} style={{ padding: "8px 16px", borderRadius: 8, background: "#E24B4A", color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>Apagar tudo</button>
+          </div>
+        </Modal>
       )}
     </div>
   );

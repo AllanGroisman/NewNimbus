@@ -77,6 +77,15 @@ describe("extractCoupon", () => {
     expect(capture.extractCoupon("use o cupom aqui embaixo")).toBeNull();
   });
 
+  it("palavra em Title Case depois do gatilho não é código; duas maiúsculas já são", () => {
+    expect(capture.extractCoupon("Use o Cupom Exclusivo no app")).toBeNull();
+    expect(capture.extractCoupon("Cupom Shopee de R$20 OFF")).toBeNull();
+    expect(capture.extractCoupon("Código Promocional liberado")).toBeNull();
+    expect(capture.extractCoupon("use o cupom MeliKids")).toBe("MELIKIDS");
+    expect(capture.extractCoupon("use o cupom JBL")).toBeNull(); // 3 < minLen
+    expect(capture.extractCoupon("use o cupom MELIKIDS")).toBe("MELIKIDS");
+  });
+
   it("sem gatilho de cupom, texto vazio ou não-string devolvem null", () => {
     expect(capture.extractCoupon("só um produto https://a.com/x sem cupom nenhum aplicável")).toBeNull();
     expect(capture.extractCoupon("promoção sem código")).toBeNull();
