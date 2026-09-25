@@ -15,7 +15,7 @@ import { createRequire } from "module";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
-const { interpretar, verdictDe, mensagemDe, condicoesDoCartao, totalDoResumo, campanhaDoCodigo } =
+const { interpretar, verdictDe, mensagemDe, condicoesDoCartao, nomeDoCartao, totalDoResumo, campanhaDoCodigo } =
   require(path.resolve(__dirname, "..", "..", "backend", "repasse", "checkout-cupom.js"));
 const htmlCupons = fs.readFileSync(path.resolve(__dirname, "..", "fixtures", "ml-checkout-cupons-iframe.html"), "utf8");
 
@@ -48,6 +48,18 @@ describe("condicoesDoCartao", () => {
     expect(c.compra_minima).toBe(1299.9);
     expect(c.limite_desconto).toBeNull();
     expect(c.alerta).toBeNull();
+  });
+});
+
+describe("nomeDoCartao", () => {
+  it("\"Com <CÓDIGO>\" vira o código", () => {
+    expect(nomeDoCartao(CARTAO_MELIKIDS)).toBe("MELIKIDS");
+  });
+  it("cartão com o nome da campanha no lugar do código", () => {
+    expect(nomeDoCartao("Cupom Site\n10% OFF\nCompra mínima R$ 100\nAplicado")).toBe("Cupom Site");
+  });
+  it("só condições e botão → null", () => {
+    expect(nomeDoCartao("10% OFF\nCompra mínima R$ 100 | Venc. 30/09/2026\nAplicado")).toBeNull();
   });
 });
 
@@ -131,6 +143,45 @@ describe("interpretar", () => {
     const r = interpretar(chegou({ cartaoDepois: { texto: "Com X1\n10% OFF\nAplicar", aplicado: false } }), "X1");
     expect(r.motivo).toBe("sem-confirmacao");
     expect(verdictDe(r)).toBe("indeterminado");
+  });
+
+  it("cartão não reconhecido, mas o resumo ganhou um cupom em uso → aplicado_agora (SITE250930)", () => {
+    const r = interpretar(chegou({ resumoAntes: "Resumo da compra Inserir código do cupom Você pagará R$ 2.435", cartaoDepois: null }), "SITE250930");
+    expect(r.status).toBe("aplicado_agora");
+    expect(verdictDe(r)).toBe("valid");
+    expect(r.cupons_em_uso).toBe("1/1");
+  });
+
+  it("guarda o nome do cartão reconhecido e o põe na mensagem", () => {
+    const texto = "Cupom Site\n10% OFF\nCompra mínima R$ 100\nAplicado";
+    const r = interpretar(chegou({ cartaoDepois: { texto, aplicado: true, porNome: false } }), "SITE250930");
+    expect(r.cartao).toEqual({ nome: "Cupom Site", texto });
+    expect(mensagemDe(r)).toMatch(/cartão "Cupom Site"/);
+  });
+
+  it("cartão com o próprio código: guarda, mas não repete o código na mensagem", () => {
+    const r = interpretar(chegou({ cartaoAntes: { texto: CARTAO_MELIKIDS, aplicado: true } }), "MELIKIDS");
+    expect(r.cartao.nome).toBe("MELIKIDS");
+    expect(mensagemDe(r)).not.toMatch(/cartão "/);
+  });
+
+  it("teste que falhou não guarda cartão", () => {
+    const r = interpretar(chegou({ erroCampo: "O cupom não está mais disponível.", cartaoDepois: { texto: "Com X1\n10% OFF\nAplicar", aplicado: false } }), "X1");
+    expect(r.cartao).toBeUndefined();
+  });
+
+  it("o resumo com o mesmo número de cupons em uso não prova nada", () => {
+    const r = interpretar(chegou({ cartaoDepois: null }), "X1");
+    expect(r.motivo).toBe("sem-confirmacao");
+  });
+
+  it("sem-confirmacao guarda o que a tela mostrou, para conferir depois", () => {
+    const r = interpretar(chegou({ textoDoModal: "Cupons Insira seu código aqui", aplicadosDepois: ["Cupom Site 10% OFF Aplicado"] }), "X1");
+    expect(r.diagnostico).toEqual({
+      textoDoModal: "Cupons Insira seu código aqui",
+      aplicados: ["Cupom Site 10% OFF Aplicado"],
+      resumoDepois: RESUMO,
+    });
   });
 
   it.each([

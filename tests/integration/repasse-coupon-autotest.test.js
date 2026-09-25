@@ -299,6 +299,58 @@ describe("cupom que valeu vira vínculo com o produto", () => {
     expect(await prisma().mlCouponProduct.count()).toBe(0);
   });
 
+  // Os outros produtos que o grupo mandou com o mesmo código (repasse/coupon-products.js).
+  const DO_GRUPO = "https://produto.mercadolivre.com.br/MLB-4810869377-kit-3-calcas-legging-_JM";
+  const capturaDoGrupo = (coupon, extra = {}) => prisma().repasseCaptureLog.create({
+    data: {
+      groupId: 1n, userId, waJid: "120363@g.us", rawUrl: "https://meli.la/2ZLewRA", resolvedUrl: DO_GRUPO,
+      store: "Mercado Livre", coupon, outcome: "queued",
+      productName: "Kit 3 Calças Legging", price: 89.9, originalPrice: 129.9, discount: 30, ...extra,
+    },
+  });
+
+  it("aprovado: os outros produtos do repasse entram no catálogo ligados como 'repasse'", async () => {
+    await capturaDoGrupo("CASA25");
+    // Um link que não é produto não vira nada.
+    await capturaDoGrupo("CASA25", { resolvedUrl: "https://www.mercadolivre.com.br/ofertas", productName: "Ofertas" });
+
+    const r = await autotest.registrarCheckout({ code: "CASA25", url: "https://meli.la/abc", material: valeu() });
+
+    expect(r.repasse).toMatchObject({ campaignId: "14167118", produtos: 1, noCatalogo: 1 });
+    const produto = await prisma().catalogProduct.findFirst({ where: { mlAnuncioId: "MLB4810869377" } });
+    expect(produto).toMatchObject({ name: "Kit 3 Calças Legging", price: 89.9, couponCampaignId: "14167118" });
+    const vinculos = await prisma().mlCouponProduct.findMany({ where: { campaignId: "14167118" } });
+    expect(vinculos.filter(v => v.productUrl === DO_GRUPO).every(v => v.origem === "repasse")).toBe(true);
+    // O produto testado continua "checkout".
+    expect(vinculos.filter(v => v.productUrl === PRODUTO).every(v => v.origem === "checkout")).toBe(true);
+    expect(await prisma().catalogProduct.count({ where: { name: "Ofertas" } })).toBe(0);
+  });
+
+  it("a rodada do robô liga os produtos de código já aprovado cuja campanha está aqui", async () => {
+    await palavraTestada("TEMAQUI", { verdict: "valid", campaignId: "555" });
+    await prisma().mlCoupon.create({ data: { campaignId: "555", title: "10% OFF", containerUrl: "https://www.mercadolivre.com.br/cupons/_Container_555" } });
+    await capturaDoGrupo("TEMAQUI");
+    vi.spyOn(sync, "syncOneCoupon").mockResolvedValue({ produtos: 0 });
+
+    const r = await autotest.runOnce();
+
+    expect(r.produtosRepasse).toBe(1);
+    const vinculos = await prisma().mlCouponProduct.findMany({ where: { campaignId: "555" } });
+    expect(vinculos.length).toBeGreaterThanOrEqual(1);
+    expect(vinculos.every(v => v.origem === "repasse")).toBe(true);
+  });
+
+  it("código aprovado com a campanha fora do sistema não liga nada ainda", async () => {
+    await palavraTestada("FORA10", { verdict: "valid", campaignId: "556" });
+    await capturaDoGrupo("FORA10");
+    vi.spyOn(sync, "startImport").mockResolvedValue({ started: false });
+
+    await autotest.runOnce();
+
+    expect(await prisma().mlCouponProduct.count()).toBe(0);
+    expect(await prisma().catalogProduct.count()).toBe(0);
+  });
+
   it("valeu mas a campanha não foi achada: fica só a palavra", async () => {
     const r = await autotest.registrarCheckout({
       code: "OUTRO15",
@@ -418,8 +470,9 @@ describe("trazer a campanha e a vitrine", () => {
   it("raspa a vitrine da campanha que está aqui sem produto nenhum", async () => {
     await capturado("VITRINE");
     await palavraTestada("VITRINE", { verdict: "valid", campaignId: "888" });
-    // A campanha existe no sistema, mas sem vínculo de produto.
-    await prisma().mlCoupon.create({ data: { campaignId: "888", title: "10% em casa" } });
+    // A campanha existe no sistema, com a URL da vitrine, mas sem vínculo de
+    // produto. Sem a URL quem vai é o "trazer campanha" (selecionar).
+    await prisma().mlCoupon.create({ data: { campaignId: "888", title: "10% em casa", containerUrl: "https://www.mercadolivre.com.br/cupons/_Container_888" } });
     const syncOne = vi.spyOn(sync, "syncOneCoupon").mockResolvedValue({ produtos: 12 });
 
     const r = await autotest.runOnce();

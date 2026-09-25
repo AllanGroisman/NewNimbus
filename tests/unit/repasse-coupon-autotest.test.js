@@ -138,6 +138,21 @@ describe("selecionar — a campanha e a vitrine", () => {
     expect(r.pesado).toEqual([expect.objectContaining({ code: "CUPOM10", action: "vitrine" })]);
   });
 
+  it("campanha do checkout, só com o produto testado e sem vitrine → traz a campanha (AMODESCONTO)", () => {
+    const r = autotest.selecionar([valida({ inSystem: true, produtos: 1, produtosVitrine: 0, temVitrine: false })], CFG, AGORA);
+    expect(r.pesado).toEqual([expect.objectContaining({ code: "CUPOM10", campaignId: "42", action: "import" })]);
+  });
+
+  it("campanha com a URL da vitrine e só o produto do checkout → raspa a vitrine", () => {
+    const r = autotest.selecionar([valida({ inSystem: true, produtos: 1, produtosVitrine: 0, temVitrine: true })], CFG, AGORA);
+    expect(r.pesado).toEqual([expect.objectContaining({ code: "CUPOM10", action: "vitrine" })]);
+  });
+
+  it("vitrine já lida → nada a fazer", () => {
+    const r = autotest.selecionar([valida({ inSystem: true, produtos: 184, produtosVitrine: 183, temVitrine: true })], CFG, AGORA);
+    expect(r.pesado).toEqual([]);
+  });
+
   it("não traz campanha sem id — não há o que buscar", () => {
     const r = autotest.selecionar([linha({ verdict: "valid", campaignId: null })], CFG, AGORA);
     expect(r.pesado).toEqual([]);

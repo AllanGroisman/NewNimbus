@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { adminRepasseLogs, adminRepasseSummary, errText} from "../data/api";
 import Pagination from "../components/ui/Pagination";
+import { useLembrado } from "../data/useLembrado";
 import Badge from "../components/ui/Badge";
 import RepasseSummary from "../components/admin/RepasseSummary";
 import CouponDetection from "../components/admin/CouponDetection";
@@ -53,17 +54,26 @@ function kindColor(info) {
   return "gray";
 }
 
+// Filtro guardado de uma versão antiga da tela (ou mexido à mão) não pode quebrá-la.
+function sanearFiltro(v) {
+  if (!v || typeof v !== "object") return null;
+  const s = (x) => (typeof x === "string" ? x : "");
+  return { store: s(v.store), outcome: s(v.outcome), errorKind: s(v.errorKind) };
+}
+
 export default function PageAdminRepasse() {
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(50);
-  const [filter, setFilter] = useState({ store: "", outcome: "", errorKind: "" });
+  // Filtros, período e o "atualizar sozinho" ficam lembrados no servidor, iguais
+  // para todos os admins (data/useLembrado.js). A página não.
+  const [filter, setFilter] = useLembrado("admin.repasse.filtro", { store: "", outcome: "", errorKind: "" }, sanearFiltro);
   const [summary, setSummary] = useState(null);
-  const [hours, setHours] = useState(24);
+  const [hours, setHours] = useLembrado("admin.repasse.horas", 24);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [auto, setAuto] = useState(true);
+  const [auto, setAuto] = useLembrado("admin.repasse.auto", true);
 
   const refresh = useCallback(async () => {
     setLoading(true);

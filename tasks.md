@@ -109,6 +109,7 @@ DOWNLOADER:
 13. [] Filtro mais vistos
 14. [] Shopee
 15. [] Como editar os templates padrão
+16. [] O link pode ser do perfil ou de um video especifico. Se for de perfil, pede quantidade de videos, se é pra trazer os mais vistos e se é pra trazer só os que tem produtos vinculados. Se for individual, cria uma lista no qual da pra acrescentar mais links de videos, assim consegue-se pegar varios videos de contas diferentes e plataformas diferentes (não necessariamente precisa ser todos do youtube, pode ser misturado com os do tiktok.)
 
 
 Geral:

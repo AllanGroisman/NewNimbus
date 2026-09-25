@@ -3,6 +3,12 @@ import { PRIMARY_DARK, CATEGORIES } from "../../data/constants";
 import { adminSondaLoteAlvos, adminSondaLoteConfig, adminSondaLoteSalvarConfig, adminSondaLoteRuns, errText } from "../../data/api";
 import { sondarLote, descreverPasso } from "../../data/sondaLote";
 import { cardStyle, inputStyle, labelStyle, botaoSecundario, botaoPrimario } from "./cupomEstilos";
+import { useLembrado } from "../../data/useLembrado";
+
+// Os campos numéricos guardam o texto do input (dá pra apagar e redigitar); a
+// conversão com teto é no `filtros`, como já era.
+const numeroOuTexto = (v) => (typeof v === "number" || typeof v === "string" ? v : null);
+const sanearCategorias = (v) => (Array.isArray(v) ? v.filter(c => typeof c === "string") : null);
 
 // Admin › Cupom › Cupons do produto › "Testar os produtos do scraping" (task 13):
 // a sonda do checkout, produto a produto, com o progresso na tela.
@@ -205,10 +211,12 @@ function Historico({ versao }) {
 }
 
 export default function SondaLote() {
-  const [categorias, setCategorias] = useState([]);
-  const [limite, setLimite] = useState(20);
-  const [pularDias, setPularDias] = useState(7);
-  const [soSemCupom, setSoSemCupom] = useState(false);
+  // O que a última execução usou fica lembrado no servidor, igual para todos os
+  // admins (data/useLembrado.js).
+  const [categorias, setCategorias] = useLembrado("admin.sondaLote.categorias", [], sanearCategorias);
+  const [limite, setLimite] = useLembrado("admin.sondaLote.limite", 20, numeroOuTexto);
+  const [pularDias, setPularDias] = useLembrado("admin.sondaLote.pularDias", 7, numeroOuTexto);
+  const [soSemCupom, setSoSemCupom] = useLembrado("admin.sondaLote.soSemCupom", false);
 
   const [previa, setPrevia] = useState(null);
   const [erro, setErro] = useState(null);

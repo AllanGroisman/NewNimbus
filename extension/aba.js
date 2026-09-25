@@ -28,8 +28,10 @@ export function esperarCarregar(tabId, timeout = ESPERA_CARGA_MS) {
   });
 }
 
-export async function abrir(url) {
-  const aba = await chrome.tabs.create({ url, active: false });
+// `ativa` = na frente, com a janela focada: só o modo depuração pede isso.
+export async function abrir(url, { ativa = false } = {}) {
+  const aba = await chrome.tabs.create({ url, active: !!ativa });
+  if (ativa) await chrome.windows.update(aba.windowId, { focused: true }).catch(() => {});
   await esperarCarregar(aba.id);
   return aba.id;
 }

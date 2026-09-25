@@ -45,6 +45,15 @@ async function logCapture(fields) {
     });
   } catch (err) {
     console.error(`[repasse] falha ao gravar log de captura: ${err.message}`);
+    return;
+  }
+
+  // Produto novo com um código que já foi aprovado: entra ligado ao cupom na hora,
+  // sem esperar a rodada do robô (repasse/coupon-products.js). Solto, depois do
+  // insert, para não atrasar a captura — e o require é preguiçoso pelo mesmo
+  // motivo do resto deste módulo.
+  if (fields.coupon && fields.store === "Mercado Livre") {
+    require("./coupon-products").ligarEmSegundoPlano(fields.coupon);
   }
 }
 

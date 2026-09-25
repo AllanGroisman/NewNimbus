@@ -246,6 +246,12 @@ async function syncCatalogCoupons() {
       FROM "ml_coupon_products" p
       JOIN "ml_coupons" c ON c."campaign_id" = p."campaign_id"
      WHERE (c."expiresAt" IS NULL OR c."expiresAt" > NOW())
+       -- O vínculo do repasse (o grupo disse) não vale contra a vitrine INTEIRA
+       -- da campanha: se ela foi raspada e o produto não está nela, o ML já disse
+       -- que não. Mesma regra do quick-check.js:coberturaDoProduto.
+       AND NOT (p."origem" = 'repasse' AND EXISTS (
+             SELECT 1 FROM "ml_coupon_products" v
+              WHERE v."campaign_id" = p."campaign_id" AND v."origem" = 'vitrine'))
      ORDER BY p."productKey", (CASE WHEN c."kind" = 'percent' THEN c."value" ELSE 0 END) DESC NULLS LAST, c."value" DESC NULLS LAST
   `;
 
@@ -274,7 +280,10 @@ async function syncCatalogCoupons() {
      WHERE cp."couponCampaignId" IS NOT NULL
        AND NOT EXISTS (
          SELECT 1 FROM "ml_coupon_products" p
-          WHERE p."productKey" = cp."key" AND p."campaign_id" = cp."couponCampaignId")
+          WHERE p."productKey" = cp."key" AND p."campaign_id" = cp."couponCampaignId"
+            AND NOT (p."origem" = 'repasse' AND EXISTS (
+                  SELECT 1 FROM "ml_coupon_products" v
+                   WHERE v."campaign_id" = p."campaign_id" AND v."origem" = 'vitrine')))
   `;
 
   return { carimbados, limpos: limpos + Number(orfaos || 0), vinculosAtivos: vinculos.length };
@@ -700,6 +709,8 @@ async function setVitrineTotal(campaignId, total) {
 //
 // `soSemProdutos` tira da fila os PARCIAIS — quem já tem algum vínculo (vitrine
 // parcial, checkout) mas não a vitrine fechada. É o "começa por quem não tem nada".
+// O vínculo do repasse não conta: é o grupo quem diz, e a campanha segue sem nada
+// que o ML tenha confirmado.
 async function couponsSemVitrine({ limit = 500, campaignIds = null, soSemProdutos = false } = {}) {
   const teto = Math.min(2000, Math.max(1, Number(limit) || 500));
   const alvo = Array.isArray(campaignIds) && campaignIds.length
@@ -711,7 +722,8 @@ async function couponsSemVitrine({ limit = 500, campaignIds = null, soSemProduto
     productsSyncedAt: null,
     OR: [{ expiresAt: null }, { expiresAt: { gt: nowish() } }],
   };
-  const base = soSemProdutos ? { ...semVitrine, products: { none: {} } } : semVitrine;
+  const semNadaDoMl = { products: { none: { origem: { not: "repasse" } } } };
+  const base = soSemProdutos ? { ...semVitrine, ...semNadaDoMl } : semVitrine;
 
   const [prontos, precisamAtivar, total, incompletos, semNada] = await Promise.all([
     // Campanha antes de loja ("campaign" < "store"), o visto por último primeiro.
@@ -734,7 +746,7 @@ async function couponsSemVitrine({ limit = 500, campaignIds = null, soSemProduto
     // O tamanho da fila em cada uma das duas escolhas, qualquer que seja a
     // escolhida — é o número que a tela mostra ao lado de cada opção.
     prisma().mlCoupon.count({ where: semVitrine }),
-    prisma().mlCoupon.count({ where: { ...semVitrine, products: { none: {} } } }),
+    prisma().mlCoupon.count({ where: { ...semVitrine, ...semNadaDoMl } }),
   ]);
   // Quantos o filtro deixou de fora, pra ninguém achar que a fila encolheu sozinha.
   const parciaisFora = soSemProdutos ? incompletos - semNada : 0;
@@ -826,12 +838,52 @@ async function deleteCoupon(campaignId) {
   return { vinculos: vinculos.count, catalogoLimpo: catalogo.count };
 }
 
+// O produto que chegou com o cupom num grupo do repasse (repasse/coupon-products.js).
+// É o vínculo mais FRACO: foi o grupo quem disse que o cupom vale ali, o ML não
+// confirmou. Por isso ele nunca rebaixa um vínculo que já existe — no conflito só
+// o `lastSeenAt` anda — e quem o promove são os outros caminhos: o
+// `vincularPorCheckout` troca qualquer origem que não seja vitrine por "checkout",
+// e o `gravarVinculos` da vitrine sobrescreve a origem. Sem DELETE: esta coleção
+// só acumula, porque não existe "a lista inteira do repasse" para comparar.
+async function vincularDoRepasse(campaignId, itens) {
+  const id = String(campaignId || "");
+  const lista = (itens || []).filter(it => it?.productUrl && it?.productKeys?.length);
+  if (!id || !lista.length) return { vinculados: 0, novos: 0 };
+  const agora = nowish();
+
+  const candidatas = lista.flatMap(it => it.productKeys.map(key => ({ key, link: it.productUrl })));
+  const canonica = await require("../catalog/pg").resolveKeys(candidatas);
+  const porChave = new Map();
+  for (const it of lista) {
+    for (const k of it.productKeys) {
+      porChave.set(k, it.productUrl);
+      const c = canonica.get(k);
+      if (c) porChave.set(c, it.productUrl);
+    }
+  }
+  const chaves = [...porChave.keys()];
+  const urls = chaves.map(k => porChave.get(k));
+
+  const linhas = await prisma().$queryRaw`
+    INSERT INTO "ml_coupon_products" ("campaign_id", "productKey", "productUrl", "origem", "firstSeenAt", "lastSeenAt")
+    SELECT ${id}, v."chave", v."url", 'repasse', ${agora}::timestamptz, ${agora}::timestamptz
+      FROM (SELECT UNNEST(${chaves}::text[]) AS "chave", UNNEST(${urls}::text[]) AS "url") v
+    ON CONFLICT ("campaign_id", "productKey") DO UPDATE
+       SET "lastSeenAt" = EXCLUDED."lastSeenAt"
+    RETURNING (xmax = 0) AS "novo"
+  `;
+  const novos = linhas.filter(l => l.novo).length;
+  if (novos) await syncCatalogCoupons();
+  return { vinculados: linhas.length, novos };
+}
+
 module.exports = {
   upsertCoupons,
   clearAll,
   deleteCoupon,
   couponsSemVitrine,
   vincularPorCheckout,
+  vincularDoRepasse,
   restampCodesFromChecks,
   findCouponByCode,
   recoverCodesFromCoupons,

@@ -5,6 +5,7 @@ import Toggle from "../components/ui/Toggle";
 import Modal from "../components/ui/Modal";
 import ScheduleField from "../components/ui/ScheduleField";
 import Pagination from "../components/ui/Pagination";
+import { useLembrado } from "../data/useLembrado";
 import Barra from "../components/admin/Barra";
 import Numero from "../components/admin/Numero";
 import { duracao } from "../data/andamentoColheita";
@@ -23,6 +24,13 @@ import {
 const STATUS_POLL_MS = 5000;
 const STATUS_POLL_RUNNING_MS = 2000;   // mais fino enquanto roda — a barra anda por passo
 
+// Filtro guardado de uma versão antiga da tela não pode quebrá-la.
+function sanearCatFilter(v) {
+  if (!v || typeof v !== "object") return null;
+  const s = (x, p = "") => (typeof x === "string" ? x : p);
+  return { category: s(v.category), source: s(v.source), q: s(v.q), sortBy: s(v.sortBy, "lastSeen_desc") || "lastSeen_desc" };
+}
+
 export default function PageAdminScraper() {
   const [available, setAvailable] = useState({ categories: [], sources: [] });
   const [config, setConfig] = useState(null);
@@ -40,7 +48,8 @@ export default function PageAdminScraper() {
   const [catTotal, setCatTotal] = useState(0);
   const [catStats, setCatStats] = useState(null);
   const [catPage, setCatPage] = useState(1);
-  const [catFilter, setCatFilter] = useState({ category: "", source: "", q: "", sortBy: "lastSeen_desc" });
+  // Filtros e ordem do catálogo lembrados no servidor, iguais para todos os admins.
+  const [catFilter, setCatFilter] = useLembrado("admin.scraper.catalogo", { category: "", source: "", q: "", sortBy: "lastSeen_desc" }, sanearCatFilter);
   const [catLoading, setCatLoading] = useState(false);
   const [clearing, setClearing] = useState(false);
   // Confirmação de "Limpar catálogo" — antes era um window.confirm do navegador.

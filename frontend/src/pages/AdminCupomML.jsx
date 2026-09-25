@@ -18,6 +18,7 @@
 // O testador de PALAVRA morava aqui e hoje é a aba vizinha (AdminCupomPalavra.jsx).
 import { Fragment, useState, useEffect, useCallback, useRef } from "react";
 import { PRIMARY_DARK } from "../data/constants";
+import { useLembrado, lerLembrado, gravarLembrado } from "../data/useLembrado";
 import {
   adminMlCupons, adminMlCuponsStatus,
   adminMlCuponsProducts, adminMlCuponsClearAll, adminMlCuponsDelete,
@@ -134,6 +135,21 @@ const FONTE_PALAVRA = {
   titulo: "lida do título",
 };
 
+// Os filtros da tabela lembrados neste navegador (ver o `useState` de `filtros`).
+const CHAVE_FILTROS = "cupons.mlFiltros";
+const FILTROS_PADRAO = { q: "", scope: "", grouping: "", onlyValid: true };
+const filtrosSemPagina = (f) => ({
+  q: f.q ?? FILTROS_PADRAO.q, scope: f.scope ?? FILTROS_PADRAO.scope,
+  grouping: f.grouping ?? FILTROS_PADRAO.grouping, onlyValid: f.onlyValid ?? FILTROS_PADRAO.onlyValid,
+});
+function sanearFiltros(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const f = {};
+  for (const k of ["q", "scope", "grouping"]) if (typeof v[k] === "string") f[k] = v[k];
+  if (typeof v.onlyValid === "boolean") f.onlyValid = v.onlyValid;
+  return f;
+}
+
 // `buscaInicial` é um número de campanha vindo da aba "Descobrir palavra": ela
 // descobre a campanha de uma palavra e manda ver o cupom aqui (AdminCupom.jsx).
 export default function CuponsDoML({ buscaInicial = null }) {
@@ -146,10 +162,24 @@ export default function CuponsDoML({ buscaInicial = null }) {
   // `onlyValid: false` junto não é detalhe: a campanha que uma palavra aponta quase
   // sempre já venceu (é por isso que a palavra sobrou circulando), e o padrão a
   // esconderia — a tela responderia "nenhum cupom" para um cupom guardado bem aqui.
-  const [filtros, setFiltros] = useState(() => ({
-    q: buscaInicial ? String(buscaInicial) : "",
-    scope: "", grouping: "", onlyValid: !buscaInicial, page: 1,
-  }));
+  //
+  // Sem a campanha vinda de fora, os filtros voltam como ficaram da última vez
+  // neste navegador (a página não: ela sempre recomeça na 1). Com ela, a campanha
+  // manda, e ela NÃO vira o filtro lembrado — senão o próximo F5 abriria preso
+  // numa campanha vencida que o operador nem escolheu. Só o que ele mexer depois
+  // disso é gravado.
+  const [filtros, setFiltros] = useState(() => (buscaInicial
+    ? { ...FILTROS_PADRAO, q: String(buscaInicial), onlyValid: false, page: 1 }
+    : { ...FILTROS_PADRAO, ...lerLembrado(CHAVE_FILTROS, {}, sanearFiltros), page: 1 }));
+  const semeadoRef = useRef(buscaInicial ? filtrosSemPagina({ q: String(buscaInicial), onlyValid: false }) : null);
+  useEffect(() => {
+    const atual = filtrosSemPagina(filtros);
+    if (semeadoRef.current) {
+      if (JSON.stringify(atual) === JSON.stringify(semeadoRef.current)) return;
+      semeadoRef.current = null;
+    }
+    gravarLembrado(CHAVE_FILTROS, atual);
+  }, [filtros]);
   const [erro, setErro] = useState(null);
   const [aberto, setAberto] = useState(null);        // campaignId com os produtos à mostra
   // A extensão que colhe a vitrine no Chrome do próprio admin (extension/ na raiz).
@@ -173,22 +203,12 @@ export default function CuponsDoML({ buscaInicial = null }) {
   // "Só os que não têm nenhum produto": tira da fila do botão 2 os
   // PARCIAIS, que já têm prévia. Lembrado por navegador — é preferência de quem
   // opera, não estado do sistema.
-  const [soSemProdutos, setSoSemProdutos] = useState(() => {
-    try { return localStorage.getItem("cupons.soSemProdutos") === "1"; } catch { return false; }
-  });
-  useEffect(() => {
-    try { localStorage.setItem("cupons.soSemProdutos", soSemProdutos ? "1" : "0"); } catch { /* sem storage, só não lembra */ }
-  }, [soSemProdutos]);
+  const [soSemProdutos, setSoSemProdutos] = useLembrado("cupons.soSemProdutos", false);
   // "Até os limites abaixo" × "tudo o que o ML tiver" (task 20). Lembrado por
   // navegador, como o `soSemProdutos`: é preferência de quem opera, não estado do
   // sistema. E é uma ESCOLHA, não um número — virar config no servidor seria criar um
   // décimo quinto campo justamente para resolver a confusão dos quatorze.
-  const [listaSemTeto, setListaSemTeto] = useState(() => {
-    try { return localStorage.getItem("cupons.listaSemTeto") === "1"; } catch { return false; }
-  });
-  useEffect(() => {
-    try { localStorage.setItem("cupons.listaSemTeto", listaSemTeto ? "1" : "0"); } catch { /* sem storage, só não lembra */ }
-  }, [listaSemTeto]);
+  const [listaSemTeto, setListaSemTeto] = useLembrado("cupons.listaSemTeto", false);
   // "Ignorar cupons de loja": a escolha fica na config do servidor (é ela que a
   // varredura lê), e aqui só o valor do clique enquanto o status não relê — sem
   // isso a caixa voltaria por um instante ao valor antigo depois de marcada.
@@ -1036,6 +1056,7 @@ export default function CuponsDoML({ buscaInicial = null }) {
 //   vitrine  — a lista inteira.
 //   parcial  — um pedaço dela: a raspagem parou no muro ou num teto.
 //   checkout — o checkout do ML aplicou o cupom naquele produto.
+//   repasse  — o produto chegou com o código num grupo do repasse (não testado).
 //
 // Quem olha esta lista precisa saber qual está vendo: "5 produtos" de um pedaço
 // não quer dizer que o cupom cobre só 5.
@@ -1043,6 +1064,7 @@ const ORIGEM = {
   vitrine: "vitrine",
   parcial: "vitrine parcial",
   checkout: "checkout",
+  repasse: "repasse",
 };
 // Em que pé está a lista de produtos do cupom. `productsSyncedAt` só é escrito
 // quando a vitrine inteira foi raspada; vínculo sem ele é pedaço (vitrine

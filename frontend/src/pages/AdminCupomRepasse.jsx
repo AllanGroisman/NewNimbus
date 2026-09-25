@@ -18,7 +18,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { PRIMARY_DARK } from "../data/constants";
 import {
-  adminRepasseCoupons, adminRepasseLogs,
+  adminRepasseCoupons, adminRepasseLogs, adminRepasseCouponLinks,
   adminMlCuponsSyncProducts, adminRepasseCouponForget, adminRepasseCouponsClear, errText,
 } from "../data/api";
 import CouponAutotest from "../components/admin/CouponAutotest";
@@ -27,8 +27,9 @@ import Pagination from "../components/ui/Pagination";
 import Modal from "../components/ui/Modal";
 import { ImportarCampanhaModal } from "./AdminCupomPalavra";
 import { testarPalavra } from "../data/cupomPalavra";
-import { extensaoTestaNoCheckout, testarNoCheckout } from "../data/cupomCheckoutRepasse";
+import { extensaoTestaNoCheckout, extensaoDepuraCheckout, testarNoCheckout } from "../data/cupomCheckoutRepasse";
 import { VERDICT, OUTCOME_LABEL } from "../data/cupomRotulos";
+import { useLembrado, umDe } from "../data/useLembrado";
 import {
   cardStyle, inputStyle, labelStyle, th, td, botaoLink, botaoPerigo, botaoSecundario,
 } from "../components/admin/cupomEstilos";
@@ -78,14 +79,17 @@ const FILTROS_STATUS = [
 const PERIODOS = [["7", "7 dias"], ["30", "30 dias"], ["90", "90 dias"], ["tudo", "Tudo"]];
 
 const PAGE_SIZE = 30;
+const CHAVE_DEPURAR = "nimbus.repasse.checkoutDepurar";
 
 const data = (v) => (v ? new Date(v).toLocaleDateString("pt-BR") : "—");
 const dataHora = (v) => (v ? new Date(v).toLocaleString("pt-BR") : "—");
 
 export default function CuponsDoRepasse() {
-  const [days, setDays] = useState("90");
-  const [status, setStatus] = useState("todos");
-  const [q, setQ] = useState("");
+  // Os filtros ficam lembrados neste navegador; a página não (a lista muda e a
+  // página 3 de ontem pode nem existir hoje).
+  const [days, setDays] = useLembrado("nimbus.repasse.filtroDias", "90", umDe(PERIODOS.map(([v]) => v)));
+  const [status, setStatus] = useLembrado("nimbus.repasse.filtroStatus", "todos", umDe(FILTROS_STATUS.map(([v]) => v)));
+  const [q, setQ] = useLembrado("nimbus.repasse.filtroBusca", "");
   const [page, setPage] = useState(1);
 
   const [dados, setDados] = useState(null);
@@ -103,10 +107,16 @@ export default function CuponsDoRepasse() {
   const [temCheckout, setTemCheckout] = useState(null);
   // O cupom que a fila (card de cima) está testando agora.
   const [naFila, setNaFila] = useState(null);
+  // Modo depuração: todo teste no checkout desta aba roda com a aba na frente e
+  // devagar. Lembrado só neste navegador.
+  const [depurar, setDepurar] = useLembrado(CHAVE_DEPURAR, false);
+  const [temDepurar, setTemDepurar] = useState(null);
+  const trocarDepurar = useCallback((v) => setDepurar(!!v), [setDepurar]);
 
   useEffect(() => {
     let vivo = true;
     extensaoTestaNoCheckout().then(v => { if (vivo) setTemCheckout(!!v); }).catch(() => { if (vivo) setTemCheckout(false); });
+    extensaoDepuraCheckout().then(v => { if (vivo) setTemDepurar(!!v); }).catch(() => { if (vivo) setTemDepurar(false); });
     return () => { vivo = false; };
   }, []);
 
@@ -207,6 +217,9 @@ export default function CuponsDoRepasse() {
         ocupadoRef={ocupadoRef}
         onTestado={aoTestarNaFila}
         onTestando={setNaFila}
+        depurar={depurar && !!temDepurar}
+        temDepurar={temDepurar}
+        onDepurar={trocarDepurar}
       />
       <div style={cardStyle}>
         <div style={{ fontWeight: 500, marginBottom: 4 }}>Cupons capturados pelo repasse</div>
@@ -302,6 +315,7 @@ export default function CuponsDoRepasse() {
                     temCheckout={temCheckout}
                     naFila={naFila === c.code}
                     emSerie={emSerie}
+                    depurar={depurar && !!temDepurar}
                   />
                 ))}
               </tbody>
@@ -394,12 +408,15 @@ function BotoesDoModal({ apagando, onCancelar, onConfirmar, rotulo: texto }) {
   );
 }
 
-function Linha({ cupom, aberto, onToggle, onPatch, onImportar, onExcluir, temCheckout, naFila, emSerie }) {
+function Linha({ cupom, aberto, onToggle, onPatch, onImportar, onExcluir, temCheckout, naFila, emSerie, depurar }) {
   const [testando, setTestando] = useState(false);
   const [raspando, setRaspando] = useState(false);
   const [aviso, setAviso] = useState(null);
 
   const sem = SEMAFORO[cupom.verdict] || SEMAFORO["nao-testado"];
+  // O produto do teste no checkout não conta: só a vitrine lida diz que ela foi lida.
+  // Sem a URL da vitrine (campanha nascida no checkout), quem a acha é o "Trazer campanha".
+  const semVitrine = (cupom.produtosVitrine ?? cupom.produtos ?? 0) === 0;
 
   const testar = async () => {
     setTestando(true);
@@ -407,7 +424,7 @@ function Linha({ cupom, aberto, onToggle, onPatch, onImportar, onExcluir, temChe
     try {
       // O caminho da task 7: o código no checkout do produto que chegou com ele.
       if (temCheckout && cupom.link) {
-        const res = await emSerie(() => testarNoCheckout(cupom.code, cupom.link, { source: "repasse-checkout" }));
+        const res = await emSerie(() => testarNoCheckout(cupom.code, cupom.link, { source: "repasse-checkout", depurar }));
         onPatch(patchDoCheckout(cupom, res));
         return;
       }
@@ -441,7 +458,7 @@ function Linha({ cupom, aberto, onToggle, onPatch, onImportar, onExcluir, temChe
     try {
       const r = await adminMlCuponsSyncProducts(cupom.campaignId);
       if (r?.produtos) {
-        onPatch({ produtos: r.produtos });
+        onPatch({ produtos: r.produtos, produtosVitrine: r.produtos });
         setAviso(`Vitrine raspada: ${r.produtos} produto(s).`);
       } else {
         setAviso("O ML não devolveu produto nenhum pra essa campanha.");
@@ -503,18 +520,18 @@ function Linha({ cupom, aberto, onToggle, onPatch, onImportar, onExcluir, temChe
             >
               {testando || naFila ? "⟳ testando..." : cupom.verdict ? "Testar de novo" : "Testar"}
             </button>
-            {cupom.verdict === "valid" && cupom.campaignId && !cupom.inSystem && (
+            {cupom.verdict === "valid" && cupom.campaignId && (!cupom.inSystem || (semVitrine && cupom.temVitrine === false)) && (
               <button onClick={onImportar} style={{ ...botaoLink, borderColor: PRIMARY_DARK, color: PRIMARY_DARK }}>
                 Trazer campanha
               </button>
             )}
-            {cupom.inSystem && cupom.produtos === 0 && (
+            {cupom.inSystem && semVitrine && cupom.temVitrine !== false && (
               <button onClick={rasparVitrine} disabled={raspando} style={botaoLink}>
                 {raspando ? "⟳ raspando..." : "Raspar vitrine"}
               </button>
             )}
             <button onClick={onToggle} style={botaoLink}>
-              {aberto ? "▲ capturas" : "▼ capturas"}
+              {aberto ? "▲" : "▼"} produtos ({cupom.links ?? 0}) e capturas
             </button>
             <button
               onClick={onExcluir}
@@ -532,10 +549,127 @@ function Linha({ cupom, aberto, onToggle, onPatch, onImportar, onExcluir, temChe
       {aberto && (
         <tr>
           <td style={{ ...td, background: "var(--color-background-secondary)" }} colSpan={6}>
+            <Produtos
+              cupom={cupom} onPatch={onPatch}
+              temCheckout={temCheckout} naFila={naFila} emSerie={emSerie} depurar={depurar}
+            />
+            <div style={{ fontWeight: 500, margin: "14px 0 6px" }}>Capturas</div>
             <Capturas code={cupom.code} />
           </td>
         </tr>
       )}
+    </>
+  );
+}
+
+// De onde veio o vínculo do produto com a campanha do código. O do repasse é o
+// grupo dizendo que o cupom vale ali; os outros o ML confirmou.
+const VINCULO = {
+  checkout: "ligado ao cupom (testado no checkout)",
+  vitrine: "ligado ao cupom (vitrine)",
+  parcial: "ligado ao cupom (parte da vitrine)",
+  repasse: "ligado ao cupom (repasse, não testado)",
+};
+
+// Os produtos do ML que chegaram com o cupom, um por link, cada um com o último
+// teste no checkout feito nele. É aqui que se escolhe em qual produto testar: o
+// "Testar" da linha usa sempre o principal (`cupom.link`), e o cupom pode valer
+// num anúncio e não em outro.
+function Produtos({ cupom, onPatch, temCheckout, naFila, emSerie, depurar }) {
+  const [itens, setItens] = useState(null);
+  const [erro, setErro] = useState(null);
+  const [testando, setTestando] = useState(null);
+  const [avisos, setAvisos] = useState({});
+
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      try {
+        const r = await adminRepasseCouponLinks(cupom.code);
+        if (vivo) setItens(r.items || []);
+      } catch (err) {
+        if (vivo) setErro(errText(err, "Não deu pra carregar os produtos."));
+      }
+    })();
+    return () => { vivo = false; };
+  }, [cupom.code]);
+
+  const testar = async (p) => {
+    setTestando(p.url);
+    setAvisos(a => ({ ...a, [p.url]: null }));
+    try {
+      const res = await emSerie(() => testarNoCheckout(cupom.code, p.url, { source: "repasse-checkout", depurar }));
+      onPatch(patchDoCheckout(cupom, res));
+      // O produto mostra o desfecho DESTA tentativa, que pode diferir do que ficou
+      // gravado na palavra: um engasgo não apaga um "valid" anterior.
+      const t = res.tentativa || res;
+      setItens(xs => xs.map(x => x.url === p.url
+        ? {
+            ...x,
+            ultimoTeste: { verdict: t.verdict ?? null, message: t.message ?? null, em: new Date().toISOString() },
+            // Aprovado neste produto: o vínculo sobe para "checkout" (repasse/coupon-autotest.js:ligarAoProduto).
+            ...(t.verdict === "valid" && res.vinculo?.vinculados ? { vinculo: "checkout" } : {}),
+          }
+        : x));
+    } catch (err) {
+      setAvisos(a => ({ ...a, [p.url]: errText(err, "Não deu pra testar nesse produto agora.") }));
+    } finally {
+      setTestando(null);
+    }
+  };
+
+  const titulo = <div style={{ fontWeight: 500, marginBottom: 6 }}>Produtos que chegaram com o cupom</div>;
+  if (erro) return <>{titulo}<div style={{ color: "var(--danger-text)" }}>{erro}</div></>;
+  if (!itens) return <>{titulo}<div style={{ color: "var(--color-text-secondary)" }}>Carregando produtos...</div></>;
+  if (!itens.length) return <>{titulo}<div style={{ color: "var(--color-text-secondary)" }}>Nenhum produto do Mercado Livre chegou com esse cupom.</div></>;
+
+  const ocupado = !!testando || !!naFila;
+  return (
+    <>
+      {titulo}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {itens.map(p => {
+          const t = p.ultimoTeste;
+          const sem = t ? (SEMAFORO[t.verdict] || SEMAFORO["nao-testado"]) : null;
+          return (
+            <div key={p.url} data-testid="produto-do-cupom" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              {p.productImg && (
+                <img src={p.productImg} alt="" width={40} height={40} style={{ objectFit: "contain", borderRadius: 4, background: "#fff" }} />
+              )}
+              <div style={{ flex: "1 1 260px", minWidth: 0 }}>
+                <a
+                  href={p.url} target="_blank" rel="noopener noreferrer"
+                  style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                  title={p.url}
+                >{p.productName || p.url}</a>
+                <div style={{ color: "var(--color-text-secondary)" }}>
+                  {p.price != null && `R$ ${Number(p.price).toLocaleString("pt-BR", { minimumFractionDigits: 2 })} · `}
+                  {p.capturas} captura(s) · {data(p.ultima)}
+                  {p.url === cupom.link && " · principal"}
+                  {" · "}
+                  <span style={{ color: p.vinculo ? "var(--success-text)" : "var(--color-text-secondary)" }}>
+                    {VINCULO[p.vinculo] || (p.vinculo ? `ligado ao cupom (${p.vinculo})` : "não ligado ao cupom")}
+                  </span>
+                </div>
+                <div style={{ color: "var(--color-text-secondary)" }}>
+                  {t
+                    ? <><span style={{ color: sem.color, fontWeight: 500 }}>{sem.label}</span> neste produto em {dataHora(t.em)}{t.message ? ` · “${t.message}”` : ""}</>
+                    : "nunca testado neste produto"}
+                </div>
+                {avisos[p.url] && <div style={{ color: "var(--danger-text)" }}>{avisos[p.url]}</div>}
+              </div>
+              <button
+                onClick={() => testar(p)}
+                disabled={!temCheckout || ocupado}
+                style={botaoLink}
+                title={temCheckout ? "Testa o código no checkout deste produto" : "Precisa da extensão atualizada"}
+              >
+                {testando === p.url ? "⟳ testando..." : "Testar neste"}
+              </button>
+            </div>
+          );
+        })}
+      </div>
     </>
   );
 }

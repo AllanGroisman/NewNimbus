@@ -26,6 +26,9 @@ const VARIACAO_VOLTAS = 3;
 const RESPOSTA_ESPERA_MS = 8000;
 const MODAL_ESPERA_MS = 15000;
 const TETO_HTML_CUPONS = 400_000;
+// Modo depuração: a aba abre na frente e cada passo espera isto, com uma faixa no
+// topo da página dizendo qual é — para o admin ver se o caminho é o certo.
+const DEPURAR_PAUSA_MS = 3000;
 
 // ── o que roda DENTRO da página ──────────────────────────────────────────
 // Uma função só, com a ação como argumento: o executeScript serializa a função, e
@@ -121,6 +124,23 @@ export function naPagina_modalCupons(acao, codigo) {
     }
   }
 
+  // Todos os cartões APLICADOS agora, venham com "Com <CÓDIGO>" ou não: o ML às
+  // vezes mostra o cupom aplicado só com o nome da campanha (SITE250930). Quem
+  // chama compara antes × depois do "Inserir" — um aplicado novo é o do código.
+  const aplicados = [];
+  for (const b of doc.querySelectorAll("button, [role='button']")) {
+    if (!/^aplicad/i.test(limpa(b.textContent))) continue;
+    const travado = b.disabled === true || /andes-button--disabled/.test(b.className || "")
+      || b.getAttribute("aria-disabled") === "true";
+    let el = b.parentElement;
+    for (let i = 0; i < 8 && el && el !== doc.body && !/OFF|R\$/i.test(textoDe(el)); i++) el = el.parentElement;
+    if (!el || el === doc.body || (campo && el.contains(campo))) continue;
+    const check = !!el.querySelector("[class*='check' i], [class*='success' i]");
+    if (!travado && !check) continue;
+    // Com as quebras de linha: o servidor tira o nome do cupom da primeira linha.
+    aplicados.push({ texto: String(textoDe(el)).trim().slice(0, 1500) });
+  }
+
   const ctl = (campo && campo.closest(".andes-form-control")) || doc.querySelector(".andes-form-control--error");
   let erroCampo = null;
   if (ctl && /andes-form-control--error/.test(ctl.className || "")) {
@@ -139,6 +159,7 @@ export function naPagina_modalCupons(acao, codigo) {
     pronto: !!campo || !!cartao,
     campo: !!campo,
     cartao,
+    aplicados,
     erroCampo,
     economia: eco ? eco[0] : null,
     texto: texto.slice(0, 4000),
@@ -260,18 +281,33 @@ export function naPagina_linkDosCupons() {
   return null;
 }
 
+// A faixa do modo depuração, fixa no topo da página. Uma só: cada passo troca o texto.
+export function naPagina_faixaDepuracao(rotulo) {
+  let el = document.getElementById("__nimbus_depuracao");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "__nimbus_depuracao";
+    el.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:8px 14px;"
+      + "background:#fde047;color:#111;font:600 14px/1.3 system-ui,sans-serif;"
+      + "box-shadow:0 2px 6px rgba(0,0,0,.3);pointer-events:none";
+    (document.body || document.documentElement).appendChild(el);
+  }
+  el.textContent = `🐞 Nimbus: ${rotulo}`;
+  return true;
+}
+
 function ehLanding(url) {
   try { return /^\/social\//i.test(decodeURIComponent(new URL(String(url || "")).pathname)); } catch { return false; }
 }
 
 // ── o comando ────────────────────────────────────────────────────────────
 
-export async function cupomNoCheckout({ url, code, tempos = null }, progresso) {
+export async function cupomNoCheckout({ url, code, tempos = null, depurar = false }, progresso) {
   const T = lerTempos(tempos);
   const codigo = String(code || "").trim().toUpperCase();
   if (!url || !codigo) throw new Error("faltou o link do produto ou o código");
 
-  const tabId = await abrir(url);
+  const tabId = await abrir(url, { ativa: !!depurar });
   const material = {
     t0: Date.now(),
     code: codigo,
@@ -279,6 +315,7 @@ export async function cupomNoCheckout({ url, code, tempos = null }, progresso) {
     checkout: { attempted: false, reached: false, via: null, url: null, blockedReason: null, variacao: null, seguro: null },
     modal: { aberto: false, onde: null, campo: false, link: null, semCupom: false, tentativas: [], planoB: false },
     cartaoAntes: null, cartaoDepois: null, erroCampo: null, economia: null,
+    aplicadosAntes: [], aplicadosDepois: [],
     digitou: null, inseriu: null,
     variacao: null, variacaoFaltando: null,
     resumoAntes: "", resumoDepois: "", textoDoModal: "",
@@ -289,7 +326,19 @@ export async function cupomNoCheckout({ url, code, tempos = null }, progresso) {
 
   const foto = () => avaliar(tabId, naPagina_foto, [], { mundoDaPagina: true })
     .then(r => r || { url: "", titulo: "", tituloDaAba: "", texto: "", digital: "", respostas: [] });
-  const clicar = (src, maxLen) => avaliar(tabId, naPagina_clicarPorTexto, [src, maxLen], { mundoDaPagina: true });
+  // Sem `depurar` não faz nada. Com ele: avisa a tela, escreve na faixa e espera.
+  const passo = async (rotulo) => {
+    if (!depurar) return;
+    progresso({ tipo: "passo-depuracao", rotulo });
+    await avaliar(tabId, naPagina_faixaDepuracao, [rotulo], { mundoDaPagina: true }).catch(() => {});
+    await sleep(DEPURAR_PAUSA_MS);
+  };
+  // Os cliques do `irAoCheckout` também passam pelo `passo` — a regex buscada diz
+  // em que botão ele vai clicar.
+  const clicar = async (src, maxLen) => {
+    await passo(`procurando o botão ${src}`);
+    return avaliar(tabId, naPagina_clicarPorTexto, [src, maxLen], { mundoDaPagina: true });
+  };
   const modal = (acao) => avaliar(tabId, naPagina_modalCupons, [acao, codigo], { mundoDaPagina: true })
     .then(r => r || { onde: null, pronto: false });
 
@@ -299,6 +348,7 @@ export async function cupomNoCheckout({ url, code, tempos = null }, progresso) {
 
     let tela = await foto();
     material.finalUrl = tela.url;
+    await passo(`página aberta: ${tela.url}`);
 
     // O muro: a extensão não contorna — traz a aba pra frente e espera o humano.
     const olharMuro = async () => {
@@ -324,6 +374,7 @@ export async function cupomNoCheckout({ url, code, tempos = null }, progresso) {
     // Link de afiliado (meli.la → /social/…): a landing não é o produto. Vai até a
     // PDP pelo "Ir para o produto" (ou pelo card em destaque), como o repasse faz.
     if (ehLanding(tela.url)) {
+      await passo("link de afiliado: indo para o produto");
       const ir = await avaliar(tabId, naPagina_irParaProduto, [], { mundoDaPagina: true }).catch(() => null);
       material.landing = { de: tela.url, via: ir?.via || null, falhou: false };
       if (ir?.href) await irPara(tabId, ir.href);
@@ -334,6 +385,7 @@ export async function cupomNoCheckout({ url, code, tempos = null }, progresso) {
     }
 
     if (!ehPaginaDeProduto(tela.url)) {
+      await passo(`não é página de produto (${tela.url}) — parando`);
       material.notProductPage = true;
       if (material.landing) material.landing.falhou = true;
       return material;
@@ -341,6 +393,7 @@ export async function cupomNoCheckout({ url, code, tempos = null }, progresso) {
 
     // Antes das variações e do "Comprar agora": é aqui que a PDP está inteira.
     material.produto = await avaliar(tabId, naPagina_produto, [], { mundoDaPagina: true }).catch(() => null) || null;
+    await passo(`produto: ${material.produto?.name || "?"} · R$ ${material.produto?.price ?? "?"}`);
 
     // ── as variações, antes do "Comprar agora" ──
     // Os grupos podem depender um do outro (a cor libera tamanhos), por isso em
@@ -356,6 +409,7 @@ export async function cupomNoCheckout({ url, code, tempos = null }, progresso) {
         if (!clicados.length) break;
         for (const g of clicados) escolhidos.add(prefixo(g.rotulo));
         progresso({ tipo: "variacao", escolhas: clicados.map(g => g.clicou) });
+        await passo(`variação escolhida: ${clicados.map(g => g.clicou).join(", ")}`);
         await sleep(VARIACAO_ESPERA_MS);   // a página não recarrega, mas repinta
       }
       const final = await lerVariacoes();
@@ -371,6 +425,7 @@ export async function cupomNoCheckout({ url, code, tempos = null }, progresso) {
     // Sem o carrinho: ele é o único caminho que deixa rastro na conta, e o cupom
     // do carrinho combinado não é a resposta para ESTE produto.
     material.checkout.attempted = true;
+    await passo("indo ao checkout (Comprar agora)");
     let ida = await irAoCheckout(tabId, { foto, clicar, progresso, T, semCarrinho: true });
     // Ficou na página do produto pedindo variação ("Escolha Tamanho para
     // continuar…"): escolhe de novo e tenta mais uma vez.
@@ -388,7 +443,11 @@ export async function cupomNoCheckout({ url, code, tempos = null }, progresso) {
       }
     }
     Object.assign(material.checkout, ida);
-    if (!ida.reached) return material;
+    if (!ida.reached) {
+      await passo(`não chegou ao checkout${material.variacaoFaltando ? ` (${material.variacaoFaltando})` : ""} — parando`);
+      return material;
+    }
+    await passo(`no checkout (via ${ida.via || "?"})`);
 
     const noCheckout = await foto();
     material.resumoAntes = noCheckout.texto;
@@ -402,9 +461,11 @@ export async function cupomNoCheckout({ url, code, tempos = null }, progresso) {
 
     // ── o modal "Cupons" ──
     progresso({ tipo: "cupons-modal" });
+    await passo("abrindo o modal Cupons");
     let estado = await modal("estado");
     if (!estado.pronto) {
       const link = await avaliar(tabId, naPagina_linkDosCupons, [], { mundoDaPagina: true });
+      await passo(link ? `clicou no link "${link.texto}"` : "link dos cupons não achado");
       if (link) {
         material.modal.link = link.texto;
         material.modal.semCupom = !!link.semCupom;
@@ -416,6 +477,7 @@ export async function cupomNoCheckout({ url, code, tempos = null }, progresso) {
       }
     }
     for (let nivel = 0; nivel <= 2 && !estado.pronto; nivel++) {
+      await passo(`modal não abriu: tentando a linha do cupom (nível ${nivel})`);
       const clicou = await avaliar(tabId, naPagina_clicarLinhaDoCupom, [COUPON_OPEN_SRC, nivel], { mundoDaPagina: true });
       material.modal.tentativas.push({ nivel, clicou: clicou?.texto || null });
       if (!clicou) break;
@@ -428,6 +490,7 @@ export async function cupomNoCheckout({ url, code, tempos = null }, progresso) {
     // Plano B: o clique não montou o iframe. A mesma página, aberta na própria aba.
     if (!estado.pronto && enderecoDosCupons) {
       material.modal.planoB = true;
+      await passo("modal não abriu: plano B, abrindo a página /cupons/cho");
       await irPara(tabId, enderecoDosCupons).catch(() => {});
       for (let i = 0; i < Math.ceil(MODAL_ESPERA_MS / 500); i++) {
         estado = await modal("estado");
@@ -439,35 +502,47 @@ export async function cupomNoCheckout({ url, code, tempos = null }, progresso) {
     material.modal.onde = estado.onde || null;
     material.modal.campo = !!estado.campo;
     material.textoDoModal = estado.texto || "";
-    if (!estado.pronto) return material;
+    if (!estado.pronto) {
+      await passo("o modal Cupons não abriu — parando");
+      return material;
+    }
 
     // ── o cupom já está aplicado? ──
     // "Inserir código do cupom" = nenhum cupom aplicado: vai direto digitar.
     material.cartaoAntes = material.modal.semCupom ? null : (estado.cartao || null);
     material.economia = estado.economia || null;
+    await passo(material.cartaoAntes?.aplicado
+      ? `${codigo} já está aplicado — não vai digitar`
+      : estado.campo ? `modal aberto (${estado.onde}); ${codigo} não aplicado` : `modal aberto (${estado.onde}), mas sem o campo do código`);
+    material.aplicadosAntes = (estado.aplicados || []).map(a => a.texto);
     if (!material.cartaoAntes?.aplicado && estado.campo) {
       // ── ativar pelo código ──
+      const jaEstavam = new Set(material.aplicadosAntes);
+      const aplicadoNovo = (e) => (e.aplicados || []).find(a => !jaEstavam.has(a.texto)) || null;
+      await passo(`digitando ${codigo}`);
       material.digitou = await modal("digitar");
       await sleep(600);   // o React habilita o "Inserir" depois do input
+      await passo(`clicando em Inserir (campo: ${material.digitou?.valor ?? "?"})`);
       material.inseriu = await modal("inserir");
       progresso({ tipo: "aplicado", code: codigo });
       await sleep(INSERIR_ESPERA_MS);
       for (let i = 0; i < Math.ceil(RESPOSTA_ESPERA_MS / 500); i++) {
         estado = await modal("estado");
-        if (estado.erroCampo || estado.cartao?.aplicado) break;
+        if (estado.erroCampo || estado.cartao?.aplicado || aplicadoNovo(estado)) break;
         await sleep(500);
       }
       material.erroCampo = estado.erroCampo || null;
       material.cartaoDepois = estado.cartao || null;
+      material.aplicadosDepois = (estado.aplicados || []).map(a => a.texto);
+      // Sem o cartão "Com <CÓDIGO>" aplicado: o cartão que virou aplicado depois do
+      // "Inserir" é o do código, com o nome que o ML quiser dar.
+      const novo = !material.erroCampo && !material.cartaoDepois?.aplicado ? aplicadoNovo(estado) : null;
+      if (novo) material.cartaoDepois = { texto: novo.texto, aplicado: true, porNome: false };
       material.economia = estado.economia || material.economia;
       material.textoDoModal = estado.texto || material.textoDoModal;
-    }
-
-    // O resumo DEPOIS: "Cupons (N/M em uso)", o desconto e o total. Só existe com
-    // o modal por cima da página de checkout (no plano B a aba é a de cupons).
-    if (!material.modal.planoB) {
-      await sleep(T.settleMs);
-      material.resumoDepois = (await foto()).texto;
+      await passo(material.erroCampo ? `ML recusou: ${material.erroCampo}`
+        : material.cartaoDepois?.porNome === false ? `aplicado (reconhecido pelo cartão novo: "${material.cartaoDepois.texto.slice(0, 60)}")`
+        : material.cartaoDepois?.aplicado ? `${codigo} aplicado` : "sem resposta clara do ML");
     }
 
     // A página dos cupons, lida de novo depois do "Inserir": ela diz a campanha.
@@ -476,10 +551,23 @@ export async function cupomNoCheckout({ url, code, tempos = null }, progresso) {
       material.htmlCupons = pagina?.ok ? pagina.html : null;
     }
 
-    if (!material.modal.planoB) await modal("fechar").catch(() => {});
+    // O resumo DEPOIS: "Cupons (N/M em uso)", o desconto e o total. Lido com o
+    // modal JÁ FECHADO — com ele aberto o resumo de baixo ainda não tinha se
+    // atualizado (SITE250930). No plano B a aba é a dos cupons: não há resumo.
+    await passo("fechando o modal");
+    if (!material.modal.planoB) {
+      await modal("fechar").catch(() => {});
+      await sleep(T.settleMs);
+      material.resumoDepois = (await foto()).texto;
+      await passo(`resumo depois: ${(material.resumoDepois.match(/Cupons?\s*\([^)]*\)[^R]*(R\$\s?[\d.,]+)?/i) || ["sem “Cupons (N/M em uso)”"])[0]}`);
+    }
     progresso({ tipo: "capturado" });
     return material;
   } finally {
+    if (depurar) {
+      await avaliar(tabId, naPagina_faixaDepuracao, ["fim — a aba fecha em instantes"], { mundoDaPagina: true }).catch(() => {});
+      await sleep(DEPURAR_PAUSA_MS * 2);
+    }
     await fechar(tabId);
   }
 }

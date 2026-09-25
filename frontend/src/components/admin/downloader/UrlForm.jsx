@@ -1,5 +1,6 @@
 import { useState } from "react";
 import Spinner from "../../ui/Spinner";
+import { useLembrado, umDe } from "../../../data/useLembrado";
 import { cardStyle, inputStyle, labelStyle, hintStyle, botaoPrimario, chipStyle } from "./downloaderEstilos";
 
 const LIMITS = [
@@ -12,8 +13,9 @@ const LIMITS = [
 // `initial` volta da última busca quando a página é recarregada.
 export default function UrlForm({ loading, onSubmit, initial }) {
   const [url, setUrl] = useState(initial?.url || "");
-  const [limit, setLimit] = useState(initial?.limit ?? 50);
-  const [tab, setTab] = useState(initial?.tab || "videos");
+  // Quantos e de qual aba ficam lembrados no servidor, iguais para todos os admins.
+  const [limit, setLimit] = useLembrado("admin.downloader.limite", 50, umDe(LIMITS.map((l) => l.value)));
+  const [tab, setTab] = useLembrado("admin.downloader.aba", "videos", umDe(["videos", "shorts"]));
   const isYoutube = /youtube\.com|youtu\.be/i.test(url);
 
   const submit = (e) => {

@@ -36,6 +36,8 @@ const COMANDOS = {
   // O cupom do repasse testado no checkout do produto, dentro do iframe do modal
   // "Cupons" (task 7).
   "cupom-no-checkout": cupomNoCheckout,
+  // O mesmo comando; o nome novo diz à tela que esta cópia entende `depurar`.
+  "cupom-no-checkout-v2": cupomNoCheckout,
   "fechar-aba": fecharAba,
 };
 

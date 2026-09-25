@@ -24,6 +24,7 @@ import { NavGuardContext } from "./data/navGuard";
 import { useNetStatus, subscribe as subscribeNetStatus } from "./data/netStatus";
 import AlertBanner from "./components/ui/AlertBanner";
 import { mergeGroupOps, mergeGroupsOps } from "./data/opsMerge";
+import { carregar as carregarPrefsAdmin, zerar as zerarPrefsAdmin, usePreferenciasProntas } from "./data/preferenciasAdmin";
 import PageDashboard from "./pages/Dashboard";
 import PageProducts from "./pages/Products";
 import PageWhatsApp from "./pages/WhatsApp";
@@ -245,6 +246,12 @@ export default function App() {
   // guardSave) não fecharem sobre um `groups` desatualizado de antes do save.
   const groupsRef = useRef(groups);
   useEffect(() => { groupsRef.current = groups; }, [groups]);
+
+  // Preferências de tela do admin (filtros, modos) moram no servidor e valem para
+  // todos os admins: carregam no login, e as páginas admin esperam essa leitura —
+  // várias semeiam o estado com ela na primeira renderização.
+  const prefsAdminProntas = usePreferenciasProntas();
+  useEffect(() => { if (user?.role === "admin") carregarPrefsAdmin(); }, [user?.role]);
 
   // Boot: se há token salvo, valida com o servidor e carrega o estado
   useEffect(() => {
@@ -798,6 +805,8 @@ export default function App() {
   }
 
   function handleLogout() {
+    // Antes do authLogout: o filtro mexido há menos de 600ms ainda sobe com o token.
+    zerarPrefsAdmin();
     authLogout();
     try { localStorage.removeItem(NAV_STORAGE_KEY); } catch { /* ignora */ }
     // Volta a barra de endereços pra raiz — deixar /campanha/123 na URL depois
@@ -1294,7 +1303,9 @@ export default function App() {
               limits={billing?.limits}
               tourActive={!!activeTour}
             />
-          : pageMap[page] || pageMap["dashboard"]
+          : (String(page).startsWith("admin-") && user?.role === "admin" && !prefsAdminProntas)
+            ? <div style={{ padding: 24, color: "var(--color-text-secondary)" }}>Carregando…</div>
+            : pageMap[page] || pageMap["dashboard"]
         }
       </div>
     </div>

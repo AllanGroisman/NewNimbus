@@ -80,7 +80,9 @@ async function aggregate({ days = 90, q = "" } = {}) {
            -- virou produto vale mais que o de um descartado; entre iguais, o recente.
            (ARRAY_AGG(COALESCE(l."resolvedUrl", l."rawUrl")
                       ORDER BY (l."outcome" = ANY(${OUTCOMES_APROVEITADOS})) DESC, l."createdAt" DESC)
-              FILTER (WHERE l."store" = 'Mercado Livre'))[1]  AS link
+              FILTER (WHERE l."store" = 'Mercado Livre'))[1]  AS link,
+           COUNT(DISTINCT COALESCE(l."resolvedUrl", l."rawUrl"))
+              FILTER (WHERE l."store" = 'Mercado Livre')    AS links
       FROM "repasse_capture_log" l
      WHERE l."coupon" IS NOT NULL
        AND l."createdAt" >= ${desde}
@@ -100,11 +102,11 @@ async function aggregate({ days = 90, q = "" } = {}) {
   const checkByCode = new Map(checks.map(c => [c.code, c]));
 
   const campaignIds = [...new Set(checks.map(c => c.campaignId).filter(Boolean))];
-  const [cupons, produtos] = await Promise.all([
+  const [cupons, produtos, daVitrine] = await Promise.all([
     campaignIds.length
       ? prisma().mlCoupon.findMany({
           where: { campaignId: { in: campaignIds } },
-          select: { campaignId: true, title: true, expiresAt: true },
+          select: { campaignId: true, title: true, expiresAt: true, containerUrl: true },
         })
       : [],
     campaignIds.length
@@ -114,9 +116,19 @@ async function aggregate({ days = 90, q = "" } = {}) {
           _count: { _all: true },
         })
       : [],
+    // Só os que vieram da vitrine: o vínculo do teste no checkout é UM produto e
+    // não diz que a vitrine foi lida (repasse/coupon-autotest.js:selecionar).
+    campaignIds.length
+      ? prisma().mlCouponProduct.groupBy({
+          by: ["campaignId"],
+          where: { campaignId: { in: campaignIds }, origem: { in: ["vitrine", "parcial"] } },
+          _count: { _all: true },
+        })
+      : [],
   ]);
   const cupomById = new Map(cupons.map(c => [c.campaignId, c]));
   const produtosById = new Map(produtos.map(p => [p.campaignId, p._count._all]));
+  const daVitrineById = new Map(daVitrine.map(p => [p.campaignId, p._count._all]));
 
   return linhas.map(r => {
     const chk = checkByCode.get(r.code) || null;
@@ -132,6 +144,8 @@ async function aggregate({ days = 90, q = "" } = {}) {
       usuarios: Number(r.usuarios),
       aproveitados: Number(r.aproveitados),
       link: r.link || null,
+      // Quantos produtos do ML diferentes chegaram com o cupom (linksDoCupom).
+      links: Number(r.links || 0),
       // null = nunca testado. É diferente de "invalid" (o ML não reconheceu) e de
       // "indeterminado" (o ML não respondeu), e a tela não pode passar um pelo outro.
       verdict: chk?.verdict ?? null,
@@ -146,6 +160,9 @@ async function aggregate({ days = 90, q = "" } = {}) {
       couponTitle: cupom?.title ?? null,
       expiresAt: cupom?.expiresAt ?? null,
       produtos: chk?.campaignId ? (produtosById.get(chk.campaignId) || 0) : 0,
+      produtosVitrine: chk?.campaignId ? (daVitrineById.get(chk.campaignId) || 0) : 0,
+      // null = a campanha não está aqui (nem se sabe).
+      temVitrine: cupom ? !!cupom.containerUrl : null,
     };
   });
 }
@@ -177,6 +194,100 @@ async function listCapturedCoupons({ page = 1, pageSize = 50, days = 90, status 
     page: pg,
     pageSize: size,
   };
+}
+
+// Os produtos do ML que chegaram com o cupom, um por link, cada um com o último
+// teste no checkout feito NELE (a URL mora no diário, coupon-autotest-log.js). É o
+// que a linha aberta da aba lista pra escolher em que produto testar.
+//
+// Sem recorte de período, pela mesma regra do forgetCoupons: o cupom que está na
+// lista tem que mostrar todos os links que o puseram lá.
+const LINKS_MAX = 100;
+
+async function linksDoCupom(code) {
+  const c = String(code ?? "").trim().toUpperCase();
+  if (!c) return [];
+
+  const linhas = await prisma().$queryRaw`
+    SELECT COALESCE(l."resolvedUrl", l."rawUrl")          AS url,
+           COUNT(*)                                     AS capturas,
+           MAX(l."createdAt")                           AS ultima,
+           BOOL_OR(l."outcome" = ANY(${OUTCOMES_APROVEITADOS})) AS aproveitado,
+           (ARRAY_AGG(l."productName" ORDER BY l."createdAt" DESC) FILTER (WHERE l."productName" IS NOT NULL))[1] AS "productName",
+           (ARRAY_AGG(l."productImg"  ORDER BY l."createdAt" DESC) FILTER (WHERE l."productImg"  IS NOT NULL))[1] AS "productImg",
+           (ARRAY_AGG(l."price"       ORDER BY l."createdAt" DESC) FILTER (WHERE l."price"       IS NOT NULL))[1] AS price
+      FROM "repasse_capture_log" l
+     WHERE l."coupon" = ${c}
+       AND l."store" = 'Mercado Livre'
+     GROUP BY 1
+     ORDER BY BOOL_OR(l."outcome" = ANY(${OUTCOMES_APROVEITADOS})) DESC, MAX(l."createdAt") DESC
+     LIMIT ${LINKS_MAX}
+  `;
+  if (!linhas.length) return [];
+
+  const urls = linhas.map(r => r.url);
+  const testes = await prisma().$queryRaw`
+    SELECT DISTINCT ON (t."url") t."url", t."verdict", t."message", t."created_at" AS em
+      FROM "repasse_coupon_autotest" t
+     WHERE t."code" = ${c}
+       AND t."action" = 'test'
+       AND t."url" = ANY(${urls})
+     ORDER BY t."url", t."created_at" DESC
+  `;
+  const testePorUrl = new Map(testes.map(t => [t.url, t]));
+  const vinculoPorUrl = await vinculosDosLinks(c, urls);
+
+  return linhas.map(r => {
+    const t = testePorUrl.get(r.url) || null;
+    return {
+      url: r.url,
+      productName: r.productName ?? null,
+      productImg: r.productImg ?? null,
+      price: r.price ?? null,
+      capturas: Number(r.capturas),
+      ultima: r.ultima,
+      aproveitado: !!r.aproveitado,
+      ultimoTeste: t ? { verdict: t.verdict ?? null, message: t.message ?? null, em: t.em } : null,
+      // A origem do vínculo deste produto com a campanha do código, ou null.
+      vinculo: vinculoPorUrl.get(r.url) || null,
+    };
+  });
+}
+
+// Qual vínculo cada link tem com a campanha do código. Pelas chaves candidatas do
+// link mais a canônica do catálogo — a mesma conta de quem gravou
+// (coupons/pg.js:vincularDoRepasse e vincularPorCheckout). Havendo mais de uma,
+// fica a mais forte.
+const PESO_ORIGEM = { checkout: 4, vitrine: 3, parcial: 2, repasse: 1 };
+
+async function vinculosDosLinks(code, urls) {
+  const resposta = new Map();
+  const chk = await prisma().mlCouponCode.findUnique({ where: { code }, select: { campaignId: true } });
+  if (!chk?.campaignId || !urls.length) return resposta;
+
+  const { chavesCandidatas } = require("../coupons/quick-check");
+  const porUrl = new Map(urls.map(u => [u, chavesCandidatas(u)]));
+  const canonica = await require("../catalog/pg").resolveKeys(
+    [...porUrl].flatMap(([u, ks]) => ks.map(key => ({ key, link: u }))),
+  );
+  for (const [u, ks] of porUrl) porUrl.set(u, [...new Set([...ks, ...ks.map(k => canonica.get(k)).filter(Boolean)])]);
+
+  const todas = [...new Set([...porUrl.values()].flat())];
+  if (!todas.length) return resposta;
+  const vinculos = await prisma().mlCouponProduct.findMany({
+    where: { campaignId: chk.campaignId, productKey: { in: todas } },
+    select: { productKey: true, origem: true },
+  });
+  const origemPorChave = new Map(vinculos.map(v => [v.productKey, v.origem || "vitrine"]));
+  for (const [u, ks] of porUrl) {
+    let melhor = null;
+    for (const k of ks) {
+      const o = origemPorChave.get(k);
+      if (o && (!melhor || (PESO_ORIGEM[o] || 0) > (PESO_ORIGEM[melhor] || 0))) melhor = o;
+    }
+    if (melhor) resposta.set(u, melhor);
+  }
+  return resposta;
 }
 
 // ── Faxina ───────────────────────────────────────────────────────────────
@@ -224,6 +335,7 @@ module.exports = {
   listCapturedCoupons,
   forgetCoupons,
   forgetFiltered,
+  linksDoCupom,
   // A fila de trabalho do coupon-autotest.js. Exportado (e não recriado lá) pra
   // tela e job lerem exatamente o mesmo cruzamento log × ml_coupon_codes.
   aggregate,

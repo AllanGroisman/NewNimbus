@@ -150,8 +150,11 @@ export function sondarCuponsNoCheckout(url, { onProgresso, timeoutMs, rapido, se
 
 // O cupom do repasse no checkout do produto que chegou com ele (task 7): abre o
 // modal "Cupons", digita o código e lê o que o ML respondeu. Material cru.
-export function cupomNoCheckout({ url, code }, { onProgresso, timeoutMs } = {}) {
-  return pedirAoColetor("cupom-no-checkout", { url, code }, { onProgresso, timeoutMs });
+// `depurar` (aba na frente, passo a passo devagar) só a extensão que anuncia
+// "cupom-no-checkout-v2" entende; e anda devagar, daí o prazo maior.
+export function cupomNoCheckout({ url, code, depurar = false }, { onProgresso, timeoutMs } = {}) {
+  if (!depurar) return pedirAoColetor("cupom-no-checkout", { url, code }, { onProgresso, timeoutMs });
+  return pedirAoColetor("cupom-no-checkout-v2", { url, code, depurar: true }, { onProgresso, timeoutMs: timeoutMs ?? 15 * 60 * 1000 });
 }
 
 // Lê o modelo (JSON do nordic) de uma página do ML. Devolve { props, landing, url, muro }.

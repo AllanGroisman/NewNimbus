@@ -32,7 +32,7 @@ const aba = {
 };
 vi.mock("../../extension/aba.js", () => aba);
 
-const { naPagina_modalCupons, naPagina_variacoes, naPagina_linkDosCupons, naPagina_produto, cupomNoCheckout } = await import("../../extension/cupom-checkout.js");
+const { naPagina_modalCupons, naPagina_variacoes, naPagina_linkDosCupons, naPagina_produto, naPagina_faixaDepuracao, cupomNoCheckout } = await import("../../extension/cupom-checkout.js");
 const { naPagina_irParaProduto } = await import("../../extension/checkout.js");
 
 // ── o DOM ──────────────────────────────────────────────────────────────────
@@ -303,14 +303,18 @@ const CHECKOUT = "https://www.mercadolivre.com.br/checkout/review/onestep";
 // `variacao`: null (sem variação) | "ok" (escolher resolve) | "presa" (nunca sai).
 // `link`: o texto do link dos cupons no resumo. `aplicadoAntes`: o cartão já vem
 // aplicado ao abrir o modal.
-function mlDeMentira({ modalAbre = true, resposta = "aplicado", variacao = null, link = "Cupons (1/1 em uso)", aplicadoAntes = false, landing = null } = {}) {
-  const st = { url: landing ? LANDING : PDP, modal: false, digitou: false, inseriu: false, fechou: false, cliques: [], tamanho: null, tentouComprar: false, cliquesVariacao: 0 };
+// `nomeDiferente`: o ML aplica o cupom mas o cartão vem com o nome da campanha,
+// sem "Com <CÓDIGO>" (SITE250930).
+function mlDeMentira({ modalAbre = true, resposta = "aplicado", variacao = null, link = "Cupons (1/1 em uso)", aplicadoAntes = false, landing = null, nomeDiferente = false } = {}) {
+  const st = { url: landing ? LANDING : PDP, modal: false, digitou: false, inseriu: false, fechou: false, cliques: [], tamanho: null, tentouComprar: false, cliquesVariacao: 0, fotoDepoisDeFechar: false };
   aba.irPara.mockImplementation(async (_tab, url) => { st.url = url; });
   aba.avaliar.mockImplementation(async (_tab, func, args) => {
     switch (func.name) {
       case "naPagina_espiao": return true;
       case "naPagina_irParaProduto": return landing === "botao" ? { href: PDP, via: "botao" } : null;
-      case "naPagina_foto": return {
+      case "naPagina_foto":
+        if (st.fechou) st.fotoDepoisDeFechar = true;
+        return {
         url: st.url, titulo: "", tituloDaAba: "",
         texto: st.url === CHECKOUT ? "Finalize sua compra Resumo da compra Cupons (1/1 em uso) - R$ 40,48 Você pagará R$ 229,42" : "Boneca Comprar agora",
         digital: st.url, respostas: [],
@@ -356,10 +360,15 @@ function mlDeMentira({ modalAbre = true, resposta = "aplicado", variacao = null,
         if (acao === "fechar") { st.fechou = true; return { ok: true }; }
         if (!st.modal) return { onde: null, pronto: false };
         const depois = st.inseriu;
+        const aplicou = depois && resposta === "aplicado";
         return {
           onde: "iframe", pronto: true, campo: true,
           erroCampo: depois && resposta === "erro" ? "O cupom não está mais disponível." : null,
-          cartao: (depois && resposta === "aplicado") || aplicadoAntes ? { texto: "Com MELIKIDS 15% OFF", aplicado: true } : null,
+          cartao: (aplicou && !nomeDiferente) || aplicadoAntes ? { texto: "Com MELIKIDS 15% OFF", aplicado: true } : null,
+          aplicados: [
+            { texto: "Cupom antigo 5% OFF Aplicado" },
+            ...(aplicou && nomeDiferente ? [{ texto: "Cupom Site 10% OFF Compra mínima R$ 100 Aplicado" }] : []),
+          ],
           economia: null, texto: "Cupons",
         };
       }
@@ -368,6 +377,30 @@ function mlDeMentira({ modalAbre = true, resposta = "aplicado", variacao = null,
   });
   return st;
 }
+
+describe("naPagina_modalCupons — cartões aplicados", () => {
+  it("lista o cartão aplicado mesmo sem \"Com <CÓDIGO>\", e não o que só oferece Aplicar", () => {
+    const doc = montarCheckout();
+    doc.querySelector("section").insertAdjacentHTML("beforeend", `
+      <div class="card"><svg class="icon-check"></svg><span>Cupom Site</span><span>10% OFF</span>
+        <button class="andes-button andes-button--disabled" disabled>Aplicado</button></div>`);
+    const e = naPagina_modalCupons("estado", "SITE250930");
+    expect(e.cartao).toBeNull();
+    expect(e.aplicados).toHaveLength(1);
+    expect(e.aplicados[0].texto).toMatch(/Cupom Site\s*10% OFF\s*Aplicado/);
+  });
+});
+
+describe("naPagina_faixaDepuracao", () => {
+  it("põe uma faixa só no topo e troca o texto a cada passo", () => {
+    document.body.innerHTML = "<p>PDP</p>";
+    naPagina_faixaDepuracao("página aberta");
+    naPagina_faixaDepuracao("digitando X1");
+    const faixas = document.querySelectorAll("#__nimbus_depuracao");
+    expect(faixas.length).toBe(1);
+    expect(faixas[0].textContent).toBe("🐞 Nimbus: digitando X1");
+  });
+});
 
 describe("cupomNoCheckout — o caminho", () => {
   beforeEach(() => { vi.clearAllMocks(); aba.classificarMuro.mockReturnValue(null); });
@@ -462,6 +495,53 @@ describe("cupomNoCheckout — o caminho", () => {
     const m = await cupomNoCheckout({ url: PDP, code: "MELIKIDS" }, () => {});
     expect(m.cartaoAntes).toMatchObject({ aplicado: true });
     expect(st.digitou).toBe(false);
+  });
+
+  it("cupom aplicado com outro nome: o cartão aplicado NOVO é o do código", async () => {
+    mlDeMentira({ nomeDiferente: true });
+    const m = await cupomNoCheckout({ url: PDP, code: "SITE250930" }, () => {});
+    expect(m.cartaoDepois).toEqual({ texto: "Cupom Site 10% OFF Compra mínima R$ 100 Aplicado", aplicado: true, porNome: false });
+    expect(m.aplicadosAntes).toEqual(["Cupom antigo 5% OFF Aplicado"]);
+  });
+
+  it("recusado: o cartão aplicado que já estava lá não vira o do código", async () => {
+    mlDeMentira({ resposta: "erro", nomeDiferente: true });
+    const m = await cupomNoCheckout({ url: PDP, code: "X1" }, () => {});
+    expect(m.cartaoDepois).toBeNull();
+  });
+
+  it("o resumo depois é lido com o modal já fechado", async () => {
+    const st = mlDeMentira();
+    await cupomNoCheckout({ url: PDP, code: "MELIKIDS" }, () => {});
+    expect(st.fotoDepoisDeFechar).toBe(true);
+  });
+
+  it("sem depurar: aba em segundo plano e nenhum passo de depuração", async () => {
+    mlDeMentira();
+    const eventos = [];
+    await cupomNoCheckout({ url: PDP, code: "MELIKIDS" }, (e) => eventos.push(e));
+    expect(aba.abrir).toHaveBeenCalledWith(PDP, { ativa: false });
+    expect(eventos.some(e => e.tipo === "passo-depuracao")).toBe(false);
+    expect(aba.avaliar.mock.calls.some(([, f]) => f.name === "naPagina_faixaDepuracao")).toBe(false);
+  });
+
+  it("modo depuração: aba na frente, cada passo avisa, escreve na faixa e espera", async () => {
+    const st = mlDeMentira();
+    const eventos = [];
+    const m = await cupomNoCheckout({ url: PDP, code: "MELIKIDS", depurar: true }, (e) => eventos.push(e));
+    expect(aba.abrir).toHaveBeenCalledWith(PDP, { ativa: true });
+    const passos = eventos.filter(e => e.tipo === "passo-depuracao").map(e => e.rotulo);
+    expect(passos[0]).toMatch(/^página aberta/);
+    expect(passos).toContain("indo ao checkout (Comprar agora)");
+    expect(passos).toContain("digitando MELIKIDS");
+    expect(passos).toContain("MELIKIDS aplicado");
+    expect(passos.some(p => /procurando o botão/.test(p))).toBe(true);
+    expect(aba.avaliar.mock.calls.filter(([, f]) => f.name === "naPagina_faixaDepuracao").length).toBe(passos.length + 1);   // + a do fim
+    expect(aba.sleep).toHaveBeenCalledWith(3000);
+    // Mesmo resultado do caminho normal.
+    expect(m.cartaoDepois).toMatchObject({ aplicado: true });
+    expect(st.inseriu).toBe(true);
+    expect(aba.fechar).toHaveBeenCalledWith(7);
   });
 
   it("sem link ou sem código, nem abre aba", async () => {

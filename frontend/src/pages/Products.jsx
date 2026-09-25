@@ -393,6 +393,7 @@ const CUPOM_ORIGEM = [
   { id: "vitrine", label: "Vitrine" },
   { id: "parcial", label: "Vitrine parcial" },
   { id: "checkout", label: "Checkout" },
+  { id: "repasse", label: "Repasse (não testado)" },
 ];
 
 const selectStyle = { padding: "7px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-primary)", fontSize: 13 };

@@ -182,7 +182,7 @@ function chavesCandidatas(url) {
 // e é essa segunda que separa "não está" de "não sei".
 //
 // Devolve `{ cobertura, origem }`: `origem` é de onde veio o vínculo que casou
-// ("vitrine" | "parcial" | "checkout" | null), e serve só para a tela qualificar a resposta.
+// ("vitrine" | "parcial" | "checkout" | "repasse" | null), e serve só para a tela qualificar a resposta.
 async function coberturaDoProduto(campaignId, chaves) {
   const lista = (Array.isArray(chaves) ? chaves : [chaves]).filter(Boolean);
   if (!campaignId || !lista.length) return { cobertura: SEM_VITRINE, origem: null };
@@ -190,17 +190,25 @@ async function coberturaDoProduto(campaignId, chaves) {
   // Um vínculo que bate responde a pergunta, venha ele da vitrine inteira ou de um
   // pedaço dela: nos dois casos foi o ML que disse que aquele produto está
   // coberto por aquela campanha.
+  //
+  // O do repasse é a exceção: quem disse foi o grupo, não o ML. Ele só responde
+  // se nenhuma outra chave der um vínculo mais forte e a vitrine inteira não
+  // tiver sido raspada — se foi, e o produto não está nela, vale a vitrine.
+  let doRepasse = false;
   for (const chave of lista) {
     const origem = await coupons.couponProductOrigem(campaignId, chave);
+    if (origem === "repasse") { doRepasse = true; continue; }
     if (origem) return { cobertura: NA_VITRINE, origem };
   }
+  const vitrineInteira = await coupons.hasVitrine(campaignId);
+  if (doRepasse && !vitrineInteira) return { cobertura: NA_VITRINE, origem: "repasse" };
 
   // Nenhuma chave bateu — e aqui a origem do que está guardado passa a importar.
   // Só a VITRINE raspada autoriza dizer "não está": ela é a lista completa. Com a
   // parcial é o contrário — são alguns produtos de uma vitrine que pode ter 50, e
   // um produto fora deles não está fora de nada. Contar a parcial aqui transformaria
   // "não sei" em "não vale", que é exatamente o erro que descarta cupom bom.
-  const cobertura = (await coupons.hasVitrine(campaignId)) ? FORA_DA_VITRINE : SEM_VITRINE;
+  const cobertura = vitrineInteira ? FORA_DA_VITRINE : SEM_VITRINE;
   return { cobertura, origem: null };
 }
 

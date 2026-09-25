@@ -19,6 +19,7 @@ import { testarPalavra } from "../data/cupomPalavra";
 import { percorrerLista } from "../data/rodadaNoChrome";
 import { coletorEntende, raparVitrine, fecharAbaDoColetor } from "../data/coletor";
 import { VERDICT } from "../data/cupomRotulos";
+import { useLembrado } from "../data/useLembrado";
 import { cardStyle, inputStyle, dia, desconto, botaoPrimario, botaoSecundario, botaoLink } from "../components/admin/cupomEstilos";
 
 // Onde a busca de uma campanha está agora. As etapas vêm do `crawlFilter` e do
@@ -60,7 +61,7 @@ function naoAchei(paginas) {
 // o botão só dispara e este modal acompanha pelo status — mesmo desenho do "Puxar
 // cupons agora" lá em cima.
 export function ImportarCampanhaModal({ campaignId, word, onClose, onDone }) {
-  const [comProdutos, setComProdutos] = useState(true);
+  const [comProdutos, setComProdutos] = useLembrado("cupons.importarComProdutos", true);
   const [enviando, setEnviando] = useState(false);
   const [rodando, setRodando] = useState(false);
   const [progresso, setProgresso] = useState(null);

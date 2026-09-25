@@ -10,6 +10,9 @@
 // operação), e a linha expande com a ficha completa do usuário.
 
 import { useState, useEffect, useCallback } from "react";
+import { useLembrado, umDe } from "../data/useLembrado";
+
+const SEGMENTOS = ["all", "paying", "operando", "idle", "canceled", "canceling", "manual-trial", "unverified", "suspended", "admin"];
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../data/constants";
 import Badge from "../components/ui/Badge";
 import Modal from "../components/ui/Modal";
@@ -384,7 +387,9 @@ export default function PageAdminUsers({ currentUser }) {
   const [loading, setLoading]       = useState(true);
   const [error, setError]           = useState(null);
   const [search, setSearch]         = useState("");
-  const [filter, setFilter]         = useState("all"); // all | paying | operando | idle | canceled | canceling | manual-trial | unverified | suspended | admin
+  // O segmento fica lembrado no servidor, igual para todos os admins; a busca por
+  // nome não (é procurar uma pessoa, não um jeito de ver a lista).
+  const [filter, setFilter]         = useLembrado("admin.usuarios.segmento", "all", umDe(SEGMENTOS)); // all | paying | operando | idle | canceled | canceling | manual-trial | unverified | suspended | admin
 
   // Bloqueio de cadastro (beta fechado). null = ainda carregando.
   const [regBlocked, setRegBlocked] = useState(null);

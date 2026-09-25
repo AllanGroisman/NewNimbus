@@ -23,6 +23,10 @@ vi.mock("../data/api", () => ({
 
 import PageAdminDownloader from "../pages/AdminDownloader.jsx";
 import { adminDlList, adminDlTemplates, adminDlJob } from "../data/api";
+import { _zerarParaTestes as zerarPrefsAdmin } from "../data/preferenciasAdmin";
+
+// As preferências de tela do admin vivem num módulo que dura a suíte inteira.
+beforeEach(() => zerarPrefsAdmin());
 
 const VIDEOS = [
   { id: "aaa", title: "Primeiro vídeo", url: "https://www.youtube.com/watch?v=aaa", thumbnail: null, duration: 61, views: 1000, uploadDate: "20260101" },

@@ -22,6 +22,10 @@ vi.mock("../data/coletor", () => ({
 import CuponsDoProduto from "../pages/AdminCupomProduto.jsx";
 import { adminProdutoCupons, adminSondaCheckoutCupons, adminSondaLoteAlvos, adminSondaLoteResultado, adminSondaLoteConfig, adminSondaLoteSalvarConfig, adminSondaLoteRuns } from "../data/api";
 import { coletorEntende, sondarCuponsNoCheckout } from "../data/coletor";
+import { _zerarParaTestes as zerarPrefsAdmin } from "../data/preferenciasAdmin";
+
+// As preferências de tela do admin vivem num módulo que dura a suíte inteira.
+beforeEach(() => zerarPrefsAdmin());
 
 const LINK = "https://www.mercadolivre.com.br/fone/p/MLB22222222";
 

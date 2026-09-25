@@ -614,10 +614,13 @@ model RepasseCouponAutotest {
   errorKind  String?  @map("error_kind") // lista fechada de repasse/error-kinds.js
   message    String?
   durationMs Int?     @map("duration_ms")
+  // O link do produto em que o teste no checkout rodou (null nos outros passos).
+  url        String?
   createdAt  DateTime @default(now()) @map("created_at")
 
   @@index([createdAt(sort: Desc)])
   @@index([code, createdAt(sort: Desc)])
+  @@index([code, url, createdAt(sort: Desc)])
   @@map("repasse_coupon_autotest")
 }
 

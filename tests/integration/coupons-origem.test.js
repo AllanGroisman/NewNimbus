@@ -137,3 +137,56 @@ describe("os ids das miniaturas guardados no cupom", () => {
     expect((await coupons.getCoupon(CAMPANHA)).sampleItemIds).toEqual(["MLB111222333"]);
   });
 });
+
+// O produto que chegou com o código num grupo do repasse (repasse/coupon-products.js).
+// É o vínculo mais fraco: o grupo disse, o ML não confirmou. Nunca rebaixa um mais
+// forte, é promovido por quem confirma e não vale contra a vitrine inteira.
+describe("o vínculo do repasse", () => {
+  beforeEach(semearCupom);
+
+  const doGrupo = { link: "https://www.mercadolivre.com.br/do-grupo/p/MLB7770077" };
+  const item = (p) => [{ productKeys: [chaveDe(p.link)], productUrl: p.link }];
+
+  it("entra com origem repasse e responde a cobertura enquanto não há vitrine", async () => {
+    const r = await coupons.vincularDoRepasse(CAMPANHA, item(doGrupo));
+    expect(r).toMatchObject({ vinculados: 1, novos: 1 });
+    expect(await coupons.couponProductOrigem(CAMPANHA, chaveDe(doGrupo.link))).toBe("repasse");
+    expect(await coberturaDoProduto(CAMPANHA, [chaveDe(doGrupo.link)]))
+      .toEqual({ cobertura: NA_VITRINE, origem: "repasse" });
+
+    // Repetir não duplica nem conta como novo.
+    expect(await coupons.vincularDoRepasse(CAMPANHA, item(doGrupo))).toMatchObject({ vinculados: 1, novos: 0 });
+  });
+
+  it("não rebaixa um vínculo mais forte", async () => {
+    await coupons.replaceCouponProducts(CAMPANHA, par(doGrupo), { origem: "parcial" });
+    await coupons.vincularDoRepasse(CAMPANHA, item(doGrupo));
+    expect(await coupons.couponProductOrigem(CAMPANHA, chaveDe(doGrupo.link))).toBe("parcial");
+  });
+
+  it("a vitrine promove o do repasse, e o checkout também", async () => {
+    await coupons.vincularDoRepasse(CAMPANHA, item(doGrupo));
+    await coupons.replaceCouponProducts(CAMPANHA, par(doGrupo), { origem: "parcial" });
+    expect(await coupons.couponProductOrigem(CAMPANHA, chaveDe(doGrupo.link))).toBe("parcial");
+
+    const outro = { link: "https://www.mercadolivre.com.br/outro-do-grupo/p/MLB7770078" };
+    await coupons.vincularDoRepasse(CAMPANHA, item(outro));
+    await coupons.vincularPorCheckout({ productKeys: [chaveDe(outro.link)], productUrl: outro.link, cupons: [{ campaignId: CAMPANHA }] });
+    expect(await coupons.couponProductOrigem(CAMPANHA, chaveDe(outro.link))).toBe("checkout");
+  });
+
+  it("a vitrine inteira raspada, sem o produto, vence o repasse", async () => {
+    await coupons.vincularDoRepasse(CAMPANHA, item(doGrupo));
+    await coupons.replaceCouponProducts(CAMPANHA, par(daVitrine));
+    // O vínculo do grupo continua guardado (a vitrine só apaga a si mesma)...
+    expect(await coupons.couponProductOrigem(CAMPANHA, chaveDe(doGrupo.link))).toBe("repasse");
+    // ...mas a resposta é a do ML.
+    expect((await coberturaDoProduto(CAMPANHA, [chaveDe(doGrupo.link)])).cobertura).toBe(FORA_DA_VITRINE);
+  });
+
+  it("'começar por quem não tem nada' não pula campanha que só tem vínculo do repasse", async () => {
+    await coupons.vincularDoRepasse(CAMPANHA, item(doGrupo));
+    const r = await coupons.couponsSemVitrine({ campaignIds: [CAMPANHA], soSemProdutos: true });
+    expect(r.total).toBe(1);
+  });
+});

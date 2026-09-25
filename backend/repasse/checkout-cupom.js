@@ -61,6 +61,19 @@ function condicoesDoCartao(texto) {
   };
 }
 
+// O nome que o ML dá ao cupom no cartão: a primeira linha que não é condição nem
+// botão. "Com MELIKIDS" → "MELIKIDS"; "Cupom Site\n10% OFF\n…" → "Cupom Site".
+// Só para mostrar e conferir — nada decide por ele.
+const LINHA_NAO_NOME = /(%\s*OFF|R\$\s?[\d.,]+\s*OFF|compra m[íi]nima|limite|venc|^aplica|est[áa] esgotando|[úu]ltimas unidades|vence hoje)/i;
+function nomeDoCartao(texto) {
+  for (const bruta of String(texto || "").split(/\n+/)) {
+    const linha = bruta.replace(/\s+/g, " ").trim();
+    if (!linha || LINHA_NAO_NOME.test(linha)) continue;
+    return linha.replace(/^com\s+/i, "").slice(0, 120) || null;
+  }
+  return null;
+}
+
 // A campanha do código, pelo modelo da página dos cupons. O modelo quase nunca traz
 // o código (`code: ""` na captura real), então o plano B é o cartão: entre os
 // cupons APLICADOS, o único cujas condições (desconto, mínimo, teto) batem com as
@@ -84,6 +97,14 @@ function campanhaDoCodigo(html, codigo, cond = {}) {
     && bate(c.minPurchase, cond.compra_minima)
     && bate(c.maxDiscount, cond.limite_desconto));
   return candidatos.length === 1 ? candidatos[0].campaignId : null;
+}
+
+// Antes sem "Cupons (N/M em uso)" = nenhum cupom (o link era "Inserir código do cupom").
+function maisCuponsEmUso(resumoAntes, resumoDepois) {
+  const depois = cupomNoResumo(resumoDepois);
+  if (!depois) return false;
+  const antes = cupomNoResumo(resumoAntes);
+  return depois.emUso > (antes ? antes.emUso : 0);
 }
 
 const MOTIVOS = {
@@ -149,12 +170,26 @@ function interpretar(material, code) {
     r.motivo = "sem-campo";
   } else if (depois?.aplicado) {
     r.status = "aplicado_agora";
+  } else if (maisCuponsEmUso(m.resumoAntes, m.resumoDepois)) {
+    // O cartão não foi reconhecido, mas o resumo da compra ganhou um cupom em uso
+    // depois do "Inserir" — e o campo não reclamou.
+    r.status = "aplicado_agora";
   } else {
     r.motivo = "sem-confirmacao";
+    // O que a tela mostrou: sem isto, "não mostrou nem erro nem o cupom" não tem
+    // como ser conferido depois.
+    r.diagnostico = {
+      textoDoModal: String(m.textoDoModal || "").slice(0, 1500) || null,
+      aplicados: (m.aplicadosDepois || []).map(t => String(t).slice(0, 300)),
+      resumoDepois: String(m.resumoDepois || "").slice(0, 500) || null,
+    };
   }
 
   const cartao = depois?.texto ? depois : antes;
   if (cartao?.texto) Object.assign(r, condicoesDoCartao(cartao.texto));
+  if (r.status !== "falha" && cartao?.texto) {
+    r.cartao = { nome: nomeDoCartao(cartao.texto), texto: String(cartao.texto).slice(0, 300) };
+  }
 
   const resumo = cupomNoResumo(m.resumoDepois) || cupomNoResumo(m.resumoAntes);
   if (resumo) {
@@ -186,10 +221,11 @@ function mensagemDe(r) {
     if (r.vencimento) partes.push(`vence ${r.vencimento.split("-").reverse().join("/")}`);
     if (r.desconto_no_pedido != null) partes.push(`-R$ ${r.desconto_no_pedido.toFixed(2).replace(".", ",")} no pedido`);
     if (r.variacao) partes.push(`variação: ${r.variacao}`);
+    if (r.cartao?.nome && r.cartao.nome.toUpperCase() !== r.codigo) partes.push(`cartão "${r.cartao.nome}"`);
     return partes.join(" · ");
   }
   const base = r.motivo === "muro" ? `O ML pediu verificação (${r.bloqueio}) e ela não foi resolvida.` : (MOTIVOS[r.motivo] || "Falhou.");
   return r.mensagem_site ? `${base} ML: "${r.mensagem_site}"` : base;
 }
 
-module.exports = { interpretar, verdictDe, mensagemDe, condicoesDoCartao, totalDoResumo, campanhaDoCodigo, dinheiro };
+module.exports = { interpretar, verdictDe, mensagemDe, condicoesDoCartao, nomeDoCartao, totalDoResumo, campanhaDoCodigo, dinheiro };

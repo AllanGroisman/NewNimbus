@@ -18,6 +18,7 @@ vi.mock("../data/api", () => ({
   errText: (err, fallback) => err?.message || fallback,
   adminRepasseCoupons: vi.fn(),
   adminRepasseLogs: vi.fn(),
+  adminRepasseCouponLinks: vi.fn(),
   adminMlCuponsTestWord: vi.fn(),
   adminMlCuponsSyncProducts: vi.fn(),
   adminMlCuponsImportCampaign: vi.fn(),
@@ -47,13 +48,17 @@ vi.mock("../data/coletor", () => ({
 import CuponsDoRepasse from "../pages/AdminCupomRepasse.jsx";
 import { coletorEntende, testarPalavraNoChrome, cupomNoCheckout } from "../data/coletor";
 import {
-  adminRepasseCoupons, adminRepasseLogs, adminMlCuponsTestWord,
+  adminRepasseCoupons, adminRepasseLogs, adminRepasseCouponLinks, adminMlCuponsTestWord,
   adminMlCuponsSyncProducts, adminMlCuponsImportCampaign, adminMlCuponsImportStatus,
   adminRepasseCouponForget, adminRepasseCouponsClear,
   adminRepasseAutotest, adminRepasseAutotestSave, adminRepasseAutotestRun, adminRepasseAutotestLog,
   adminRepasseCupomCheckoutPendentes, adminRepasseCupomCheckoutReivindicar, adminRepasseCupomCheckoutResultado,
   adminRepasseCupomCheckoutAuto, adminRepasseCupomCheckoutManual, adminRepasseCupomCheckoutManualRemover,
 } from "../data/api";
+import { _zerarParaTestes as zerarPrefsAdmin, gravar as gravarPref } from "../data/preferenciasAdmin";
+
+// As preferências de tela do admin vivem num módulo que dura a suíte inteira.
+beforeEach(() => zerarPrefsAdmin());
 
 const cupom = (extra = {}) => ({
   code: "JBL20",
@@ -108,9 +113,12 @@ async function abrirCardDoRobo() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Os filtros e o modo depuração são lembrados no navegador.
+  localStorage.clear();
   // Sem extensão é o padrão: o teste de palavra cai no caminho do servidor.
   coletorEntende.mockResolvedValue(false);
   adminRepasseLogs.mockResolvedValue({ items: [] });
+  adminRepasseCouponLinks.mockResolvedValue({ code: "JBL20", items: [] });
   adminRepasseAutotest.mockResolvedValue({ config: configRobo, defaults: configRobo, status: statusRobo() });
   adminRepasseAutotestLog.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 });
   adminRepasseCupomCheckoutPendentes.mockResolvedValue(fila([]));
@@ -167,6 +175,24 @@ describe("Admin › Cupom › Repasse", () => {
     expect(within(linha).getByText(/no sistema · 40 produto/)).toBeTruthy();
   });
 
+  it("campanha nascida no checkout (só o produto testado, sem URL da vitrine) oferece 'trazer campanha', não raspar", async () => {
+    await abrir([
+      cupom({ verdict: "valid", campaignId: "13651165", inSystem: true, couponTitle: "15% OFF com AMODESCONTO", produtos: 1, produtosVitrine: 0, temVitrine: false }),
+    ]);
+    const linha = linhaDe("JBL20");
+    expect(within(linha).getByText("Trazer campanha")).toBeTruthy();
+    expect(within(linha).queryByText("Raspar vitrine")).toBeNull();
+  });
+
+  it("com a URL da vitrine e só o produto do checkout, oferece raspar", async () => {
+    await abrir([
+      cupom({ verdict: "valid", campaignId: "111", inSystem: true, couponTitle: "20% JBL", produtos: 1, produtosVitrine: 0, temVitrine: true }),
+    ]);
+    const linha = linhaDe("JBL20");
+    expect(within(linha).getByText("Raspar vitrine")).toBeTruthy();
+    expect(within(linha).queryByText("Trazer campanha")).toBeNull();
+  });
+
   it("campanha no sistema mas sem vitrine oferece raspar — e mostra o que veio", async () => {
     await abrir([
       cupom({ verdict: "valid", campaignId: "111", inSystem: true, couponTitle: "20% JBL", produtos: 0 }),
@@ -189,13 +215,34 @@ describe("Admin › Cupom › Repasse", () => {
     expect(adminRepasseCoupons.mock.calls[1][0]).toMatchObject({ status: "nao-testado", page: 1 });
   });
 
+  it("os filtros voltam como estavam depois de sair e voltar (a página não)", async () => {
+    const { unmount } = render(<CuponsDoRepasse />);
+    adminRepasseCoupons.mockResolvedValue(lista([cupom()]));
+    await waitFor(() => expect(adminRepasseCoupons).toHaveBeenCalled());
+    fireEvent.change(screen.getByLabelText("Situação"), { target: { value: "invalid" } });
+    fireEvent.change(screen.getByLabelText("Período"), { target: { value: "7" } });
+    await waitFor(() => expect(adminRepasseCoupons).toHaveBeenLastCalledWith(expect.objectContaining({ status: "invalid", days: "7" })));
+    unmount();
+    adminRepasseCoupons.mockClear();
+
+    render(<CuponsDoRepasse />);
+    await waitFor(() => expect(adminRepasseCoupons).toHaveBeenCalled());
+    expect(adminRepasseCoupons.mock.calls[0][0]).toMatchObject({ status: "invalid", days: "7", page: 1 });
+  });
+
+  it("um status lembrado que não existe mais cai em 'todos'", async () => {
+    gravarPref("nimbus.repasse.filtroStatus", "sumiu");
+    await abrir([cupom()]);
+    expect(adminRepasseCoupons.mock.calls[0][0]).toMatchObject({ status: "todos" });
+  });
+
   it("expandir a linha busca as capturas daquele cupom", async () => {
     await abrir([cupom()]);
     adminRepasseLogs.mockResolvedValue({
       items: [{ id: "1", createdAt: "2026-08-30T10:00:00Z", outcome: "queued", groupName: "Ofertas TOP", productName: "Fone JBL" }],
     });
 
-    fireEvent.click(screen.getByText("▼ capturas"));
+    fireEvent.click(screen.getByText(/▼ produtos \(0\) e capturas/));
 
     await waitFor(() => expect(screen.getByText("Fone JBL")).toBeTruthy());
     expect(adminRepasseLogs).toHaveBeenCalledWith({ coupon: "JBL20", pageSize: 20 });
@@ -429,7 +476,7 @@ describe("Admin › Cupom › Repasse — teste no checkout", () => {
     fireEvent.click(within(linhaDe("JBL20")).getByText("Testar"));
 
     await waitFor(() => expect(screen.getByText(/Aplicado no checkout · 20% OFF/)).toBeTruthy());
-    expect(cupomNoCheckout).toHaveBeenCalledWith({ url: LINK, code: "JBL20" }, expect.anything());
+    expect(cupomNoCheckout).toHaveBeenCalledWith({ url: LINK, code: "JBL20", depurar: false }, expect.anything());
     expect(adminRepasseCupomCheckoutResultado).toHaveBeenCalledWith(expect.objectContaining({
       code: "JBL20", url: LINK, material: MATERIAL, source: "repasse-checkout",
     }));
@@ -604,11 +651,127 @@ describe("Admin › Cupom › Repasse — teste no checkout", () => {
     await waitFor(() => expect(adminRepasseCupomCheckoutManualRemover).toHaveBeenCalledWith("7"));
   });
 
+  it("Modo depuração: marcado, o teste da fila vai com depurar e o passo aparece no card", async () => {
+    try { localStorage.clear(); } catch { /* sem storage */ }
+    coletorEntende.mockImplementation(async (cmd) => cmd === "cupom-no-checkout" || cmd === "cupom-no-checkout-v2");
+    adminRepasseCupomCheckoutPendentes.mockResolvedValue(fila([itemRepasse()], { checkoutAuto: false, auto: false }));
+    let soltar;
+    cupomNoCheckout.mockImplementation((_p, { onProgresso }) => {
+      onProgresso({ tipo: "passo-depuracao", rotulo: "no checkout (via comprar-agora)" });
+      return new Promise(r => { soltar = () => r(MATERIAL); });
+    });
+    adminRepasseCupomCheckoutResultado.mockResolvedValue(RESPOSTA);
+    await abrir([cupom({ link: LINK })]);
+
+    const caixa = await screen.findByLabelText("Modo depuração");
+    await waitFor(() => expect(caixa.disabled).toBe(false));
+    fireEvent.click(caixa);
+
+    const linha = within(cardDaFila()).getByText("JBL20").closest("tr");
+    await waitFor(() => expect(within(linha).getByText("Testar").disabled).toBe(false));
+    fireEvent.click(within(linha).getByText("Testar"));
+
+    expect(await within(cardDaFila()).findByText(/🐞 JBL20: no checkout \(via comprar-agora\)/)).toBeTruthy();
+    expect(cupomNoCheckout).toHaveBeenCalledWith({ url: LINK, code: "JBL20", depurar: true }, expect.anything());
+    soltar();
+    await waitFor(() => expect(adminRepasseCupomCheckoutResultado).toHaveBeenCalled());
+    try { localStorage.clear(); } catch { /* sem storage */ }
+  });
+
+  it("Modo depuração fica desabilitado com a extensão que não o entende", async () => {
+    comExtensao();
+    adminRepasseCupomCheckoutPendentes.mockResolvedValue(fila([], { checkoutAuto: false, auto: false }));
+    await abrir([cupom()]);
+    await waitFor(() => expect(coletorEntende).toHaveBeenCalledWith("cupom-no-checkout-v2"));
+    expect((await screen.findByLabelText("Modo depuração")).disabled).toBe(true);
+  });
+
   it("sem a extensão nova, avisa e nada da fila é testado", async () => {
     adminRepasseCupomCheckoutPendentes.mockResolvedValue(fila([itemRepasse()]));
     await abrir([cupom({ link: LINK })]);
     expect(await screen.findByText(/não está instalada nesta aba, ou está desatualizada/)).toBeTruthy();
     expect(cupomNoCheckout).not.toHaveBeenCalled();
     expect(adminRepasseCupomCheckoutReivindicar).not.toHaveBeenCalled();
+  });
+  describe("produtos que chegaram com o cupom", () => {
+    const OUTRO = "https://produto.mercadolivre.com.br/MLB-222-caixa-jbl-go-_JM";
+    const produtos = [
+      { url: LINK, productName: "Caixa JBL Flip", productImg: null, price: 499.9, capturas: 3, ultima: "2026-08-30T10:00:00Z", aproveitado: true,
+        ultimoTeste: { verdict: "valid", message: "Aplicado no checkout", em: "2026-09-20T10:00:00Z" }, vinculo: "repasse" },
+      { url: OUTRO, productName: "Caixa JBL Go", productImg: null, price: null, capturas: 1, ultima: "2026-08-29T10:00:00Z", aproveitado: false, ultimoTeste: null, vinculo: null },
+    ];
+    const abrirProdutos = async () => {
+      fireEvent.click(within(linhaDe("JBL20")).getByText(/produtos \(2\) e capturas/));
+      await screen.findByText("Caixa JBL Go");
+    };
+
+    it("abrir a linha lista cada produto com o link e o último teste nele", async () => {
+      adminRepasseCouponLinks.mockResolvedValue({ code: "JBL20", items: produtos });
+      await abrir([cupom({ link: LINK, links: 2 })]);
+      await abrirProdutos();
+
+      expect(adminRepasseCouponLinks).toHaveBeenCalledWith("JBL20");
+      expect(screen.getByText("Caixa JBL Go").closest("a").getAttribute("href")).toBe(OUTRO);
+      const [flip, go] = screen.getAllByTestId("produto-do-cupom");
+      expect(within(flip).getByText(/principal/)).toBeTruthy();
+      expect(within(flip).getByText(/neste produto em/)).toBeTruthy();
+      expect(within(go).getByText("nunca testado neste produto")).toBeTruthy();
+      // Se o produto está ligado ao cupom, e com que força.
+      expect(within(flip).getByText("ligado ao cupom (repasse, não testado)")).toBeTruthy();
+      expect(within(go).getByText("não ligado ao cupom")).toBeTruthy();
+    });
+
+    it("Testar neste leva o código ao checkout DAQUELE produto", async () => {
+      comExtensao();
+      adminRepasseCupomCheckoutPendentes.mockResolvedValue(fila([], { checkoutAuto: false, auto: false }));
+      adminRepasseCouponLinks.mockResolvedValue({ code: "JBL20", items: produtos });
+      cupomNoCheckout.mockResolvedValue(MATERIAL);
+      adminRepasseCupomCheckoutResultado.mockResolvedValue({
+        ...RESPOSTA, tentativa: { verdict: "indeterminado", message: "O ML mostrou um erro." },
+      });
+      await abrir([cupom({ link: LINK, links: 2 })]);
+      await waitFor(() => expect(coletorEntende).toHaveBeenCalled());
+      await abrirProdutos();
+
+      const go = screen.getAllByTestId("produto-do-cupom")[1];
+      await waitFor(() => expect(within(go).getByText("Testar neste").disabled).toBe(false));
+      fireEvent.click(within(go).getByText("Testar neste"));
+
+      await waitFor(() => expect(within(go).getByText(/O ML mostrou um erro/)).toBeTruthy());
+      // Não aprovado nesta tentativa: o vínculo não muda.
+      expect(within(go).getByText("não ligado ao cupom")).toBeTruthy();
+      expect(cupomNoCheckout).toHaveBeenCalledWith({ url: OUTRO, code: "JBL20", depurar: false }, expect.anything());
+      expect(adminRepasseCupomCheckoutResultado).toHaveBeenCalledWith(expect.objectContaining({ code: "JBL20", url: OUTRO }));
+      // A linha fica com o que foi gravado na palavra.
+      expect(within(linhaDe("JBL20")).getByText(/no checkout, por aqui/)).toBeTruthy();
+    });
+
+    it("aprovado neste produto, ele passa a aparecer como testado no checkout", async () => {
+      comExtensao();
+      adminRepasseCupomCheckoutPendentes.mockResolvedValue(fila([], { checkoutAuto: false, auto: false }));
+      adminRepasseCouponLinks.mockResolvedValue({ code: "JBL20", items: produtos });
+      cupomNoCheckout.mockResolvedValue(MATERIAL);
+      adminRepasseCupomCheckoutResultado.mockResolvedValue({
+        ...RESPOSTA, vinculo: { vinculados: 1 }, tentativa: { verdict: "valid", message: "Aplicado no checkout" },
+      });
+      await abrir([cupom({ link: LINK, links: 2 })]);
+      await waitFor(() => expect(coletorEntende).toHaveBeenCalled());
+      await abrirProdutos();
+
+      const go = screen.getAllByTestId("produto-do-cupom")[1];
+      await waitFor(() => expect(within(go).getByText("Testar neste").disabled).toBe(false));
+      fireEvent.click(within(go).getByText("Testar neste"));
+
+      await waitFor(() => expect(within(go).getByText("ligado ao cupom (testado no checkout)")).toBeTruthy());
+    });
+
+    it("sem a extensão nova, Testar neste fica desligado", async () => {
+      adminRepasseCouponLinks.mockResolvedValue({ code: "JBL20", items: produtos });
+      await abrir([cupom({ link: LINK, links: 2 })]);
+      await waitFor(() => expect(coletorEntende).toHaveBeenCalled());
+      await abrirProdutos();
+
+      for (const b of screen.getAllByText("Testar neste")) expect(b.disabled).toBe(true);
+    });
   });
 });

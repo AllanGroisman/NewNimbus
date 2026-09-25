@@ -24,6 +24,7 @@ const mlCupons = require("./coupons/sync");
 const couponsStore = require("./coupons");
 const tutorials = require("./tutorials");
 const appConfig = require("./config");
+const adminPrefs = require("./admin-prefs");
 const cpfUtil = require("./utils/cpf");
 const phoneUtil = require("./utils/phone");
 const repasseLeaders = require("./repasse/leaders");
@@ -854,6 +855,22 @@ app.put("/api/admin/layout", auth.requireAuth, auth.requireAdmin, async (req, re
   appConfig.set(PALETTE_KEY, palette);
   if (!await confirmConfigSaved(res)) return;
   res.json({ ok: true, palette });
+});
+
+// Preferências de tela do admin (filtros, modos), iguais para todos os admins.
+// Gravação por chave — ver backend/admin-prefs.js.
+app.get("/api/admin/prefs", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json({ prefs: adminPrefs.lerTodas() });
+});
+
+app.put("/api/admin/prefs/:chave", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    adminPrefs.gravar(req.params.chave, (req.body || {}).value);
+  } catch (err) {
+    return res.status(err.status || 500).json({ error: err.message });
+  }
+  if (!await confirmConfigSaved(res)) return;
+  res.json({ ok: true });
 });
 
 app.post("/api/auth/login", loginLimiter, async (req, res) => {
@@ -3416,6 +3433,8 @@ app.post("/api/admin/repasse/cupom-checkout/resultado", auth.requireAuth, auth.r
       checkedAt: r.linha?.checkedAt ?? null,
       checkCount: r.linha?.checkCount ?? null,
       source: r.linha?.source ?? null,
+      // O desta tentativa, que é o que o diário grava para o produto testado.
+      tentativa: { verdict: r.verdict, message: r.message },
     });
   } catch (err) {
     httpErrors.serverError(res, err, { req, ctx: "POST /api/admin/repasse/cupom-checkout/resultado" });
@@ -3522,6 +3541,18 @@ app.get("/api/admin/repasse/coupons", auth.requireAuth, auth.requireAdmin, async
     }));
   } catch (err) {
     httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/repasse/coupons" });
+  }
+});
+
+// Os produtos do ML que chegaram com um cupom, cada um com o último teste no
+// checkout feito nele — a linha aberta da aba escolhe em qual testar.
+app.get("/api/admin/repasse/coupons/:code/links", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const repasseCoupons = require("./repasse/coupons");
+    const code = String(req.params.code || "").trim().toUpperCase();
+    res.json({ code, items: await repasseCoupons.linksDoCupom(code) });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/repasse/coupons/:code/links" });
   }
 });
 

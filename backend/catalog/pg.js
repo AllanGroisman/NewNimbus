@@ -390,7 +390,7 @@ async function query({
 // `cupom`: { status, busca, origem }
 //   status — "com" | "com-palavra" | "sem-palavra" | "sem"
 //   busca  — id da campanha (exato), palavra (sem caixa) ou trecho do título
-//   origem — "vitrine" | "parcial" | "checkout" (de onde veio o vínculo)
+//   origem — "vitrine" | "parcial" | "checkout" | "repasse" (de onde veio o vínculo)
 const ADMIN_SORTS = {
   price_asc:     Prisma.sql`cp."price" ASC NULLS LAST`,
   price_desc:    Prisma.sql`cp."price" DESC NULLS LAST`,
@@ -398,7 +398,7 @@ const ADMIN_SORTS = {
   lastSeen_desc: Prisma.sql`cp."lastSeenAt" DESC`,
   discount_desc: Prisma.sql`cp."discount" DESC NULLS LAST`,
 };
-const ORIGENS_CUPOM = new Set(["vitrine", "parcial", "checkout"]);
+const ORIGENS_CUPOM = new Set(["vitrine", "parcial", "checkout", "repasse"]);
 
 async function adminQuery({
   category = null, source = null, q = "", minDiscount = 0, sortBy = "lastSeen_desc",

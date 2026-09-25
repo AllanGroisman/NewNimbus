@@ -89,6 +89,32 @@ describe("paraProduto", () => {
     expect(r.cupons[0].origem).toBe("vitrine");
   });
 
+  it("o do repasse é o mais fraco, e some da resposta quando a vitrine inteira não tem o produto", async () => {
+    await cupom("R", { value: 30 });
+    await coupons.vincularDoRepasse("R", [{ productKeys: [pcKey(LINK)], productUrl: LINK }]);
+
+    let r = await pc.paraProduto({ url: LINK });
+    expect(r.cupons.map(c => [c.campaignId, c.origem])).toEqual([["R", "repasse"]]);
+    expect(r.cupons[0].origemRotulo).toMatch(/repasse/);
+    // O catálogo ganha o carimbo do cupom...
+    expect((await prisma().catalogProduct.findFirst({ where: { link: LINK } })).couponCampaignId).toBe("R");
+
+    // ...até a vitrine inteira da campanha ser raspada sem este produto.
+    await coupons.replaceCouponProducts("R", [{ productKey: pcKey("https://www.mercadolivre.com.br/y/p/MLB44444444"), productUrl: "https://www.mercadolivre.com.br/y/p/MLB44444444" }]);
+    r = await pc.paraProduto({ url: LINK });
+    expect(r.cupons).toEqual([]);
+    await coupons.syncCatalogCoupons();
+    expect((await prisma().catalogProduct.findFirst({ where: { link: LINK } })).couponCampaignId).toBe(null);
+  });
+
+  it("repasse perde para qualquer outra origem do mesmo cupom", () => {
+    const r = pc.montarResposta([
+      { campaignId: "A", origem: "repasse", kind: "percent", value: 10 },
+      { campaignId: "A", origem: "parcial", kind: "percent", value: 10 },
+    ], { price: 100 });
+    expect(r.cupons[0].origem).toBe("parcial");
+  });
+
   it("link que não é produto dá erro claro", async () => {
     await expect(pc.paraProduto({ url: "" })).rejects.toThrow(/produto/);
   });

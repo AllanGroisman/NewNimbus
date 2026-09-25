@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import AlertBanner from "../components/ui/AlertBanner";
 import Badge from "../components/ui/Badge";
 import UrlForm from "../components/admin/downloader/UrlForm";
+import { useLembrado } from "../data/useLembrado";
 import VideoCard, { SkeletonCard } from "../components/admin/downloader/VideoCard";
 import SelectionBar from "../components/admin/downloader/SelectionBar";
 import DownloadPanel from "../components/admin/downloader/DownloadPanel";
@@ -41,9 +42,11 @@ export default function PageAdminDownloader() {
   const [job, setJob] = useState(null);
   // { [videoId]: { status: "loading"|"done"|"error", items } } — TikTok e Shorts.
   const [products, setProducts] = useState(saved?.products || {});
-  const [onlyWithProduct, setOnlyWithProduct] = useState(saved?.onlyWithProduct || false);
+  // O filtro e o template ficam lembrados no servidor, iguais para todos os admins
+  // (data/useLembrado.js); o sessionStorage guarda só a busca desta aba.
+  const [onlyWithProduct, setOnlyWithProduct] = useLembrado("admin.downloader.soComProduto", false);
   const [templates, setTemplates] = useState([]);
-  const [templateId, setTemplateId] = useState(saved?.templateId || "");
+  const [templateId, setTemplateId] = useLembrado("admin.downloader.template", "");
   const [editor, setEditor] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const listGen = useRef(0);
@@ -140,7 +143,13 @@ export default function PageAdminDownloader() {
   // Templates ficam num JSON do backend, não no navegador: sobrevivem a limpar
   // o cache e valem para qualquer aba.
   useEffect(() => {
-    adminDlTemplates().then(({ templates: lista }) => setTemplates(lista)).catch(() => { /* sem templates, sem drama */ });
+    adminDlTemplates().then(({ templates: lista }) => {
+      setTemplates(lista);
+      // O template lembrado pode ter sido apagado por outro admin.
+      if (templateId && !lista.some((t) => t.id === templateId)) setTemplateId("");
+    }).catch(() => { /* sem templates, sem drama */ });
+    // Só na montagem: é a checagem do que veio lembrado, não de cada troca.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Retoma os produtos que ficaram pela metade quando a página recarregou.
@@ -153,10 +162,10 @@ export default function PageAdminDownloader() {
 
   useEffect(() => {
     try {
-      if (result) sessionStorage.setItem(SAVE_KEY, JSON.stringify({ params, result, products, selected: [...selected], onlyWithProduct, jobId, templateId }));
+      if (result) sessionStorage.setItem(SAVE_KEY, JSON.stringify({ params, result, products, selected: [...selected], jobId }));
       else sessionStorage.removeItem(SAVE_KEY);
     } catch { /* modo privado ou cota cheia */ }
-  }, [params, result, products, selected, onlyWithProduct, jobId, templateId]);
+  }, [params, result, products, selected, jobId]);
 
   // Polling do progresso, mesmo padrão das telas de colheita do Nimbus. 1,5s e
   // não 1s: o apiLimiter dá 180 req/min por usuário e o resto do painel já gasta

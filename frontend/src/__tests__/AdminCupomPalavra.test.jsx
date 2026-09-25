@@ -47,6 +47,10 @@ import {
   adminMlCuponsImportCampaign,
   adminMlCuponsImportStatus,
 } from "../data/api";
+import { _zerarParaTestes as zerarPrefsAdmin } from "../data/preferenciasAdmin";
+
+// As preferências de tela do admin vivem num módulo que dura a suíte inteira.
+beforeEach(() => zerarPrefsAdmin());
 
 // A resposta do POST /code. `coupon: null` é o caso que abre o popup: o ML
 // reconheceu a palavra e o sistema não tem a campanha.
@@ -69,6 +73,8 @@ async function testarPalavra() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // "Trazer com produtos" é lembrado no navegador.
+  localStorage.clear();
   // Sem extensão é o padrão: o teste de palavra cai no caminho do servidor.
   coletorEntende.mockResolvedValue(false);
   adminMlCuponsCodes.mockResolvedValue({ codes: [] });

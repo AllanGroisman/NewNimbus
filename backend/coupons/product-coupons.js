@@ -37,12 +37,13 @@ const ORIGEM_ROTULO = {
   checkout: "checkout do ML (testado neste produto)",
   vitrine: "vitrine completa do cupom",
   parcial: "parte da vitrine do cupom",
+  repasse: "grupo do repasse (não testado neste produto)",
 };
 
 // Pura: as linhas do banco viram a resposta da tela. Um cupom pode aparecer por mais
 // de uma chave do mesmo produto; fica a origem mais forte.
 function montarResposta(linhas, produto) {
-  const peso = { checkout: 4, vitrine: 3, parcial: 2 };
+  const peso = { checkout: 4, vitrine: 3, parcial: 2, repasse: 1 };
   const porCampanha = new Map();
   for (const l of linhas || []) {
     const atual = porCampanha.get(l.campaignId);
@@ -82,7 +83,12 @@ async function paraProduto({ url = null, key = null } = {}) {
       FROM "ml_coupon_products" p
       JOIN "ml_coupons" c ON c."campaign_id" = p."campaign_id"
      WHERE p."productKey" = ANY(${chaves})
-       AND (c."expiresAt" IS NULL OR c."expiresAt" > NOW())`;
+       AND (c."expiresAt" IS NULL OR c."expiresAt" > NOW())
+       -- O vínculo do repasse é o grupo dizendo; a vitrine inteira raspada é o ML
+       -- dizendo a lista toda. Se ela existe e o produto não está nela, vale ela.
+       AND NOT (p."origem" = 'repasse' AND EXISTS (
+             SELECT 1 FROM "ml_coupon_products" v
+              WHERE v."campaign_id" = p."campaign_id" AND v."origem" = 'vitrine'))`;
   return { ...montarResposta(linhas, produto), chaves };
 }
 

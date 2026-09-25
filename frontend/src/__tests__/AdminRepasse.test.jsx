@@ -20,6 +20,10 @@ vi.mock("../data/api", () => ({
 
 import PageAdminRepasse from "../pages/AdminRepasse.jsx";
 import { adminRepasseLogs, adminRepasseSummary } from "../data/api";
+import { _zerarParaTestes as zerarPrefsAdmin } from "../data/preferenciasAdmin";
+
+// As preferências de tela do admin vivem num módulo que dura a suíte inteira.
+beforeEach(() => zerarPrefsAdmin());
 
 const KINDS = {
   captcha: { label: "CAPTCHA", what: "A loja exigiu verificação anti-robô.", action: "Bloqueio passageiro — nada a fazer agora.", transient: true },
@@ -72,6 +76,20 @@ describe("Admin › Repasse", () => {
     render(<PageAdminRepasse />);
     const alerta = await screen.findByText(/Mercado Livre: nenhum link aprovado desde/);
     expect(alerta.parentElement.textContent).toMatch(/90 tentativas seguidas falharam \(CAPTCHA\)/);
+  });
+
+  it("filtro de loja e 'atualizar sozinho' voltam como estavam ao reabrir a tela", async () => {
+    const { unmount } = render(<PageAdminRepasse />);
+    fireEvent.change(await screen.findByDisplayValue("Todas as lojas"), { target: { value: "Amazon" } });
+    fireEvent.click(screen.getByRole("checkbox"));
+    await waitFor(() => expect(adminRepasseLogs).toHaveBeenLastCalledWith(expect.objectContaining({ store: "Amazon" })));
+    unmount();
+    adminRepasseLogs.mockClear();
+
+    render(<PageAdminRepasse />);
+    await waitFor(() => expect(adminRepasseLogs).toHaveBeenCalled());
+    expect(adminRepasseLogs.mock.calls[0][0]).toMatchObject({ store: "Amazon" });
+    expect(screen.getByRole("checkbox")).not.toBeChecked();
   });
 
   it("loja saudável não vira alerta", async () => {

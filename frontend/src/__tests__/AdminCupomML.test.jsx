@@ -76,6 +76,11 @@ import { adminMlCuponsImportCampaign, adminMlCuponsImportStatus } from "../data/
 import { adminMlCuponsAgendaPendentes, adminMlCuponsAgendaReivindicar, adminMlCuponsAgendaFalhou } from "../data/api";
 import { coletorInfo, coletorEntende, raparVitrine, paginaDeCupons, fecharAbaDoColetor } from "../data/coletor";
 import { _zerarParaTestes } from "../data/rodadaCupons";
+import { _zerarParaTestes as zerarPrefsAdmin, gravar as gravarPref } from "../data/preferenciasAdmin";
+import { lerLembrado } from "../data/useLembrado";
+
+// As preferências de tela do admin vivem num módulo que dura a suíte inteira.
+beforeEach(() => zerarPrefsAdmin());
 
 // A extensão instalada, e quais comandos aquela cópia entende. A tela pergunta os
 // dois: uma cópia da versão 1.0 responde ao ping e não conhece "lista".
@@ -1068,5 +1073,42 @@ describe("sair da aba e voltar no meio de uma rodada", () => {
     expect(adminMlCuponsLocalStart).toHaveBeenCalledTimes(1);
     soltar();
     await waitFor(() => expect(adminMlCuponsLocalFim).toHaveBeenCalled());
+  });
+});
+
+// Os filtros da tabela ficam lembrados no navegador — menos quando a tela abre
+// apontando uma campanha vinda de outra aba: aí a campanha manda e NÃO vira o
+// filtro lembrado.
+describe("filtros lembrados", () => {
+  const BUSCA = "buscar por título, loja, palavra ou nº da campanha";
+
+  it("volta com a busca e o 'só válidos' da última vez", async () => {
+    const { unmount } = render(<PageCuponsML />);
+    await waitFor(() => expect(adminMlCupons).toHaveBeenCalled());
+    fireEvent.change(screen.getByPlaceholderText(BUSCA), { target: { value: "jbl" } });
+    await waitFor(() => expect(adminMlCupons).toHaveBeenLastCalledWith(expect.objectContaining({ q: "jbl" })));
+    unmount();
+    adminMlCupons.mockClear();
+
+    render(<PageCuponsML />);
+    await waitFor(() => expect(adminMlCupons).toHaveBeenCalled());
+    expect(adminMlCupons.mock.calls[0][0]).toMatchObject({ q: "jbl", onlyValid: true, page: 1 });
+    expect(screen.getByPlaceholderText(BUSCA)).toHaveValue("jbl");
+  });
+
+  it("a campanha vinda de outra aba não apaga nem substitui o que estava lembrado", async () => {
+    gravarPref("cupons.mlFiltros", { q: "jbl", scope: "", grouping: "", onlyValid: true });
+    const { unmount } = render(<PageCuponsML buscaInicial="123456" />);
+    await waitFor(() => expect(adminMlCupons).toHaveBeenCalled());
+    expect(adminMlCupons.mock.calls[0][0]).toMatchObject({ q: "123456", onlyValid: false });
+    unmount();
+    expect(lerLembrado("cupons.mlFiltros", {})).toMatchObject({ q: "jbl", onlyValid: true });
+  });
+
+  it("filtro guardado estragado cai no padrão", async () => {
+    gravarPref("cupons.mlFiltros", "lixo");
+    render(<PageCuponsML />);
+    await waitFor(() => expect(adminMlCupons).toHaveBeenCalled());
+    expect(adminMlCupons.mock.calls[0][0]).toMatchObject({ q: "", onlyValid: true, page: 1 });
   });
 });

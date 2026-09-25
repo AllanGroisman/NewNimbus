@@ -29,6 +29,11 @@ import {
   adminListUsers, adminGetRegistration, adminUserDetail, adminSetUserSuspended,
   adminGrantManualTrial, adminRevokeManualTrial,
 } from "../data/api";
+import { _zerarParaTestes as zerarPrefsAdmin } from "../data/preferenciasAdmin";
+import { lerLembrado } from "../data/useLembrado";
+
+// As preferências de tela do admin vivem num módulo que dura a suíte inteira.
+beforeEach(() => zerarPrefsAdmin());
 
 function user(over = {}) {
   return {
@@ -142,6 +147,21 @@ describe("Admin › Usuários", () => {
     expect(screen.getByText("Opera")).toBeInTheDocument();
     expect(screen.queryByText("SemNumero")).not.toBeInTheDocument();
     expect(screen.queryByText("SemCampanha")).not.toBeInTheDocument();
+  });
+
+  it("o segmento escolhido fica lembrado para quem abrir a tela depois", async () => {
+    mostrar([
+      user({ id: "a", name: "Opera",     email: "a@ex.com", counts: { groups: 1, activeGroups: 1, repasseGroups: 0, numbers: 1, connectedNumbers: 1 } }),
+      user({ id: "b", name: "SemNumero", email: "b@ex.com", counts: { groups: 1, activeGroups: 1, repasseGroups: 0, numbers: 1, connectedNumbers: 0 } }),
+    ]);
+    const { unmount } = render(<PageAdminUsers currentUser={{ id: "admin" }} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Operando (1)" }));
+    unmount();
+
+    render(<PageAdminUsers currentUser={{ id: "admin" }} />);
+    expect(await screen.findByText("Opera")).toBeInTheDocument();
+    expect(screen.queryByText("SemNumero")).not.toBeInTheDocument();
+    expect(lerLembrado("admin.usuarios.segmento", "all")).toBe("operando");
   });
 
   it("'Parados' é quem tem acesso ativo e não está operando — quem não paga fica de fora", async () => {

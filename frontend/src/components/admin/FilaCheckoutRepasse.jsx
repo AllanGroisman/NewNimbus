@@ -5,7 +5,8 @@
 // Aqui ela aparece inteira — código, link e de onde veio — com:
 //   - o "Testar automaticamente": a aba pega sozinha o primeiro da fila a cada 30s;
 //   - o Testar de cada item e o "Testar todos", que anda a fila um a um (com Parar);
-//   - o "+ Adicionar teste", para testar um código num link escolhido à mão.
+//   - o "+ Adicionar teste", para testar um código num link escolhido à mão;
+//   - o "Modo depuração": a aba abre na frente e anda devagar, com o passo à mostra.
 //
 // Tudo passa pelo mesmo `emSerie` da página: o checkout é um só por conta do ML, e
 // dois testes ao mesmo tempo se atropelariam.
@@ -37,7 +38,7 @@ function linkCurto(url) {
   }
 }
 
-export default function FilaCheckoutRepasse({ temCheckout, emSerie, ocupadoRef, onTestado, onTestando }) {
+export default function FilaCheckoutRepasse({ temCheckout, emSerie, ocupadoRef, onTestado, onTestando, depurar = false, temDepurar = null, onDepurar }) {
   const [fila, setFila] = useState(null);
   const [erro, setErro] = useState(null);
   const [aviso, setAviso] = useState(null);
@@ -48,6 +49,8 @@ export default function FilaCheckoutRepasse({ temCheckout, emSerie, ocupadoRef, 
   const [lote, setLote] = useState(false);
   const [salvandoAuto, setSalvandoAuto] = useState(false);
   const [adicionando, setAdicionando] = useState(false);
+  // O passo em que a extensão está, no modo depuração.
+  const [passoAtual, setPassoAtual] = useState(null);
   const pararRef = useRef(false);
 
   const carregar = useCallback(async () => {
@@ -72,8 +75,12 @@ export default function FilaCheckoutRepasse({ temCheckout, emSerie, ocupadoRef, 
     }
     setTestando(item.code);
     onTestando?.(item.code);
+    setPassoAtual(null);
+    const onProgresso = (ev) => { if (ev?.tipo === "passo-depuracao") setPassoAtual(ev.rotulo); };
     try {
-      const res = await emSerie(() => testarNoCheckout(item.code, item.url, { source, manualId: item.manualId || null }));
+      const res = await emSerie(() => testarNoCheckout(item.code, item.url, {
+        source, manualId: item.manualId || null, depurar, onProgresso,
+      }));
       onTestado?.(item.code, res);
       // A mensagem já diz "ligado ao produto"; a campanha nova só o vínculo sabe.
       const texto = `${res.message || res.verdict}${res.vinculo?.cuponsNovos ? " · campanha nova no sistema" : ""}`;
@@ -83,9 +90,10 @@ export default function FilaCheckoutRepasse({ temCheckout, emSerie, ocupadoRef, 
       return res;
     } finally {
       setTestando(null);
+      setPassoAtual(null);
       onTestando?.(null);
     }
-  }, [emSerie, onTestado, onTestando]);
+  }, [emSerie, onTestado, onTestando, depurar]);
 
   // O laço automático. Lê o AGORA num ref: o efeito monta uma vez só.
   const agoraRef = useRef(null);
@@ -190,6 +198,18 @@ export default function FilaCheckoutRepasse({ temCheckout, emSerie, ocupadoRef, 
             />
             Testar automaticamente
           </label>
+          <label
+            style={{ fontSize: 12, display: "flex", gap: 6, alignItems: "center", cursor: temDepurar ? "pointer" : "default" }}
+            title={temDepurar === false ? "Precisa da extensão 2.4.5 ou mais nova" : "A aba abre na frente e cada passo espera 3s"}
+          >
+            <input
+              type="checkbox"
+              checked={depurar}
+              disabled={!temDepurar}
+              onChange={e => onDepurar?.(e.target.checked)}
+            />
+            Modo depuração
+          </label>
           {lote ? (
             <button onClick={() => { pararRef.current = true; }} style={botaoSecundario}>■ Parar</button>
           ) : (
@@ -211,7 +231,14 @@ export default function FilaCheckoutRepasse({ temCheckout, emSerie, ocupadoRef, 
           ? "Com o automático ligado, esta aba pega o primeiro da fila a cada 30s."
           : "O automático está desligado: a fila só anda pelos botões."}
         {lote && <b> Testando a fila inteira, um de cada vez… “Parar” vale depois do cupom atual.</b>}
+        {depurar && " Modo depuração: a aba abre na frente e cada passo espera 3s."}
       </div>
+
+      {depurar && testando && (
+        <div style={{ fontSize: 12, marginBottom: 10, fontFamily: "monospace" }}>
+          🐞 {testando}: {passoAtual || "abrindo a aba…"}
+        </div>
+      )}
 
       {semExtensao && (
         <div style={{ fontSize: 12, color: "var(--warn-text)", marginBottom: 10 }}>

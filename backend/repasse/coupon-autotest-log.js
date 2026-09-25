@@ -40,6 +40,7 @@ async function logAutotest(fields) {
         // aqui pra uma mensagem de erro gigante do Puppeteer não virar a linha.
         message: fields.message ? String(fields.message).slice(0, 500) : null,
         durationMs: fields.durationMs != null ? Math.round(fields.durationMs) : null,
+        url: fields.url ? String(fields.url).slice(0, 1000) : null,
       },
     });
   } catch (err) {

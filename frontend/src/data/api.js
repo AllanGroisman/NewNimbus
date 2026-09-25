@@ -744,6 +744,11 @@ export async function adminRepasseCoupons({ page = 1, pageSize = 50, days = 90, 
   return http("GET", `/api/admin/repasse/coupons?${params}`);
 }
 
+// Os produtos do ML que chegaram com um cupom, com o último teste no checkout de cada um.
+export async function adminRepasseCouponLinks(code) {
+  return http("GET", `/api/admin/repasse/coupons/${encodeURIComponent(code)}/links`);
+}
+
 // Esquecer um cupom capturado: a coluna `coupon` das capturas dele vai a null.
 // As capturas ficam no log de Admin › Repasse e a palavra testada continua no
 // dicionário — some só o código, da lista desta aba.
@@ -885,6 +890,10 @@ export async function layoutGet()                 { return http("GET",  "/api/la
 // de esperar a resposta do servidor (ver o script inline no index.html).
 export const PALETTE_CACHE_KEY = "nimbus_palette";
 export async function adminLayoutSave(palette)    { return http("PUT",  "/api/admin/layout", { palette }); }
+
+// ─── Admin / Preferências de tela (filtros, modos — iguais para todos os admins) ─
+export async function adminPrefsGet()             { return http("GET",  "/api/admin/prefs"); }
+export async function adminPrefSet(chave, value)  { return http("PUT",  `/api/admin/prefs/${encodeURIComponent(chave)}`, { value }); }
 
 // ─── Admin / Notificações WhatsApp ─────────────────────────────────────
 export async function adminNotifConfig()          { return http("GET",  "/api/admin/notifications/config"); }

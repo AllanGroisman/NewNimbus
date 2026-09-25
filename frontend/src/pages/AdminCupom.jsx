@@ -11,6 +11,7 @@ import { useState, useEffect, useCallback } from "react";
 import { PRIMARY, PRIMARY_DARK } from "../data/constants";
 import { adminCouponHistory, adminMlCuponsSyncProducts, errText } from "../data/api";
 import { testarCupom } from "../data/cupomTeste";
+import { useLembrado, umDe } from "../data/useLembrado";
 import CuponsDoML from "./AdminCupomML";
 import ConfigTest from "./AdminCupomConfig";
 import DescobrirPalavra from "./AdminCupomPalavra";
@@ -57,6 +58,7 @@ const COBERTURA_ORIGEM = {
   vitrine: "pela vitrine raspada",
   parcial: "por um pedaço da vitrine",
   checkout: "pelo checkout do ML",
+  repasse: "pelo grupo do repasse — não testado neste produto",
 };
 
 // Cinco perguntas diferentes moram nesta página, e cada uma tem a sua aba:
@@ -140,7 +142,8 @@ function TestarNoCheckout() {
   // "rapido" é o padrão porque é o que responde: ele usa o que o sistema já sabe
   // (a palavra na aba /cupons + a vitrine do cupom) e não depende do checkout,
   // que o ML barra com CAPTCHA desde 25/08.
-  const [mode, setMode] = useState("rapido");
+  // Lembrado neste navegador: quem vive no checkout não precisa reescolher a cada F5.
+  const [mode, setMode] = useLembrado("cupons.testeModo", "rapido", umDe(["rapido", "checkout", "leitura"]));
   const [running, setRunning] = useState(false);
   // Onde o checkout está, quando ele roda na aba do próprio admin. Só a extensão
   // conta isso: o caminho do servidor é uma caixa preta de ~1 minuto.

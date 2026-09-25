@@ -115,7 +115,17 @@ function selecionar(linhas, cfg, agora = Date.now()) {
     // A campanha está aqui mas a vitrine nunca foi raspada. Isso é FALTA DE DADO,
     // não "o cupom não vale nada": sem os vínculos o quick-check fica em
     // "sem-vitrine" pra sempre e o desconto nunca entra na conta do envio.
-    if ((l.produtos || 0) === 0 && cfg.rasparVitrine) {
+    //
+    // Conta só os produtos DA VITRINE: a campanha que nasceu no teste do checkout
+    // já vem com o produto testado (`origem: "checkout"`), e contá-lo deixava
+    // AMODESCONTO e MELIUZKIDS sem vitrine para sempre.
+    if ((l.produtosVitrine ?? l.produtos ?? 0) > 0) continue;
+    // E a do checkout nasce sem `containerUrl` — sem ela o `syncOneCoupon` não tem
+    // o que raspar. Quem acha a URL é o "trazer campanha" (findCampaign na lista da
+    // conta), que já raspa os produtos em seguida.
+    if (l.temVitrine === false) {
+      if (cfg.importarCampanha) importacoes.push({ code: l.code, campaignId: l.campaignId, linha: l });
+    } else if (cfg.rasparVitrine) {
       vitrines.push({ code: l.code, campaignId: l.campaignId, linha: l });
     }
   }
@@ -167,7 +177,7 @@ async function runOnce({ manual = false } = {}) {
   const sync = require("../coupons/sync");
   const affiliate = require("../scraping/affiliate");
 
-  const resumo = { testados: 0, importados: 0, vitrines: 0, bloqueado: false, pulada: null };
+  const resumo = { testados: 0, importados: 0, vitrines: 0, produtosRepasse: 0, bloqueado: false, pulada: null };
   const pular = async (motivo, message) => {
     resumo.pulada = message;
     await logAutotest({ code: "-", action: ACTION.SKIP, ok: false, message });
@@ -177,6 +187,21 @@ async function runOnce({ manual = false } = {}) {
   _running = true;
   const t0 = Date.now();
   try {
+    const linhas = await repasseCoupons.aggregate({ days: cfg.diasDeBusca });
+
+    // Os produtos do repasse nos cupons aprovados. Só banco, então vem antes das
+    // travas de Chrome: cobre o código aprovado antes disto existir e a campanha
+    // que só entrou no sistema depois (varredura, "Trazer campanha").
+    for (const l of linhas) {
+      if (l.verdict !== "valid" || !l.inSystem) continue;
+      try {
+        const r = await require("./coupon-products").ligarProdutosDoRepasse(l.code, { dias: cfg.diasDeBusca });
+        resumo.produtosRepasse += r.novos || 0;
+      } catch (err) {
+        console.error(`[repasse] produtos do repasse no cupom ${l.code}: ${err.message}`);
+      }
+    }
+
     // O mesmo cuidado do sync.startImport: rodada do admin em curso e este job são
     // dois Chromes na mesma conta. Funciona porque os dois vivem neste processo.
     const st = sync.status();
@@ -201,7 +226,6 @@ async function runOnce({ manual = false } = {}) {
       return await pular("sem-sessao", "Sem sessão do Mercado Livre do sistema — cole o cookie em Admin › Mercado Livre.");
     }
 
-    const linhas = await repasseCoupons.aggregate({ days: cfg.diasDeBusca });
     const { pesado } = selecionar(linhas, cfg);
 
     // As palavras NÃO são mais testadas aqui. O teste de palavra solta em /cupons,
@@ -415,6 +439,18 @@ async function registrarCheckout({ code, url = null, material, source = "repasse
   });
   _reservas.delete(c);
 
+  // Aprovado: os outros produtos que o repasse trouxe com este código entram
+  // ligados a ele também, como vínculo fraco (repasse/coupon-products.js). Depois
+  // do recordCodeCheck, porque é o veredito GRAVADO que ele lê.
+  let repasse = null;
+  if (verdict === "valid") {
+    try {
+      repasse = await require("./coupon-products").ligarProdutosDoRepasse(c, { dias: cfgStore.readConfig().diasDeBusca });
+    } catch (err) {
+      console.error(`[repasse] produtos do repasse no cupom ${c}: ${err.message}`);
+    }
+  }
+
   // O pedido manual sai da fila com o desfecho dele.
   if (manualId != null) {
     try {
@@ -431,7 +467,7 @@ async function registrarCheckout({ code, url = null, material, source = "repasse
   await logAutotest({
     code: c, action: ACTION.TEST, ok: verdict === "valid", verdict,
     campaignId: resultado.campaignId, errorKind: bloqueio, message, durationMs,
-    produtos: vinculo?.vinculados ?? null,
+    produtos: vinculo?.vinculados ?? null, url,
   });
   _status.testados += 1;
   _status.lastRunAt = new Date().toISOString();
@@ -452,7 +488,7 @@ async function registrarCheckout({ code, url = null, material, source = "repasse
     }).catch(() => {});
   }
 
-  return { resultado, verdict, message, linha, vinculo };
+  return { resultado, verdict, message, linha, vinculo, repasse };
 }
 
 // O cupom valeu no checkout DESTE produto: é a prova mais forte que existe de que
@@ -472,43 +508,13 @@ async function ligarAoProduto({ material, url, campaignId, pg }) {
     const productUrl = final || url;
     const productKeys = chavesCandidatas(productUrl);
     if (!productUrl || !productKeys.length) return null;
-    const { criado } = await garantirNoCatalogo({ produto: material?.produto, productUrl, productKeys });
+    const { criado } = await require("./coupon-products").garantirNoCatalogo({ produto: material?.produto, productUrl, productKeys });
     const r = await pg.vincularPorCheckout({ productKeys, productUrl, cupons: [cupom] });
     return { ...r, noCatalogo: criado };
   } catch (err) {
     console.error(`[repasse] vínculo do cupom ${campaignId} ao produto: ${err.message}`);
     return { erro: err.message };
   }
-}
-
-// O produto do repasse quase nunca passou pelo scraping, e o `vincularPorCheckout`
-// só carimba linhas do catálogo que JÁ existem — o cupom ficava ligado a um
-// produto que ninguém via. Então, se o anúncio ainda não está no catálogo, ele
-// entra com os dados que a extensão leu na PDP (cupom-checkout.js:naPagina_produto).
-// Se já está, a linha fica como está: quem a atualiza é o scraping.
-async function garantirNoCatalogo({ produto, productUrl, productKeys }) {
-  const { prisma } = require("../db");
-  const { mlAnuncioIdFromUrl } = require("../catalog/product-key");
-  const anuncio = mlAnuncioIdFromUrl(productUrl);
-  const existe = await prisma().catalogProduct.findFirst({
-    where: { OR: [{ key: { in: productKeys } }, ...(anuncio ? [{ mlAnuncioId: anuncio }] : [])] },
-    select: { key: true },
-  });
-  if (existe || !produto?.name) return { criado: false };
-
-  const { upgradeMLImageUrl, normalizeSoldText } = require("../scraping/scraper");
-  const r = await require("../catalog/pg").upsertProducts([{
-    name: String(produto.name).trim(),
-    link: productUrl,
-    img: produto.img ? upgradeMLImageUrl(produto.img) : null,
-    price: produto.price ?? null,
-    originalPrice: produto.originalPrice ?? null,
-    discount: produto.discount ?? null,
-    sold: normalizeSoldText(produto.sold),
-    store: "Mercado Livre",
-    category: null,
-  }]);
-  return { criado: r.inserted > 0 };
 }
 
 // ── Agenda ───────────────────────────────────────────────────────────────
