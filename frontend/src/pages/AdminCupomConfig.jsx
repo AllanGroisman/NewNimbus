@@ -21,7 +21,7 @@ import {
   adminScraperMLSession, adminScraperMLSessionSave, adminScraperMLSessionTest,
   adminMlCupons, adminMlCuponsStatus, adminMlCuponsDiagnosticoLink, errText,
 } from "../data/api";
-import { coletorInfo, raparVitrine, _resetColetor } from "../data/coletor";
+import { coletorInfo, raparVitrine, esvaziarCarrinhoNoChrome, _resetColetor } from "../data/coletor";
 import MLSourcesSection from "../components/admin/MLSourcesSection";
 import ExtensaoAusente from "../components/admin/ExtensaoAusente";
 import ColheitaLog from "../components/admin/ColheitaLog";
@@ -97,6 +97,7 @@ export default function ConfigTest() {
       )}
 
       <CardExtensao info={extensao} onRever={perguntarExtensao} />
+      <CardCarrinho info={extensao} />
       <CardCookie sessao={sessao} onSaved={recarregar} />
       <CardTag sessao={sessao} onSaved={recarregar} />
       <MLSourcesSection />
@@ -167,6 +168,70 @@ function CardExtensao({ info, onRever }) {
           Recarregue a extensão da pasta <code>extension/</code> em <code>chrome://extensions</code> (↻)
           e dê F5 nesta página. Enquanto isso, o que falta continua rodando pelo servidor.
         </div>
+      )}
+    </Card>
+  );
+}
+
+// Esvaziar o carrinho do ML (task 18). O plano B do checkout põe o produto no
+// carrinho da conta e tira no fim — quando o fim não roda (aba fechada, muro,
+// timeout), o item fica, e o checkout passa a calcular cupom sobre o carrinho
+// combinado. É a conta deste Chrome, não a do cookie do sistema.
+function CardCarrinho({ info }) {
+  const [rodando, setRodando] = useState(false);
+  const [andamento, setAndamento] = useState(null);
+  const [msg, setMsg] = useState(null);
+
+  const entende = !!info?.instalada && (info.comandos || []).includes("esvaziar-carrinho");
+
+  async function esvaziar() {
+    if (!confirm("Tirar TODOS os itens do carrinho do Mercado Livre logado neste Chrome? Os “Salvos para depois” ficam.")) return;
+    setRodando(true);
+    setMsg(null);
+    setAndamento("abrindo o carrinho numa aba…");
+    try {
+      const r = await esvaziarCarrinhoNoChrome({
+        onProgresso: (p) => setAndamento(
+          p.tipo === "muro" ? "o Mercado Livre pediu verificação — resolva na aba que abriu"
+            : p.tipo === "carrinho" ? `${p.itens} item(ns) no carrinho`
+            : p.tipo === "removeu" ? `tirei ${p.n}${p.titulo ? ` — ${p.titulo}` : ""} · faltam ${p.restantes}`
+            : null),
+      });
+      const n = r.removidos || 0;
+      if (r.vazio) {
+        setMsg({ tom: "ok", texto: n ? `Carrinho vazio — tirei ${n} item(ns).` : "O carrinho já estava vazio." });
+      } else {
+        setMsg({ tom: n ? "aviso" : "erro", texto: `Tirei ${n} item(ns)${r.restantes != null ? `, sobraram ${r.restantes}` : ""}: ${r.motivo || "motivo desconhecido"}.` });
+      }
+    } catch (err) {
+      setMsg({ tom: "erro", texto: errText(err, "A extensão não conseguiu esvaziar o carrinho.") });
+    } finally {
+      setRodando(false);
+      setAndamento(null);
+    }
+  }
+
+  return (
+    <Card
+      tom="neutro"
+      titulo="Carrinho do Mercado Livre"
+      veredito={
+        info === null ? "perguntando pela extensão…"
+          : !info.instalada ? "precisa da extensão."
+          : !entende ? "a extensão instalada é anterior à 2.4.6 e não sabe esvaziar o carrinho — recarregue-a (↻) e dê F5."
+          : "o teste de cupom pelo carrinho deixa item para trás quando é interrompido. Aqui tira tudo de uma vez."
+      }
+      acoes={
+        <button onClick={esvaziar} disabled={!entende || rodando} style={{ ...botaoSecundario, opacity: !entende || rodando ? 0.5 : 1 }}>
+          {rodando ? "⟳ Esvaziando…" : "Esvaziar carrinho do ML"}
+        </button>
+      }
+    >
+      {(andamento || msg) && (
+        <>
+          {andamento && <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>{andamento}</div>}
+          {msg && <Recado {...msg} />}
+        </>
       )}
     </Card>
   );

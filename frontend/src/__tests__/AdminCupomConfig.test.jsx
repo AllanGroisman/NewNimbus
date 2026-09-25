@@ -23,6 +23,7 @@ vi.mock("../data/api", () => ({
 vi.mock("../data/coletor", () => ({
   coletorInfo: vi.fn(),
   raparVitrine: vi.fn(),
+  esvaziarCarrinhoNoChrome: vi.fn(),
   _resetColetor: vi.fn(),
 }));
 
@@ -31,7 +32,7 @@ import {
   adminScraperMLSession, adminScraperMLSessionSave, adminScraperMLSessionTest,
   adminScraperMLSources, adminMlCupons, adminMlCuponsStatus, adminMlCuponsDiagnosticoLink,
 } from "../data/api";
-import { coletorInfo, raparVitrine } from "../data/coletor";
+import { coletorInfo, raparVitrine, esvaziarCarrinhoNoChrome } from "../data/coletor";
 
 const SESSAO_OK = {
   configured: true, cookieLength: 4200, source: "db", tag: "pb20260221170529",
@@ -190,5 +191,45 @@ describe("extensão instalada, mas velha", () => {
     expect(screen.getByText(/puxar a lista de cupons/)).toBeInTheDocument();
     // …e não some com o botão: o que falta continua rodando pelo servidor.
     expect(screen.getByText(/continua rodando pelo servidor/)).toBeInTheDocument();
+  });
+});
+
+describe("esvaziar o carrinho do ML (task 18)", () => {
+  const COM_CARRINHO = { instalada: true, versao: "2.4.6", comandos: ["lista", "raspar", "palavra", "checkout", "esvaziar-carrinho"] };
+
+  it("cópia da extensão sem o comando deixa o botão cinza e diz por quê", async () => {
+    await abrirTela();
+    expect(await screen.findByText(/anterior à 2\.4\.6/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Esvaziar carrinho do ML" })).toBeDisabled();
+  });
+
+  it("pede confirmação e não faz nada se o admin desistir", async () => {
+    coletorInfo.mockResolvedValue(COM_CARRINHO);
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    await abrirTela();
+    fireEvent.click(await screen.findByRole("button", { name: "Esvaziar carrinho do ML" }));
+    expect(esvaziarCarrinhoNoChrome).not.toHaveBeenCalled();
+  });
+
+  it("carrinho esvaziado diz quantos itens saíram", async () => {
+    coletorInfo.mockResolvedValue(COM_CARRINHO);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    esvaziarCarrinhoNoChrome.mockResolvedValue({ removidos: 3, itens: [], restantes: 0, vazio: true, motivo: null });
+    await abrirTela();
+    const botao = await screen.findByRole("button", { name: "Esvaziar carrinho do ML" });
+    await waitFor(() => expect(botao).not.toBeDisabled());
+    fireEvent.click(botao);
+    expect(await screen.findByText("Carrinho vazio — tirei 3 item(ns).")).toBeInTheDocument();
+  });
+
+  it("sobra no carrinho aparece com o motivo, não como sucesso", async () => {
+    coletorInfo.mockResolvedValue(COM_CARRINHO);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    esvaziarCarrinhoNoChrome.mockResolvedValue({ removidos: 1, itens: [], restantes: 2, vazio: false, motivo: "cliquei em excluir e o carrinho não mudou" });
+    await abrirTela();
+    const botao = await screen.findByRole("button", { name: "Esvaziar carrinho do ML" });
+    await waitFor(() => expect(botao).not.toBeDisabled());
+    fireEvent.click(botao);
+    expect(await screen.findByText(/Tirei 1 item\(ns\), sobraram 2: cliquei em excluir/)).toBeInTheDocument();
   });
 });

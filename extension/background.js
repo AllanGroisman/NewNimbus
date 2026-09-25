@@ -19,6 +19,7 @@ import { lista, fecharAba } from "./lista.js";
 import { palavra } from "./palavra.js";
 import { checkout, cuponsNoCheckout } from "./checkout.js";
 import { cupomNoCheckout } from "./cupom-checkout.js";
+import { esvaziarCarrinho } from "./carrinho.js";
 
 // Cada comando recebe (payload, progresso) e devolve um objeto serializável.
 // A tela consulta esta lista pelo anúncio da ponte: é assim que ela sabe se a
@@ -39,6 +40,9 @@ const COMANDOS = {
   // O mesmo comando; o nome novo diz à tela que esta cópia entende `depurar`.
   "cupom-no-checkout-v2": cupomNoCheckout,
   "fechar-aba": fecharAba,
+  // Tira todos os itens do carrinho da conta (task 18) — o lixo que o plano B do
+  // checkout deixa quando a limpeza do fim do teste não roda.
+  "esvaziar-carrinho": esvaziarCarrinho,
 };
 
 chrome.runtime.onMessage.addListener((msg, sender, responder) => {

@@ -12,6 +12,7 @@ tela de admin pedir:
 | `palavra` | Admin › Cupom › Descobrir palavra e Repasse | Digita a palavra no “Inserir código do cupom” e devolve o que o ML respondeu. |
 | `checkout` | Admin › Cupom › Testar cupom (modo checkout) | Leva o produto ao checkout e aplica o código. **Nunca finaliza compra.** |
 | `cupons-checkout` | Admin › Cupom › Cupons do produto (sonda) | Leva o produto até a tela dos cupons do checkout e **só fotografa** — não digita nem clica em cupom. O servidor guarda em `backend/logs/ml-checkout-cupons/`. Desde a 2.2.0; desde a **2.2.5** ela também busca a página `/cupons/cho` direto da aba (o deeplink está no modelo do checkout), que é o caminho que responde mesmo quando nenhum cupom está em uso e o popup não abre. |
+| `esvaziar-carrinho` | Admin › Cupom › Config Test → “Esvaziar carrinho do ML” | Abre o carrinho e tira os itens um a um (só clica em “Excluir”). Não mexe nos “Salvos para depois”. Desde a 2.4.6. |
 | `props` | diagnóstico | Lê o modelo (JSON) de uma página do ML. |
 
 ## Por que ela existe
@@ -64,6 +65,7 @@ e a extensão só clica no que vier.
 | `colher.js` | Lê os cards de uma página de listagem. **Gêmeo** de `backend/scraping/scraper.js:harvestMLCards`. |
 | `palavra.js` | O “Inserir código do cupom”, com um espião de XHR para pegar a resposta do ML. |
 | `checkout.js` | O caminho até a tela do cupom no checkout. Porte de `backend/scraping/ml-coupon.js`. |
+| `carrinho.js` | Esvaziar o carrinho da conta, item por item, conferindo que ele encolheu a cada clique. |
 | `ponte.js` | O único ponto de contato com a página do admin (`postMessage`). |
 
 ## Instalar (uma vez)

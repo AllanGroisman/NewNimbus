@@ -157,6 +157,13 @@ export function cupomNoCheckout({ url, code, depurar = false }, { onProgresso, t
   return pedirAoColetor("cupom-no-checkout-v2", { url, code, depurar: true }, { onProgresso, timeoutMs: timeoutMs ?? 15 * 60 * 1000 });
 }
 
+// Tira todos os itens do carrinho do ML da conta deste Chrome (task 18). Devolve
+// { removidos, itens, restantes, vazio, temSalvos, motivo }. Só a extensão que
+// anuncia "esvaziar-carrinho" entende — quem chama confere antes.
+export function esvaziarCarrinhoNoChrome({ onProgresso, timeoutMs } = {}) {
+  return pedirAoColetor("esvaziar-carrinho", {}, { onProgresso, timeoutMs });
+}
+
 // Lê o modelo (JSON do nordic) de uma página do ML. Devolve { props, landing, url, muro }.
 export function lerPropsDaPagina(url, { chaves, onProgresso, timeoutMs } = {}) {
   return pedirAoColetor("props", { url, chaves }, { onProgresso, timeoutMs });
