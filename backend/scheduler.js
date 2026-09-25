@@ -669,14 +669,19 @@ async function sendItem(userId, group, whatsappGroups, item) {
 
   let itemForSend = item;
   // Repasse no modo "mensagem original": o texto do líder vai como veio, só com
-  // os links trocados. Aqui cada link precisa virar afiliado — um que falhe
-  // derruba a mensagem inteira (mesma política do item comum: sem comissão, não sai).
+  // os links trocados. O link principal (o primeiro) precisa virar afiliado — se
+  // falhar, a mensagem cai (mesma política do item comum: sem comissão, não sai).
+  // Os extras que falharem saem crus, como vieram do líder.
   let originalText = null;
   if (item.originalText && Array.isArray(item.originalLinks) && item.originalLinks.length) {
     const pairs = [];
-    for (const l of item.originalLinks) {
+    for (const [i, l] of item.originalLinks.entries()) {
       const conv = AFFILIATE_CONVERTERS[l.store];
       const aff = conv ? await conv.convert(userId, l.link) : null;
+      if (!aff && i > 0) {
+        console.warn(`[scheduler] afiliado ${conv?.label || l.store} falhou pra um link extra da mensagem original de "${item.name?.slice(0, 40)}" — vai cru`);
+        continue;
+      }
       if (!aff) {
         const err = new Error(`Afiliado ${conv?.label || l.store} falhou pra um link da mensagem original de "${item.name?.slice(0, 40)}" — mensagem descartada (sem link com comissão).`);
         err.code = "affiliate_conversion_failed";

@@ -487,44 +487,28 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null, text 
     // do grupo líder, então só vale a escolha de lojas da própria campanha.
     const allowedSources = scheduler.resolveSources(group.scraping?.sources);
 
-    // Modo "mensagem original": a mensagem inteira vira UM item, com todos os
-    // links trocados no envio. Basta um link que não vire afiliado pra ela toda
-    // ser descartada — repassar com link de outro afiliado não é opção.
+    // Modo "mensagem original": a mensagem inteira vira UM item, com os links de
+    // produto que deram certo trocados no envio. Link que não serviu (página de
+    // cupom, não-produto, loja fora da campanha) NÃO derruba a mensagem: fica cru
+    // no texto, como veio do líder. Os de loja fora da campanha seguem no batch
+    // só pra cair no log de "fonte não habilitada" do loop abaixo.
     let batch = items;
     if (originalMessage.isOriginalMode(group)) {
       const blocked = items.filter(b => {
         const sid = scraper.normalizeSource(b.store);
         return !sid || !allowedSources.includes(sid);
       });
-      if (discarded.length || blocked.length) {
-        const why = discarded.length
-          ? `outro link da mensagem não pôde ser usado (${discarded[0].reason})`
-          : `outro link da mensagem é de loja não habilitada na campanha (${blocked[0].store})`;
-        console.log(`[repasse] campanha ${groupId}: mensagem original descartada — ${why}`);
-        for (const base of items) {
-          const isBlocked = blocked.includes(base);
-          logCapture({
-            groupId, userId, waJid,
-            rawUrl: base.rawUrl, resolvedUrl: base.link, store: base.store,
-            sourceAllowed: !isBlocked, affiliateConfigured: base.affiliateConfigured, scrapeOk: base.scrapeOk,
-            productName: base.name, productImg: base.img, price: base.price, originalPrice: base.originalPrice,
-            discount: base.discount, sold: base.sold, coupon: base.coupon,
-            outcome: "discarded",
-            reason: isBlocked
-              ? "fonte não habilitada — mensagem original inteira descartada"
-              : `mensagem original inteira descartada: ${why}`,
-            stage: isBlocked ? STAGE.SOURCE : STAGE.QUEUE,
-          });
-        }
-        continue;
+      const usable = items.filter(b => !blocked.includes(b));
+      batch = blocked;
+      if (usable.length) {
+        const extra = usable.length - 1;
+        batch = [{
+          ...usable[0],
+          name: extra > 0 ? `${usable[0].name} (+${extra} produto${extra > 1 ? "s" : ""})` : usable[0].name,
+          originalText: text,
+          originalLinks: usable.map(b => ({ raw: b.rawUrl, link: b.link, store: b.store })),
+        }, ...blocked];
       }
-      const extra = items.length - 1;
-      batch = [{
-        ...items[0],
-        name: extra > 0 ? `${items[0].name} (+${extra} produto${extra > 1 ? "s" : ""})` : items[0].name,
-        originalText: text,
-        originalLinks: items.map(b => ({ raw: b.rawUrl, link: b.link, store: b.store })),
-      }];
     }
 
     let approved = 0, pending = 0;

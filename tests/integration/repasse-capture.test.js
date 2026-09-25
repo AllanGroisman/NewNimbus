@@ -654,20 +654,40 @@ describe("repasse capture — modo mensagem original", () => {
     expect(g.queue[0].name).toMatch(/\(\+1 produto\)$/);
   });
 
-  it("um link não suportado descarta a mensagem inteira e loga", async () => {
+  it("um link não suportado não derruba a mensagem: fica cru no texto", async () => {
     const { user } = await createTestUser({ plan: "pro" });
     affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
     await storage.saveState(user.id, { groups: [originalGroup(5102)] });
     await capture.rebuildLeaderIndex();
 
-    await capture.onUpsert(user.id, NUMBER_ID, [
-      msgWithText("https://www.mercadolivre.com.br/p/MLB333 e https://www.magazineluiza.com.br/produto/123"),
-    ]);
+    const text = "https://www.mercadolivre.com.br/p/MLB333 e https://www.magazineluiza.com.br/produto/123";
+    await capture.onUpsert(user.id, NUMBER_ID, [msgWithText(text)]);
 
     const g = (await storage.loadState(user.id)).groups.find(x => x.id === 5102);
-    expect(g.queue.length + g.pending.length).toBe(0);
+    expect(g.queue.length).toBe(1);
+    expect(g.queue[0].originalText).toBe(text);
+    expect(g.queue[0].originalLinks.map(l => l.raw)).toEqual(["https://www.mercadolivre.com.br/p/MLB333"]);
     const rows = await waitForLogs(user.id, 2);
-    expect(rows.every(r => r.outcome === "discarded")).toBe(true);
-    expect(rows.some(r => /mensagem original inteira descartada/.test(r.reason))).toBe(true);
+    expect(rows.find(r => /magazineluiza/.test(r.rawUrl)).outcome).toBe("discarded");
+    expect(rows.find(r => /MLB333/.test(r.rawUrl)).outcome).toBe("queued");
+  });
+
+  it("um link que não é produto (sem foto/preço) não derruba a mensagem", async () => {
+    scraper.scrapeSingleProduct.mockImplementation(async (url) => (/cupom/.test(url)
+      ? { name: "Cupons", link: url, price: null, img: null, store: "Mercado Livre" }
+      : { name: "Sanduicheira", link: url, price: 99.9, img: "https://img/x.jpg", store: scraper.detectStore(url) }));
+    const { user } = await createTestUser({ plan: "pro" });
+    affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
+    await storage.saveState(user.id, { groups: [originalGroup(5103)] });
+    await capture.rebuildLeaderIndex();
+
+    const text = "Pega o cupom https://www.mercadolivre.com.br/cupom-x e o produto https://www.mercadolivre.com.br/p/MLB444";
+    await capture.onUpsert(user.id, NUMBER_ID, [msgWithText(text)]);
+
+    const g = (await storage.loadState(user.id)).groups.find(x => x.id === 5103);
+    expect(g.queue.length).toBe(1);
+    expect(g.queue[0].name).toBe("Sanduicheira");
+    expect(g.queue[0].originalText).toBe(text);
+    expect(g.queue[0].originalLinks.map(l => l.raw)).toEqual(["https://www.mercadolivre.com.br/p/MLB444"]);
   });
 });

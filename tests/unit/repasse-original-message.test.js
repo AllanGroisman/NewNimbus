@@ -99,8 +99,17 @@ describe("sendItem com mensagem original", () => {
     expect(caption).not.toMatch(/MODELO/);
   });
 
-  it("um link que não converte descarta a mensagem inteira e loga", async () => {
+  it("link extra que não converte sai cru, sem derrubar a mensagem", async () => {
     affiliate.gerarLinkAfiliadoShopee.mockResolvedValue(null);
+    const send = vi.spyOn(wa, "sendImage").mockResolvedValue({});
+    const r = await scheduler.sendItem("u1", GRUPO, WA, item());
+    expect(r.sentCount).toBe(1);
+    expect(send.mock.calls[0][4]).toBe("*Oferta* https://meli.la/MEU e https://s.shopee/b");
+    expect(gravadas).toHaveLength(0);
+  });
+
+  it("link principal que não converte descarta a mensagem e loga", async () => {
+    affiliate.gerarLinkAfiliadoML.mockResolvedValue(null);
     const send = vi.spyOn(wa, "sendImage").mockResolvedValue({});
     await expect(scheduler.sendItem("u1", GRUPO, WA, item())).rejects.toMatchObject({ code: "affiliate_conversion_failed" });
     expect(send).not.toHaveBeenCalled();
