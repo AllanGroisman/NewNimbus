@@ -415,7 +415,11 @@ const apiLimiter = rateLimit({
   max: 180,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: skipLimitInTests,
+  // A rodada de cupons do ML fica de fora: com várias abas do Chrome do admin ela
+  // passa dos 180/min sozinha, e um 429 no meio dela derruba a rodada e perde o
+  // que já foi lido (o `/local/fim` também toma 429). Todas essas rotas exigem
+  // requireAuth + requireAdmin, então quem não é admin continua barrado nelas.
+  skip: (req) => skipLimitInTests() || req.originalUrl.startsWith("/api/admin/ml-cupons"),
   keyGenerator: apiLimiterKey,
   message: { error: "Limite de requisições atingido. Aguarde 1 minuto." },
 });
