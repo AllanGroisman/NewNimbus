@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, storeLockMessage, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, soldText, getGroupCategories, getGroupStats, computeQueueETA, formatETA, formatTimeBR, formatDateBR, isSameDayBR } from "../data/constants";
+import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, storeLockMessage, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, soldText, getGroupCategories, getGroupStats, computeQueueETA, formatETA, formatTimeBR, formatDateBR, isSameDayBR, WHATSNIMBUS_EVENTS } from "../data/constants";
 import { createWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupQueue, saveGroupQueue, saveItemCoupon, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue, errText } from "../data/api";
 import { refillResultMsg, queueMax } from "../data/refill";
 import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
@@ -400,7 +400,7 @@ function QueueItemCard({ item, idx, eta, onRemove, onMoveToTop, onSaveCoupon, on
   );
 }
 
-export default function GroupDashboard({ group, numbers, whatsappGroups = [], affiliateConfigured = true, affiliateStatus = null, storeLocks = {}, onBack, onUpdate, onDelete, onCreateWhatsappGroup, onUpdateWhatsappGroup, onGoToSettings, onGoToAffiliate, onGoToWhatsapp, customTemplates = [], onAddCustomTemplate, onDeleteCustomTemplate, onUpdateCustomTemplate, limits, tourActive = false }) {
+export default function GroupDashboard({ group, numbers, whatsappGroups = [], affiliateConfigured = true, affiliateStatus = null, storeLocks = {}, onBack, onUpdate, onDelete, onCreateWhatsappGroup, onUpdateWhatsappGroup, onGoToSettings, notificationSettings = null, onGoToAffiliate, onGoToWhatsapp, customTemplates = [], onAddCustomTemplate, onDeleteCustomTemplate, onUpdateCustomTemplate, limits, tourActive = false }) {
   const [tab, setTab] = useState(() => readSavedTab(group.id, group?.scraping?.kind === "repasse"));
   // Guarda a aba atual por campanha pra restaurar no F5.
   useEffect(() => { writeSavedTab(group.id, tab); }, [group.id, tab]);
@@ -1518,6 +1518,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const isRepasseGroup = scraping?.kind === "repasse";
   const manageDirty = groupInfo.name !== group.name
     || (isRepasseGroup && stableJSON(scraping?.sources) !== stableJSON(group.scraping?.sources))
+    || stableJSON(scraping?.notifications) !== stableJSON(group.scraping?.notifications)
     || cooldownDirty;
   const scrapingDirty = stableJSON(scraping) !== stableJSON(group.scraping);
   // A aba de busca edita o scraping E as categorias (que vivem no grupo), então
@@ -1921,6 +1922,64 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               As lojas, as categorias e os filtros de produto ficam na aba <strong>Busca de Produtos</strong>.
             </div>
           )}
+
+          {/* Avisos desta campanha (task 23). Mora em scraping.notifications e só
+              SILENCIA: o que está desligado nas Configurações da conta continua
+              desligado. Ausente = ligado. Salva no "Salvar alterações". */}
+          {(() => {
+            const campNotif = scraping.notifications || {};
+            const campOn = campNotif.enabled !== false;
+            const campEvents = campNotif.events || {};
+            const setCampNotif = (patch) => setScraping(s => ({ ...s, notifications: { ...(s.notifications || {}), ...patch } }));
+            const accountOn = !!notificationSettings?.enabled;
+            const accountEvents = notificationSettings?.events || {};
+            const offInAccount = WHATSNIMBUS_EVENTS.filter(ev => ev.campaign && accountEvents[ev.key] === false);
+            return (
+              <div data-tour="mg-notifications" style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 500, marginBottom: 4 }}>Notificações desta campanha</div>
+                    <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                      Avisos do WhatsNimbus sobre esta campanha. Desligar aqui não afeta as outras campanhas.
+                    </div>
+                  </div>
+                  <Toggle label="Receber avisos desta campanha" value={campOn} onChange={v => setCampNotif({ enabled: v })} />
+                </div>
+                {notificationSettings && (!accountOn || offInAccount.length > 0) && (
+                  <AlertBanner
+                    tone="warn"
+                    style={{ marginTop: 12, marginBottom: 0 }}
+                    message={!accountOn
+                      ? "As notificações do WhatsNimbus estão desligadas na sua conta — nada daqui será enviado."
+                      : `Desligado na sua conta (vale para todas as campanhas): ${offInAccount.map(ev => ev.label).join(", ")}.`}
+                    actions={onGoToSettings ? [{ label: "Abrir configurações", onClick: onGoToSettings }] : undefined}
+                  />
+                )}
+                <div style={{ marginTop: 12, opacity: campOn ? 1 : 0.5 }}>
+                  {WHATSNIMBUS_EVENTS.filter(ev => ev.campaign).map(ev => {
+                    // Envio instantâneo já desliga a fila vazia no scheduler (queueEmptyAlert).
+                    const byAutoSend = ev.key === "queueEmpty" && scraping.autoSend === true;
+                    return (
+                      <div key={ev.key} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderTop: "0.5px solid var(--color-border-tertiary)" }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 13, fontWeight: 500 }}>{ev.label}</div>
+                          <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                            {byAutoSend ? "Desligado pelo envio instantâneo." : ev.desc}
+                          </div>
+                        </div>
+                        <Toggle
+                          label={ev.label}
+                          disabled={!campOn || byAutoSend}
+                          value={!byAutoSend && campEvents[ev.key] !== false}
+                          onChange={v => setCampNotif({ events: { ...campEvents, [ev.key]: v } })}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Cooldown: movido da aba Janelas — é uma regra de produto, não de horário */}
           <div data-tour="mg-cooldown" style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>

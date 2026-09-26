@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../data/constants";
+import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, WHATSNIMBUS_EVENTS } from "../data/constants";
 import Badge from "../components/ui/Badge";
 import Toggle from "../components/ui/Toggle";
 import Modal from "../components/ui/Modal";
@@ -8,15 +8,6 @@ import { authUpdate, authChangePassword, accountRequestEmailChange, errText} fro
 import { useUnsavedGuard } from "../data/navGuard";
 import { formatPhone, isValidPhone, maskPhoneInput, toStoredPhone } from "../data/phone";
 
-// Eventos que o WhatsNimbus (WhatsApp do sistema) pode avisar por DM.
-const WHATSNIMBUS_EVENTS = [
-  { key: "whatsappDisconnected", label: "WhatsApp desconectado", desc: "Aviso quando um dos seus números cai" },
-  { key: "campaignStopped",      label: "Campanha parada",        desc: "Quando uma campanha para por algum motivo (ex.: afiliado ou WhatsApp)" },
-  { key: "campaignDeactivated",  label: "Campanha desativada",    desc: "Quando você pausa uma campanha" },
-  { key: "campaignReactivated",  label: "Campanha reativada",     desc: "Quando você retoma uma campanha" },
-  { key: "productSearch",        label: "Busca de produtos",      desc: "Resultado das buscas: aprovados / aguardando confirmação" },
-  { key: "queueEmpty",           label: "Fila vazia",             desc: "Quando a fila de uma campanha fica sem produtos" },
-];
 
 export default function PageSettings({ user, setUser, onLogout, settings = {}, setSettings = () => {}, numbers = [] }) {
   const [section, setSection] = useState("account");

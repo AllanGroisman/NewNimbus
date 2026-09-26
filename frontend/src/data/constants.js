@@ -439,3 +439,15 @@ export function pathToNav(pathname) {
   if (campanha) return { page: "group", groupId: decodeURIComponent(campanha[1]) };
   return { page: PATH_TO_PAGE[clean] || "dashboard", groupId: null };
 }
+
+// Eventos que o WhatsNimbus (WhatsApp do sistema) pode avisar por DM.
+// `campaign: true` = evento de uma campanha, que também pode ser silenciado
+// dentro dela (aba Gerenciar → scraping.notifications).
+export const WHATSNIMBUS_EVENTS = [
+  { key: "whatsappDisconnected", label: "WhatsApp desconectado", desc: "Aviso quando um dos seus números cai" },
+  { key: "campaignStopped",      label: "Campanha parada",        desc: "Quando uma campanha para por algum motivo (ex.: afiliado ou WhatsApp)", campaign: true },
+  { key: "campaignDeactivated",  label: "Campanha desativada",    desc: "Quando você pausa uma campanha", campaign: true },
+  { key: "campaignReactivated",  label: "Campanha reativada",     desc: "Quando você retoma uma campanha", campaign: true },
+  { key: "productSearch",        label: "Busca de produtos",      desc: "Resultado das buscas: aprovados / aguardando confirmação", campaign: true },
+  { key: "queueEmpty",           label: "Fila vazia",             desc: "Quando a fila de uma campanha fica sem produtos", campaign: true },
+];

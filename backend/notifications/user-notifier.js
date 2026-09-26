@@ -90,11 +90,22 @@ function stateAlert(key, isDown, { graceMs = NOTIFY_GRACE_MS, onDown, onRecover 
   if (st.notified) Promise.resolve().then(onRecover).catch(() => {});
 }
 
+// Preferência da CAMPANHA (scraping.notifications). Só silencia: o que está
+// desligado nas Configurações da conta continua desligado. Ausente = ligado,
+// então campanha antiga segue avisando como antes.
+function groupAllows(group, eventType) {
+  const n = group && group.scraping && group.scraping.notifications;
+  if (!n) return true;
+  if (n.enabled === false) return false;
+  return !(n.events && n.events[eventType] === false);
+}
+
 // ── Núcleo de envio ─────────────────────────────────────────────────────────
-async function deliver(userId, eventType, text) {
+async function deliver(userId, eventType, text, group = null) {
   const cfg = await readUserConfig(userId);
   if (!cfg.enabled) return false;
   if (!cfg.events[eventType]) return false;
+  if (!groupAllows(group, eventType)) return false;
   if (!cfg.destinationNumberId) return false;
 
   // Telefone do número de destino escolhido pelo usuário.
@@ -183,48 +194,52 @@ async function onSessionStatus(userId, numberId, status) {
   }
 }
 
-async function onCampaignDeactivated(userId, groupName) {
+// Os eventos de campanha recebem o `group` inteiro: o deliver lê dele as
+// preferências de aviso da campanha (groupAllows).
+async function onCampaignDeactivated(userId, group) {
   await deliver(userId, "campaignDeactivated",
-    `${TAG} ⏸️\nA campanha *${groupName}* foi *desativada*.`);
+    `${TAG} ⏸️\nA campanha *${group.name}* foi *desativada*.`, group);
 }
 
-async function onCampaignReactivated(userId, groupName) {
+async function onCampaignReactivated(userId, group) {
   await deliver(userId, "campaignReactivated",
-    `${TAG} ▶️\nA campanha *${groupName}* foi *reativada*.`);
+    `${TAG} ▶️\nA campanha *${group.name}* foi *reativada*.`, group);
 }
 
 // stopped: true = gate bloqueando o envio agora. Chamar SEMPRE (true e false) a
 // cada tick. O grace do stateAlert absorve paradas curtas (ex.: número reconectando
 // entre dois ticks): só avisa se seguir parada. Ao voltar, avisa a recuperação.
-async function onCampaignStopped(userId, groupId, groupName, reason, stopped) {
-  const key = `${userId}:stopped:${groupId}`;
+// Campanha silenciada continua passando pelo stateAlert — só o envio final é
+// barrado, então religar o aviso não despeja alertas velhos.
+async function onCampaignStopped(userId, group, reason, stopped) {
+  const key = `${userId}:stopped:${group.id}`;
   stateAlert(key, stopped, {
     onDown: async () => {
       await deliver(userId, "campaignStopped",
-        `${TAG} 🛑\nA campanha *${groupName}* foi *parada*.\nMotivo: ${reason}`);
+        `${TAG} 🛑\nA campanha *${group.name}* foi *parada*.\nMotivo: ${reason}`, group);
     },
     onRecover: async () => {
       await deliver(userId, "campaignStopped",
-        `${TAG} ✅\nA campanha *${groupName}* voltou a operar.`);
+        `${TAG} ✅\nA campanha *${group.name}* voltou a operar.`, group);
     },
   });
 }
 
 // Resultado de uma busca (refill). approved/pending já vêm calculados pelo caller.
-async function onProductSearch(userId, groupName, { added, approved, pending }) {
+async function onProductSearch(userId, group, { added, approved, pending }) {
   if (!added) return;
-  const lines = [`${TAG} 🔎`, `Busca na campanha *${groupName}*: ${added} novo(s).`];
+  const lines = [`${TAG} 🔎`, `Busca na campanha *${group.name}*: ${added} novo(s).`];
   if (approved) lines.push(`✅ ${approved} aprovado(s) automaticamente.`);
   if (pending) lines.push(`⏳ ${pending} aguardando sua confirmação.`);
-  await deliver(userId, "productSearch", lines.join("\n"));
+  await deliver(userId, "productSearch", lines.join("\n"), group);
 }
 
 // isEmpty: fila vazia dentro de uma janela de envio. Chamar true e false (reset).
-async function onQueueEmpty(userId, groupId, groupName, isEmpty) {
-  const key = `${userId}:empty:${groupId}`;
+async function onQueueEmpty(userId, group, isEmpty) {
+  const key = `${userId}:empty:${group.id}`;
   if (!transition(key, isEmpty)) return;
   await deliver(userId, "queueEmpty",
-    `${TAG} 📭\nA fila da campanha *${groupName}* está *vazia* — não há produtos pra enviar.\nFaça uma busca ou aprove os pendentes.`);
+    `${TAG} 📭\nA fila da campanha *${group.name}* está *vazia* — não há produtos pra enviar.\nFaça uma busca ou aprove os pendentes.`, group);
 }
 
 // ── Teste de conexão (botão "Testar" no card do número) ─────────────────────
@@ -268,6 +283,7 @@ module.exports = {
   onQueueEmpty,
   // Exportado pra teste: núcleo do debounce/recuperação (sem IO).
   stateAlert,
+  groupAllows,
   NOTIFY_GRACE_MS,
   __clearAlertState: () => alertState.clear(),
 };

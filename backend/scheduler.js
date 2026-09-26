@@ -998,23 +998,23 @@ async function processGroup(userId, group, whatsappGroups, numbers, planPaused) 
   // Parada por gate (afiliado/whatsapp) — notifica o dono com o motivo (edge-trigger).
   const affGate = affiliateGate(userId, group);
   if (affGate.paused) {
-    userNotifier.onCampaignStopped(userId, group.id, group.name, affGate.reason, true).catch(() => {});
+    userNotifier.onCampaignStopped(userId, group, affGate.reason, true).catch(() => {});
     return;
   }
   const waGate = await whatsappGate(userId, group, whatsappGroups, planPaused, numbers);
   if (waGate.paused) {
-    userNotifier.onCampaignStopped(userId, group.id, group.name, waGate.reason, true).catch(() => {});
+    userNotifier.onCampaignStopped(userId, group, waGate.reason, true).catch(() => {});
     return;
   }
   // Sem nenhuma janela de envio a campanha está parada de verdade: não envia e
   // também não busca produtos novos (senão a fila cresceria sem nunca sair).
   // O envio instantâneo ignora as janelas de propósito, então ele não conta.
   if (!windowGate(group).ok) {
-    userNotifier.onCampaignStopped(userId, group.id, group.name, "nenhuma janela de envio configurada", true).catch(() => {});
+    userNotifier.onCampaignStopped(userId, group, "nenhuma janela de envio configurada", true).catch(() => {});
     return;
   }
   // Não está parada por gate: reseta o edge-trigger pra uma próxima parada avisar.
-  userNotifier.onCampaignStopped(userId, group.id, group.name, null, false).catch(() => {});
+  userNotifier.onCampaignStopped(userId, group, null, false).catch(() => {});
 
   // Nada de poda por filtro aqui. Este tick rodava a cada minuto apagando da fila
   // tudo que não batesse mais com os filtros atuais, sem nada na tela dizendo por
@@ -1045,7 +1045,7 @@ async function processGroup(userId, group, whatsappGroups, numbers, planPaused) 
     }
     // Notifica o resultado da busca automática (novos produtos aprovados/pendentes).
     if (newItems.length) {
-      userNotifier.onProductSearch(userId, group.name, {
+      userNotifier.onProductSearch(userId, group, {
         added: newItems.length,
         approved: target === "queue" ? newItems.length : 0,
         pending: target === "pending" ? newItems.length : 0,
@@ -1056,7 +1056,7 @@ async function processGroup(userId, group, whatsappGroups, numbers, planPaused) 
   // Fila vazia dentro de uma janela de envio (edge-trigger). Usa a queue já
   // considerando o refill acima.
   const effQueueLen = (updates.queue !== undefined ? updates.queue : (group.queue || [])).length;
-  userNotifier.onQueueEmpty(userId, group.id, group.name, queueEmptyAlert(group, inWindow, effQueueLen)).catch(() => {});
+  userNotifier.onQueueEmpty(userId, group, queueEmptyAlert(group, inWindow, effQueueLen)).catch(() => {});
 
   // Dispatch (só consome de queue — pending precisa de aprovação manual)
   const groupForDispatch = updates.queue ? { ...group, queue: updates.queue } : group;
@@ -1198,7 +1198,7 @@ async function refillNow(userId, groupId, overrides = {}) {
   const saved = await storage.updateGroupOps(userId, groupId, updates);
   // Notifica o dono sobre a busca manual (botão "Buscar agora").
   if (newItems.length) {
-    userNotifier.onProductSearch(userId, group.name, {
+    userNotifier.onProductSearch(userId, group, {
       added: newItems.length,
       approved: target === "queue" ? newItems.length : 0,
       pending: target === "pending" ? newItems.length : 0,

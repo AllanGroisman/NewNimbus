@@ -125,3 +125,5 @@ Geral:
 20. [x] Se a campanha de repasse esta com envio imediato ativado quero que automaticamente a notificação de fila vazia seja desativado. Não faz sentido a cada produto receber um aviso que a fila esta vazia.
 
 21. [x] Na busca de produtos dos cupons quero poder limitar o numero de cupons buscados. O lote é de quantos em quantos ele salva no banco de dados? Tamb;em quero que nos historicos de quando foram rodadas as buscas nessa pagina, se passar de minuto, apareça em formato de minuto e se passar de hora apareça em horas (1h 4min e 40s, 2min e 20s, 30s, etc...). Além disso, quero que a tela pare de pular enquanto roda, se eu tento mexer na tela enquanto roda, como fica aparecendo elementos novos dos cupons sendo explorados, a tela fica rolando de volta para mostrar, não precisa disso, quero que fique solto para que eu possa ver o que eu quiser.
+
+23. [x] Adiciona no gerenciamento de cada campanha opções de noitificação para ligar/desligar assim geral e individual de cada caso.

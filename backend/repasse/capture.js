@@ -584,7 +584,7 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null, text 
     const added = approved + pending;
     if (added > 0) {
       console.log(`[repasse] campanha ${groupId}: +${added} (${approved} fila / ${pending} revisão)`);
-      userNotifier.onProductSearch(userId, group.name, { added, approved, pending }).catch(() => {});
+      userNotifier.onProductSearch(userId, group, { added, approved, pending }).catch(() => {});
     }
   }
 }

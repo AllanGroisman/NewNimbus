@@ -1294,6 +1294,7 @@ export default function App() {
               onDeleteWhatsappGroup={deleteWhatsappGroup}
               onUpdateWhatsappGroup={updateWhatsappGroup}
               onGoToSettings={() => requestNavigation(() => setPage("settings"))}
+              notificationSettings={settings.notifications || null}
               onGoToAffiliate={(provider) => requestNavigation(() => setPage(provider === "shopee" ? "shopee" : "mercado-livre"))}
               onGoToWhatsapp={() => requestNavigation(() => setPage("whatsapp"))}
               customTemplates={settings.customTemplates || []}

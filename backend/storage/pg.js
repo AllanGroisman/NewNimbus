@@ -306,9 +306,10 @@ async function saveState(userId, incoming) {
       const before = prevPaused.get(gid);
       const after = !!g.paused;
       if (before === after) continue;
-      const name = String(g.name || "");
-      if (after) notifier.onCampaignDeactivated(userId, name).catch(() => {});
-      else notifier.onCampaignReactivated(userId, name).catch(() => {});
+      // `g` já traz o scraping novo: silenciar e pausar no mesmo save vale na hora.
+      const group = { id: gid, name: String(g.name || ""), scraping: g.scraping || {} };
+      if (after) notifier.onCampaignDeactivated(userId, group).catch(() => {});
+      else notifier.onCampaignReactivated(userId, group).catch(() => {});
     }
   } catch { /* ignore */ }
 
