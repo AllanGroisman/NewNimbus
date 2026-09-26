@@ -116,14 +116,33 @@ Geral:
 
 16. [] Site com as promoções
 
-17. [] Quero criar uma aba de Cupons logo após a aba Produtos que tem na area de ADMIN onde eu consigo ver todos os cupons, navegar entre eles, ver um resumo, os produtos de cada um, filtrar os cupons, filtrar depois dentro nos seus produtos, etc... Pensa em algo legal e de fácil utilização. 
+17. [x] Quero criar uma aba de Cupons logo após a aba Produtos que tem na area de ADMIN onde eu consigo ver todos os cupons, navegar entre eles, ver um resumo, os produtos de cada um, filtrar os cupons, filtrar depois dentro nos seus produtos, etc... Pensa em algo legal e de fácil utilização. 
 
 18. [x] Cria um botão na extensão que busca os cupons para limpar meu carrinho do mercado livre. Onde ta?
 
-19. [] Adiciona os cupons na busca de produtos das campanhas. Deve aparecer os cupons nos cards dos produtos e deve aparecer filtros para pesquisar por cupom, filtrar pelo menor preço final com cupom incluso, etc... Verifique como fazer da melhor forma e com as features necessarias para ficar bom para o usu do usuario.
+19. [x] Adiciona os cupons na busca de produtos das campanhas. Deve aparecer os cupons nos cards dos produtos e deve aparecer filtros para pesquisar por cupom, filtrar pelo menor preço final com cupom incluso, etc... Verifique como fazer da melhor forma e com as features necessarias para ficar bom para o usu do usuario.
 
 20. [x] Se a campanha de repasse esta com envio imediato ativado quero que automaticamente a notificação de fila vazia seja desativado. Não faz sentido a cada produto receber um aviso que a fila esta vazia.
 
 21. [x] Na busca de produtos dos cupons quero poder limitar o numero de cupons buscados. O lote é de quantos em quantos ele salva no banco de dados? Tamb;em quero que nos historicos de quando foram rodadas as buscas nessa pagina, se passar de minuto, apareça em formato de minuto e se passar de hora apareça em horas (1h 4min e 40s, 2min e 20s, 30s, etc...). Além disso, quero que a tela pare de pular enquanto roda, se eu tento mexer na tela enquanto roda, como fica aparecendo elementos novos dos cupons sendo explorados, a tela fica rolando de volta para mostrar, não precisa disso, quero que fique solto para que eu possa ver o que eu quiser.
 
 23. [x] Adiciona no gerenciamento de cada campanha opções de noitificação para ligar/desligar assim geral e individual de cada caso.
+
+24. [x] Nas campanhas de repasse, preciso reformular a aba Grupos. Passa os botões de aprovação automatica e repassar a mensagem original para dentro de gerenciar. Troca grupos lideres para Grupos Origem. Consegue trazer a miniatura da fotinho do grupo la do whats para os grupos nesta pagina? 
+
+25. [x] Nas campanhas de repasse, na aba grupos, queria que o desing fosse mais organico para a pessoa entender, o grupo de origem fica todo listado unido e uma seta liga para a lista dos grupos destino. O botão de adicionar grupos em ambos deve abrir um popup para escolher o whatsApp e depois o grupo. Os grupos devem ser todos no mesmo padrão, tanto origem quanto os de destino, com o Whats de quais são originários e se estão conectados, o botão remover pode estar escondido em um botao "..." no qual nos grupos de destino deve ter também opção para copiar o link de convite, opção para duplicar o grupo e opção para ativar a duplicação automatica caso o grupo fique cheio.  
+
+26. [x] No gerenciar de cada campanha pode juntar as informações da campanha com tempo de espera para reenvio e com fontes de busca nas de repasse. As opções de notificações podem estar juntas também, com o botão geral aparecendo e as notificações específicas são expansíveis se a geral esta ativa.
+
+
+Rodar o Claude na VPS e desligar o computador (via tmux):
+
+1. Instalar na VPS: `sudo apt install -y tmux`
+2. Abrir uma sessão tmux e iniciar o Claude dentro dela:
+   ```
+   tmux new -s claude
+   cd ~/NewNimbus
+   claude --continue   # retoma a última conversa, ou só "claude" para uma nova
+   ```
+3. Passar a tarefa e confirmar que começou a rodar. Depois pode fechar o VS Code e desligar o PC — o tmux mantém o processo vivo na VPS.
+4. No dia seguinte, conectar pelo túnel, abrir um terminal e rodar: `tmux attach -t claude`

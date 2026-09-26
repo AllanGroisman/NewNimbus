@@ -22,6 +22,10 @@ export const SORT_OPTIONS = [
   { id: "price_desc", label: "Maior preço" },
   { id: "rating_desc", label: "Melhor avaliação" },
   { id: "lastSeen_desc", label: "Mais recentes" },
+  // Task 19: o preço que o cliente paga com o melhor cupom anunciável (o de
+  // vitrine quando nenhum cupom vale), e quanto o cupom tira.
+  { id: "final_price_asc", label: "Menor preço com cupom" },
+  { id: "coupon_off_desc", label: "Maior desconto do cupom" },
 ];
 export const DEFAULT_SORT = "discount_desc";
 
@@ -57,7 +61,20 @@ const AUTOSAVE_MS = 800;
 const SECTIONS_KEY = "nimbus.searchTab.sections";
 const VIEW_KEY = "nimbus.searchTab.view";
 
-const EMPTY_FILTERS = { keywords: "", minPrice: 0, maxPrice: null, minDiscount: 0, minRating: 0, minSales: 0, hasCoupon: false };
+const EMPTY_FILTERS = {
+  keywords: "", minPrice: 0, maxPrice: null, minDiscount: 0, minRating: 0, minSales: 0, hasCoupon: false,
+  coupon: "", couponSearch: "", minCouponPct: 0, priceWithCoupon: false,
+};
+
+// O filtro "Cupom" (backend/catalog/pg.js:buildWhere). `hasCoupon` é o formato
+// antigo — campanha salva antes da task 19 — e quer dizer "com".
+const COUPON_LEVELS = [
+  { id: "", label: "Qualquer produto" },
+  { id: "com", label: "Com cupom", hint: "Está na vitrine de algum cupom vigente do ML — com ou sem palavra." },
+  { id: "com-palavra", label: "Com palavra", hint: "Tem cupom com palavra descoberta: é o único que a mensagem consegue anunciar." },
+  { id: "valendo", label: "Cupom valendo", hint: "Um cupom com palavra desconta NESTE preço (a compra mínima já foi atingida)." },
+];
+const couponLevelOf = (f = {}) => (COUPON_LEVELS.some(l => l.id && l.id === f.coupon) ? f.coupon : (f.hasCoupon ? "com" : ""));
 
 // Só o que o catálogo entende dos filtros. Serve pra duas coisas ao mesmo tempo:
 // é o que vai na request, e é o que se compara pra saber se o que está escrito
@@ -69,7 +86,10 @@ const filterSig = (f = {}) => JSON.stringify({
   minDiscount: Number(f.minDiscount) || 0,
   minRating: Number(f.minRating) || 0,
   minSales: Number(f.minSales) || 0,
-  hasCoupon: !!f.hasCoupon,
+  coupon: couponLevelOf(f),
+  couponSearch: String(f.couponSearch || "").trim(),
+  minCouponPct: Number(f.minCouponPct) || 0,
+  priceWithCoupon: !!f.priceWithCoupon,
 });
 
 // Chaves de comparação com fila/pendentes/histórico.
@@ -248,10 +268,14 @@ export default function ProductSearchTab({
   const setFilter = (key, value) => setScraping(s => ({ ...s, filters: { ...s.filters, [key]: value } }));
   // Pros cliques que TIRAM filtro (chips "✕", "Tirar X", o ✕ da busca): ali o
   // usuário não está digitando, está mandando refazer a lista sem aquilo.
-  const applyFilter = (key, value) => {
-    setFilter(key, value);
-    setApplied(a => ({ ...a, [key]: value }));
-  };
+  const applyFilter = (key, value) => applyFilters({ [key]: value });
+  function applyFilters(patch) {
+    setScraping(s => ({ ...s, filters: { ...s.filters, ...patch } }));
+    setApplied(a => ({ ...a, ...patch }));
+  }
+  // O nível do cupom grava no campo novo e aposenta o `hasCoupon` antigo, senão
+  // escolher "Qualquer produto" numa campanha antiga deixaria o filtro ligado.
+  const applyCouponLevel = (id) => applyFilters({ coupon: id, hasCoupon: false });
   const resetFilters = () => {
     setScraping(s => ({ ...s, filters: { ...EMPTY_FILTERS } }));
     setApplied({ ...EMPTY_FILTERS });
@@ -455,8 +479,19 @@ export default function ProductSearchTab({
   if (Number(filters.minSales) > 0) {
     activeChips.push({ label: `${filters.minSales}+ vendas`, clear: () => applyFilter("minSales", 0) });
   }
-  if (filters.hasCoupon) {
-    activeChips.push({ label: "só com cupom do ML", clear: () => applyFilter("hasCoupon", false) });
+  const couponLevel = couponLevelOf(filters);
+  if (couponLevel) {
+    const label = { com: "com cupom do ML", "com-palavra": "cupom com palavra", valendo: "cupom valendo" }[couponLevel];
+    activeChips.push({ label, clear: () => applyCouponLevel("") });
+  }
+  if (String(filters.couponSearch || "").trim()) {
+    activeChips.push({ label: `cupom "${String(filters.couponSearch).trim()}"`, clear: () => applyFilter("couponSearch", "") });
+  }
+  if (Number(filters.minCouponPct) > 0) {
+    activeChips.push({ label: `cupom de ${filters.minCouponPct}%+`, clear: () => applyFilter("minCouponPct", 0) });
+  }
+  if (filters.priceWithCoupon && (Number(filters.minPrice) > 0 || Number(filters.maxPrice) > 0)) {
+    activeChips.push({ label: "preço com cupom", clear: () => applyFilter("priceWithCoupon", false) });
   }
 
   // A palavra-chave já aparece no campo de busca — o resumo abaixo dele mostra
@@ -882,7 +917,7 @@ export default function ProductSearchTab({
             onClick={() => toggleSection("filters")}
             aria-expanded={sections.filters}
             aria-controls="sec-filters"
-            title="Preço, desconto, avaliação e vendas"
+            title="Preço, desconto, avaliação, vendas e cupom"
             style={{
               ...chipStyle({ active: otherChips.length > 0 }),
               padding: "9px 14px", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 6,
@@ -982,23 +1017,76 @@ export default function ProductSearchTab({
           </div>
         </div>
 
-        {/* Fora da grade dos campos numéricos de propósito: é uma chave, não um
-            valor a digitar, e vale na hora (`applyFilter`) como os chips. */}
-        <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, cursor: "pointer", fontSize: 13 }}>
-          <input
-            type="checkbox"
-            checked={!!filters.hasCoupon}
-            onChange={e => applyFilter("hasCoupon", e.target.checked)}
-          />
-          <span>Só produtos com cupom do Mercado Livre</span>
-        </label>
-        {filters.hasCoupon && (
-          <div style={{ ...noteStyle("warn"), marginTop: 8 }}>
-            Só entram produtos que o sistema já viu na vitrine de algum cupom. O selo roxo no card é
-            cupom com palavra — só esse desconta na mensagem. O selo cinza é cupom cuja palavra ainda
-            não foi descoberta: sem ela o cliente não teria o que digitar no checkout.
+        {/* ── Cupom do Mercado Livre (task 19). O nível é uma escolha de um
+            clique e vale na hora (`applyCouponLevel`), como os chips; os campos
+            de digitar esperam o Buscar, como os outros do painel. */}
+        <div style={{ marginTop: 18, paddingTop: 14, borderTop: "0.5px solid var(--color-border-tertiary)" }}>
+          <label style={fieldLabelStyle}>🎟️ Cupom do Mercado Livre</label>
+          <div role="radiogroup" aria-label="Cupom do Mercado Livre" style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
+            {COUPON_LEVELS.map(l => {
+              const active = couponLevel === l.id;
+              return (
+                <button
+                  key={l.id || "todos"}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  title={l.hint}
+                  onClick={() => applyCouponLevel(l.id)}
+                  style={{ ...chipStyle({ active }), padding: "6px 12px" }}
+                >
+                  {l.label}
+                </button>
+              );
+            })}
           </div>
-        )}
+          <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12, lineHeight: 1.45 }}>
+            {COUPON_LEVELS.find(l => l.id === couponLevel)?.hint
+              || "Cupons só existem no Mercado Livre. O selo roxo no card é cupom com palavra — só ele desconta na mensagem; o cinza é cupom cuja palavra ainda não foi descoberta."}
+          </div>
+          <div className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <div>
+              <label style={fieldLabelStyle} htmlFor="pr-coupon-search">Cupom específico</label>
+              <input
+                id="pr-coupon-search" type="text"
+                value={filters.couponSearch || ""}
+                onChange={e => setFilter("couponSearch", e.target.value)}
+                onKeyDown={onFilterKeyDown}
+                placeholder="Palavra, nº da campanha ou nome"
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label style={fieldLabelStyle} htmlFor="pr-min-coupon">Desconto mínimo do cupom</label>
+              <div style={{ position: "relative" }}>
+                <span style={prefixStyle}>%</span>
+                <input
+                  id="pr-min-coupon" type="number" min={0} max={MAX_DISCOUNT} step={5}
+                  value={filters.minCouponPct || ""}
+                  onChange={e => setFilter("minCouponPct", num(e.target.value) ?? 0)}
+                  onBlur={e => setFilter("minCouponPct", clampFilter(e.target.value, MAX_DISCOUNT))}
+                  onKeyDown={onFilterKeyDown}
+                  placeholder="Sem mínimo"
+                  style={{ ...inputStyle, paddingLeft: 36 }}
+                />
+              </div>
+            </div>
+          </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, cursor: "pointer", fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={!!filters.priceWithCoupon}
+              onChange={e => applyFilter("priceWithCoupon", e.target.checked)}
+            />
+            <span>Preço mínimo e máximo valem para o preço <strong>com cupom</strong></span>
+          </label>
+          {(sortBy === "final_price_asc" || sortBy === "coupon_off_desc" || couponLevel || Number(filters.minCouponPct) > 0) && (
+            <div style={{ ...noteStyle("warn"), marginTop: 8 }}>
+              O preço com cupom é o do cupom com palavra que mais desconta no produto, respeitando compra
+              mínima, teto e validade. É o mesmo cupom que a mensagem anuncia.
+            </div>
+          )}
+        </div>
 
         {priceInverted && (
           <div style={{ ...noteStyle("warn"), marginTop: 12 }}>

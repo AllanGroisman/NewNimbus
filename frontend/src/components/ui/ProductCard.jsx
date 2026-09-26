@@ -22,14 +22,23 @@ const savings = (product) => {
   return diff > 0 ? diff : null;
 };
 
-// O cupom que o produto consegue ANUNCIAR: o primeiro com palavra. O backend já
-// manda a lista nessa ordem (coupons/pg.js:couponsListForKeys) e é o mesmo critério
-// que o envio usa (scheduler.js:couponRuleForItem) — sem palavra não há o que o
-// cliente digite no checkout, então o desconto não sai na mensagem.
+// O cupom que o produto consegue ANUNCIAR: dentre os com palavra, o que deixa o
+// preço menor (`priceWithCoupon`, calculado no backend); se nenhum desconta neste
+// preço, o primeiro com palavra. É o mesmo critério do envio
+// (backend/coupons/price.js:melhorCupom) e da ordem "Menor preço com cupom" da
+// busca — sem palavra não há o que o cliente digite no checkout, então o desconto
+// não sai na mensagem.
 //
 // `coupons` só vem de /api/ofertas; nas telas que ainda não passam por lá o card
 // simplesmente não desenha selo nenhum.
-const cupomAnunciavel = (product) => (product?.coupons || []).find(c => c.code) || null;
+const cupomAnunciavel = (product) => {
+  const comPalavra = (product?.coupons || []).filter(c => c.code);
+  let melhor = null;
+  for (const c of comPalavra) {
+    if (c.priceWithCoupon != null && (melhor == null || c.priceWithCoupon < melhor.priceWithCoupon)) melhor = c;
+  }
+  return melhor || comPalavra[0] || null;
+};
 
 // O selo do cupom, em dois estados que dizem coisas diferentes:
 //
@@ -317,8 +326,15 @@ export function ProductGridCard({ product, footer, badge, showStore = false, emp
                   cupom que existe mas não pega neste preço aparece no selo lá em
                   cima, sem número — melhor calar que prometer errado. */}
               {cupomAnunciavel(product)?.priceWithCoupon != null && (
-                <div style={{ fontSize: 11, fontWeight: 500, color: PRIMARY_DARK, marginTop: 1 }}>
-                  Com cupom: {formatPrice(cupomAnunciavel(product).priceWithCoupon)}
+                <div
+                  title={`Com a palavra ${cupomAnunciavel(product).code} no checkout do Mercado Livre`}
+                  style={{
+                    display: "inline-block", fontSize: 12, fontWeight: 600, color: PRIMARY_DARK, marginTop: 3,
+                    padding: "2px 7px", borderRadius: 6, background: "var(--color-background-secondary)",
+                    border: "0.5px dashed var(--color-border-secondary)",
+                  }}
+                >
+                  🎟️ {formatPrice(cupomAnunciavel(product).priceWithCoupon)} com cupom
                 </div>
               )}
             </div>

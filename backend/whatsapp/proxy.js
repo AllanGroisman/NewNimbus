@@ -110,6 +110,10 @@ async function getGroupMetadata(userId, numberId, jid) {
   return queue.callControl("getGroupMetadata", [String(userId), String(numberId), jid], { timeoutMs: 30000 });
 }
 
+async function getGroupPicture(userId, numberId, jid) {
+  return queue.callControl("getGroupPicture", [String(userId), String(numberId), jid], { timeoutMs: 15000 });
+}
+
 // No-op no server. Worker faz restore das sessões no próprio boot.
 function restoreSessions() {
   console.log("[whatsapp-proxy] restoreSessions delegado pro worker");
@@ -130,7 +134,7 @@ async function status() {
 module.exports = {
   startSession, requestPairingCode, getSession, listSessions, listAllSessions, deleteSession,
   sendText, sendImage, msgStats,
-  createGroup, getInviteLink, revokeInvite, listGroups, leaveGroup, getGroupMetadata,
+  createGroup, getInviteLink, revokeInvite, listGroups, leaveGroup, getGroupMetadata, getGroupPicture,
   restoreSessions, closeAll, status,
   jidFromPhone, normalizePhone,
 };

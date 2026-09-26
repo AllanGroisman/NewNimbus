@@ -164,7 +164,7 @@ function sourcesForCampaign(group) {
 
 // Ordem e tamanho do lote da busca de produtos, escolhidos pelo usuário na aba
 // "Busca de Produtos" e guardados no jsonb `scraping` da campanha.
-const SORT_MODES = new Set(["relevance", "discount_desc", "price_asc", "price_desc", "rating_desc", "lastSeen_desc"]);
+const SORT_MODES = new Set(["relevance", "discount_desc", "price_asc", "price_desc", "rating_desc", "lastSeen_desc", "final_price_asc", "coupon_off_desc"]);
 const DEFAULT_BATCH = 20;
 const MAX_BATCH = 50;
 
@@ -490,11 +490,12 @@ async function refillQueue(userId, group) {
   const cupons = await coupons.couponsListForKeys(candidates.map(p => p.key));
   const escolhidos = candidates.slice(0, vagas);
 
-  // O cupom que este produto consegue ANUNCIAR: o primeiro com palavra. A lista já
-  // vem ordenada com os que têm `code` na frente (couponsListForKeys), então é só
-  // pegar o primeiro — e é o mesmo critério que o envio usa em couponRuleForItem,
-  // que é o que faz a prévia da tela e a mensagem enviada contarem a mesma história.
-  const cupomDe = key => (cupons.get(key) || []).find(c => c.code) || null;
+  // O cupom que este produto consegue ANUNCIAR: dentre os com palavra, o que deixa
+  // o preço menor (coupons/price.js:melhorCupom). É o mesmo critério do envio
+  // (couponRuleForItem), do card da busca e da ordem "menor preço final" — é o que
+  // faz a prévia da tela e a mensagem enviada contarem a mesma história.
+  const precoDe = new Map(candidates.map(p => [p.key, p.price]));
+  const cupomDe = key => coupons.melhorCupom(precoDe.get(key), cupons.get(key));
 
   const rawItems = escolhidos.map(p => ({
     id: p.key,    // a UI de pending busca por `id`
@@ -602,8 +603,8 @@ function bumpMetrics(group, ok) {
 //
 // Ordem: a palavra do próprio item primeiro (no repasse vem da legenda do grupo
 // líder, ou digitada à mão na fila) — é a que o usuário escolheu. Só depois o
-// catálogo, e ali também só cupom COM palavra; `couponsListForKeys` já entrega a
-// lista nessa ordem, com os que têm `code` na frente.
+// catálogo, e ali também só cupom COM palavra — o que mais desconta neste preço
+// (coupons/price.js:melhorCupom).
 //
 // Só Mercado Livre: `ml_coupons` é a aba de cupons do ML, e o desconto de lá não
 // vale num produto da Amazon ou da Shopee. Sem essa trava, um produto da Amazon com
@@ -620,7 +621,7 @@ async function couponRuleForItem(item) {
   }
   if (item?.key) {
     const mapa = await coupons.couponsListForKeys([item.key]).catch(() => null);
-    const c = (mapa?.get(item.key) || []).find(x => x.code);
+    const c = coupons.melhorCupom(item.price, mapa?.get(item.key));
     if (c) return c;
   }
   return null;

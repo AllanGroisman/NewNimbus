@@ -146,7 +146,6 @@ const FORMAT_BUTTONS = [
   { token: "`", label: "</>", title: "Monoespaço (`texto`)", style: { fontFamily: "monospace", fontSize: 11 } },
 ];
 import Badge from "./ui/Badge";
-import UsageBadge from "./ui/UsageBadge";
 import StatCard from "./ui/StatCard";
 import MiniBar from "./ui/MiniBar";
 import Tabs from "./ui/Tabs";
@@ -154,6 +153,7 @@ import Modal from "./ui/Modal";
 import Toggle from "./ui/Toggle";
 import { ProductRow } from "./ui/ProductCard";
 import ProductSearchTab from "./campaign/ProductSearchTab";
+import GroupsTab from "./campaign/GroupsTab";
 
 // Marca um valor "vazio" como — para o card mostrar todos os campos sempre.
 const NULL_LABEL = "—";
@@ -400,6 +400,12 @@ function QueueItemCard({ item, idx, eta, onRemove, onMoveToTop, onSaveCoupon, on
   );
 }
 
+// Cartões e subseções da aba Gerenciar (task 26).
+const manageCardStyle = { background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 };
+const manageSubStyle = { marginTop: 16, paddingTop: 14, borderTop: "0.5px solid var(--color-border-tertiary)" };
+const manageSubTitleStyle = { fontSize: 13, fontWeight: 600, marginBottom: 4 };
+const manageLabelStyle = { fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 };
+
 export default function GroupDashboard({ group, numbers, whatsappGroups = [], affiliateConfigured = true, affiliateStatus = null, storeLocks = {}, onBack, onUpdate, onDelete, onCreateWhatsappGroup, onUpdateWhatsappGroup, onGoToSettings, notificationSettings = null, onGoToAffiliate, onGoToWhatsapp, customTemplates = [], onAddCustomTemplate, onDeleteCustomTemplate, onUpdateCustomTemplate, limits, tourActive = false }) {
   const [tab, setTab] = useState(() => readSavedTab(group.id, group?.scraping?.kind === "repasse"));
   // Guarda a aba atual por campanha pra restaurar no F5.
@@ -435,19 +441,9 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const [saved, setSaved] = useState(false);
   const [previewPromo, setPreviewPromo] = useState(true); // preview: simula item com/sem promoção
   const [showDelete, setShowDelete] = useState(false);
-  // Modal "Adicionar grupo": null = fechado, "choose" | "create-numbers" | "create-details" | "existing"
-  const [addStep, setAddStep] = useState(null);
-  const [addExistingNumberId, setAddExistingNumberId] = useState(null);
-  const [addExistingSearch, setAddExistingSearch] = useState("");
+  // Os grupos do WhatsApp de cada número, carregados sob demanda pelo popup de
+  // adicionar grupo da aba Grupos (components/campaign/GroupsTab.jsx).
   const [waGroupsByNumber, setWaGroupsByNumber] = useState({}); // numberId -> [{jid, name, members}]
-  const [loadingWAGroups, setLoadingWAGroups] = useState(false);
-  const [waGroupsError, setWaGroupsError] = useState(null);
-  const [importingJid, setImportingJid] = useState(null);
-  const [confirmUnlinkWG, setConfirmUnlinkWG] = useState(null);
-  const [copiedId, setCopiedId] = useState(null);
-  const [newWGForm, setNewWGForm] = useState({ name: "", numberIds: numbers[0]?.id ? [numbers[0].id] : [], participants: "" });
-  const [creatingWG, setCreatingWG] = useState(false);
-  const [createWGError, setCreateWGError] = useState(null);
   const [sendingNow, setSendingNow] = useState(false);
   const [sendNowMsg, setSendNowMsg] = useState(null);
   const [refilling, setRefilling] = useState(false);
@@ -978,15 +974,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     }
   };
 
-  const copyInvite = (wg) => {
-    if (!wg?.inviteLink) return;
-    if (typeof navigator !== "undefined" && navigator.clipboard) {
-      navigator.clipboard.writeText(wg.inviteLink).catch(() => {});
-    }
-    setCopiedId(wg.id);
-    setTimeout(() => setCopiedId(c => c === wg.id ? null : c), 1500);
-  };
-
   // Calcula o próximo "#N" pra clonar um grupo. Tira sufixo "#N" prévio do nome
   // base (clonar X #2 vira X #3, não X #2 #1).
   const computeCloneName = (originalName) => {
@@ -1003,27 +990,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     return `${base} #${n}`;
   };
 
-  // Abre o modal de criação pré-preenchido com nome "X #N" e mesmo número.
-  // Número já conhecido (o mesmo do grupo clonado) — pula direto pra tela de detalhes.
-  const cloneGroup = (wg) => {
-    setNewWGForm({
-      name: computeCloneName(wg.name),
-      numberIds: wg.numberId ? [wg.numberId] : (numbers[0]?.id ? [numbers[0].id] : []),
-      participants: "",
-    });
-    setAddStep("create-details");
-  };
-
-  // Edição da descrição (estado local — guarda só no Nimbus, não no WhatsApp).
-  const [editingDescId, setEditingDescId] = useState(null);
-  const [descDraft, setDescDraft] = useState("");
-  const startEditDesc = (wg) => { setEditingDescId(wg.id); setDescDraft(wg.description || ""); };
-  const saveDesc = (wg) => {
-    onUpdateWhatsappGroup?.(wg.id, { description: descDraft });
-    setEditingDescId(null);
-  };
-  const cancelEditDesc = () => { setEditingDescId(null); setDescDraft(""); };
-
   const primaryCat = groupInfo.categories[0] || getGroupCategories(group)[0];
   const barColor = primaryCat === "gamer" ? "#378ADD" : PRIMARY;
   const linkedWGs = whatsappGroups.filter(w => groupInfo.whatsappGroupIds.includes(w.id));
@@ -1032,7 +998,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   // O id de um whatsappGroup É o jid do grupo (ver importAndLink), então
   // `numberId::id` de um grupo de envio bate com `numberId::jid` de um líder.
   const campaignLeaders = scraping?.kind === "repasse" ? leadersOf(scraping) : [];
-  const leaderKeys = new Set(campaignLeaders.map(l => `${l.numberId}::${l.jid}`));
   // Passa objeto quando disponível (ml + shopee gating), senão fallback boolean (compat).
   // O `schedule` vem do grupo salvo (e não do `sched` em edição): a campanha só
   // deixa de estar pausada por falta de janela depois que a janela é salva.
@@ -1104,128 +1069,79 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     onUpdate(group.id, { whatsappGroupIds: next });
   };
 
-  const closeAddModal = () => {
-    setAddStep(null);
-    setAddExistingNumberId(null);
-    setAddExistingSearch("");
-    setWaGroupsError(null);
-  };
-
-  // Carrega os grupos do WhatsApp de UM número (lazy — só quando o usuário escolhe ele).
-  const loadGroupsForNumber = async (numberId) => {
-    setAddExistingNumberId(numberId);
-    setAddExistingSearch("");
-    setWaGroupsError(null);
-    if (waGroupsByNumber[numberId]) return; // já carregado nesta sessão do modal
-    setLoadingWAGroups(true);
-    try {
-      const list = await listWAGroups(numberId);
-      setWaGroupsByNumber(m => ({ ...m, [numberId]: list }));
-      // Sincroniza a contagem de membros ao vivo de volta pros grupos já
-      // importados — sem isso, `members` fica "congelado" no valor do
-      // momento do import/criação (o que a aba Grupos exibe), enquanto este
-      // picker sempre mostra o valor atual, gerando divergência entre as
-      // duas telas pro mesmo grupo.
-      for (const wg of whatsappGroups) {
-        if (wg.numberId !== numberId) continue;
-        const live = list.find(l => l.jid === wg.id);
-        if (live && live.members !== wg.members) {
-          onUpdateWhatsappGroup?.(wg.id, { members: live.members });
-        }
+  // Os grupos do WhatsApp de um número (lazy — só quando o popup escolhe ele).
+  // Guardados por número enquanto a campanha está aberta.
+  const fetchGroupsOf = async (numberId) => {
+    if (waGroupsByNumber[numberId]) return waGroupsByNumber[numberId];
+    const list = await listWAGroups(numberId);
+    setWaGroupsByNumber(m => ({ ...m, [numberId]: list }));
+    // Sincroniza a contagem de membros ao vivo de volta pros grupos já
+    // importados — sem isso, `members` fica "congelado" no valor do momento do
+    // import/criação (o que a aba Grupos exibe), enquanto o popup sempre mostra o
+    // valor atual.
+    for (const wg of whatsappGroups) {
+      if (wg.numberId !== numberId) continue;
+      const live = list.find(l => l.jid === wg.id);
+      if (live && live.members !== wg.members) {
+        onUpdateWhatsappGroup?.(wg.id, { members: live.members });
       }
-    } catch (err) {
-      const num = numbers.find(n => n.id === numberId);
-      setWaGroupsError(`${num?.label || numberId}: ${err.message || "Falha ao listar grupos"}`);
-      setWaGroupsByNumber(m => ({ ...m, [numberId]: [] }));
-    } finally {
-      setLoadingWAGroups(false);
     }
+    return list;
   };
 
   // Importa um grupo do WhatsApp pro Nimbus e já vincula à campanha
   const importAndLink = async (numberId, waGroup) => {
-    setImportingJid(waGroup.jid);
-    try {
-      const newId = onCreateWhatsappGroup({
-        id: waGroup.jid,
-        name: waGroup.name,
-        numberId,
-        members: waGroup.members || 0,
-        inviteLink: null,
-      });
-      const next = [...(groupInfo.whatsappGroupIds || []), newId];
-      setGroupInfo(g => ({ ...g, whatsappGroupIds: next }));
-      onUpdate(group.id, { whatsappGroupIds: next });
-      closeAddModal();
-    } finally {
-      setImportingJid(null);
-    }
+    const newId = onCreateWhatsappGroup({
+      id: waGroup.jid,
+      name: waGroup.name,
+      numberId,
+      members: waGroup.members || 0,
+      inviteLink: null,
+    });
+    const next = [...(groupInfo.whatsappGroupIds || []), newId];
+    setGroupInfo(g => ({ ...g, whatsappGroupIds: next }));
+    onUpdate(group.id, { whatsappGroupIds: next });
   };
 
-  // Vincula à campanha um grupo já cadastrado no Nimbus
-  const linkAndClose = (wgId) => {
-    linkWG(wgId);
-    closeAddModal();
+  // Cria o grupo de fato no WhatsApp e já vincula. Grupo criado sem conseguir
+  // travar o envio só para admins não é erro de criação — volta como aviso, e o
+  // popup fica aberto pro usuário ler (ele precisa ajustar na mão no WhatsApp).
+  const createAndLink = async ({ numberId, name, participants = "" }) => {
+    const parts = String(participants).split(/[\n,;]/).map(p => p.trim()).filter(Boolean);
+    const result = await createWAGroup(numberId, name, parts);
+    const newId = onCreateWhatsappGroup({
+      id: result.jid,
+      name: result.name,
+      numberId,
+      members: (result.participants || []).length + 1,
+      inviteLink: result.inviteLink,
+    });
+    const next = [...(groupInfo.whatsappGroupIds || []), newId];
+    setGroupInfo(g => ({ ...g, whatsappGroupIds: next }));
+    onUpdate(group.id, { whatsappGroupIds: next });
+    if (result.adminOnly === false) {
+      return {
+        warning: `Grupo "${result.name || name}" criado, mas não foi possível deixar o envio só para admins. ` +
+          "Ajuste manualmente no WhatsApp em Configurações do grupo > Enviar mensagens.",
+      };
+    }
+    return {};
   };
 
-  const submitCreateWG = async () => {
-    setCreateWGError(null);
-    const selectedIds = newWGForm.numberIds || [];
-    if (!newWGForm.name.trim() || selectedIds.length === 0) return;
-    const parts = newWGForm.participants
-      .split(/[\n,;]/)
-      .map(p => p.trim())
-      .filter(Boolean);
-    setCreatingWG(true);
-    const baseName = newWGForm.name.trim();
-    const useSuffix = selectedIds.length > 1;
-    const created = [];
-    const errors = [];
-    const warnings = [];
-    try {
-      for (const numId of selectedIds) {
-        const num = numbers.find(n => n.id === numId);
-        const name = useSuffix && num ? `${baseName} — ${num.label}` : baseName;
-        try {
-          const result = await createWAGroup(numId, name, parts);
-          if (result.adminOnly === false) warnings.push(result.name || name);
-          const newId = onCreateWhatsappGroup({
-            id: result.jid,
-            name: result.name,
-            numberId: numId,
-            members: result.participants.length + 1,
-            inviteLink: result.inviteLink,
-          });
-          created.push(newId);
-        } catch (err) {
-          errors.push(`${num?.label || numId}: ${err.message}`);
-        }
-      }
-      if (created.length > 0) {
-        const next = [...(groupInfo.whatsappGroupIds || []), ...created];
-        setGroupInfo(g => ({ ...g, whatsappGroupIds: next }));
-        onUpdate(group.id, { whatsappGroupIds: next });
-      }
-      // Grupo criado mas sem conseguir travar o envio só para admins: não é erro
-      // de criação, é aviso — o usuário precisa ajustar na mão no WhatsApp.
-      const msgs = [];
-      if (errors.length > 0) msgs.push(`Falhou em ${errors.length} número(s):\n${errors.join("\n")}`);
-      if (warnings.length > 0) {
-        msgs.push(
-          `Grupo(s) criado(s), mas não foi possível deixar o envio só para admins em: ${warnings.join(", ")}. ` +
-          `Ajuste manualmente no WhatsApp em Configurações do grupo > Enviar mensagens.`
-        );
-      }
-      if (msgs.length > 0) setCreateWGError(msgs.join("\n\n"));
-      if (errors.length > 0 && created.length === 0) return;
-      // Limpa o form antes de manter o modal aberto: o botão de criar fica
-      // desabilitado sem nome, então não dá pra duplicar o grupo sem querer.
-      setNewWGForm({ name: "", numberIds: numbers[0]?.id ? [numbers[0].id] : [], participants: "" });
-      if (msgs.length > 0) return;
-      closeAddModal();
-    } finally {
-      setCreatingWG(false);
-    }
+  // Grupos de origem do repasse. Gravam na hora, como os grupos destino: a lista
+  // vai por cima do scraping JÁ SALVO, para não promover de carona uma edição
+  // pendente da aba Gerenciar.
+  const saveLeaders = (next) => {
+    setScraping(s => withLeaders(s, next));
+    onUpdate(group.id, { scraping: withLeaders(group.scraping, next) });
+  };
+  const addLeader = (numberId, wg) => {
+    const cur = leadersOf(group.scraping);
+    if (cur.some(l => l.jid === wg.jid && l.numberId === numberId)) return;
+    saveLeaders([...cur, { numberId, jid: wg.jid, name: wg.name }]);
+  };
+  const removeLeader = (l) => {
+    saveLeaders(leadersOf(group.scraping).filter(x => !(x.jid === l.jid && x.numberId === l.numberId)));
   };
 
   // Refresca o link de convite (revoga o atual e atualiza no estado)
@@ -1518,6 +1434,9 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const isRepasseGroup = scraping?.kind === "repasse";
   const manageDirty = groupInfo.name !== group.name
     || (isRepasseGroup && stableJSON(scraping?.sources) !== stableJSON(group.scraping?.sources))
+    // Aprovação automática e mensagem original moraram na aba Grupos até a task 24.
+    || (isRepasseGroup && stableJSON(scraping?.auto) !== stableJSON(group.scraping?.auto))
+    || (isRepasseGroup && stableJSON(scraping?.repasse?.messageMode) !== stableJSON(group.scraping?.repasse?.messageMode))
     || stableJSON(scraping?.notifications) !== stableJSON(group.scraping?.notifications)
     || cooldownDirty;
   const scrapingDirty = stableJSON(scraping) !== stableJSON(group.scraping);
@@ -1582,13 +1501,15 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     try { return !localStorage.getItem(REPASSE_INTRO_SEEN_KEY); } catch { return true; }
   });
   const [showRepasseHelpModal, setShowRepasseHelpModal] = useState(false);
+  // Os avisos específicos da campanha (aba Gerenciar) abrem num clique.
+  const [notifOpen, setNotifOpen] = useState(false);
   const dismissRepasseIntro = () => {
     try { localStorage.setItem(REPASSE_INTRO_SEEN_KEY, "1"); } catch { /* ignora (modo privado/quota) */ }
     setShowRepasseIntro(false);
   };
 
-  // No repasse a aba "Repasse" não existe mais: os grupos líderes e a aprovação
-  // automática foram pra aba Grupos, e os pendentes pra aba Fila.
+  // No repasse a aba "Repasse" não existe mais: os grupos de origem foram pra aba
+  // Grupos, a aprovação automática pra aba Gerenciar e os pendentes pra aba Fila.
   const groupTabs = [
     { id: "overview", label: "Visão geral" },
     { id: "manage", label: "Gerenciar" },
@@ -1882,50 +1803,97 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
       {tab === "manage" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div data-tour="mg-info" style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-            <div style={{ fontWeight: 500, marginBottom: 4 }}>Informações da campanha</div>
-            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>Nome</div>
+          {/* Task 26: nome, lojas (repasse) e tempo de espera num cartão só — são
+              as regras da campanha, e três cartões soltos pareciam três telas. */}
+          <div data-tour="mg-info" style={manageCardStyle}>
+            <div style={{ fontWeight: 600, marginBottom: 12 }}>Informações da campanha</div>
             <div>
-              <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Nome da campanha</label>
-              <input value={groupInfo.name} onChange={e => setGroupInfo(g => ({ ...g, name: e.target.value }))} placeholder="Ex: Tech BR" style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }} />
+              <label htmlFor="mg-name" style={manageLabelStyle}>Nome da campanha</label>
+              <input id="mg-name" value={groupInfo.name} onChange={e => setGroupInfo(g => ({ ...g, name: e.target.value }))} placeholder="Ex: Tech BR" style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }} />
+            </div>
+
+            {/* Lojas: só no repasse. Campanha de busca escolhe lojas e categorias
+                junto dos filtros, na aba Busca de Produtos. */}
+            {isRepasse && (
+              <div data-tour="mg-sources" style={manageSubStyle}>
+                <div style={manageSubTitleStyle}>Fontes de busca</div>
+                <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 10 }}>
+                  De quais lojas os links postados nos grupos de origem podem ser repassados. Links de outras lojas são ignorados.
+                </div>
+                {/* Sem cadeado: a trava de loja do admin impede a BUSCA no catálogo,
+                    e o repasse não busca — o link chega pronto do grupo de origem. */}
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {allSources.map(src => {
+                    const active = scraping.sources.includes(src);
+                    return <div key={src} onClick={() => handleToggleSource(src)} style={{ padding: "6px 14px", borderRadius: 8, border: `0.5px solid ${active ? PRIMARY : "var(--color-border-tertiary)"}`, background: active ? PRIMARY_LIGHT : "transparent", color: active ? PRIMARY_DARK : "var(--color-text-secondary)", fontSize: 13, cursor: "pointer", fontWeight: active ? 500 : 400 }}>{active ? "✓ " : ""}{src}</div>;
+                  })}
+                </div>
+                {scraping.sources.length === 0 && (
+                  <div style={{ marginTop: 10, fontSize: 11, color: "var(--danger-text)" }}>Selecione ao menos uma fonte para o repasse funcionar.</div>
+                )}
+              </div>
+            )}
+
+            {/* Cooldown: movido da aba Janelas — é uma regra de produto, não de horário */}
+            <div data-tour="mg-cooldown" style={manageSubStyle}>
+              <div style={manageSubTitleStyle}>Tempo de espera para reenvio</div>
+              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 10 }}>Quanto tempo um produto aguarda antes de poder ser enviado novamente.</div>
+              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <input type="number" min={1} aria-label="Tempo de espera" value={sched.cooldownValue} onChange={e => setSched(s => ({ ...s, cooldownValue: Number(e.target.value) }))} style={{ width: 80, padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 15, fontWeight: 500, textAlign: "center" }} />
+                <div style={{ display: "flex", gap: 6 }}>
+                  {["horas", "dias", "semanas"].map(u => (
+                    <button key={u} onClick={() => setSched(s => ({ ...s, cooldownUnit: u }))} style={{ padding: "7px 14px", borderRadius: 8, border: `0.5px solid ${sched.cooldownUnit === u ? PRIMARY : "var(--color-border-tertiary)"}`, background: sched.cooldownUnit === u ? PRIMARY_LIGHT : "transparent", color: sched.cooldownUnit === u ? PRIMARY_DARK : "var(--color-text-secondary)", fontSize: 13, cursor: "pointer", fontWeight: sched.cooldownUnit === u ? 500 : 400 }}>{u}</button>
+                  ))}
+                </div>
+              </div>
+              <div style={{ marginTop: 8, fontSize: 12, color: "var(--color-text-secondary)" }}>Produto enviado hoje só poderá ser reenviado após {sched.cooldownValue} {sched.cooldownUnit}.</div>
             </div>
           </div>
 
-          {/* Lojas: só no repasse. Campanha de busca escolhe lojas e categorias
-              junto dos filtros, na aba Busca de Produtos. */}
-          {isRepasse && (
-            <div data-tour="mg-sources" style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-              <div style={{ fontWeight: 500, marginBottom: 4 }}>Fontes de busca</div>
-              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
-                Escolha de quais lojas os links postados nos grupos líderes podem ser repassados. Links de outras lojas são ignorados.
-              </div>
-              {/* Sem cadeado: a trava de loja do admin impede a BUSCA no catálogo,
-                  e o repasse não busca — o link chega pronto do grupo líder. */}
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {allSources.map(src => {
-                  const active = scraping.sources.includes(src);
-                  return <div key={src} onClick={() => handleToggleSource(src)} style={{ padding: "6px 14px", borderRadius: 8, border: `0.5px solid ${active ? PRIMARY : "var(--color-border-tertiary)"}`, background: active ? PRIMARY_LIGHT : "transparent", color: active ? PRIMARY_DARK : "var(--color-text-secondary)", fontSize: 13, cursor: "pointer", fontWeight: active ? 500 : 400 }}>{active ? "✓ " : ""}{src}</div>;
-                })}
-              </div>
-              {scraping.sources.length === 0 && (
-                <div style={{ marginTop: 10, fontSize: 11, color: "var(--danger-text)" }}>Selecione ao menos uma fonte para o repasse funcionar.</div>
-              )}
-            </div>
-          )}
+          <div style={{ fontSize: 12, color: "var(--color-text-secondary)", padding: "0 2px" }}>
+            {isRepasse
+              ? <>Os grupos de origem e destino ficam na aba <strong>Grupos</strong>; a revisão dos links capturados, na aba <strong>Fila</strong>.</>
+              : <>As lojas, as categorias e os filtros de produto ficam na aba <strong>Busca de Produtos</strong>.</>}
+          </div>
 
-          {isRepasse ? (
-            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", padding: "0 2px" }}>
-              Os grupos líderes e a aprovação automática ficam na aba <strong>Grupos</strong>; a revisão dos links capturados, na aba <strong>Fila</strong>.
-            </div>
-          ) : (
-            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", padding: "0 2px" }}>
-              As lojas, as categorias e os filtros de produto ficam na aba <strong>Busca de Produtos</strong>.
+          {/* Task 24: como a captura do repasse trata o que chega — saiu da aba
+              Grupos, que agora é só o caminho origem → destino. */}
+          {isRepasse && (
+            <div data-tour="mg-repasse" style={manageCardStyle}>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>Repasse</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0" }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>Aprovação automática</div>
+                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                    {scraping.auto !== false
+                      ? "Links capturados nos grupos de origem entram direto na fila de envio."
+                      : "Links capturados ficam aguardando revisão na aba Fila. Você aprova cada um antes do envio."}
+                  </div>
+                </div>
+                <Toggle label="Aprovação automática" value={scraping.auto !== false} onChange={v => setScraping(s => ({ ...s, auto: v }))} />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0 0", borderTop: "0.5px solid var(--color-border-tertiary)" }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>Repassar a mensagem original</div>
+                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                    {scraping.repasse?.messageMode === "original"
+                      ? "A mensagem do grupo de origem é repassada exatamente como veio, trocando só os links pelos seus links de afiliado. Se algum link da mensagem não puder virar seu link de afiliado, a mensagem inteira é descartada."
+                      : "Cada produto capturado é enviado com o modelo de mensagem da campanha."}
+                  </div>
+                </div>
+                <Toggle
+                  label="Repassar a mensagem original"
+                  value={scraping.repasse?.messageMode === "original"}
+                  onChange={v => setScraping(s => ({ ...s, repasse: { ...(s.repasse || {}), messageMode: v ? "original" : "template" } }))}
+                />
+              </div>
             </div>
           )}
 
           {/* Avisos desta campanha (task 23). Mora em scraping.notifications e só
               SILENCIA: o que está desligado nas Configurações da conta continua
-              desligado. Ausente = ligado. Salva no "Salvar alterações". */}
+              desligado. Ausente = ligado. Salva no "Salvar alterações". Task 26:
+              a chave geral fica à vista e os avisos específicos abrem num clique. */}
           {(() => {
             const campNotif = scraping.notifications || {};
             const campOn = campNotif.enabled !== false;
@@ -1933,19 +1901,24 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             const setCampNotif = (patch) => setScraping(s => ({ ...s, notifications: { ...(s.notifications || {}), ...patch } }));
             const accountOn = !!notificationSettings?.enabled;
             const accountEvents = notificationSettings?.events || {};
-            const offInAccount = WHATSNIMBUS_EVENTS.filter(ev => ev.campaign && accountEvents[ev.key] === false);
+            const campaignEvents = WHATSNIMBUS_EVENTS.filter(ev => ev.campaign);
+            const offInAccount = campaignEvents.filter(ev => accountEvents[ev.key] === false);
+            const isOn = (ev) => !(ev.key === "queueEmpty" && scraping.autoSend === true) && campEvents[ev.key] !== false;
+            const ligados = campaignEvents.filter(isOn).length;
             return (
-              <div data-tour="mg-notifications" style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
+              <div data-tour="mg-notifications" style={manageCardStyle}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 500, marginBottom: 4 }}>Notificações desta campanha</div>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>Notificações desta campanha</div>
                     <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
-                      Avisos do WhatsNimbus sobre esta campanha. Desligar aqui não afeta as outras campanhas.
+                      {campOn
+                        ? "Avisos do WhatsNimbus sobre esta campanha. Desligar aqui não afeta as outras campanhas."
+                        : "Nenhum aviso do WhatsNimbus sobre esta campanha é enviado."}
                     </div>
                   </div>
                   <Toggle label="Receber avisos desta campanha" value={campOn} onChange={v => setCampNotif({ enabled: v })} />
                 </div>
-                {notificationSettings && (!accountOn || offInAccount.length > 0) && (
+                {notificationSettings && campOn && (!accountOn || offInAccount.length > 0) && (
                   <AlertBanner
                     tone="warn"
                     style={{ marginTop: 12, marginBottom: 0 }}
@@ -1955,46 +1928,48 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                     actions={onGoToSettings ? [{ label: "Abrir configurações", onClick: onGoToSettings }] : undefined}
                   />
                 )}
-                <div style={{ marginTop: 12, opacity: campOn ? 1 : 0.5 }}>
-                  {WHATSNIMBUS_EVENTS.filter(ev => ev.campaign).map(ev => {
-                    // Envio instantâneo já desliga a fila vazia no scheduler (queueEmptyAlert).
-                    const byAutoSend = ev.key === "queueEmpty" && scraping.autoSend === true;
-                    return (
-                      <div key={ev.key} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderTop: "0.5px solid var(--color-border-tertiary)" }}>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 13, fontWeight: 500 }}>{ev.label}</div>
-                          <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>
-                            {byAutoSend ? "Desligado pelo envio instantâneo." : ev.desc}
-                          </div>
-                        </div>
-                        <Toggle
-                          label={ev.label}
-                          disabled={!campOn || byAutoSend}
-                          value={!byAutoSend && campEvents[ev.key] !== false}
-                          onChange={v => setCampNotif({ events: { ...campEvents, [ev.key]: v } })}
-                        />
+                {campOn && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setNotifOpen(o => !o)}
+                      aria-expanded={notifOpen}
+                      aria-controls="mg-notif-events"
+                      style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", marginTop: 12, padding: "8px 0 0", border: "none", borderTop: "0.5px solid var(--color-border-tertiary)", background: "transparent", cursor: "pointer", fontSize: 13, color: "var(--color-text-primary)", textAlign: "left" }}
+                    >
+                      <span style={{ display: "inline-block", transition: "transform .15s", transform: notifOpen ? "rotate(90deg)" : "none", fontSize: 11 }}>▶</span>
+                      <span style={{ flex: 1, fontWeight: 500 }}>Avisos específicos</span>
+                      <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>{ligados} de {campaignEvents.length} ligados</span>
+                    </button>
+                    {notifOpen && (
+                      <div id="mg-notif-events" style={{ marginTop: 4 }}>
+                        {campaignEvents.map(ev => {
+                          // Envio instantâneo já desliga a fila vazia no scheduler (queueEmptyAlert).
+                          const byAutoSend = ev.key === "queueEmpty" && scraping.autoSend === true;
+                          return (
+                            <div key={ev.key} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0 8px 19px", borderTop: "0.5px solid var(--color-border-tertiary)" }}>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontSize: 13, fontWeight: 500 }}>{ev.label}</div>
+                                <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                                  {byAutoSend ? "Desligado pelo envio instantâneo." : ev.desc}
+                                </div>
+                              </div>
+                              <Toggle
+                                label={ev.label}
+                                disabled={byAutoSend}
+                                value={isOn(ev)}
+                                onChange={v => setCampNotif({ events: { ...campEvents, [ev.key]: v } })}
+                              />
+                            </div>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
-                </div>
+                    )}
+                  </>
+                )}
               </div>
             );
           })()}
-
-          {/* Cooldown: movido da aba Janelas — é uma regra de produto, não de horário */}
-          <div data-tour="mg-cooldown" style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-            <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Tempo de espera para reenvio</div>
-            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>Quanto tempo um produto aguarda antes de poder ser enviado novamente</div>
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <input type="number" min={1} value={sched.cooldownValue} onChange={e => setSched(s => ({ ...s, cooldownValue: Number(e.target.value) }))} style={{ width: 80, padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 15, fontWeight: 500, textAlign: "center" }} />
-              <div style={{ display: "flex", gap: 6 }}>
-                {["horas", "dias", "semanas"].map(u => (
-                  <button key={u} onClick={() => setSched(s => ({ ...s, cooldownUnit: u }))} style={{ padding: "7px 14px", borderRadius: 8, border: `0.5px solid ${sched.cooldownUnit === u ? PRIMARY : "var(--color-border-tertiary)"}`, background: sched.cooldownUnit === u ? PRIMARY_LIGHT : "transparent", color: sched.cooldownUnit === u ? PRIMARY_DARK : "var(--color-text-secondary)", fontSize: 13, cursor: "pointer", fontWeight: sched.cooldownUnit === u ? 500 : 400 }}>{u}</button>
-                ))}
-              </div>
-            </div>
-            <div style={{ marginTop: 10, fontSize: 12, color: "var(--color-text-secondary)" }}>Produto enviado hoje só poderá ser reenviado após {sched.cooldownValue} {sched.cooldownUnit}.</div>
-          </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
             <button
@@ -2029,7 +2004,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           {isRepasse && group.scraping?.repasse?.messageMode === "original" && (
             <AlertBanner
               tone="info"
-              message="Esta campanha repassa a mensagem original do grupo líder (troca só os links) — o modelo abaixo não é usado. Para voltar a usar o modelo, desligue “Repassar a mensagem original” na aba Grupos."
+              message="Esta campanha repassa a mensagem original do grupo de origem (troca só os links) — o modelo abaixo não é usado. Para voltar a usar o modelo, desligue “Repassar a mensagem original” na aba Gerenciar."
             />
           )}
           <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
@@ -2302,666 +2277,47 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
         </div>
       )}
 
-      {tab === "whatsapp" && (() => {
-        // No repasse a aba segue o caminho do link: primeiro a captura (grupos
-        // líderes + aprovação), depois o envio. Na campanha de busca só existe
-        // o envio, e ele continua abrindo a aba como sempre.
-        const sendingSection = (
-        <div style={{ display: "flex", flexDirection: "column", gap: 14, ...(isRepasse ? { marginTop: 6, paddingTop: 14, borderTop: "0.5px solid var(--color-border-tertiary)" } : null) }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 500, display: "flex", alignItems: "center", gap: 8 }}>
-                Grupos Destino
-                <UsageBadge current={groupInfo.whatsappGroupIds.length} limit={limits?.whatsappGroupsPerCampaign} label="grupos criados" />
+      {tab === "whatsapp" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {isRepasse && (showRepasseIntro ? (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 10, background: PRIMARY_LIGHT, color: PRIMARY_DARK, padding: "10px 14px", borderRadius: 10, fontSize: 12, lineHeight: 1.5 }}>
+              <div style={{ flex: 1 }}>
+                🔁 O sistema escuta os <strong>grupos de origem</strong> e captura os links de produto (Mercado Livre, Shopee e Amazon) postados neles, re-afiliando com a sua TAG — e manda para os <strong>grupos destino</strong>.
               </div>
-              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>
-                {isRepasse
-                  ? "Para onde vão os produtos capturados nos grupos líderes. Cada grupo recebe a mesma fila."
-                  : "Para onde esta campanha envia. Cada grupo recebe a mesma fila de produtos."}
-              </div>
-            </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button
-                data-tour="wg-add"
-                onClick={() => setAddStep("choose")}
-                disabled={numbers.length === 0}
-                title={numbers.length === 0 ? "Conecte um número de WhatsApp primeiro" : "Adicionar grupo a esta campanha"}
-                style={{ padding: "7px 12px", borderRadius: 8, background: numbers.length === 0 ? "var(--color-border-secondary)" : PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: numbers.length === 0 ? "not-allowed" : "pointer", fontWeight: 500 }}
-              >+ Adicionar grupo</button>
-            </div>
-          </div>
-
-          {linkedWGs.length === 0 ? (
-            <div data-tour="wg-list" style={{ textAlign: "center", padding: "40px 20px", color: "var(--color-text-secondary)", fontSize: 13, background: "var(--color-background-secondary)", borderRadius: 12 }}>
-              <div style={{ fontSize: 28, marginBottom: 10 }}>💬</div>
-              <div style={{ fontWeight: 500, color: "var(--color-text-primary)", marginBottom: 6 }}>Nenhum grupo destino vinculado</div>
-              <div style={{ fontSize: 12, marginBottom: 14 }}>Crie um novo grupo ou vincule um existente para começar a enviar mensagens.</div>
-              {numbers.length === 0
-                ? <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Conecte um número do WhatsApp na aba <strong>WhatsApp</strong> do menu para adicionar grupos.</div>
-                : <button onClick={() => setAddStep("choose")} style={{ padding: "8px 18px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>+ Adicionar primeiro grupo</button>
-              }
+              <button onClick={dismissRepasseIntro} style={{ padding: "4px 10px", borderRadius: 7, border: `0.5px solid ${PRIMARY_DARK}`, background: "transparent", color: PRIMARY_DARK, fontSize: 12, cursor: "pointer", fontWeight: 500, whiteSpace: "nowrap" }}>Entendi</button>
             </div>
           ) : (
-            <div data-tour="wg-list" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {linkedWGs.map(w => {
-                const number = numbers.find(n => n.id === w.numberId);
-                const numberConnected = number?.status === "connected";
-                const connected = w.status === "connected" && numberConnected;
-                // Mesmo grupo nos dois papéis: recebe os envios e também é
-                // escutado. Vale marcar — o resto da tela trata os dois como
-                // listas separadas.
-                const alsoLeader = leaderKeys.has(`${w.numberId}::${w.id}`);
-                return (
-                  <div key={w.id} style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12, gap: 12, flexWrap: "wrap" }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-                          <span style={{ width: 9, height: 9, borderRadius: "50%", background: connected ? PRIMARY : "#E24B4A", flexShrink: 0 }} />
-                          <span style={{ fontSize: 14, fontWeight: 500 }}>{w.name}</span>
-                          <Badge color={connected ? "green" : "red"}>{connected ? "Conectado" : "Desconectado"}</Badge>
-                          {alsoLeader && <Badge color="amber">👑 Também é líder</Badge>}
-                        </div>
-                        <div
-                          style={{
-                            display: "grid",
-                            gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
-                            gap: 10,
-                            background: "var(--color-background-secondary)",
-                            border: "0.5px solid var(--color-border-tertiary)",
-                            borderRadius: 10,
-                            padding: "10px 12px",
-                          }}
-                        >
-                          <div>
-                            <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>Membros</div>
-                            <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-primary)" }}>{w.members ?? 0}</div>
-                          </div>
-                          <div>
-                            <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>Número WhatsApp</div>
-                            <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={number ? `${number.label} · ${number.phone || ""}` : "número removido"}>
-                              {number ? number.label : <span style={{ color: "var(--danger-text)", fontStyle: "italic" }}>removido</span>}
-                            </div>
-                            {number?.phone && <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 1 }}>{number.phone}</div>}
-                          </div>
-                          <div>
-                            <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>Adicionado</div>
-                            <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-primary)" }}>{w.createdAt || "—"}</div>
-                          </div>
-                          <div>
-                            <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>Envios hoje</div>
-                            <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-primary)" }}>{w.sentToday ?? 0}</div>
-                          </div>
-                          <div>
-                            <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>Último envio</div>
-                            <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-primary)" }}>{w.lastSend && w.lastSend !== "—" ? w.lastSend : <span style={{ color: "var(--color-text-secondary)", fontWeight: 400 }}>nenhum</span>}</div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Descrição (nota local — não sincroniza com WhatsApp) */}
-                    <div style={{ marginTop: 12, marginBottom: 12 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                        <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 500 }}>Descrição</div>
-                        {editingDescId !== w.id && (
-                          <button onClick={() => startEditDesc(w)} title="Editar descrição" style={{ background: "transparent", border: "none", padding: 0, color: PRIMARY_DARK, fontSize: 11, cursor: "pointer", fontWeight: 500 }}>
-                            ✎ {w.description ? "editar" : "adicionar"}
-                          </button>
-                        )}
-                      </div>
-                      {editingDescId === w.id ? (
-                        <>
-                          <textarea
-                            autoFocus
-                            value={descDraft}
-                            onChange={e => setDescDraft(e.target.value)}
-                            rows={2}
-                            placeholder="Notas internas sobre este grupo (visível só no Nimbus)"
-                            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `0.5px solid ${PRIMARY}`, background: "var(--color-background-secondary)", fontSize: 13, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }}
-                          />
-                          <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-                            <button onClick={() => saveDesc(w)} style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY, color: "#fff", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Salvar</button>
-                            <button onClick={cancelEditDesc} style={{ padding: "5px 12px", borderRadius: 7, background: "transparent", color: "var(--color-text-primary)", border: "0.5px solid var(--color-border-secondary)", fontSize: 12, cursor: "pointer" }}>Cancelar</button>
-                          </div>
-                        </>
-                      ) : (
-                        <div style={{ fontSize: 13, color: w.description ? "var(--color-text-primary)" : "var(--color-text-secondary)", fontStyle: w.description ? "normal" : "italic", whiteSpace: "pre-wrap", lineHeight: 1.4 }}>
-                          {w.description || "—"}
-                        </div>
-                      )}
-                    </div>
-
-                    {w.inviteLink && (
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, background: "var(--color-background-secondary)", border: "0.5px solid var(--color-border-tertiary)", marginBottom: 12 }}>
-                        <span style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>🔗</span>
-                        <input
-                          readOnly
-                          value={w.inviteLink}
-                          onFocus={e => e.target.select()}
-                          style={{ flex: 1, minWidth: 0, padding: 0, border: "none", background: "transparent", fontSize: 12, color: "var(--color-text-primary)", fontFamily: "monospace", outline: "none" }}
-                        />
-                        <button
-                          onClick={() => copyInvite(w)}
-                          style={{ padding: "4px 12px", borderRadius: 6, border: `0.5px solid ${copiedId === w.id ? PRIMARY : "var(--color-border-secondary)"}`, background: copiedId === w.id ? PRIMARY_LIGHT : "transparent", color: copiedId === w.id ? PRIMARY_DARK : "var(--color-text-primary)", fontSize: 12, cursor: "pointer", fontWeight: 500, flexShrink: 0 }}
-                        >
-                          {copiedId === w.id ? "✓ Copiado" : "Copiar"}
-                        </button>
-                        <a
-                          href={w.inviteLink}
-                          target="_blank"
-                          rel="noreferrer"
-                          style={{ padding: "4px 12px", borderRadius: 6, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, color: "var(--color-text-primary)", textDecoration: "none", flexShrink: 0 }}
-                        >
-                          Abrir
-                        </a>
-                      </div>
-                    )}
-
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {w.inviteLink && <button onClick={() => refreshInvite(w)} style={{ padding: "6px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: "pointer" }}>Renovar link</button>}
-                      <button
-                        onClick={() => cloneGroup(w)}
-                        disabled={numbers.length === 0}
-                        title={numbers.length === 0 ? "Conecte um número de WhatsApp primeiro" : `Criar um novo grupo "${computeCloneName(w.name)}" com a mesma configuração`}
-                        style={{ padding: "6px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 12, cursor: numbers.length === 0 ? "not-allowed" : "pointer", opacity: numbers.length === 0 ? 0.5 : 1 }}
-                      >
-                        ⎘ Criar cópia
-                      </button>
-                      <div style={{ flex: 1 }} />
-                      <button onClick={() => setConfirmUnlinkWG(w)} style={{ padding: "6px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: "pointer" }}>Desvincular</button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+            <button
+              onClick={() => setShowRepasseHelpModal(true)}
+              style={{ alignSelf: "flex-start", padding: "5px 10px", borderRadius: 7, border: "0.5px solid var(--color-border-tertiary)", background: "transparent", color: "var(--color-text-secondary)", fontSize: 12, cursor: "pointer" }}
+            >
+              ❓ O que é uma campanha de repasse?
+            </button>
+          ))}
+          <GroupsTab
+            isRepasse={isRepasse}
+            campaignName={group.name}
+            numbers={numbers}
+            whatsappGroups={whatsappGroups}
+            linkedWGs={linkedWGs}
+            leaders={campaignLeaders}
+            leaderLimit={limits?.leadersPerCampaign}
+            destLimit={limits?.whatsappGroupsPerCampaign}
+            loadGroups={fetchGroupsOf}
+            knownGroups={waGroupsByNumber}
+            onAddLeader={addLeader}
+            onRemoveLeader={removeLeader}
+            onLinkExisting={linkWG}
+            onImportAndLink={importAndLink}
+            onUnlink={unlinkWG}
+            onCreateGroup={createAndLink}
+            onUpdateWhatsappGroup={onUpdateWhatsappGroup}
+            onRevokeInvite={refreshInvite}
+            computeCloneName={computeCloneName}
+            onError={setActionError}
+          />
         </div>
-        );
-
-        // Repasse: os grupos líderes são grupos de WhatsApp, então moram aqui
-        // junto com os grupos de destino (antes ficavam na aba Repasse).
-        const captureSection = (
-            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {showRepasseIntro ? (
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 10, background: PRIMARY_LIGHT, color: PRIMARY_DARK, padding: "10px 14px", borderRadius: 10, fontSize: 12, lineHeight: 1.5 }}>
-                <div style={{ flex: 1 }}>
-                  🔁 O sistema escuta os <strong>grupos líderes</strong> abaixo e captura os links de produto (Mercado Livre, Shopee e Amazon) postados neles, re-afiliando com a sua TAG.
-                </div>
-                <button onClick={dismissRepasseIntro} style={{ padding: "4px 10px", borderRadius: 7, border: `0.5px solid ${PRIMARY_DARK}`, background: "transparent", color: PRIMARY_DARK, fontSize: 12, cursor: "pointer", fontWeight: 500, whiteSpace: "nowrap" }}>Entendi</button>
-              </div>
-            ) : (
-              <button
-                onClick={() => setShowRepasseHelpModal(true)}
-                style={{ alignSelf: "flex-start", padding: "5px 10px", borderRadius: 7, border: "0.5px solid var(--color-border-tertiary)", background: "transparent", color: "var(--color-text-secondary)", fontSize: 12, cursor: "pointer" }}
-              >
-                ❓ O que é uma campanha de repasse?
-              </button>
-            )}
-
-            {/* Grupos líderes */}
-            {(() => {
-              const leaders = campaignLeaders;
-              const leaderLimit = limits?.leadersPerCampaign;
-              const leaderFull = leaderLimit != null && leaders.length >= leaderLimit;
-              const addLeader = wg => setScraping(s => {
-                const cur = leadersOf(s);
-                if (cur.some(l => l.jid === wg.jid && l.numberId === addExistingNumberId)) return s;
-                return withLeaders(s, [...cur, { numberId: addExistingNumberId, jid: wg.jid, name: wg.name }]);
-              });
-              const removeLeader = l => setScraping(s =>
-                withLeaders(s, leadersOf(s).filter(x => !(x.jid === l.jid && x.numberId === l.numberId)))
-              );
-              return (
-            <div data-tour="pr-leader" style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
-                <div style={{ fontWeight: 500 }}>Grupos líderes</div>
-                <UsageBadge current={leaders.length} limit={leaderLimit} label="grupos líderes" />
-              </div>
-              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
-                Os grupos de onde os links serão capturados. Tudo que eles postarem cai na fila desta campanha.
-              </div>
-
-              {leaders.length > 0 ? (
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
-                  {leaders.map(l => {
-                    // O líder não tem registro em whatsappGroups (ele nunca é
-                    // importado), então o único sinal de saúde é o número que
-                    // escuta o grupo: número caído = captura parada em silêncio.
-                    const leaderNumber = numbers.find(n => n.id === l.numberId);
-                    const leaderOn = leaderNumber?.status === "connected";
-                    return (
-                    <div key={`${l.numberId}::${l.jid}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, background: "var(--color-background-secondary)", border: `0.5px solid ${leaderOn ? PRIMARY : "var(--danger-border)"}` }}>
-                      <span style={{ fontSize: 18 }}>👑</span>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                          <span style={{ fontSize: 13, fontWeight: 500 }}>{l.name || l.jid}</span>
-                          <Badge color={leaderOn ? "green" : "red"}>{leaderOn ? "Conectado" : "Desconectado"}</Badge>
-                        </div>
-                        <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
-                          {leaderNumber
-                            ? (leaderNumber.label || `Número ${l.numberId}`)
-                            : <span style={{ color: "var(--danger-text)", fontStyle: "italic" }}>número removido</span>}
-                        </div>
-                        {!leaderOn && (
-                          <div style={{ fontSize: 11, color: "var(--warn-text)", marginTop: 3 }}>
-                            {leaderNumber
-                              ? "Enquanto este número estiver desconectado, nada é capturado neste grupo."
-                              : "O número que escutava este grupo não existe mais — nada é capturado até escolher outro líder."}
-                          </div>
-                        )}
-                      </div>
-                      <button onClick={() => removeLeader(l)} style={{ padding: "5px 12px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 12, cursor: "pointer" }}>Remover</button>
-                    </div>
-                    );
-                  })}
-                </div>
-              ) : numbers.length > 0 && (
-                /* Sem líder a campanha de repasse nunca captura nada — e nada
-                   na tela dizia isso. (Sem número conectado, a mensagem de
-                   baixo já explica o que fazer, então não duplicamos o aviso.) */
-                <div style={{ fontSize: 12, color: "var(--warn-text)", background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", padding: "10px 12px", borderRadius: 8, marginBottom: 12, lineHeight: 1.5 }}>
-                  ⚠ <strong>Nenhum grupo líder escolhido.</strong> Sem líder esta campanha não captura nenhum link, e a fila fica vazia. Escolha abaixo o grupo que ela deve escutar.
-                </div>
-              )}
-
-              {numbers.length === 0 ? (
-                <div style={{ fontSize: 12, color: "var(--warn-text)", background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", padding: "10px 12px", borderRadius: 8 }}>
-                  Nenhum número de WhatsApp conectado. Conecte um número na página WhatsApp para escolher os grupos líderes.
-                </div>
-              ) : leaderFull ? (
-                <div style={{ fontSize: 12, color: "var(--color-text-secondary)", background: "var(--color-background-secondary)", padding: "10px 12px", borderRadius: 8 }}>
-                  Você chegou no limite de {leaderLimit} {leaderLimit === 1 ? "grupo líder" : "grupos líderes"} do seu plano. Remova um da lista para trocar, ou suba de plano para escutar mais grupos.
-                </div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {numbers.map(n => (
-                      <button
-                        key={n.id}
-                        onClick={() => loadGroupsForNumber(n.id)}
-                        style={{ padding: "6px 12px", borderRadius: 8, border: `0.5px solid ${addExistingNumberId === n.id ? PRIMARY : "var(--color-border-tertiary)"}`, background: addExistingNumberId === n.id ? PRIMARY_LIGHT : "transparent", color: addExistingNumberId === n.id ? PRIMARY_DARK : "var(--color-text-primary)", fontSize: 12, cursor: "pointer", fontWeight: addExistingNumberId === n.id ? 500 : 400 }}
-                      >
-                        {n.label || n.phone || n.id}
-                      </button>
-                    ))}
-                  </div>
-                  {loadingWAGroups && <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Carregando grupos…</div>}
-                  {waGroupsError && <div style={{ fontSize: 12, color: "var(--danger-text)" }}>{waGroupsError}</div>}
-                  {addExistingNumberId && !loadingWAGroups && (waGroupsByNumber[addExistingNumberId] || []).length > 0 && (
-                    <input
-                      autoFocus
-                      value={addExistingSearch}
-                      onChange={e => setAddExistingSearch(e.target.value)}
-                      placeholder="Buscar grupo pelo nome..."
-                      style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }}
-                    />
-                  )}
-                  {addExistingNumberId && !loadingWAGroups && (() => {
-                    const q = addExistingSearch.trim().toLowerCase();
-                    const rawLeaderGroups = waGroupsByNumber[addExistingNumberId] || [];
-                    const filteredLeaderGroups = rawLeaderGroups.filter(wg => !q || (wg.name || "").toLowerCase().includes(q));
-                    return (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 260, overflowY: "auto" }}>
-                      {filteredLeaderGroups.length === 0 ? (
-                        <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
-                          {rawLeaderGroups.length === 0 ? "Nenhum grupo encontrado neste número." : `Nenhum grupo bate com "${addExistingSearch}".`}
-                        </div>
-                      ) : (
-                        filteredLeaderGroups.map(wg => {
-                          const already = leaders.some(l => l.jid === wg.jid && l.numberId === addExistingNumberId);
-                          // Escolher como líder um grupo que já é destino desta
-                          // campanha é válido, mas quase sempre é engano — o
-                          // nome dos dois costuma ser parecido no seletor.
-                          const isDestino = linkedWGs.some(w => w.id === wg.jid && w.numberId === addExistingNumberId);
-                          return (
-                          <div key={wg.jid} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)" }}>
-                            <div style={{ flex: 1 }}>
-                              <div style={{ fontSize: 13, fontWeight: 500 }}>{wg.name}</div>
-                              <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{wg.members || 0} membros</div>
-                              {isDestino && (
-                                <div style={{ fontSize: 11, color: "var(--warn-text)", marginTop: 2 }}>já é grupo de envio desta campanha</div>
-                              )}
-                            </div>
-                            <button
-                              onClick={() => addLeader(wg)}
-                              disabled={already}
-                              style={{ padding: "5px 12px", borderRadius: 7, background: already ? "transparent" : PRIMARY, color: already ? "var(--color-text-secondary)" : "#fff", border: already ? "0.5px solid var(--color-border-tertiary)" : "none", fontSize: 12, cursor: already ? "default" : "pointer", fontWeight: 500 }}
-                            >
-                              {already ? "Já é líder" : "Selecionar"}
-                            </button>
-                          </div>
-                          );
-                        })
-                      )}
-                    </div>
-                    );
-                  })()}
-                </div>
-              )}
-            </div>
-              );
-            })()}
-
-            {/* Aprovação automática */}
-            <div data-tour="pr-auto" style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 500, marginBottom: 4 }}>Aprovação automática</div>
-                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
-                    {scraping.auto !== false
-                      ? "Links capturados nos grupos líderes entram direto na fila de envio."
-                      : "Links capturados ficam aguardando revisão. Você aprova cada um antes do envio."}
-                  </div>
-                </div>
-                <Toggle label="Aprovação automática" value={scraping.auto !== false} onChange={v => setScraping(s => ({ ...s, auto: v }))} />
-              </div>
-            </div>
-
-            {/* Formato da mensagem: modelo da campanha x texto original do líder */}
-            <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 500, marginBottom: 4 }}>Repassar a mensagem original</div>
-                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
-                    {scraping.repasse?.messageMode === "original"
-                      ? "A mensagem do grupo líder é repassada exatamente como veio, trocando só os links pelos seus links de afiliado. Se algum link da mensagem não puder virar seu link de afiliado, a mensagem inteira é descartada."
-                      : "Cada produto capturado é enviado com o modelo de mensagem da campanha."}
-                  </div>
-                </div>
-                <Toggle
-                  label="Repassar a mensagem original"
-                  value={scraping.repasse?.messageMode === "original"}
-                  onChange={v => setScraping(s => ({ ...s, repasse: { ...(s.repasse || {}), messageMode: v ? "original" : "template" } }))}
-                />
-              </div>
-            </div>
-
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-              <button
-                onClick={save}
-                disabled={!scrapingDirty && !saved}
-                title={scrapingDirty ? "Salvar configurações do repasse" : "Sem alterações pra salvar"}
-                style={saveBtnStyle(scrapingDirty)}
-              >
-                {saved ? "✓ Salvo!" : "Salvar configurações"}
-              </button>
-            </div>
-            </div>
-        );
-
-        return (
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {isRepasse && captureSection}
-          {sendingSection}
-
-          {addStep === "choose" && (
-            <Modal title="Adicionar grupo" onClose={closeAddModal}>
-              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>
-                Como você quer adicionar um grupo a esta campanha?
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <button
-                  onClick={() => setAddStep("create-numbers")}
-                  disabled={numbers.length === 0}
-                  style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "14px 16px", borderRadius: 10, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", cursor: numbers.length === 0 ? "not-allowed" : "pointer", textAlign: "left", opacity: numbers.length === 0 ? 0.5 : 1 }}
-                >
-                  <span style={{ fontSize: 22 }}>➕</span>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 2 }}>Criar grupo novo</div>
-                    <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
-                      Cria um grupo novo no WhatsApp e já vincula a esta campanha.
-                    </div>
-                  </div>
-                </button>
-                <button
-                  onClick={() => setAddStep("existing")}
-                  disabled={numbers.length === 0}
-                  style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "14px 16px", borderRadius: 10, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", cursor: numbers.length === 0 ? "not-allowed" : "pointer", textAlign: "left", opacity: numbers.length === 0 ? 0.5 : 1 }}
-                >
-                  <span style={{ fontSize: 22 }}>🔗</span>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 2 }}>Adicionar grupo existente</div>
-                    <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
-                      Escolha um número e selecione um dos grupos do WhatsApp dele.
-                    </div>
-                  </div>
-                </button>
-              </div>
-              {numbers.length === 0 && (
-                <div style={{ fontSize: 11, color: "var(--warn-text)", marginTop: 12, padding: "8px 10px", background: "var(--warn-bg)", borderRadius: 8 }}>
-                  Conecte um número de WhatsApp na aba <strong>WhatsApp</strong> antes de adicionar grupos.
-                </div>
-              )}
-            </Modal>
-          )}
-
-          {addStep === "existing" && (() => {
-            const cadastradosByJid = new Map(whatsappGroups.map(w => [w.id, w]));
-            const linkedSet = new Set(groupInfo.whatsappGroupIds);
-            const connectedNumbers = numbers.filter(n => n.status === "connected");
-            const selectedNum = numbers.find(n => n.id === addExistingNumberId);
-            const rawList = addExistingNumberId ? (waGroupsByNumber[addExistingNumberId] || []) : [];
-            const q = addExistingSearch.trim().toLowerCase();
-            const filtered = rawList
-              .filter(g => !q || (g.name || "").toLowerCase().includes(q))
-              .map(g => {
-                const existing = cadastradosByJid.get(g.jid);
-                return {
-                  ...g,
-                  alreadyInNimbus: !!existing,
-                  alreadyLinked: existing ? linkedSet.has(existing.id) : false,
-                  nimbusId: existing?.id || null,
-                };
-              });
-            return (
-              <Modal title="Adicionar grupo existente" onClose={closeAddModal}>
-                {!addExistingNumberId ? (
-                  <>
-                    <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
-                      Selecione o número de WhatsApp pra listar os grupos dele.
-                    </div>
-                    {connectedNumbers.length === 0 ? (
-                      <div style={{ fontSize: 12, color: "var(--warn-text)", padding: "10px 12px", background: "var(--warn-bg)", borderRadius: 8 }}>
-                        Nenhum número conectado. Conecte um número primeiro.
-                      </div>
-                    ) : (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 320, overflowY: "auto" }}>
-                        {connectedNumbers.map(n => (
-                          <button
-                            key={n.id}
-                            onClick={() => loadGroupsForNumber(n.id)}
-                            style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", cursor: "pointer", textAlign: "left" }}
-                          >
-                            <span style={{ width: 8, height: 8, borderRadius: "50%", background: PRIMARY, flexShrink: 0 }} />
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: 13, fontWeight: 500 }}>{n.label}</div>
-                              <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{n.phone}</div>
-                            </div>
-                            <span style={{ fontSize: 11, color: PRIMARY_DARK, fontWeight: 500 }}>Listar grupos →</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, fontSize: 12, color: "var(--color-text-secondary)" }}>
-                      <button onClick={() => { setAddExistingNumberId(null); setAddExistingSearch(""); setWaGroupsError(null); }} style={{ padding: "4px 10px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: "pointer" }}>← Trocar número</button>
-                      <span>📱 {selectedNum?.label} <span style={{ color: "var(--color-text-secondary)" }}>· {selectedNum?.phone}</span></span>
-                    </div>
-                    <input
-                      autoFocus
-                      value={addExistingSearch}
-                      onChange={e => setAddExistingSearch(e.target.value)}
-                      placeholder="Buscar grupo pelo nome..."
-                      style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", marginBottom: 10 }}
-                    />
-                    {loadingWAGroups ? (
-                      <div style={{ fontSize: 12, color: "var(--color-text-secondary)", padding: "20px 0", textAlign: "center" }}>⟳ Carregando grupos do WhatsApp...</div>
-                    ) : waGroupsError ? (
-                      <div style={{ fontSize: 12, color: "var(--danger-text)", padding: "10px 12px", background: "var(--danger-bg)", borderRadius: 8 }}>{waGroupsError}</div>
-                    ) : rawList.length === 0 ? (
-                      <div style={{ fontSize: 12, color: "var(--color-text-secondary)", padding: "20px 0", textAlign: "center", fontStyle: "italic" }}>Nenhum grupo encontrado neste número.</div>
-                    ) : filtered.length === 0 ? (
-                      <div style={{ fontSize: 12, color: "var(--color-text-secondary)", padding: "20px 0", textAlign: "center", fontStyle: "italic" }}>Nenhum grupo bate com "{addExistingSearch}".</div>
-                    ) : (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 360, overflowY: "auto" }}>
-                        {filtered.map(g => {
-                          const importing = importingJid === g.jid;
-                          const onClick = g.alreadyLinked ? null
-                            : g.alreadyInNimbus ? () => linkAndClose(g.nimbusId)
-                            : () => importAndLink(addExistingNumberId, g);
-                          const actionLabel = g.alreadyLinked ? "✓ Já nesta campanha"
-                            : importing ? "⟳ Adicionando..."
-                            : g.alreadyInNimbus ? "+ Vincular"
-                            : "+ Adicionar";
-                          return (
-                            <div
-                              key={g.jid}
-                              onClick={onClick || undefined}
-                              style={{
-                                display: "flex", alignItems: "center", gap: 10,
-                                padding: "10px 12px", borderRadius: 10,
-                                border: "0.5px solid var(--color-border-tertiary)",
-                                background: g.alreadyLinked ? "var(--color-background-primary)" : "var(--color-background-secondary)",
-                                cursor: !onClick || importing ? "default" : "pointer",
-                                opacity: g.alreadyLinked ? 0.5 : (importing ? 0.6 : 1),
-                              }}
-                            >
-                              <span style={{ fontSize: 16 }}>👥</span>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontSize: 13, fontWeight: 500 }}>{g.name || "(sem nome)"}</div>
-                                <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
-                                  {g.members} membro{g.members !== 1 ? "s" : ""}
-                                  {g.alreadyInNimbus && !g.alreadyLinked && " · já cadastrado no Nimbus"}
-                                </div>
-                              </div>
-                              <span style={{ fontSize: 11, color: g.alreadyLinked ? "var(--color-text-secondary)" : PRIMARY_DARK, fontWeight: 500 }}>
-                                {actionLabel}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </>
-                )}
-                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
-                  <button onClick={closeAddModal} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Fechar</button>
-                </div>
-              </Modal>
-            );
-          })()}
-
-          {addStep === "create-numbers" && (
-            <Modal title="Criar grupo no WhatsApp" onClose={closeAddModal}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-                <button onClick={() => setAddStep("choose")} style={{ padding: "4px 10px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: "pointer" }}>← Voltar</button>
-              </div>
-              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14, lineHeight: 1.5 }}>
-                Escolha em qual número de WhatsApp o grupo vai ser criado.
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <div>
-                  <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 6 }}>
-                    Números que vão criar <span style={{ color: "var(--color-text-tertiary, var(--color-text-secondary))" }}>(selecione um ou mais — cria 1 grupo por número)</span>
-                  </label>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 220, overflowY: "auto", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 8, padding: 8, background: "var(--color-background-secondary)" }}>
-                    {numbers.map(n => {
-                      const checked = (newWGForm.numberIds || []).includes(n.id);
-                      const connected = n.status === "connected";
-                      return (
-                        <label key={n.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 6, cursor: connected ? "pointer" : "not-allowed", opacity: connected ? 1 : 0.5 }}>
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            disabled={!connected}
-                            onChange={() => setNewWGForm(f => {
-                              const cur = new Set(f.numberIds || []);
-                              cur.has(n.id) ? cur.delete(n.id) : cur.add(n.id);
-                              return { ...f, numberIds: [...cur] };
-                            })}
-                            style={{ width: 15, height: 15, cursor: connected ? "pointer" : "not-allowed" }}
-                          />
-                          <span style={{ width: 7, height: 7, borderRadius: "50%", background: connected ? PRIMARY : "#E24B4A", flexShrink: 0 }} />
-                          <span style={{ fontSize: 13, fontWeight: checked ? 500 : 400 }}>{n.label}</span>
-                          <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{n.phone}</span>
-                          {!connected && <span style={{ fontSize: 11, color: "var(--danger-text)", marginLeft: "auto" }}>desconectado</span>}
-                        </label>
-                      );
-                    })}
-                  </div>
-                  {(newWGForm.numberIds || []).length > 1 && (
-                    <div style={{ fontSize: 11, color: PRIMARY_DARK, marginTop: 6 }}>
-                      💡 Serão criados {newWGForm.numberIds.length} grupos (sufixo com o apelido de cada número).
-                    </div>
-                  )}
-                </div>
-              </div>
-              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 18 }}>
-                <button onClick={closeAddModal} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
-                <button onClick={() => setAddStep("create-details")} disabled={(newWGForm.numberIds || []).length === 0} style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: (newWGForm.numberIds || []).length === 0 ? 0.5 : 1 }}>
-                  Próximo →
-                </button>
-              </div>
-            </Modal>
-          )}
-
-          {addStep === "create-details" && (
-            <Modal title="Criar grupo no WhatsApp" onClose={closeAddModal}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-                <button onClick={() => setAddStep("create-numbers")} style={{ padding: "4px 10px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: "pointer" }}>← Voltar</button>
-              </div>
-              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14, lineHeight: 1.5 }}>
-                Um novo grupo será criado <strong>de fato no WhatsApp</strong> e vinculado a esta campanha.
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <div>
-                  <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Nome do grupo</label>
-                  <input value={newWGForm.name} onChange={e => setNewWGForm(f => ({ ...f, name: e.target.value }))} placeholder={`Ex: ${group.name} — Regional`} style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" }} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
-                    Participantes iniciais
-                  </label>
-                  <textarea
-                    value={newWGForm.participants}
-                    onChange={e => setNewWGForm(f => ({ ...f, participants: e.target.value }))}
-                    rows={3}
-                    placeholder="+5511999998888&#10;+5521988887777"
-                    style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", resize: "vertical", fontFamily: "inherit" }}
-                  />
-                  <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4 }}>
-                    Um por linha (ou separados por vírgula). Inclua o código do país (+55). Se deixar vazio, o grupo é criado sem participantes extras — só você.
-                  </div>
-                </div>
-                {createWGError && (
-                  <div style={{ background: "var(--danger-bg)", color: "var(--danger-text)", padding: "8px 10px", borderRadius: 8, fontSize: 12 }}>{createWGError}</div>
-                )}
-              </div>
-              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 18 }}>
-                <button onClick={closeAddModal} disabled={creatingWG} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
-                <button onClick={submitCreateWG} disabled={!newWGForm.name.trim() || (newWGForm.numberIds || []).length === 0 || creatingWG} style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: (!newWGForm.name.trim() || (newWGForm.numberIds || []).length === 0 || creatingWG) ? 0.5 : 1 }}>
-                  {creatingWG ? "⟳ Criando..." : (newWGForm.numberIds || []).length > 1 ? `Criar e vincular (${newWGForm.numberIds.length})` : "Criar e vincular"}
-                </button>
-              </div>
-            </Modal>
-          )}
-
-          {confirmUnlinkWG && (
-            <Modal title="Desvincular grupo?" onClose={() => setConfirmUnlinkWG(null)}>
-              <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
-                <strong style={{ color: "var(--color-text-primary)" }}>{confirmUnlinkWG.name}</strong> deixará de receber os envios desta campanha. O grupo em si não é excluído — continua disponível pra vincular de novo ou usar em outras campanhas.
-              </p>
-              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                <button onClick={() => setConfirmUnlinkWG(null)} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
-                <button onClick={() => { unlinkWG(confirmUnlinkWG.id); setConfirmUnlinkWG(null); }} style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>Desvincular</button>
-              </div>
-            </Modal>
-          )}
-        </div>
-        );
-      })()}
+      )}
 
       {tab === "products" && !isRepasse && (
         <ProductSearchTab
@@ -3074,7 +2430,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                   <div style={{ fontSize: 14, fontWeight: 500 }}>Aguardando revisão</div>
                   <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>
                     {isRepasse
-                      ? "Links capturados dos grupos líderes que precisam de aprovação"
+                      ? "Links capturados dos grupos de origem que precisam de aprovação"
                       : "Produtos que ficaram esperando aprovação antes de entrar na fila"}
                   </div>
                 </div>
@@ -3110,7 +2466,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Fila vazia</div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>
                 {isRepasse ? (
-                  <>A fila é reabastecida com os links capturados dos grupos líderes. Confira a configuração de captura na aba <strong>Grupos</strong>.</>
+                  <>A fila é reabastecida com os links capturados dos grupos de origem. Confira os grupos de origem na aba <strong>Grupos</strong>.</>
                 ) : (
                   <>A fila é reabastecida automaticamente do catálogo nos horários de envio.
                   Para buscar produtos do catálogo agora, use a aba <strong>Busca de Produtos</strong>.</>
@@ -3286,7 +2642,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       {showRepasseHelpModal && (
         <Modal title="Campanha de repasse" onClose={() => setShowRepasseHelpModal(false)}>
           <div style={{ fontSize: 13, lineHeight: 1.6, color: "var(--color-text-primary)" }}>
-            🔁 Esta é uma campanha de <strong>repasse</strong>. O sistema escuta os grupos líderes abaixo e captura os links de produto (Mercado Livre, Shopee e Amazon) postados neles, re-afiliando com a sua TAG. A busca no catálogo fica desabilitada.
+            🔁 Esta é uma campanha de <strong>repasse</strong>. O sistema escuta os grupos de origem e captura os links de produto (Mercado Livre, Shopee e Amazon) postados neles, re-afiliando com a sua TAG. A busca no catálogo fica desabilitada.
           </div>
         </Modal>
       )}

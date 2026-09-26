@@ -11,7 +11,7 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
-const { precoComCupom, detalheDoCupom } = require(path.resolve(__dirname, "..", "..", "backend", "coupons", "price.js"));
+const { precoComCupom, detalheDoCupom, melhorCupom } = require(path.resolve(__dirname, "..", "..", "backend", "coupons", "price.js"));
 
 const daqui = min => new Date(Date.now() + min * 60000).toISOString();
 
@@ -144,5 +144,32 @@ describe("detalheDoCupom", () => {
     expect(detalheDoCupom(200, { kind: "percent", value: 10, minPurchase: 500 })).toBe(null);   // compra mínima
     expect(detalheDoCupom(200, { kind: "percent", value: 10, expiresAt: daqui(-60) })).toBe(null); // vencido
     expect(detalheDoCupom(200, { kind: "percent", value: 10, startsAt: daqui(60) })).toBe(null);   // não começou
+  });
+});
+
+// O cupom que o produto anuncia (task 19): a busca ordena pelo menor preço final, e
+// o card e o envio têm de falar do MESMO cupom que a ordem usou.
+describe("melhorCupom", () => {
+  const DEZ = { campaignId: "a", code: "DEZ", kind: "percent", value: 10 };
+  const TRINTA_REAIS = { campaignId: "b", code: "TRINTA", kind: "fixed", value: 30 };
+  const SEM_PALAVRA = { campaignId: "c", code: null, kind: "percent", value: 50 };
+
+  it("escolhe o que deixa o preço menor neste produto", () => {
+    // Em R$ 200: 10% = R$ 180, R$ 30 = R$ 170.
+    expect(melhorCupom(200, [DEZ, TRINTA_REAIS]).code).toBe("TRINTA");
+    // Em R$ 1000: 10% = R$ 900, R$ 30 = R$ 970.
+    expect(melhorCupom(1000, [TRINTA_REAIS, DEZ]).code).toBe("DEZ");
+  });
+
+  it("ignora cupom sem palavra, por maior que seja", () => {
+    expect(melhorCupom(200, [SEM_PALAVRA, DEZ]).code).toBe("DEZ");
+    expect(melhorCupom(200, [SEM_PALAVRA])).toBe(null);
+    expect(melhorCupom(200, [])).toBe(null);
+    expect(melhorCupom(200, undefined)).toBe(null);
+  });
+
+  it("sem nenhum valendo neste preço, fica o primeiro com palavra", () => {
+    const MIN = { ...DEZ, code: "MIN", minPurchase: 500 };
+    expect(melhorCupom(200, [SEM_PALAVRA, MIN, { ...TRINTA_REAIS, minPurchase: 300 }]).code).toBe("MIN");
   });
 });

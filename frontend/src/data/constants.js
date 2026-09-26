@@ -297,6 +297,7 @@ export const sidebarItems = [
   { id: "settings", icon: "⚙", label: "Configurações" },
   { id: "subscription", icon: "★", label: "Assinatura" },
   { id: "products",       icon: "⊟", label: "Produtos",       adminOnly: true },
+  { id: "admin-cupons",   icon: "🏷", label: "Cupons",         adminOnly: true },
   { id: "admin-scraper",  icon: "⟳", label: "Scraping",       adminOnly: true },
   { id: "admin-scrap-tester", icon: "⚗", label: "ScrapTester", adminOnly: true },
   { id: "admin-ml",       icon: "◆", label: "Mercado Livre",  adminOnly: true },
@@ -350,6 +351,7 @@ export const PAGE_TO_PATH = {
   settings: "/configuracoes",
   subscription: "/assinatura",
   products: "/admin/produtos",
+  "admin-cupons": "/admin/cupons",
   "admin-scraper": "/admin/scraping",
   "admin-scrap-tester": "/admin/scrap-tester",
   "admin-ml": "/admin/mercado-livre",
@@ -450,4 +452,5 @@ export const WHATSNIMBUS_EVENTS = [
   { key: "campaignReactivated",  label: "Campanha reativada",     desc: "Quando você retoma uma campanha", campaign: true },
   { key: "productSearch",        label: "Busca de produtos",      desc: "Resultado das buscas: aprovados / aguardando confirmação", campaign: true },
   { key: "queueEmpty",           label: "Fila vazia",             desc: "Quando a fila de uma campanha fica sem produtos", campaign: true },
+  { key: "groupDuplicated",      label: "Grupo duplicado",        desc: "Quando um grupo destino enche e a duplicação automática cria o próximo" },
 ];

@@ -93,4 +93,25 @@ function detalheDoCupom(price, rule) {
   return { final, economia, rotulo };
 }
 
-module.exports = { precoComCupom, detalheDoCupom };
+// O cupom que o produto ANUNCIA, dentre os que o cobrem (a lista do
+// `couponsListForKeys`). Só cupom com palavra conta — sem ela o cliente não tem o
+// que digitar. Entre eles, o que deixa o preço MENOR neste produto; se nenhum
+// desconta neste preço (compra mínima, por exemplo), o primeiro da lista, que é o
+// de maior desconto nominal — a palavra ainda vale ser dita.
+//
+// Antes era sempre o primeiro com palavra, e aí a busca ordenada por "menor preço
+// final" (catalog/pg.js:PRECO_COM_CUPOM, que usa o melhor cupom) e o card/envio
+// podiam falar de cupons diferentes para o mesmo produto.
+function melhorCupom(price, lista) {
+  const comPalavra = (lista || []).filter(c => c && c.code);
+  if (!comPalavra.length) return null;
+  let melhor = null;
+  let melhorFinal = Infinity;
+  for (const c of comPalavra) {
+    const final = precoComCupom(price, c);
+    if (final !== null && final < melhorFinal) { melhor = c; melhorFinal = final; }
+  }
+  return melhor || comPalavra[0];
+}
+
+module.exports = { precoComCupom, detalheDoCupom, melhorCupom };

@@ -50,6 +50,7 @@ import PageAdminLayout from "./pages/AdminLayout";
 import PageAdminStripe from "./pages/AdminStripe";
 import PageAdminRepasse from "./pages/AdminRepasse";
 import PageAdminCupom from "./pages/AdminCupom";
+import PageAdminCupons from "./pages/AdminCupons";
 import PageTutoriais from "./pages/Tutoriais";
 import Login from "./pages/Login";
 import PageAssinar from "./pages/Assinar";
@@ -1127,6 +1128,7 @@ export default function App() {
     "mercado-livre": lockedStore("ml") || <PageAffiliateML onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
     "amazon": lockedStore("amazon") || <PageAffiliateAmazon onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
     "shopee": lockedStore("shopee") || <PageAffiliateShopee onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
+    "admin-cupons":   user?.role === "admin" ? <PageAdminCupons /> : fallbackPage,
     "admin-scraper":  user?.role === "admin" ? <PageAdminScraper /> : fallbackPage,
     "admin-scrap-tester": user?.role === "admin" ? <PageAdminScrapTester /> : fallbackPage,
     "admin-ml":       user?.role === "admin" ? <PageAdminML /> : fallbackPage,

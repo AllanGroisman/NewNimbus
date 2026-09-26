@@ -40,3 +40,19 @@ export function resumoCategorias(c, labels, max = 2) {
   if (nomes.length <= max) return { texto: completo, resto: 0, completo };
   return { texto: nomes.slice(0, max).join(" · "), resto: nomes.length - max, completo };
 }
+
+// O prazo de um cupom em palavras (Admin › Cupons, task 17):
+// "vence em 5h", "vence em 2 dias", "venceu hoje", "venceu há 3 dias", "sem validade".
+export function prazoDoCupom(expiresAt, agora = Date.now()) {
+  if (!expiresAt) return { texto: "sem validade", tom: "neutro" };
+  const t = new Date(expiresAt).getTime();
+  if (!Number.isFinite(t)) return { texto: "validade ilegível", tom: "neutro" };
+  const h = (t - agora) / 36e5;
+  if (h <= 0) {
+    const d = Math.floor(-h / 24);
+    return { texto: d >= 1 ? `venceu há ${d} ${d === 1 ? "dia" : "dias"}` : "venceu hoje", tom: "vencido" };
+  }
+  if (h < 24) return { texto: `vence em ${Math.max(1, Math.round(h))}h`, tom: "urgente" };
+  const d = Math.round(h / 24);
+  return { texto: `vence em ${d} ${d === 1 ? "dia" : "dias"}`, tom: d <= 3 ? "urgente" : "ok" };
+}

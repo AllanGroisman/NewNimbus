@@ -28,6 +28,7 @@ const DEFAULT_EVENTS = {
   campaignStopped: true,
   productSearch: true,
   queueEmpty: true,
+  groupDuplicated: true,
 };
 
 // Lazy-require pra evitar dependência circular no boot (wa carrega Baileys/auth).
@@ -242,6 +243,18 @@ async function onQueueEmpty(userId, group, isEmpty) {
     `${TAG} 📭\nA fila da campanha *${group.name}* está *vazia* — não há produtos pra enviar.\nFaça uma busca ou aprove os pendentes.`, group);
 }
 
+// Um grupo destino encheu e a duplicação automática criou o seguinte da série
+// (whatsapp/auto-duplicate.js). Vai com o link novo: é ele que o dono divulga.
+async function onGroupDuplicated(userId, { from, to, members, inviteLink, campaigns = [] }) {
+  const lines = [
+    `${TAG} 👥`,
+    `O grupo *${from}* chegou a ${members} membros e foi *duplicado*: o novo grupo é *${to}*.`,
+  ];
+  if (campaigns.length) lines.push(`Ele já recebe as ofertas de: ${campaigns.join(", ")}.`);
+  if (inviteLink) lines.push(`Link de convite: ${inviteLink}`);
+  await deliver(userId, "groupDuplicated", lines.join("\n"));
+}
+
 // ── Teste de conexão (botão "Testar" no card do número) ─────────────────────
 // Fora do deliver(): o teste tem que sair mesmo com as notificações desligadas
 // nas preferências do usuário — quem clicou está olhando a tela esperando a
@@ -281,6 +294,7 @@ module.exports = {
   onCampaignStopped,
   onProductSearch,
   onQueueEmpty,
+  onGroupDuplicated,
   // Exportado pra teste: núcleo do debounce/recuperação (sem IO).
   stateAlert,
   groupAllows,

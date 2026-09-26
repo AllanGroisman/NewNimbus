@@ -320,7 +320,7 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                 >
                   <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>🔁 Repasse</div>
                   <div style={{ fontSize: 12, color: "var(--color-text-secondary)", lineHeight: 1.4 }}>
-                    Em vez de buscar produtos, o sistema escuta um ou mais <strong>grupos líderes</strong> e captura os links de produto postados neles, re-afiliando com a sua TAG. Os grupos vinculados replicam as ofertas dos líderes.
+                    Em vez de buscar produtos, o sistema escuta um ou mais <strong>grupos de origem</strong> e captura os links de produto postados neles, re-afiliando com a sua TAG. Os grupos destino replicam as ofertas dos grupos de origem.
                   </div>
                 </div>
               </div>
@@ -332,7 +332,7 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
             // Passo 2b: campanha de repasse.
             <form onSubmit={e => { e.preventDefault(); submit(); }}>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>
-                Dê um nome à campanha. Você vai escolher os <strong>grupos líderes</strong> e os grupos que recebem as ofertas depois, dentro da campanha.
+                Dê um nome à campanha. Você vai escolher os <strong>grupos de origem</strong> e os grupos destino depois, dentro da campanha.
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 <div>

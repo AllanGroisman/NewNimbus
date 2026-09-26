@@ -285,6 +285,55 @@ async function runSearchSql(sql, fuzzy) {
   return rows;
 }
 
+// ── Cupom na busca das campanhas (task 19) ─────────────────────────────────
+//
+// O preço que o cliente paga com o MELHOR cupom anunciável do produto, em SQL.
+// É a mesma conta do coupons/price.js:precoComCupom — cupom com palavra (sem ela o
+// cliente não tem o que digitar), vigente, já começado, compra mínima atingida,
+// percentual abaixo de 100%, teto do `maxDiscount` — só que por linha, para
+// ordenar e filtrar o catálogo inteiro sem trazer nada para o JavaScript. Se as
+// duas divergirem, a lista ordena por um preço e o card mostra outro; o teste de
+// integração catalog-cupom-busca confere as duas contra os mesmos cupons.
+//
+// NULL = nenhum cupom anunciável dá desconto neste preço.
+const CUPOM_VIGENTE = Prisma.sql`(c."expiresAt" IS NULL OR c."expiresAt" > NOW())`;
+const PRECO_COM_CUPOM = Prisma.sql`(
+  SELECT MIN(x.final) FROM (
+    SELECT cp."price" - CASE WHEN c."maxDiscount" > 0 THEN LEAST(d.off, c."maxDiscount") ELSE d.off END AS final
+      FROM "ml_coupon_products" p
+      JOIN "ml_coupons" c ON c."campaign_id" = p."campaign_id"
+      CROSS JOIN LATERAL (SELECT CASE
+        WHEN c."kind" = 'percent' AND c."value" > 0 AND c."value" < 100 THEN cp."price" * c."value" / 100
+        WHEN c."kind" = 'fixed' AND c."value" > 0 THEN c."value"
+      END AS off) d
+     WHERE p."productKey" = cp."key"
+       AND c."code" IS NOT NULL
+       AND ${CUPOM_VIGENTE}
+       AND (c."startsAt" IS NULL OR c."startsAt" <= NOW())
+       AND (c."minPurchase" IS NULL OR c."minPurchase" <= 0 OR cp."price" >= c."minPurchase")
+       AND d.off IS NOT NULL
+  ) x WHERE x.final > 0 AND x.final < cp."price")`;
+
+// O filtro "Cupom" da busca. Cada nível é mais apertado que o anterior:
+//   com         — o produto está na vitrine de algum cupom vigente (com ou sem palavra)
+//   com-palavra — algum desses cupons tem palavra: dá para anunciar
+//   valendo     — um cupom com palavra DESCONTA neste preço (compra mínima atingida)
+// `hasCoupon`, o filtro antigo da tela (e de campanha salva antes da task 19),
+// continua valendo e vira o "com".
+const CUPOM_FILTROS = new Set(["com", "com-palavra", "valendo"]);
+
+function cupomFilterOf(filters = {}) {
+  if (CUPOM_FILTROS.has(filters.coupon)) return filters.coupon;
+  return filters.hasCoupon ? "com" : null;
+}
+
+function existeCupom(extra = []) {
+  return Prisma.sql`EXISTS (
+    SELECT 1 FROM "ml_coupon_products" p
+      JOIN "ml_coupons" c ON c."campaign_id" = p."campaign_id"
+     WHERE ${Prisma.join([Prisma.sql`p."productKey" = cp."key"`, CUPOM_VIGENTE, ...extra], " AND ")})`;
+}
+
 // Monta o WHERE a partir dos filtros da campanha/página. Separado de query()
 // porque count() precisa exatamente do mesmo filtro. SQL cru (e não o `where` do
 // Prisma) por causa da busca: sem acento, com trigramas e ordem por relevância,
@@ -315,16 +364,33 @@ function buildWhere({ categories, sources, excludeKeys, filters = {} }) {
     if (arr.length) cond.push(Prisma.sql`cp."key" <> ALL(${arr}::text[])`);
   }
 
-  const { minDiscount = 0, minPrice = 0, maxPrice, minRating = 0, minSales = 0, keywords = "", hasCoupon = false, fuzzy = false } = filters;
-  // "só produtos com cupom do ML". Cabe no WHERE porque o vínculo mora numa
-  // COLUNA (couponCampaignId, escrita só pela sincronização de cupons) — filtrar
-  // isso em JS depois da query deixaria o count() e a paginação mentindo, que é
-  // o mesmo motivo do soldCount ter virado coluna.
-  if (hasCoupon) cond.push(Prisma.sql`cp."couponCampaignId" IS NOT NULL`);
+  const { minDiscount = 0, minPrice = 0, maxPrice, minRating = 0, minSales = 0, keywords = "", fuzzy = false } = filters;
+  // Os filtros de cupom. Cabem no WHERE porque o vínculo cupom ↔ produto é uma
+  // tabela indexada por productKey — filtrar em JS depois da query deixaria o
+  // count() e a paginação mentindo, que é o mesmo motivo do soldCount ter virado
+  // coluna. É o vínculo VIGENTE (e não a coluna `couponCampaignId`, que só guarda
+  // um cupom e pode estar velha) porque é ele que o card do produto mostra.
+  const cupom = cupomFilterOf(filters);
+  if (cupom === "com") cond.push(existeCupom());
+  else if (cupom === "com-palavra") cond.push(existeCupom([Prisma.sql`c."code" IS NOT NULL`]));
+  else if (cupom === "valendo") cond.push(Prisma.sql`${PRECO_COM_CUPOM} IS NOT NULL`);
+  // Um cupom específico: a palavra (sem caixa), o id da campanha ou um trecho do título.
+  const cupomBusca = String(filters.couponSearch || "").trim().slice(0, 100);
+  if (cupomBusca) {
+    cond.push(existeCupom([Prisma.sql`(LOWER(c."code") = LOWER(${cupomBusca}) OR c."campaign_id" = ${cupomBusca} OR c."title" ILIKE ${"%" + cupomBusca + "%"})`]));
+  }
+  // Quanto o cupom tira NESTE produto, em %. Só cupom que desconta de verdade.
+  const minCupomPct = Number(filters.minCouponPct) || 0;
+  if (minCupomPct > 0) {
+    cond.push(Prisma.sql`${PRECO_COM_CUPOM} <= cp."price" * ${1 - Math.min(100, minCupomPct) / 100}`);
+  }
   if (minDiscount > 0) cond.push(Prisma.sql`cp."discount" >= ${minDiscount}`);
-  if (minPrice > 0) cond.push(Prisma.sql`cp."price" >= ${minPrice}`);
+  // A faixa de preço pode valer sobre o preço FINAL, com o cupom descontado —
+  // "até R$ 100 com cupom" é justamente o produto de R$ 120 que o cupom derruba.
+  const preco = filters.priceWithCoupon ? Prisma.sql`COALESCE(${PRECO_COM_CUPOM}, cp."price")` : Prisma.sql`cp."price"`;
+  if (minPrice > 0) cond.push(Prisma.sql`${preco} >= ${minPrice}`);
   if (maxPrice != null && Number.isFinite(maxPrice) && maxPrice > 0) {
-    cond.push(Prisma.sql`cp."price" <= ${maxPrice}`);
+    cond.push(Prisma.sql`${preco} <= ${maxPrice}`);
   }
   if (minRating > 0) cond.push(Prisma.sql`cp."rating" >= ${minRating}`);
   // soldCount é gravado já parseado (0 quando o produto não diz quantas vendeu),
@@ -397,6 +463,11 @@ const ADMIN_SORTS = {
   rating_desc:   Prisma.sql`cp."rating" DESC NULLS LAST`,
   lastSeen_desc: Prisma.sql`cp."lastSeenAt" DESC`,
   discount_desc: Prisma.sql`cp."discount" DESC NULLS LAST`,
+  // Task 19. O preço que se paga de fato: com o cupom quando ele vale, o de
+  // vitrine quando não. Produto sem cupom entra na mesma régua, não no fim.
+  final_price_asc:   Prisma.sql`COALESCE(${PRECO_COM_CUPOM}, cp."price") ASC NULLS LAST`,
+  // Quanto o cupom tira, em % do preço. Sem cupom valendo vai para o fim.
+  coupon_off_desc:   Prisma.sql`(1 - ${PRECO_COM_CUPOM} / NULLIF(cp."price", 0)) DESC NULLS LAST, cp."discount" DESC NULLS LAST`,
 };
 const ORIGENS_CUPOM = new Set(["vitrine", "parcial", "checkout", "repasse"]);
 

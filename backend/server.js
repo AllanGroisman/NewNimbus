@@ -1898,7 +1898,7 @@ app.post("/api/state/groups/:gid/refill", auth.requireAuth, requireActiveSubscri
 // Ofertas — agora lê do CATÁLOGO global (preenchido pelo admin-scraper)
 // ────────────────────────────────────────────────────────────────────────
 
-const OFERTAS_SORTS = new Set(["relevance", "discount_desc", "price_asc", "price_desc", "rating_desc", "lastSeen_desc"]);
+const OFERTAS_SORTS = new Set(["relevance", "discount_desc", "price_asc", "price_desc", "rating_desc", "lastSeen_desc", "final_price_asc", "coupon_off_desc"]);
 
 // Navegação do catálogo pelo usuário comum — mesma superfície de filtros e
 // ordenação que o refill da campanha usa, com paginação. A aba "Busca de
@@ -1956,7 +1956,12 @@ app.get("/api/ofertas", auth.requireAuth, async (req, res) => {
     // desde que a coluna `couponCampaignId` existe — o que faltava era esta linha,
     // que é o que liga o filtro à tela.
     const hasCoupon = req.query.hasCoupon === "1" || req.query.hasCoupon === "true";
-    const filters = { minDiscount, minPrice, maxPrice, minRating, minSales, keywords, hasCoupon };
+    // Os filtros de cupom da task 19 (catalog/pg.js:buildWhere valida cada um).
+    const coupon = ["com", "com-palavra", "valendo"].includes(req.query.coupon) ? req.query.coupon : null;
+    const couponSearch = String(req.query.couponSearch || "").trim().slice(0, 100);
+    const minCouponPct = Math.min(100, Math.max(0, parseFloat(req.query.minCouponPct) || 0));
+    const priceWithCoupon = req.query.priceWithCoupon === "1" || req.query.priceWithCoupon === "true";
+    const filters = { minDiscount, minPrice, maxPrice, minRating, minSales, keywords, hasCoupon, coupon, couponSearch, minCouponPct, priceWithCoupon };
 
     const sortBy = OFERTAS_SORTS.has(req.query.sortBy) ? req.query.sortBy : "discount_desc";
 
@@ -3289,6 +3294,59 @@ app.get("/api/admin/catalog", auth.requireAuth, auth.requireAdmin, async (req, r
   }
 });
 
+// ── Admin › Cupons (task 17) ──────────────────────────────────────────────
+// A tela de NAVEGAR pelos cupons guardados: resumo, lista filtrável e os produtos
+// de cada cupom. Só leitura — quem escreve é a colheita (aba Admin › Cupom).
+const cuponsBrowse = require("./coupons/browse");
+
+app.get("/api/admin/cupons/resumo", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    // O nome bonito das categorias do ML só o status da colheita sabe (ele é
+    // mesclado a cada rodada) — a tela mostra "Eletrônicos" em vez da chave crua.
+    res.json({ ...await cuponsBrowse.resumo(), groupingLabels: mlCupons.status().groupingLabels || {} });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/cupons/resumo" });
+  }
+});
+
+app.get("/api/admin/cupons", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const q = req.query;
+    res.json(await cuponsBrowse.listar({
+      q: q.q, situacao: q.situacao, palavra: q.palavra, tipo: q.tipo, escopo: q.escopo,
+      categoria: q.categoria, produtos: q.produtos, minValor: q.minValor,
+      sortBy: q.sortBy, page: q.page, pageSize: q.pageSize,
+    }));
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/cupons" });
+  }
+});
+
+app.get("/api/admin/cupons/:campaignId", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const c = await cuponsBrowse.detalhe(String(req.params.campaignId));
+    if (!c) return res.status(404).json({ error: "Cupom não encontrado." });
+    res.json(c);
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/cupons/:campaignId" });
+  }
+});
+
+app.get("/api/admin/cupons/:campaignId/produtos", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const q = req.query;
+    const r = await cuponsBrowse.produtos(String(req.params.campaignId), {
+      q: q.q, origem: q.origem, catalogo: q.catalogo, valendo: q.valendo,
+      minPrice: q.minPrice, maxPrice: q.maxPrice, minDiscount: q.minDiscount,
+      sortBy: q.sortBy, page: q.page, pageSize: q.pageSize,
+    });
+    if (!r) return res.status(404).json({ error: "Cupom não encontrado." });
+    res.json(r);
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/cupons/:campaignId/produtos" });
+  }
+});
+
 // ── Detecção de cupom na legenda do grupo líder ──────────────────────────
 // As palavras-gatilho ("cupom", "código", "voucher"…) e o tamanho do código
 // eram fixos no capture.js; agora vivem em app_config e o admin edita aqui.
@@ -4181,6 +4239,32 @@ app.get("/api/whatsapp/sessions/:id/groups/:jid/invite", auth.requireAuth, async
   }
 });
 
+// A miniatura da foto de um grupo (task 24): a aba Grupos da campanha mostra a
+// foto de cada grupo origem e destino. Guardada em memória por algumas horas —
+// a tela pede uma por grupo a cada vez que abre, e cada pedido é um IQ no
+// WhatsApp. "Sem foto" também fica guardado (por menos tempo), senão o grupo sem
+// foto perguntaria de novo a cada abertura. A URL é do CDN do WhatsApp e vale
+// alguns dias, então as horas daqui cabem com folga.
+const GROUP_PIC_TTL_MS = 6 * 60 * 60 * 1000;
+const GROUP_PIC_NONE_TTL_MS = 60 * 60 * 1000;
+const groupPicCache = new Map();
+app.get("/api/whatsapp/sessions/:id/groups/:jid/picture", auth.requireAuth, async (req, res) => {
+  const k = `${req.user.id}::${req.params.id}::${req.params.jid}`;
+  const hit = groupPicCache.get(k);
+  if (hit && Date.now() - hit.at < (hit.url ? GROUP_PIC_TTL_MS : GROUP_PIC_NONE_TTL_MS)) {
+    return res.json({ url: hit.url });
+  }
+  try {
+    const url = await wa.getGroupPicture(req.user.id, req.params.id, req.params.jid);
+    groupPicCache.set(k, { url: url || null, at: Date.now() });
+    if (groupPicCache.size > 5000) groupPicCache.delete(groupPicCache.keys().next().value);
+    res.json({ url: url || null });
+  } catch (err) {
+    // Número desconectado ou grupo que ele deixou: a tela cai nas iniciais.
+    res.json({ url: null, error: err.message });
+  }
+});
+
 app.post("/api/whatsapp/sessions/:id/groups/:jid/invite/revoke", auth.requireAuth, async (req, res) => {
   try {
     const inviteLink = await wa.revokeInvite(req.user.id, req.params.id, req.params.jid);
@@ -4436,6 +4520,9 @@ async function boot() {
       wa.restoreSessions().catch(err => console.error("[server] restoreSessions:", err.message));
     }
     scheduler.start();
+    // Grupo destino cheio vira o próximo da série (task 25). Mesmo processo do
+    // scheduler: as operações de grupo passam pela fachada `whatsapp`.
+    require("./whatsapp/auto-duplicate").start();
     adminScraper.start();
     scrapTester.start();
     // A rodada GERAL de cupons do ML continua sendo o botão do admin, mas o

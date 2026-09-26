@@ -56,31 +56,44 @@ function renderManage({ scraping, notificationSettings = { enabled: true, events
 
 beforeEach(() => { try { localStorage.clear(); } catch { /* ignore */ } });
 
+// Os avisos específicos ficam atrás de um clique (task 26).
+const abrirEspecificos = () => fireEvent.click(screen.getByRole("button", { name: /Avisos específicos/ }));
+
 describe("GroupDashboard — notificações da campanha", () => {
-  it("campanha sem preferência: tudo ligado", () => {
+  it("campanha sem preferência: tudo ligado, com os específicos recolhidos", () => {
     renderManage();
     expect(screen.getByRole("switch", { name: "Receber avisos desta campanha" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.queryByRole("switch", { name: "Busca de produtos" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Avisos específicos/ })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText("5 de 5 ligados")).toBeInTheDocument();
+    abrirEspecificos();
     expect(screen.getByRole("switch", { name: "Busca de produtos" })).toHaveAttribute("aria-checked", "true");
   });
 
-  it("desligar a chave geral trava os eventos e salva enabled=false", () => {
+  it("desligar a chave geral esconde os específicos e salva enabled=false", () => {
     const { onUpdate } = renderManage();
+    abrirEspecificos();
     fireEvent.click(screen.getByRole("switch", { name: "Receber avisos desta campanha" }));
-    expect(screen.getByRole("switch", { name: "Fila vazia" })).toBeDisabled();
+    expect(screen.queryByRole("switch", { name: "Fila vazia" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Avisos específicos/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/Nenhum aviso do WhatsNimbus sobre esta campanha/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Salvar alterações/ }));
     expect(onUpdate).toHaveBeenCalledTimes(1);
     expect(onUpdate.mock.calls[0][1].scraping.notifications.enabled).toBe(false);
   });
 
-  it("desligar um evento salva só ele", () => {
+  it("desligar um evento salva só ele, e a contagem acompanha", () => {
     const { onUpdate } = renderManage();
+    abrirEspecificos();
     fireEvent.click(screen.getByRole("switch", { name: "Busca de produtos" }));
+    expect(screen.getByText("4 de 5 ligados")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Salvar alterações/ }));
     expect(onUpdate.mock.calls[0][1].scraping.notifications).toEqual({ events: { productSearch: false } });
   });
 
   it("envio instantâneo desliga a fila vazia", () => {
     renderManage({ scraping: { kind: "repasse", autoSend: true } });
+    abrirEspecificos();
     const sw = screen.getByRole("switch", { name: "Fila vazia" });
     expect(sw).toBeDisabled();
     expect(sw).toHaveAttribute("aria-checked", "false");
@@ -89,5 +102,35 @@ describe("GroupDashboard — notificações da campanha", () => {
   it("avisa quando a conta está com as notificações desligadas", () => {
     renderManage({ notificationSettings: { enabled: false } });
     expect(screen.getByText(/desligadas na sua conta/)).toBeInTheDocument();
+  });
+});
+
+// Task 24/26: no repasse, a aprovação automática e a mensagem original moram no
+// Gerenciar, junto das fontes e do tempo de espera.
+describe("GroupDashboard — Gerenciar do repasse", () => {
+  it("nome, fontes e tempo de espera ficam no mesmo cartão", () => {
+    renderManage({ scraping: { kind: "repasse" } });
+    const info = document.querySelector('[data-tour="mg-info"]');
+    expect(info.querySelector('[data-tour="mg-sources"]')).toBeTruthy();
+    expect(info.querySelector('[data-tour="mg-cooldown"]')).toBeTruthy();
+    expect(info.querySelector("#mg-name")).toBeTruthy();
+  });
+
+  it("aprovação automática e mensagem original salvam no Salvar alterações", () => {
+    const { onUpdate } = renderManage({ scraping: { kind: "repasse" } });
+    fireEvent.click(screen.getByRole("switch", { name: "Aprovação automática" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Repassar a mensagem original" }));
+    const salvar = screen.getByRole("button", { name: /Salvar alterações/ });
+    expect(salvar).not.toBeDisabled();
+    fireEvent.click(salvar);
+    const sc = onUpdate.mock.calls[0][1].scraping;
+    expect(sc.auto).toBe(false);
+    expect(sc.repasse.messageMode).toBe("original");
+  });
+
+  it("campanha de busca não tem o cartão do repasse", () => {
+    renderManage();
+    expect(screen.queryByRole("switch", { name: "Aprovação automática" })).not.toBeInTheDocument();
+    expect(document.querySelector('[data-tour="mg-sources"]')).toBeNull();
   });
 });

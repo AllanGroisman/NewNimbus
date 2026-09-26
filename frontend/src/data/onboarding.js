@@ -59,7 +59,7 @@ export const TOURS = {
 
   // Tour da campanha: entra em cada aba e ilumina as partes principais dela.
   // Serve pras duas famílias de campanha — os passos que só existem na busca
-  // (pesquisa, filtros) ou só no repasse (grupos líderes) se pulam sozinhos.
+  // (pesquisa, filtros) ou só no repasse (grupos de origem) se pulam sozinhos.
   campaign: {
     id: "campaign",
     title: "Tour da campanha",
@@ -69,10 +69,10 @@ export const TOURS = {
       { tab: "overview", anchor: "tab-overview", title: "Visão geral", text: "O resumo da campanha, pra bater o olho e ver se está rodando: envios de hoje e da semana, quantos produtos esperam na fila, a hora do último envio e os últimos produtos que foram pros grupos. Não se configura nada aqui." },
 
       // ── Gerenciar
-      { tab: "manage", anchor: "tab-manage", title: "Gerenciar", text: "O nome da campanha, as lojas que ela aceita e a espera pra repetir um produto já enviado. O que você mudar aqui só passa a valer depois de clicar em Salvar." },
+      { tab: "manage", anchor: "tab-manage", title: "Gerenciar", text: "O nome da campanha, as lojas que ela aceita, a espera pra repetir um produto já enviado e os avisos da campanha. No repasse, também a aprovação automática e o repasse da mensagem original. O que você mudar aqui só passa a valer depois de clicar em Salvar." },
 
       // ── Busca de produtos (a campanha de repasse não tem esta aba: os grupos
-      //    líderes ficam na aba Grupos e a revisão dos links, na aba Fila)
+      //    de origem ficam na aba Grupos e a revisão dos links, na aba Fila)
       { tab: "products", anchor: "tab-products", title: "De onde vêm os produtos", text: "É aqui que você diz o que procurar no catálogo: categorias, palavras-chave e filtros de preço, desconto e avaliação. Colar um link na mão não é aqui — isso fica na aba Fila." },
       { tab: "products", anchor: "pr-where", title: "Onde buscar", text: "As lojas e as categorias que esta campanha vasculha. Aparecem só as categorias ligadas; o botão \"Adicionar categoria\" abre a lista pra marcar mais, até o limite do seu plano." },
       { tab: "products", anchor: "pr-queue", title: "Preenchimento automático", text: "A chave liga e desliga o preenchimento sozinho. Em \"Configurar\" você escolhe quando ele acontece — quando a fila estiver acabando ou em horários fixos do dia — e o máximo de produtos que a fila pode ter — o preenchimento completa até esse número e para. A ordem fica no seletor em cima da lista de produtos." },
@@ -83,11 +83,11 @@ export const TOURS = {
 
       // ── Grupos
       { tab: "whatsapp", anchor: "tab-whatsapp", title: "Grupos", text: "Os grupos destino, que recebem as ofertas desta campanha. Sem grupo aqui, não tem pra quem enviar." },
-      // Líderes antes do "+ Adicionar grupo": no repasse a aba abre pela
-      // captura, e o tour segue a mesma ordem da tela. Na campanha de busca a
-      // âncora pr-leader não existe e o passo é pulado.
-      { tab: "whatsapp", anchor: "pr-leader", title: "Grupos líderes", text: "No repasse, os grupos que o sistema fica escutando: todo link de produto postado neles é capturado e re-afiliado com a sua tag. Com a aprovação automática ligada eles entram direto na fila; desligada, esperam você aprovar na aba Fila." },
-      { tab: "whatsapp", anchor: "wg-add", title: "Adicionar um grupo", text: "Cria um grupo novo ou vincula um que já existe, usando um dos números que você conectou. A bolinha de cada grupo na lista diz se ele está conectado." },
+      // Origem antes do destino: no repasse a aba mostra o caminho do link, e o
+      // tour segue a mesma ordem da tela. Na campanha de busca a âncora
+      // pr-leader não existe e o passo é pulado.
+      { tab: "whatsapp", anchor: "pr-leader", title: "Grupos Origem", text: "No repasse, os grupos que o sistema fica escutando: todo link de produto postado neles é capturado, re-afiliado com a sua tag e segue a seta até os grupos destino. Com a aprovação automática (aba Gerenciar) ligada eles entram direto na fila; desligada, esperam você aprovar na aba Fila." },
+      { tab: "whatsapp", anchor: "wg-add", title: "Adicionar um grupo", text: "Abre o popup: primeiro você escolhe o WhatsApp, depois o grupo dele — ou cria um grupo novo. A bolinha na foto de cada grupo diz se ele está conectado, e o ⋯ guarda o link de convite, a cópia do grupo e a duplicação automática quando ele enche." },
 
       // ── Modelos de mensagem
       { tab: "messages", anchor: "tab-messages", title: "Modelos de mensagem", text: "É onde você escolhe como vai ser a mensagem enviada nos grupos: o texto que acompanha cada oferta." },

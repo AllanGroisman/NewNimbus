@@ -398,6 +398,29 @@ textarea::placeholder {
 .sec-panel.join-left  { border-top-left-radius: 0;  }
 .sec-panel.join-right { border-top-right-radius: 0; }
 
+/* Aba Grupos do repasse (task 25): origem → destino lado a lado, com a seta no
+   meio. Abaixo de 1100px (a sidebar come ~220px) as duas colunas não cabem os
+   cartões, e o fluxo vira uma coluna com a seta apontando para baixo. */
+.groups-flow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 56px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.groups-flow-arrow {
+  align-self: stretch;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  color: var(--color-brand); font-size: 26px; line-height: 1; padding-top: 40px;
+}
+.groups-flow-arrow-label { font-size: 10px; color: var(--color-text-secondary); text-align: center; line-height: 1.2; }
+.groups-flow-arrow-v { display: none; }
+@media (max-width: 1100px) {
+  .groups-flow { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .groups-flow-arrow { flex-direction: row; padding: 4px 0; font-size: 22px; gap: 8px; }
+  .groups-flow-arrow-h { display: none; }
+  .groups-flow-arrow-v { display: inline; }
+}
+
 /* Mobile responsive */
 @media (max-width: 768px) {
   .sec-panel.join-left, .sec-panel.join-right {

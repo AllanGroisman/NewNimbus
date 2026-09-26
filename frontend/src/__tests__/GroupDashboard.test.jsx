@@ -2,8 +2,8 @@
 // (recém-movido pra ser visível em todas as abas). Não cobre toda a UI, só os
 // pontos críticos que mudaram recentemente.
 
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 
 // Mock dos imports de api antes de importar o componente
 vi.mock("../data/api", () => ({
@@ -25,10 +25,12 @@ vi.mock("../data/api", () => ({
   saveGroupQueue: vi.fn(),
   approveAllPending: vi.fn(),
   rejectAllPending: vi.fn(),
+  getWAGroupPicture: vi.fn().mockResolvedValue({ url: null }),
+  getWAInvite: vi.fn().mockResolvedValue({ inviteLink: "https://chat.whatsapp.com/ABC" }),
 }));
 
 import GroupDashboard from "../components/GroupDashboard.jsx";
-import { createWAGroup, fetchUrlMetadata } from "../data/api";
+import { createWAGroup, fetchUrlMetadata, listWAGroups, getWAInvite, getWAGroupPicture } from "../data/api";
 
 function makeGroup(overrides = {}) {
   return {
@@ -150,49 +152,180 @@ describe("GroupDashboard — voltar", () => {
   });
 });
 
-describe("GroupDashboard — desvincular grupo (aba Grupos)", () => {
+// A aba Grupos (tasks 24 e 25): cartões iguais para origem e destino, com as
+// ações atrás do "⋯", e o popup de adicionar que escolhe o WhatsApp e depois o grupo.
+const abrirMenu = (nome) => fireEvent.click(screen.getByRole("button", { name: `Mais ações — ${nome}` }));
+const itemDoMenu = (nome) => screen.getByRole("menuitem", { name: nome });
+
+describe("GroupDashboard — remover grupo destino (aba Grupos)", () => {
   // Setup: campanha com 1 grupo de WhatsApp vinculado, na aba "Grupos".
-  function renderWithLinkedGroup() {
-    return renderDashboard({
+  function renderWithLinkedGroup(extra = {}) {
+    const r = renderDashboard({
       group: { whatsappGroupIds: ["wg-1"] },
-      numbers: [{ id: "num-1", label: "Número 1", phone: "5511999999999" }],
-      whatsappGroups: [{ id: "wg-1", name: "Grupo Vinculado", numberId: "num-1", members: 5, jid: "wg-1" }],
+      numbers: [{ id: "num-1", label: "Número 1", phone: "5511999999999", status: "connected" }],
+      whatsappGroups: [{ id: "wg-1", name: "Grupo Vinculado", numberId: "num-1", members: 5, jid: "wg-1", ...extra }],
     });
+    fireEvent.click(screen.getByRole("button", { name: /Grupos/ })); // vai pra aba
+    return r;
   }
 
-  it("clicar 'Desvincular' abre modal de confirmação (não desvincula direto)", () => {
+  it("o cartão mostra o WhatsApp de origem, a conexão e os membros", () => {
+    renderWithLinkedGroup();
+    const destino = within(screen.getByRole("region", { name: "Grupos Destino" }));
+    expect(destino.getByText("Grupo Vinculado")).toBeInTheDocument();
+    expect(destino.getByText("Conectado")).toBeInTheDocument();
+    expect(destino.getByText(/Número 1/)).toBeInTheDocument();
+    expect(destino.getByText(/5 membros/)).toBeInTheDocument();
+  });
+
+  it("remover fica no ⋯ e pede confirmação (não desvincula direto)", () => {
     const { props } = renderWithLinkedGroup();
-    fireEvent.click(screen.getByRole("button", { name: /Grupos/ })); // vai pra aba
-
-    fireEvent.click(screen.getByRole("button", { name: /^Desvincular$/ }));
-
-    expect(screen.getByText(/Desvincular grupo\?/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Desvincular$/ })).not.toBeInTheDocument();
+    abrirMenu("Grupo Vinculado");
+    fireEvent.click(itemDoMenu("Remover da campanha"));
+    expect(screen.getByText(/Remover grupo da campanha\?/i)).toBeInTheDocument();
     expect(props.onUpdate).not.toHaveBeenCalled(); // ainda não mexeu no estado
   });
 
   it("confirmar no modal chama onUpdate removendo o grupo dos vinculados", () => {
     const { props } = renderWithLinkedGroup();
-    fireEvent.click(screen.getByRole("button", { name: /Grupos/ }));
-    fireEvent.click(screen.getByRole("button", { name: /^Desvincular$/ }));
-
-    // Agora há 2 botões "Desvincular" (o da lista + o de confirmar no modal).
-    const botoes = screen.getAllByRole("button", { name: /^Desvincular$/ });
-    fireEvent.click(botoes[botoes.length - 1]); // o do modal
-
+    abrirMenu("Grupo Vinculado");
+    fireEvent.click(itemDoMenu("Remover da campanha"));
+    fireEvent.click(screen.getByRole("button", { name: /^Remover$/ }));
     expect(props.onUpdate).toHaveBeenCalledWith(1, { whatsappGroupIds: [] });
+  });
+
+  it("copiar o link de convite busca o link quando o grupo ainda não tem", async () => {
+    const { props } = renderWithLinkedGroup();
+    abrirMenu("Grupo Vinculado");
+    fireEvent.click(itemDoMenu("🔗 Copiar link de convite"));
+    await waitFor(() => expect(getWAInvite).toHaveBeenCalledWith("num-1", "wg-1"));
+    expect(props.onUpdateWhatsappGroup).toHaveBeenCalledWith("wg-1", { inviteLink: "https://chat.whatsapp.com/ABC" });
+    expect(await screen.findByText(/Link de convite de "Grupo Vinculado" copiado/)).toBeInTheDocument();
+  });
+
+  it("a duplicação automática liga e desliga pelo ⋯", () => {
+    const { props } = renderWithLinkedGroup();
+    abrirMenu("Grupo Vinculado");
+    const item = screen.getByRole("menuitemcheckbox", { name: /Duplicar automaticamente quando encher/ });
+    expect(item).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(item);
+    expect(props.onUpdateWhatsappGroup).toHaveBeenCalledWith("wg-1", { autoDuplicate: true });
+  });
+
+  it("grupo com a duplicação ligada ganha o selo; o que já duplicou avisa", () => {
+    renderWithLinkedGroup({ autoDuplicate: true });
+    expect(screen.getByText(/Duplica ao encher/)).toBeInTheDocument();
+  });
+
+  it("'Duplicar grupo' abre a criação com o próximo nome da série", () => {
+    renderWithLinkedGroup();
+    abrirMenu("Grupo Vinculado");
+    fireEvent.click(itemDoMenu("⎘ Duplicar grupo"));
+    expect(screen.getByLabelText("Nome do grupo")).toHaveValue("Grupo Vinculado #2");
+  });
+});
+
+describe("GroupDashboard — foto do grupo", () => {
+  it("mostra a miniatura do WhatsApp; sem foto, as iniciais", async () => {
+    getWAGroupPicture.mockImplementation(async (numberId, jid) => ({ url: jid === "foto@g.us" ? "https://pps.whatsapp.net/foto.jpg" : null }));
+    const { container } = renderDashboard({
+      group: { whatsappGroupIds: ["foto@g.us", "semfoto@g.us"] },
+      numbers: [{ id: "num-1", label: "Número 1", status: "connected" }],
+      whatsappGroups: [
+        { id: "foto@g.us", name: "Com Foto", numberId: "num-1" },
+        { id: "semfoto@g.us", name: "Sem Foto Aqui", numberId: "num-1" },
+      ],
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Grupos/ }));
+    await waitFor(() => expect(container.querySelector('img[src="https://pps.whatsapp.net/foto.jpg"]')).toBeTruthy());
+    expect(getWAGroupPicture).toHaveBeenCalledWith("num-1", "semfoto@g.us");
+    expect(screen.getByText("SF")).toBeInTheDocument();
+  });
+});
+
+describe("GroupDashboard — adicionar grupo destino (WhatsApp → grupo)", () => {
+  // O happy-dom tem IntersectionObserver, mas ele nunca avisa: aqui toda linha
+  // "aparece" assim que é observada.
+  beforeEach(() => {
+    vi.stubGlobal("IntersectionObserver", class {
+      constructor(cb) { this.cb = cb; }
+      observe(el) { this.cb([{ isIntersecting: true, target: el }]); }
+      disconnect() {}
+    });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  function abrir(extra = {}) {
+    const r = renderDashboard({
+      numbers: [
+        { id: "num-1", label: "Número 1", phone: "5511999999999", status: "connected" },
+        { id: "num-2", label: "Número 2", phone: "5511888888888", status: "disconnected" },
+      ],
+      ...extra,
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Grupos/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Adicionar grupo destino" }));
+    return r;
+  }
+
+  it("primeiro o WhatsApp (desconectado não entra), depois os grupos dele", async () => {
+    listWAGroups.mockResolvedValueOnce([{ jid: "g1@g.us", name: "Grupo Um", members: 12 }]);
+    const { props } = abrir();
+    expect(screen.getByRole("button", { name: /Número 2/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /Número 1/ }));
+    await waitFor(() => expect(listWAGroups).toHaveBeenCalledWith("num-1"));
+    fireEvent.click(await screen.findByRole("button", { name: /Grupo Um/ }));
+    await waitFor(() => expect(props.onCreateWhatsappGroup).toHaveBeenCalledWith(expect.objectContaining({ id: "g1@g.us", name: "Grupo Um", numberId: "num-1" })));
+  });
+
+  it("a lista do popup mostra a foto de cada grupo", async () => {
+    getWAGroupPicture.mockImplementation(async (numberId, jid) => ({ url: jid === "popfoto@g.us" ? "https://pps.whatsapp.net/pop.jpg" : null }));
+    listWAGroups.mockResolvedValueOnce([
+      { jid: "popfoto@g.us", name: "Grupo Foto", members: 3 },
+      { jid: "popsem@g.us", name: "Outro Grupo", members: 5 },
+    ]);
+    const { container } = abrir();
+    fireEvent.click(screen.getByRole("button", { name: /Número 1/ }));
+    await waitFor(() => expect(container.ownerDocument.querySelector('img[src="https://pps.whatsapp.net/pop.jpg"]')).toBeTruthy());
+    expect(getWAGroupPicture).toHaveBeenCalledWith("num-1", "popsem@g.us");
+    expect(screen.getByText("OG")).toBeInTheDocument();
+  });
+
+  it("com muitos grupos, no máximo 4 fotos são pedidas ao mesmo tempo", async () => {
+    const pendentes = [];
+    let maxAndando = 0;
+    getWAGroupPicture.mockImplementation(() => new Promise(resolve => {
+      pendentes.push(resolve);
+      maxAndando = Math.max(maxAndando, pendentes.length);
+    }));
+    listWAGroups.mockResolvedValueOnce(Array.from({ length: 10 }, (_, i) => ({ jid: `fila${i}@g.us`, name: `Fila ${i}`, members: 1 })));
+    abrir();
+    fireEvent.click(screen.getByRole("button", { name: /Número 1/ }));
+    await screen.findByRole("button", { name: /Fila 9/ });
+    let atendidos = 0;
+    while (atendidos < 10) {
+      await waitFor(() => expect(pendentes.length).toBeGreaterThan(0));
+      expect(pendentes.length).toBeLessThanOrEqual(4);
+      const lote = pendentes.splice(0);
+      atendidos += lote.length;
+      lote.forEach(r => r({ url: null }));
+    }
+    expect(maxAndando).toBe(4);
+    expect(getWAGroupPicture.mock.calls.filter(([, jid]) => jid.startsWith("fila")).length).toBe(10);
   });
 });
 
 describe("GroupDashboard — criar grupo com envio só para admins", () => {
-  // Abre o fluxo "adicionar grupo" > "criar grupo novo" e preenche o nome.
+  // Abre o popup, escolhe o WhatsApp e vai em "criar grupo novo".
   async function abrirCriacao() {
     const rendered = renderDashboard({
       numbers: [{ id: "num-1", label: "Número 1", phone: "5511999999999", status: "connected" }],
     });
     fireEvent.click(screen.getByRole("button", { name: /Grupos/ }));
     fireEvent.click(screen.getByRole("button", { name: /Adicionar primeiro grupo/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Criar grupo novo/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Próximo/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Número 1/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Criar grupo novo neste WhatsApp/ }));
     fireEvent.change(screen.getByPlaceholderText(/Regional/), { target: { value: "Grupo Novo" } });
     return rendered;
   }
@@ -209,15 +342,17 @@ describe("GroupDashboard — criar grupo com envio só para admins", () => {
     expect(screen.getByPlaceholderText(/Regional/)).toBeInTheDocument();
   });
 
-  it("adminOnly=true fecha o modal sem aviso", async () => {
+  it("adminOnly=true fecha o modal sem aviso e vincula o grupo", async () => {
     createWAGroup.mockResolvedValue({
       jid: "wg-novo@g.us", name: "Grupo Novo", inviteLink: null, adminOnly: true, participants: [],
     });
-    await abrirCriacao();
+    const { props } = await abrirCriacao();
     fireEvent.click(screen.getByRole("button", { name: /Criar e vincular/ }));
 
     await waitFor(() => expect(screen.queryByPlaceholderText(/Regional/)).not.toBeInTheDocument());
     expect(screen.queryByText(/só para admins/i)).not.toBeInTheDocument();
+    expect(createWAGroup).toHaveBeenCalledWith("num-1", "Grupo Novo", []);
+    expect(props.onCreateWhatsappGroup).toHaveBeenCalledWith(expect.objectContaining({ id: "wg-novo@g.us", numberId: "num-1" }));
   });
 });
 
@@ -228,36 +363,68 @@ describe("GroupDashboard — fila vazia no modo repasse", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /Fila/ })); // aba Fila
 
-    expect(screen.getByText(/grupos líderes/i)).toBeInTheDocument();
+    expect(screen.getByText(/grupos de origem/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Ir para Grupos/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Ir para Busca de Produtos/i })).not.toBeInTheDocument();
   });
 });
 
-describe("GroupDashboard — grupos líderes do repasse", () => {
+describe("GroupDashboard — grupos de origem do repasse", () => {
   function abrirRepasse(overrides) {
     const r = renderDashboard(overrides);
-    // Os grupos líderes moram na aba Grupos desde que a aba Repasse foi removida.
+    // Os grupos de origem moram na aba Grupos desde que a aba Repasse foi removida.
     fireEvent.click(screen.getByRole("button", { name: /^Grupos/ }));
     return r;
   }
 
-  function renderRepasse(leaders, limitLeaders = 3) {
+  function renderRepasse(leaders, limitLeaders = 3, numbers = [{ id: "n1", label: "Número 1" }]) {
     return abrirRepasse({
       group: { scraping: { kind: "repasse", sources: [], filters: {}, repasse: { leaders } } },
-      numbers: [{ id: "n1", label: "Número 1" }],
+      numbers,
       limits: { leadersPerCampaign: limitLeaders },
     });
   }
 
-  it("lista todos os líderes da campanha", () => {
+  it("lista todas as origens da campanha, cada uma com o seu ⋯", () => {
     renderRepasse([
       { numberId: "n1", jid: "111@g.us", name: "Ofertas A" },
       { numberId: "n1", jid: "222@g.us", name: "Ofertas B" },
     ]);
     expect(screen.getByText("Ofertas A")).toBeInTheDocument();
     expect(screen.getByText("Ofertas B")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: /^Remover$/ })).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Mais ações — Ofertas A" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mais ações — Ofertas B" })).toBeInTheDocument();
+  });
+
+  it("remover uma origem pede confirmação e grava na hora", () => {
+    const { props } = renderRepasse([
+      { numberId: "n1", jid: "111@g.us", name: "Ofertas A" },
+      { numberId: "n1", jid: "222@g.us", name: "Ofertas B" },
+    ]);
+    abrirMenu("Ofertas A");
+    fireEvent.click(itemDoMenu("Remover da origem"));
+    expect(screen.getByText(/Remover grupo de origem\?/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Remover$/ }));
+    const scraping = props.onUpdate.mock.calls.at(-1)[1].scraping;
+    expect(scraping.repasse.leaders).toEqual([{ numberId: "n1", jid: "222@g.us", name: "Ofertas B" }]);
+    expect(screen.queryByText("Ofertas A")).not.toBeInTheDocument();
+  });
+
+  it("adicionar origem: escolhe o WhatsApp, depois o grupo, e grava na hora", async () => {
+    listWAGroups.mockResolvedValueOnce([
+      { jid: "111@g.us", name: "Ofertas A", members: 50 },
+      { jid: "333@g.us", name: "Ofertas C", members: 80 },
+    ]);
+    const { props } = renderRepasse([{ numberId: "n1", jid: "111@g.us", name: "Ofertas A" }], 3,
+      [{ id: "n1", label: "Número 1", status: "connected" }]);
+    fireEvent.click(screen.getByRole("button", { name: "Adicionar grupo de origem" }));
+    fireEvent.click(screen.getByRole("button", { name: /Número 1/ }));
+    // O que já é origem aparece travado.
+    expect(await screen.findByRole("button", { name: /Ofertas A.*Já é origem/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /Ofertas C/ }));
+    await waitFor(() => expect(props.onUpdate).toHaveBeenCalled());
+    const scraping = props.onUpdate.mock.calls.at(-1)[1].scraping;
+    expect(scraping.repasse.leaders.map(l => l.jid)).toEqual(["111@g.us", "333@g.us"]);
   });
 
   it("entende o formato antigo de líder único", () => {
@@ -269,13 +436,13 @@ describe("GroupDashboard — grupos líderes do repasse", () => {
     expect(screen.getByText("Ofertas Antigas")).toBeInTheDocument();
   });
 
-  it("no limite do plano, esconde o seletor e explica o porquê", () => {
+  it("no limite do plano, trava o adicionar e explica o porquê", () => {
     renderRepasse([{ numberId: "n1", jid: "111@g.us", name: "Ofertas A" }], 1);
-    expect(screen.getByText(/limite de 1 grupo líder do seu plano/i)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Número 1/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/limite de 1 grupo de origem do seu plano/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Adicionar grupo de origem" })).toBeDisabled();
   });
 
-  it("a aba Repasse não existe mais — os líderes ficam na aba Grupos", () => {
+  it("a aba Repasse não existe mais — as origens ficam na aba Grupos e a aprovação no Gerenciar", () => {
     renderDashboard({
       group: { scraping: { kind: "repasse", sources: [], filters: {}, repasse: { leaders: [] } } },
       numbers: [{ id: "n1", label: "Número 1" }],
@@ -283,8 +450,11 @@ describe("GroupDashboard — grupos líderes do repasse", () => {
     });
     expect(screen.queryByRole("button", { name: /^Repasse$/ })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Grupos/ }));
-    expect(screen.getAllByText(/Grupos líderes/i).length).toBeGreaterThan(0);
+    expect(screen.getByText("Grupos Origem")).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Aprovação automática" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Gerenciar$/ }));
     expect(screen.getByRole("switch", { name: "Aprovação automática" })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Repassar a mensagem original" })).toBeInTheDocument();
   });
 
   it("campanha de busca continua com a aba Busca de Produtos", () => {
@@ -292,29 +462,26 @@ describe("GroupDashboard — grupos líderes do repasse", () => {
     expect(screen.getByRole("button", { name: /Busca de Produtos/ })).toBeInTheDocument();
   });
 
-  it("com vaga sobrando, o seletor de número fica disponível", () => {
-    renderRepasse([{ numberId: "n1", jid: "111@g.us", name: "Ofertas A" }], 3);
-    expect(screen.getByRole("button", { name: /Número 1/ })).toBeInTheDocument();
-  });
-
-  it("a captura (líderes) vem antes da lista de grupos destino", () => {
+  it("a origem vem antes do destino, ligadas pela seta", () => {
     const { container } = renderRepasse([{ numberId: "n1", jid: "111@g.us", name: "Ofertas A" }]);
-    const lideres = container.querySelector('[data-tour="pr-leader"]');
+    const origem = container.querySelector('[data-tour="pr-leader"]');
     const envio = container.querySelector('[data-tour="wg-list"]');
-    expect(lideres).toBeTruthy();
+    expect(origem).toBeTruthy();
     expect(envio).toBeTruthy();
-    expect(lideres.compareDocumentPosition(envio) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(origem.compareDocumentPosition(envio) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(container.querySelector(".groups-flow-arrow")).toBeTruthy();
     expect(screen.getByText("Grupos Destino")).toBeInTheDocument();
   });
 
-  it("campanha de busca não ganha seção de captura na aba Grupos", () => {
+  it("campanha de busca não ganha seção de origem na aba Grupos", () => {
     const { container } = renderDashboard({ group: { scraping: { kind: "scraping", sources: ["Amazon"], filters: {} } } });
     fireEvent.click(screen.getByRole("button", { name: /^Grupos/ }));
     expect(container.querySelector('[data-tour="pr-leader"]')).toBeNull();
+    expect(container.querySelector(".groups-flow-arrow")).toBeNull();
     expect(screen.getByText("Grupos Destino")).toBeInTheDocument();
   });
 
-  it("líder com número conectado mostra 'Conectado'", () => {
+  it("origem com número conectado mostra 'Conectado'", () => {
     abrirRepasse({
       group: { scraping: { kind: "repasse", sources: [], filters: {}, repasse: { leaders: [{ numberId: "n1", jid: "111@g.us", name: "Ofertas A" }] } } },
       numbers: [{ id: "n1", label: "Número 1", status: "connected" }],
@@ -323,13 +490,13 @@ describe("GroupDashboard — grupos líderes do repasse", () => {
     expect(screen.getByText("Conectado")).toBeInTheDocument();
   });
 
-  it("líder com número desconectado avisa que nada é capturado", () => {
+  it("origem com número desconectado avisa que nada é capturado", () => {
     renderRepasse([{ numberId: "n1", jid: "111@g.us", name: "Ofertas A" }]);
     expect(screen.getByText("Desconectado")).toBeInTheDocument();
     expect(screen.getByText(/nada é capturado neste grupo/i)).toBeInTheDocument();
   });
 
-  it("líder cujo número sumiu aparece como removido", () => {
+  it("origem cujo número sumiu aparece como removido", () => {
     abrirRepasse({
       group: { scraping: { kind: "repasse", sources: [], filters: {}, repasse: { leaders: [{ numberId: "n9", jid: "111@g.us", name: "Ofertas A" }] } } },
       numbers: [{ id: "n1", label: "Número 1", status: "connected" }],
@@ -338,12 +505,12 @@ describe("GroupDashboard — grupos líderes do repasse", () => {
     expect(screen.getByText(/número removido/i)).toBeInTheDocument();
   });
 
-  it("repasse sem nenhum líder avisa que a campanha não captura nada", () => {
+  it("repasse sem nenhuma origem avisa que a campanha não captura nada", () => {
     renderRepasse([]);
-    expect(screen.getByText(/Nenhum grupo líder escolhido/i)).toBeInTheDocument();
+    expect(screen.getByText(/Nenhum grupo de origem escolhido/i)).toBeInTheDocument();
   });
 
-  it("grupo que é destino e líder ao mesmo tempo ganha o selo de líder", () => {
+  it("grupo que é destino e origem ao mesmo tempo ganha o selo nos dois lados", () => {
     abrirRepasse({
       group: {
         whatsappGroupIds: ["111@g.us"],
@@ -353,7 +520,8 @@ describe("GroupDashboard — grupos líderes do repasse", () => {
       numbers: [{ id: "n1", label: "Número 1", status: "connected" }],
       limits: { leadersPerCampaign: 3 },
     });
-    expect(screen.getByText(/Também é líder/)).toBeInTheDocument();
+    expect(screen.getByText(/Também é origem/)).toBeInTheDocument();
+    expect(screen.getByText(/Também é destino/)).toBeInTheDocument();
   });
 });
 

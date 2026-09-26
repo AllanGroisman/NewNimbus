@@ -1214,6 +1214,19 @@ async function getGroupMetadata(userId, numberId, jid) {
   return s.sock.groupMetadata(jid);
 }
 
+// A URL da miniatura da foto do grupo (task 24), ou null quando o grupo não tem
+// foto — o WhatsApp responde "item-not-found" e isso não é erro. A URL é do CDN
+// do WhatsApp e expira em alguns dias; quem guarda (server.js) guarda por horas.
+async function getGroupPicture(userId, numberId, jid) {
+  const s = ensureConnected(userId, numberId);
+  try {
+    return (await s.sock.profilePictureUrl(jid, "preview")) || null;
+  } catch (err) {
+    if (/not-found|item-not-found|404|401|not-authorized/i.test(String(err?.message || err?.data || ""))) return null;
+    throw err;
+  }
+}
+
 // ── Manutenção periódica ────────────────────────────────────────────────────
 // Dois timers, iniciados uma vez por processo (por restoreSessions, que roda no
 // boot do worker e do server em memory mode).
@@ -1428,6 +1441,7 @@ module.exports = {
   listGroups,
   leaveGroup,
   getGroupMetadata,
+  getGroupPicture,
   restoreSessions,
   closeAll,
   jidFromPhone,
@@ -1462,6 +1476,7 @@ function makeStub() {
     listGroups: fail,
     leaveGroup: fail,
     getGroupMetadata: fail,
+    getGroupPicture: fail,
     restoreSessions: () => {},
     closeAll: () => Promise.resolve(),
     jidFromPhone: () => null,

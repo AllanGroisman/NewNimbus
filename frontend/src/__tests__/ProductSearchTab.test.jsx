@@ -934,3 +934,67 @@ describe("ProductSearchTab — autosave", () => {
     expect(screen.getByText("✓ Salvo")).toBeInTheDocument();
   });
 });
+
+// Task 19: o cupom do ML na busca da campanha — filtro, ordem e o preço final no card.
+describe("ProductSearchTab — cupom", () => {
+  const abrirFiltros = () => fireEvent.click(screen.getByRole("button", { name: /^Filtros/ }));
+  const ultima = () => browseCatalog.mock.calls[browseCatalog.mock.calls.length - 1][0];
+
+  it("o nível do cupom vale no clique e aposenta o hasCoupon antigo", async () => {
+    // Campanha salva antes da task 19: `hasCoupon` quer dizer "com cupom".
+    render(<Harness initialScraping={{ auto: true, sources: ["Mercado Livre"], filters: { hasCoupon: true } }} />);
+    await waitFor(() => expect(browseCatalog).toHaveBeenCalled());
+    expect(browseCatalog.mock.calls[0][0].coupon).toBe("com");
+    expect(screen.getByText("com cupom do ML")).toBeInTheDocument();
+
+    abrirFiltros();
+    fireEvent.click(screen.getByRole("radio", { name: "Cupom valendo" }));
+    await waitFor(() => expect(ultima().coupon).toBe("valendo"));
+
+    fireEvent.click(screen.getByRole("radio", { name: "Qualquer produto" }));
+    await waitFor(() => expect(ultima().coupon).toBe(""));
+    expect(screen.queryByText("com cupom do ML")).not.toBeInTheDocument();
+  });
+
+  it("cupom específico, desconto mínimo do cupom e preço com cupom vão pro catálogo no Buscar", async () => {
+    render(<Harness />);
+    await waitFor(() => expect(browseCatalog).toHaveBeenCalled());
+    abrirFiltros();
+    fireEvent.change(screen.getByLabelText("Cupom específico"), { target: { value: "GALAXY10" } });
+    fireEvent.change(screen.getByLabelText("Desconto mínimo do cupom"), { target: { value: "15" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: /valem para o preço com cupom/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Buscar" }));
+    await waitFor(() => expect(ultima()).toMatchObject({
+      couponSearch: "GALAXY10", minCouponPct: 15, priceWithCoupon: true,
+    }));
+    expect(screen.getByText('cupom "GALAXY10"')).toBeInTheDocument();
+    expect(screen.getByText("cupom de 15%+")).toBeInTheDocument();
+  });
+
+  it("as ordens de cupom estão no seletor", async () => {
+    render(<Harness />);
+    await waitFor(() => expect(browseCatalog).toHaveBeenCalledTimes(1));
+    expect(SORT_OPTIONS.map(o => o.id)).toEqual(expect.arrayContaining(["final_price_asc", "coupon_off_desc"]));
+    fireEvent.change(await screen.findByLabelText("Ordenar Por"), { target: { value: "final_price_asc" } });
+    await waitFor(() => expect(ultima().sortBy).toBe("final_price_asc"));
+  });
+
+  it("o card mostra o preço do cupom com palavra que mais desconta", async () => {
+    browseCatalog.mockResolvedValue({
+      items: [makeProduct({
+        price: 150,
+        coupons: [
+          { campaignId: "1", code: "DEZ", rotulo: "10% OFF", priceWithCoupon: 135 },
+          { campaignId: "2", code: "TRINTA", rotulo: "R$ 30,00 OFF", priceWithCoupon: 120 },
+          { campaignId: "3", code: null, rotulo: "50% OFF", priceWithCoupon: 75 },
+        ],
+      })],
+      total: 1, page: 1, pageSize: 24,
+    });
+    render(<Harness />);
+    expect(await screen.findByText(/R\$ 120,00 com cupom/)).toBeInTheDocument();
+    expect(screen.getByText(/TRINTA · R\$ 30,00 OFF/)).toBeInTheDocument();
+    // O de 50% não tem palavra: o cliente não teria o que digitar.
+    expect(screen.queryByText(/R\$ 75,00/)).not.toBeInTheDocument();
+  });
+});

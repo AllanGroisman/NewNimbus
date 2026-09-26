@@ -416,6 +416,7 @@ export async function fetchOfertas({ category, minDiscount = 0, minPrice = 0, ma
 export async function browseCatalog({
   categories, sources, q = "", minPrice = 0, maxPrice, minDiscount = 0,
   minRating = 0, minSales = 0, hasCoupon = false,
+  coupon = "", couponSearch = "", minCouponPct = 0, priceWithCoupon = false,
   sortBy = "discount_desc", page = 1, pageSize = 24,
   groupId, hideQueued = true, hideRecent = true,
 } = {}, { signal } = {}) {
@@ -437,6 +438,11 @@ export async function browseCatalog({
   // Só quando ligado: o backend lê "1"/"true" e ignora o resto, e mandar
   // "hasCoupon=false" à toa só sujaria a URL (e a chave de cache do navegador).
   if (hasCoupon) params.set("hasCoupon", "1");
+  // Os filtros de cupom (task 19) — a mesma regra: só vão quando ligados.
+  if (coupon) params.set("coupon", coupon);
+  if (couponSearch && couponSearch.trim()) params.set("couponSearch", couponSearch.trim());
+  if (minCouponPct > 0) params.set("minCouponPct", minCouponPct);
+  if (priceWithCoupon) params.set("priceWithCoupon", "1");
   params.set("sortBy", sortBy);
   params.set("page", page);
   params.set("pageSize", pageSize);
@@ -477,6 +483,10 @@ export async function requestWAPairingCode(id, phone) {
 
 // ─── WhatsApp / grupos ─────────────────────────────────────────────────
 export async function listWAGroups(id)   { return http("GET",  `/api/whatsapp/sessions/${id}/groups`); }
+// A miniatura da foto do grupo — { url } ou { url: null } quando não tem foto.
+export async function getWAGroupPicture(id, jid) {
+  return http("GET", `/api/whatsapp/sessions/${id}/groups/${encodeURIComponent(jid)}/picture`);
+}
 export async function createWAGroup(id, name, participants) {
   return http("POST", `/api/whatsapp/sessions/${id}/groups`, { name, participants });
 }
@@ -715,6 +725,26 @@ export async function adminCatalog({ page = 1, pageSize = 50, category, source, 
   if (cupomBusca) params.set("cupomBusca", cupomBusca);
   if (cupomOrigem) params.set("cupomOrigem", cupomOrigem);
   return http("GET", `/api/admin/catalog?${params}`);
+}
+// Admin › Cupons (task 17): navegar pelos cupons guardados. Parâmetros vazios
+// não vão na URL — o backend trata ausência como "sem filtro".
+const qsDe = (obj) => {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(obj || {})) {
+    if (v === undefined || v === null || v === "" || v === false || v === 0) continue;
+    params.set(k, v === true ? "1" : String(v));
+  }
+  return params.toString();
+};
+export async function adminCuponsResumo() { return http("GET", "/api/admin/cupons/resumo"); }
+export async function adminCuponsListar(filtros = {}, { signal } = {}) {
+  return http("GET", `/api/admin/cupons?${qsDe(filtros)}`, undefined, { signal });
+}
+export async function adminCupomDetalhe(campaignId) {
+  return http("GET", `/api/admin/cupons/${encodeURIComponent(campaignId)}`);
+}
+export async function adminCupomProdutosFiltrados(campaignId, filtros = {}, { signal } = {}) {
+  return http("GET", `/api/admin/cupons/${encodeURIComponent(campaignId)}/produtos?${qsDe(filtros)}`, undefined, { signal });
 }
 export async function adminClearCatalog() { return http("DELETE", "/api/admin/catalog"); }
 
