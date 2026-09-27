@@ -21,6 +21,7 @@ const ytdlp = require("./ytdlp");
 const jobs = require("./jobs");
 const tiktokProduct = require("./tiktokProduct");
 const youtubeProduct = require("./youtubeProduct");
+const shopeeVideo = require("./shopeeVideo");
 const templates = require("./templates");
 
 const router = express.Router();
@@ -93,21 +94,37 @@ router.get("/health", async (_req, res) => {
 });
 
 router.post("/list", async (req, res) => {
-  const { url, limit = 50, tab = "videos" } = req.body || {};
+  const { url, limit = 50, tab = "videos", sort = "recent" } = req.body || {};
   if (!url || typeof url !== "string") return res.status(400).json({ error: "Informe a URL do perfil." });
+  if (shopeeVideo.isVideoUrl(url)) {
+    return res.status(400).json({ error: "Perfil da Shopee não dá para listar — cole o link de cada vídeo." });
+  }
   try {
     res.json(await ytdlp.listVideos(url, {
       limit: Math.max(0, Number(limit) || 0),
       tab: tab === "shorts" ? "shorts" : "videos",
+      sort: sort === "views" ? "views" : "recent",
     }));
   } catch (err) {
     res.status(502).json({ error: `Não foi possível listar os vídeos: ${err.message}` });
   }
 });
 
+// Um vídeo só, pelo link dele — a lista de "vídeos avulsos", que mistura
+// plataformas. A Shopee não passa pelo yt-dlp (ver shopeeVideo.js).
+router.post("/video", async (req, res) => {
+  const url = req.body?.url;
+  if (!url || typeof url !== "string") return res.status(400).json({ error: "Informe o link do vídeo." });
+  try {
+    res.json({ video: shopeeVideo.isVideoUrl(url) ? await shopeeVideo.getVideo(url) : await ytdlp.videoInfo(url) });
+  } catch (err) {
+    res.status(502).json({ error: `Não foi possível abrir o vídeo: ${err.message}` });
+  }
+});
+
 router.post("/products", async (req, res) => {
   const url = req.body?.url;
-  const source = typeof url === "string" && [tiktokProduct, youtubeProduct].find((m) => m.isVideoUrl(url));
+  const source = typeof url === "string" && [tiktokProduct, youtubeProduct, shopeeVideo].find((m) => m.isVideoUrl(url));
   if (!source) return res.status(400).json({ error: "URL de vídeo inválida." });
   try {
     res.json({ products: await source.getProducts(url) });
@@ -121,6 +138,16 @@ router.get("/templates", (_req, res) => {
     res.json({ templates: templates.list() });
   } catch (err) {
     httpErrors.serverError(res, err, { req: _req, ctx: "GET /api/admin/downloader/templates" });
+  }
+});
+
+// Recoloca os templates de fábrica (os que vêm na primeira abertura) sem
+// apagar os do usuário.
+router.post("/templates/restore-defaults", (req, res) => {
+  try {
+    res.json({ templates: templates.restoreDefaults() });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/admin/downloader/templates/restore-defaults" });
   }
 });
 

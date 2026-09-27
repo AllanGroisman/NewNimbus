@@ -5,7 +5,22 @@ import { cardStyle, skelBar } from "./downloaderEstilos";
 
 // Card de vídeo com seleção. Mesmo esqueleto do ProductGridCard do Nimbus:
 // imagem no topo, título em 2 linhas, selos embaixo.
-export default function VideoCard({ video, vertical, selected, onToggle, product, platform }) {
+const PLATFORMS = {
+  tiktok: ["rose", "TikTok"],
+  youtube: ["red", "YouTube"],
+  shopee: ["orange", "Shopee"],
+};
+
+export function PlatformBadge({ platform }) {
+  const [color, label] = PLATFORMS[platform] || ["gray", "Outro"];
+  return <Badge color={color}>{label}</Badge>;
+}
+
+const SHOP = { youtube: "YouTube Shopping", tiktok: "TikTok Shop", shopee: "Shopee" };
+
+// `onRemove` só na lista avulsa: lá o vídeo entrou porque alguém colou o link,
+// então também sai por ali.
+export default function VideoCard({ video, vertical, selected, onToggle, product, platform, onRemove }) {
   const d = duration(video.duration);
   const v = views(video.views);
   const dt = date(video.uploadDate);
@@ -54,8 +69,24 @@ export default function VideoCard({ video, vertical, selected, onToggle, product
         </span>
         {items.length > 0 && (
           <span style={{ position: "absolute", top: 8, right: 8 }}>
-            <Badge color="orange">🛍 {platform === "youtube" ? "YouTube Shopping" : "TikTok Shop"}</Badge>
+            <Badge color="orange">🛍 {SHOP[platform] || "Produto"}</Badge>
           </span>
+        )}
+        {onRemove && (
+          <button
+            type="button"
+            title="Tirar da lista"
+            aria-label="Tirar da lista"
+            onClick={(e) => { e.stopPropagation(); onRemove(); }}
+            onKeyDown={(e) => e.stopPropagation()}
+            style={{
+              position: "absolute", bottom: 6, left: 6,
+              width: 24, height: 24, borderRadius: 6, border: "none", cursor: "pointer",
+              background: "rgba(0,0,0,0.6)", color: "#fff", fontSize: 13,
+            }}
+          >
+            ✕
+          </button>
         )}
         {d && (
           <span style={{
@@ -75,6 +106,7 @@ export default function VideoCard({ video, vertical, selected, onToggle, product
           {video.title}
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: "auto" }}>
+          {onRemove && <PlatformBadge platform={platform} />}
           {v && <Badge color="gray">{v}</Badge>}
           {dt && <Badge color="blue">{dt}</Badge>}
           <a

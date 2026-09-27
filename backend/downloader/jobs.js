@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { downloadVideo } = require("./ytdlp");
+const shopeeVideo = require("./shopeeVideo");
 const { renderOverlay } = require("./render");
 
 const TMP = path.join(__dirname, "tmp");
@@ -84,7 +85,8 @@ function pumpDownload() {
     const { job, item } = dlQueue.shift();
     downloading++;
     item.status = "downloading";
-    downloadVideo(item, job.dir, (p) => { item.percent = p; })
+    const download = shopeeVideo.isVideoUrl(item.url) ? shopeeVideo.downloadVideo : downloadVideo;
+    download(item, job.dir, (p) => { item.percent = p; })
       .then((file) => {
         item.raw = file;
         if (!job.template || !item.overlay) return finish(item, file);

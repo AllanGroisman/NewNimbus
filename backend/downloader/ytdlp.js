@@ -55,6 +55,7 @@ function lastError(stderr) {
 function detectPlatform(url) {
   if (/(^|\.)tiktok\.com/i.test(url)) return "tiktok";
   if (/(^|\.)(youtube\.com|youtu\.be)/i.test(url)) return "youtube";
+  if (/(^|\.)(shopee\.com\.br|shp\.ee)/i.test(url)) return "shopee";
   return "other";
 }
 
@@ -79,32 +80,64 @@ function pickThumb(entry, platform) {
   return thumbs.length ? thumbs[thumbs.length - 1].url : null;
 }
 
-async function listVideos(rawUrl, { limit = 50, tab = "videos" } = {}) {
+// "Mais vistos" não tem ordem pronta: o YouTube ignora o ?sort=p e o TikTok
+// nem oferece. Varre uma janela maior dos recentes e ordena por views aqui.
+// 300 cabe nos 170s mesmo no TikTok (lista ~30 por requisição).
+const POPULAR_SCAN = 300;
+
+async function listVideos(rawUrl, { limit = 50, tab = "videos", sort = "recent" } = {}) {
   const url = normalizeUrl(rawUrl, tab);
   const platform = detectPlatform(url);
+  const popular = sort === "views";
+  const scan = popular ? (limit > 0 ? Math.max(limit, POPULAR_SCAN) : 0) : limit;
   const args = ["--flat-playlist", "-J", "--no-warnings"];
-  if (limit > 0) args.push("--playlist-end", String(limit));
+  if (scan > 0) args.push("--playlist-end", String(scan));
   args.push(url);
 
   const data = JSON.parse(await run(args));
   const entries = data.entries || [data];
-  const videos = entries
+  let videos = entries
     .filter((e) => e && e.id && e._type !== "playlist")
-    .map((e) => ({
-      id: e.id,
-      title: e.title || e.description || e.id,
-      url: e.url && /^https?:/.test(e.url) ? e.url : (e.webpage_url || buildUrl(platform, e, data)),
-      thumbnail: pickThumb(e, platform),
-      duration: e.duration || null,
-      views: e.view_count ?? null,
-      uploadDate: e.upload_date || (e.timestamp ? new Date(e.timestamp * 1000).toISOString().slice(0, 10).replace(/-/g, "") : null),
-    }));
+    .map((e) => toVideo(e, platform, data));
+  if (popular) {
+    videos.sort((a, b) => (b.views ?? -1) - (a.views ?? -1));
+    if (limit > 0) videos = videos.slice(0, limit);
+  }
 
   return {
     platform,
     url,
     channel: data.channel || data.uploader || data.title || null,
+    scanned: popular ? entries.length : undefined,
     videos,
+  };
+}
+
+function toVideo(e, platform, data = {}) {
+  return {
+    id: e.id,
+    title: e.title || e.description || e.id,
+    url: e.url && /^https?:/.test(e.url) && !e.formats ? e.url : (e.webpage_url || buildUrl(platform, e, data)),
+    thumbnail: pickThumb(e, platform),
+    duration: e.duration || null,
+    views: e.view_count ?? null,
+    uploadDate: e.upload_date || (e.timestamp ? new Date(e.timestamp * 1000).toISOString().slice(0, 10).replace(/-/g, "") : null),
+  };
+}
+
+// Vídeo avulso (link de um vídeo, não de perfil). Sem --flat-playlist o -J
+// traz o vídeo completo, com largura/altura — é daí que sai se ele é vertical.
+async function videoInfo(rawUrl) {
+  let url = rawUrl.trim();
+  if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+  const platform = detectPlatform(url);
+  const e = JSON.parse(await run(["-J", "--no-playlist", "--no-warnings", "--skip-download", url], { timeoutMs: 60000 }));
+  if (!e?.id || e._type === "playlist") throw new Error("Esse link é de um perfil ou playlist, não de um vídeo.");
+  return {
+    ...toVideo(e, platform),
+    platform,
+    channel: e.channel || e.uploader || null,
+    vertical: e.width && e.height ? e.height > e.width : platform === "tiktok" || /\/shorts\//.test(url),
   };
 }
 
@@ -184,4 +217,4 @@ async function update() {
   return run(["-U"], { timeoutMs: 120000 });
 }
 
-module.exports = { listVideos, downloadVideo, version, update, detectPlatform };
+module.exports = { listVideos, videoInfo, downloadVideo, version, update, detectPlatform, normalizeUrl };

@@ -6,17 +6,16 @@
 // App.jsx do Nimbus já dá tudo isso em volta desta página.
 import { useEffect, useMemo, useRef, useState } from "react";
 import AlertBanner from "../components/ui/AlertBanner";
-import Badge from "../components/ui/Badge";
 import UrlForm from "../components/admin/downloader/UrlForm";
 import { useLembrado } from "../data/useLembrado";
-import VideoCard, { SkeletonCard } from "../components/admin/downloader/VideoCard";
+import VideoCard, { PlatformBadge, SkeletonCard } from "../components/admin/downloader/VideoCard";
 import SelectionBar from "../components/admin/downloader/SelectionBar";
 import DownloadPanel from "../components/admin/downloader/DownloadPanel";
 import TemplateEditor from "../components/admin/downloader/TemplateEditor";
 import { frameSize, loadImages, renderToDataUrl, usesTitle } from "../components/admin/downloader/overlay";
-import { chipStyle, hintStyle } from "../components/admin/downloader/downloaderEstilos";
+import { botaoSecundario, chipStyle, hintStyle } from "../components/admin/downloader/downloaderEstilos";
 import {
-  adminDlList, adminDlProducts, adminDlTemplates, adminDlJobCreate, adminDlJob, errText,
+  adminDlList, adminDlVideo, adminDlProducts, adminDlTemplates, adminDlJobCreate, adminDlJob, errText,
 } from "../data/api";
 
 // F5 não pode perder a listagem: o estado da busca fica no sessionStorage
@@ -34,6 +33,7 @@ export default function PageAdminDownloader() {
   // valor e sair da aba e voltar traria a listagem velha.
   const [saved] = useState(loadState);
   const [loading, setLoading] = useState(false);
+  const [adding, setAdding] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(saved?.result || null);
   const [params, setParams] = useState(saved?.params || null);
@@ -51,13 +51,25 @@ export default function PageAdminDownloader() {
   const [preparing, setPreparing] = useState(false);
   const listGen = useRef(0);
 
+  // Lista avulsa (links de vídeo colados um a um) mistura plataformas: ali o
+  // formato e a plataforma são de cada vídeo, não do resultado.
+  const isList = result?.mode === "list";
   const vertical = result?.platform === "tiktok" || result?.url?.includes("/shorts");
-  // Produto marcado só existe no TikTok Shop e nos Shorts (YouTube Shopping).
-  const hasProducts = (data) => data.platform === "tiktok" || (data.platform === "youtube" && data.url?.includes("/shorts"));
+  // Produto marcado só existe no TikTok Shop, no Shopee Vídeo e nos Shorts
+  // (YouTube Shopping). Vídeo do YouTube avulso também tenta: o link pode ser
+  // de um Short colado como watch?v=.
+  const canHaveProducts = (v, data) => {
+    const p = v.platform || data.platform;
+    if (p === "tiktok" || p === "shopee") return true;
+    return p === "youtube" && (data.mode === "list" || data.url?.includes("/shorts"));
+  };
+  const hasProducts = (data) => (data.videos || []).some((v) => canHaveProducts(v, data));
 
   // Busca o produto de cada vídeo em segundo plano, 4 por vez. Uma listagem
   // nova incrementa listGen e faz as buscas da anterior pararem.
-  const loadProducts = async (videos, gen) => {
+  const loadProducts = async (all, gen, data) => {
+    const videos = all.filter((v) => canHaveProducts(v, data));
+    if (!videos.length) return;
     setProducts((prev) => ({ ...prev, ...Object.fromEntries(videos.map((v) => [v.id, { status: "loading", items: [] }])) }));
     const queue = [...videos];
     const worker = async () => {
@@ -89,12 +101,62 @@ export default function PageAdminDownloader() {
       if (gen !== listGen.current) return;
       if (!data.videos.length) setError("Nenhum vídeo encontrado nesse perfil.");
       setResult(data);
-      if (hasProducts(data) && data.videos.length) loadProducts(data.videos, gen);
+      if (data.videos.length) loadProducts(data.videos, gen, data);
     } catch (err) {
       setError(errText(err, "Não foi possível listar os vídeos."));
     } finally {
       setLoading(false);
     }
+  };
+
+  // Vídeos avulsos entram numa lista que cresce a cada link colado. Colar um
+  // vídeo com um perfil na tela troca o perfil por uma lista nova.
+  const addVideos = async (links) => {
+    const fresh = !isList;
+    const gen = fresh ? ++listGen.current : listGen.current;
+    if (fresh) {
+      setResult(null);
+      setParams(null);
+      setProducts({});
+      setSelected(new Set());
+    }
+    setAdding(true);
+    setError(null);
+    const falhas = [];
+    const novos = [];
+    for (const url of links) {
+      try {
+        const { video } = await adminDlVideo(url);
+        novos.push(video);
+      } catch (err) {
+        falhas.push(errText(err, `Não foi possível abrir ${url}`));
+      }
+    }
+    setAdding(false);
+    if (gen !== listGen.current) return;
+    const base = fresh ? { mode: "list", platform: "mixed", channel: null, videos: [] } : result;
+    const key = (v) => `${v.platform}:${v.id}`;
+    const have = new Set(base.videos.map(key));
+    const add = novos.filter((v) => !have.has(key(v)) && have.add(key(v)));
+    const data = { ...base, videos: [...base.videos, ...add] };
+    setResult(data);
+    // Recém-adicionado já vem marcado: quem colou o link quer baixar.
+    setSelected((prev) => new Set([...prev, ...add.map((v) => v.id)]));
+    if (falhas.length) setError(falhas.join(" · "));
+    else if (novos.length && !add.length) setError("Esse vídeo já está na lista.");
+    if (add.length) loadProducts(add, gen, data);
+  };
+
+  const removeVideo = (id) => {
+    setResult((r) => ({ ...r, videos: r.videos.filter((v) => v.id !== id) }));
+    setSelected((prev) => { const next = new Set(prev); next.delete(id); return next; });
+  };
+
+  const clearList = () => {
+    ++listGen.current;
+    setResult(null);
+    setProducts({});
+    setSelected(new Set());
   };
 
   const toggle = (id) => setSelected((prev) => {
@@ -156,7 +218,7 @@ export default function PageAdminDownloader() {
   useEffect(() => {
     if (!saved?.result || !hasProducts(saved.result)) return;
     const pending = (saved.result.videos || []).filter((v) => !["done", "error"].includes(saved.products?.[v.id]?.status));
-    if (pending.length) loadProducts(pending, listGen.current);
+    if (pending.length) loadProducts(pending, listGen.current, saved.result);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -198,7 +260,8 @@ export default function PageAdminDownloader() {
   const videos = useMemo(() => result?.videos || [], [result]);
   const withProduct = useMemo(() => videos.filter((v) => products[v.id]?.items?.length), [videos, products]);
   const productsLoading = videos.filter((v) => products[v.id]?.status === "loading").length;
-  const filtering = onlyWithProduct && hasProducts(result || {});
+  // Na lista avulsa cada vídeo foi colado de propósito: o filtro não esconde nenhum.
+  const filtering = onlyWithProduct && !isList && hasProducts(result || {});
   const shown = filtering ? withProduct : videos;
   // Seleção escondida pelo filtro não conta nem é baixada.
   const selectedShown = shown.filter((v) => selected.has(v.id));
@@ -215,12 +278,24 @@ export default function PageAdminDownloader() {
       <div style={{ marginBottom: 16 }}>
         <h1 style={{ fontSize: 20, marginBottom: 4 }}>Downloader</h1>
         <div style={hintStyle}>
-          Cole o link de um perfil do YouTube ou do TikTok, escolha os vídeos e
-          baixe — com ou sem template por cima.
+          Cole o link de um perfil do YouTube ou do TikTok — ou links de vídeos
+          avulsos (YouTube, TikTok e Shopee, misturados) —, escolha os vídeos e
+          baixe, com ou sem template por cima.
         </div>
+        <button type="button" onClick={() => setEditor(true)} style={{ ...botaoSecundario, marginTop: 10 }}>
+          🎨 Templates
+        </button>
       </div>
 
-      <UrlForm loading={loading} onSubmit={list} initial={saved?.params} />
+      <UrlForm
+        loading={loading}
+        adding={adding}
+        onSubmit={list}
+        onAddVideos={addVideos}
+        initial={saved?.params}
+        onlyWithProduct={onlyWithProduct}
+        onOnlyWithProduct={setOnlyWithProduct}
+      />
 
       <AlertBanner message={error} onDismiss={() => setError(null)} />
 
@@ -229,6 +304,7 @@ export default function PageAdminDownloader() {
       {editor && (
         <TemplateEditor
           templates={templates}
+          initialId={templateId}
           // A prévia usa a miniatura de um vídeo de verdade da listagem.
           refVideo={selectedShown[0] || shown[0]}
           onClose={() => setEditor(false)}
@@ -239,12 +315,15 @@ export default function PageAdminDownloader() {
       {result && videos.length > 0 && (
         <>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-            <h2 style={{ fontSize: 16 }}>{result.channel || "Vídeos"}</h2>
-            <Badge color={result.platform === "tiktok" ? "rose" : "red"}>
-              {result.platform === "tiktok" ? "TikTok" : result.platform === "youtube" ? "YouTube" : "Outro"}
-            </Badge>
-            <span style={hintStyle}>{videos.length} vídeos</span>
-            {hasProducts(result) && (
+            <h2 style={{ fontSize: 16 }}>{isList ? "Lista de vídeos" : result.channel || "Vídeos"}</h2>
+            {!isList && <PlatformBadge platform={result.platform} />}
+            <span style={hintStyle}>
+              {videos.length} vídeos{params?.sort === "views" && !isList ? " · mais vistos" : ""}
+            </span>
+            {isList && (
+              <button type="button" onClick={clearList} style={botaoSecundario}>Limpar lista</button>
+            )}
+            {!isList && hasProducts(result) && (
               <button
                 type="button"
                 onClick={() => setOnlyWithProduct((on) => !on)}
@@ -277,10 +356,10 @@ export default function PageAdminDownloader() {
         </div>
       )}
 
-      {(loading || shown.length > 0) && (
+      {(loading || adding || shown.length > 0) && (
         <div style={{
           display: "grid",
-          gridTemplateColumns: `repeat(auto-fill, minmax(${vertical ? 170 : 220}px, 1fr))`,
+          gridTemplateColumns: `repeat(auto-fill, minmax(${vertical || isList ? 170 : 220}px, 1fr))`,
           gap: 12,
         }}>
           {loading
@@ -289,20 +368,22 @@ export default function PageAdminDownloader() {
               <VideoCard
                 key={v.id}
                 video={v}
-                vertical={vertical}
+                vertical={v.vertical ?? vertical}
                 selected={selected.has(v.id)}
                 onToggle={() => toggle(v.id)}
                 product={products[v.id]}
-                platform={result.platform}
+                platform={v.platform || result.platform}
+                onRemove={isList ? () => removeVideo(v.id) : null}
               />
             ))}
+          {adding && <SkeletonCard vertical />}
         </div>
       )}
 
-      {!loading && !result && !error && (
+      {!loading && !adding && !result && !error && (
         <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--color-text-secondary)" }}>
           <div style={{ fontSize: 40, marginBottom: 8 }}>🎬</div>
-          <div style={{ fontSize: 14 }}>Cole o link de um perfil para listar os vídeos.</div>
+          <div style={{ fontSize: 14 }}>Cole o link de um perfil para listar os vídeos, ou de um vídeo para montar uma lista.</div>
         </div>
       )}
     </>

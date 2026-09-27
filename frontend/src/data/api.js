@@ -962,10 +962,12 @@ export async function whatsNimbusSend(payload)    { return http("POST", "/api/ad
 // não conseguem mandar header. Eles usam a chave do job (ver DownloadPanel.jsx).
 export async function adminDlHealth()              { return http("GET",  "/api/admin/downloader/health"); }
 export async function adminDlList(params)          { return http("POST", "/api/admin/downloader/list", params, { timeoutMs: VERY_SLOW_TIMEOUT_MS }); }
+export async function adminDlVideo(url)            { return http("POST", "/api/admin/downloader/video", { url }, { timeoutMs: SLOW_TIMEOUT_MS }); }
 export async function adminDlProducts(url)         { return http("POST", "/api/admin/downloader/products", { url }); }
 export async function adminDlTemplates()           { return http("GET",  "/api/admin/downloader/templates"); }
 export async function adminDlTemplateSave(id, t)   { return http("PUT",  `/api/admin/downloader/templates/${encodeURIComponent(id)}`, t); }
 export async function adminDlTemplateRemove(id)    { return http("DELETE", `/api/admin/downloader/templates/${encodeURIComponent(id)}`); }
+export async function adminDlTemplatesRestore()    { return http("POST", "/api/admin/downloader/templates/restore-defaults"); }
 export async function adminDlJobCreate(payload)    { return http("POST", "/api/admin/downloader/jobs", payload, { timeoutMs: SLOW_TIMEOUT_MS }); }
 export async function adminDlJob(id)               { return http("GET",  `/api/admin/downloader/jobs/${encodeURIComponent(id)}`); }
 export async function adminDlUpdateYtdlp()         { return http("POST", "/api/admin/downloader/update-ytdlp", undefined, { timeoutMs: VERY_SLOW_TIMEOUT_MS }); }

@@ -109,4 +109,17 @@ function remove(id) {
   write(list().filter((t) => t.id !== id));
 }
 
-module.exports = { list, save, remove };
+// Fábrica volta por nome: o que tem o mesmo nome de um de fábrica é
+// sobrescrito (é o "desfazer" de quem editou o padrão e não gostou); os
+// outros templates ficam intactos.
+function restoreDefaults() {
+  const all = list();
+  for (const t of FACTORY) {
+    const i = all.findIndex((x) => x.name === t.name);
+    const item = { ...JSON.parse(JSON.stringify(t)), id: i >= 0 ? all[i].id : crypto.randomUUID(), updatedAt: Date.now() };
+    if (i >= 0) all[i] = item; else all.push(item);
+  }
+  return write(all);
+}
+
+module.exports = { list, save, remove, restoreDefaults };

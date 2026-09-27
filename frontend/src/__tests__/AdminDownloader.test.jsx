@@ -13,6 +13,8 @@ import userEvent from "@testing-library/user-event";
 vi.mock("../data/api", () => ({
   errText: (err, fallback) => err?.message || fallback,
   adminDlList: vi.fn(),
+  adminDlVideo: vi.fn(),
+  adminDlTemplatesRestore: vi.fn(),
   adminDlProducts: vi.fn(),
   adminDlTemplates: vi.fn(),
   adminDlJobCreate: vi.fn(),
@@ -22,7 +24,7 @@ vi.mock("../data/api", () => ({
 }));
 
 import PageAdminDownloader from "../pages/AdminDownloader.jsx";
-import { adminDlList, adminDlTemplates, adminDlJob } from "../data/api";
+import { adminDlList, adminDlVideo, adminDlProducts, adminDlTemplates, adminDlJob } from "../data/api";
 import { _zerarParaTestes as zerarPrefsAdmin } from "../data/preferenciasAdmin";
 
 // As preferências de tela do admin vivem num módulo que dura a suíte inteira.
@@ -53,7 +55,7 @@ describe("listagem", () => {
     adminDlList.mockResolvedValue({ platform: "youtube", url: "https://www.youtube.com/@canal/videos", channel: "Canal de Teste", videos: VIDEOS });
 
     render(<PageAdminDownloader />);
-    await userEvent.type(screen.getByLabelText(/Perfil do YouTube ou TikTok/i), "https://www.youtube.com/@canal");
+    await userEvent.type(screen.getByLabelText(/Link do perfil ou do vídeo/i), "https://www.youtube.com/@canal");
     await userEvent.click(screen.getByRole("button", { name: /Listar vídeos/i }));
 
     expect(await screen.findByText("Canal de Teste")).toBeInTheDocument();
@@ -65,7 +67,7 @@ describe("listagem", () => {
     adminDlList.mockResolvedValue({ platform: "youtube", url: "u", channel: null, videos: [] });
 
     render(<PageAdminDownloader />);
-    await userEvent.type(screen.getByLabelText(/Perfil do YouTube ou TikTok/i), "https://www.youtube.com/@vazio");
+    await userEvent.type(screen.getByLabelText(/Link do perfil ou do vídeo/i), "https://www.youtube.com/@vazio");
     await userEvent.click(screen.getByRole("button", { name: /Listar vídeos/i }));
 
     expect(await screen.findByText(/Nenhum vídeo encontrado/i)).toBeInTheDocument();
@@ -75,10 +77,44 @@ describe("listagem", () => {
     adminDlList.mockRejectedValue(new Error("Não foi possível listar os vídeos: canal privado"));
 
     render(<PageAdminDownloader />);
-    await userEvent.type(screen.getByLabelText(/Perfil do YouTube ou TikTok/i), "https://www.youtube.com/@privado");
+    await userEvent.type(screen.getByLabelText(/Link do perfil ou do vídeo/i), "https://www.youtube.com/@privado");
     await userEvent.click(screen.getByRole("button", { name: /Listar vídeos/i }));
 
     expect(await screen.findByText(/canal privado/i)).toBeInTheDocument();
+  });
+});
+
+describe("perfil × vídeo avulso", () => {
+  it("manda a ordem 'mais vistos' para o backend", async () => {
+    adminDlList.mockResolvedValue({ platform: "youtube", url: "u", channel: "Canal", videos: VIDEOS });
+
+    render(<PageAdminDownloader />);
+    await userEvent.type(screen.getByLabelText(/Link do perfil ou do vídeo/i), "https://www.youtube.com/@canal");
+    await userEvent.click(screen.getByRole("button", { name: /Mais vistos/i }));
+    await userEvent.click(screen.getByRole("button", { name: /Listar vídeos/i }));
+
+    await waitFor(() => expect(adminDlList).toHaveBeenCalledWith(expect.objectContaining({ sort: "views" })));
+  });
+
+  it("link de vídeo vira lista avulsa que mistura plataformas", async () => {
+    adminDlProducts.mockResolvedValue({ products: [] });
+    adminDlVideo
+      .mockResolvedValueOnce({ video: { id: "yt1", platform: "youtube", title: "Vídeo do YouTube", url: "https://www.youtube.com/shorts/yt1", vertical: true } })
+      .mockResolvedValueOnce({ video: { id: "sp1", platform: "shopee", title: "Vídeo da Shopee", url: "https://sv.shopee.com.br/web/@x/video/sp1", vertical: true } });
+
+    render(<PageAdminDownloader />);
+    const input = screen.getByLabelText(/Link do perfil ou do vídeo/i);
+    await userEvent.type(input, "https://www.youtube.com/shorts/yt1");
+    await userEvent.click(screen.getByRole("button", { name: /Adicionar à lista/i }));
+    expect(await screen.findByText("Vídeo do YouTube")).toBeInTheDocument();
+
+    await userEvent.type(input, "https://sv.shopee.com.br/web/@x/video/sp1");
+    await userEvent.click(screen.getByRole("button", { name: /Adicionar à lista/i }));
+    expect(await screen.findByText("Vídeo da Shopee")).toBeInTheDocument();
+
+    expect(adminDlList).not.toHaveBeenCalled();
+    expect(screen.getByText("Lista de vídeos")).toBeInTheDocument();
+    expect(screen.getAllByRole("checkbox")).toHaveLength(2);
   });
 });
 

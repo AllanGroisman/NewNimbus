@@ -106,15 +106,13 @@ FLUXO
 
 DOWNLOADER:
 
-13. [] Filtro mais vistos
-14. [] Shopee
-15. [] Como editar os templates padrão
-16. [] O link pode ser do perfil ou de um video especifico. Se for de perfil, pede quantidade de videos, se é pra trazer os mais vistos e se é pra trazer só os que tem produtos vinculados. Se for individual, cria uma lista no qual da pra acrescentar mais links de videos, assim consegue-se pegar varios videos de contas diferentes e plataformas diferentes (não necessariamente precisa ser todos do youtube, pode ser misturado com os do tiktok.)
+13. [x] Filtro mais vistos
+14. [x] Shopee
+15. [x] Como editar os templates padrão
+16. [x] O link pode ser do perfil ou de um video especifico. Se for de perfil, pede quantidade de videos, se é pra trazer os mais vistos e se é pra trazer só os que tem produtos vinculados. Se for individual, cria uma lista no qual da pra acrescentar mais links de videos, assim consegue-se pegar varios videos de contas diferentes e plataformas diferentes (não necessariamente precisa ser todos do youtube, pode ser misturado com os do tiktok.)
 
 
 Geral:
-
-16. [] Site com as promoções
 
 17. [x] Quero criar uma aba de Cupons logo após a aba Produtos que tem na area de ADMIN onde eu consigo ver todos os cupons, navegar entre eles, ver um resumo, os produtos de cada um, filtrar os cupons, filtrar depois dentro nos seus produtos, etc... Pensa em algo legal e de fácil utilização. 
 
@@ -146,3 +144,6 @@ Rodar o Claude na VPS e desligar o computador (via tmux):
    ```
 3. Passar a tarefa e confirmar que começou a rodar. Depois pode fechar o VS Code e desligar o PC — o tmux mantém o processo vivo na VPS.
 4. No dia seguinte, conectar pelo túnel, abrir um terminal e rodar: `tmux attach -t claude`
+
+
+27. [x] No downloader consigo compartilhar direto para o tiktok e youtube shorts um vídeo ou serie de videos para serem postados? Estando utilizando pelo celular ou pelo pc? Ou só baixando o video e depois upando la? Se for complicado só garanta que está fácil de baixar para o celular (por exemplo, baixar zip no celular não funciona).

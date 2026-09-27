@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { adminDlTemplates, adminDlTemplateSave, adminDlTemplateRemove, errText } from "../../../data/api";
+import { adminDlTemplates, adminDlTemplateSave, adminDlTemplateRemove, adminDlTemplatesRestore, errText } from "../../../data/api";
 import { PRIMARY } from "../../../data/constants";
 import {
   CANVAS, FONTS, emptyTemplate, frameSize, hitTest, layerBox,
@@ -115,8 +115,11 @@ const Cor = ({ value, onChange }) => (
 
 const row = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 };
 
-export default function TemplateEditor({ templates, refVideo, onClose, onSaved }) {
-  const [draft, setDraft] = useState(() => clone(templates[0] || emptyTemplate()));
+// Os dois de fábrica ("Faixa no topo", "Barras + vídeo reduzido") são
+// templates comuns: editar e salvar muda o padrão. "Restaurar padrões" traz de
+// volta a versão original deles sem tocar nos outros.
+export default function TemplateEditor({ templates, initialId, refVideo, onClose, onSaved }) {
+  const [draft, setDraft] = useState(() => clone(templates.find((t) => t.id === initialId) || templates[0] || emptyTemplate()));
   const [sel, setSel] = useState(-1);
   const [busy, setBusy] = useState(false);
   const [erro, setErro] = useState(null);
@@ -170,6 +173,22 @@ export default function TemplateEditor({ templates, refVideo, onClose, onSaved }
     }
   };
 
+  const restaurar = async () => {
+    if (!window.confirm("Voltar os templates de fábrica à versão original? Os seus outros templates não mudam.")) return;
+    setBusy(true);
+    setErro(null);
+    try {
+      const { templates: lista } = await adminDlTemplatesRestore();
+      onSaved(lista, draft.id || null);
+      setDraft(clone(lista.find((t) => t.id === draft.id) || lista[0] || emptyTemplate()));
+      setSel(-1);
+    } catch (err) {
+      setErro(errText(err, "Não foi possível restaurar os padrões."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const excluir = async () => {
     if (!draft.id) return;
     setBusy(true);
@@ -190,7 +209,7 @@ export default function TemplateEditor({ templates, refVideo, onClose, onSaved }
     <div style={modalBackdrop} onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div style={modalCard}>
         <div style={{
-          display: "flex", alignItems: "center", gap: 10, padding: "12px 16px",
+          display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", flexWrap: "wrap",
           borderBottom: "0.5px solid var(--color-border-tertiary)",
         }}>
           <div style={{ fontSize: 15, fontWeight: 600 }}>🎨 Templates</div>
@@ -210,6 +229,10 @@ export default function TemplateEditor({ templates, refVideo, onClose, onSaved }
           </button>
           <button type="button" style={botaoSecundario} onClick={() => setDraft((d) => ({ ...clone(d), id: undefined, name: `${d.name} (cópia)` }))}>
             Duplicar
+          </button>
+          <button type="button" style={botaoSecundario} onClick={restaurar} disabled={busy}
+            title="Volta os templates de fábrica à versão original">
+            ↺ Restaurar padrões
           </button>
           <button type="button" style={{ ...botaoSecundario, marginLeft: "auto" }} onClick={onClose}>Fechar</button>
         </div>
