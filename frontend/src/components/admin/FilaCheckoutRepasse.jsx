@@ -8,18 +8,22 @@
 //   - o "+ Adicionar teste", para testar um código num link escolhido à mão;
 //   - o "Modo depuração": a aba abre na frente e anda devagar, com o passo à mostra.
 //
-// Tudo passa pelo mesmo `emSerie` da página: o checkout é um só por conta do ML, e
-// dois testes ao mesmo tempo se atropelariam.
+// Tudo passa pelo mesmo `emSerie` (data/filaCheckoutRepasse.js): o checkout é um
+// só por conta do ML, e dois testes ao mesmo tempo se atropelariam. O teste em
+// curso, o "Testar todos" e os resultados também moram lá (task 29): sair da aba
+// no meio e voltar mostra o mesmo andamento, com a barra e o "Parar".
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
-  adminRepasseCupomCheckoutPendentes, adminRepasseCupomCheckoutReivindicar,
-  adminRepasseCupomCheckoutAuto, adminRepasseCupomCheckoutManual,
+  adminRepasseCupomCheckoutPendentes, adminRepasseCupomCheckoutAuto, adminRepasseCupomCheckoutManual,
   adminRepasseCupomCheckoutManualRemover, errText,
 } from "../../data/api";
-import { testarNoCheckout } from "../../data/cupomCheckoutRepasse";
-import Modal from "../ui/Modal";
 import {
-  cardStyle, inputStyle, labelStyle, th, td, botaoLink, botaoPrimario, botaoSecundario,
+  useFilaCheckout, testarUm as testarUmNaFila, testarTodos as testarTodosNaFila, parar, avisar, ocupado,
+} from "../../data/filaCheckoutRepasse";
+import Modal from "../ui/Modal";
+import Barra from "./Barra";
+import {
+  cardStyle, inputStyle, labelStyle, th, td, botaoLink, botaoPrimario, botaoSecundario, segundos,
 } from "./cupomEstilos";
 
 export const FILA_INTERVALO_MS = 30000;
@@ -38,20 +42,13 @@ function linkCurto(url) {
   }
 }
 
-export default function FilaCheckoutRepasse({ temCheckout, emSerie, ocupadoRef, onTestado, onTestando, depurar = false, temDepurar = null, onDepurar }) {
+export default function FilaCheckoutRepasse({ temCheckout, depurar = false, temDepurar = null, onDepurar }) {
   const [fila, setFila] = useState(null);
   const [erro, setErro] = useState(null);
-  const [aviso, setAviso] = useState(null);
-  const [testando, setTestando] = useState(null);
-  // O último desfecho de cada código testado por aqui — o item some da fila
-  // depois do teste, e sem isto o resultado sumiria junto.
-  const [resultados, setResultados] = useState([]);
-  const [lote, setLote] = useState(false);
   const [salvandoAuto, setSalvandoAuto] = useState(false);
   const [adicionando, setAdicionando] = useState(false);
-  // O passo em que a extensão está, no modo depuração.
-  const [passoAtual, setPassoAtual] = useState(null);
-  const pararRef = useRef(false);
+  const { testando, inicioEm, passo, lote, resultados, aviso, recargas } = useFilaCheckout();
+  const setAviso = avisar;
 
   const carregar = useCallback(async () => {
     try {
@@ -65,40 +62,28 @@ export default function FilaCheckoutRepasse({ temCheckout, emSerie, ocupadoRef, 
     }
   }, []);
 
-  // Um item: reivindica (outra aba pode estar nele), roda na extensão, grava.
-  const testarItem = useCallback(async (item, source) => {
-    try {
-      await adminRepasseCupomCheckoutReivindicar(item.code);
-    } catch (err) {
-      if (err?.status === 409) { setAviso(`${item.code}: outra aba já está testando esse cupom.`); return null; }
-      throw err;
-    }
-    setTestando(item.code);
-    onTestando?.(item.code);
-    setPassoAtual(null);
-    const onProgresso = (ev) => { if (ev?.tipo === "passo-depuracao") setPassoAtual(ev.rotulo); };
-    try {
-      const res = await emSerie(() => testarNoCheckout(item.code, item.url, {
-        source, manualId: item.manualId || null, depurar, onProgresso,
-      }));
-      onTestado?.(item.code, res);
-      // A mensagem já diz "ligado ao produto"; a campanha nova só o vínculo sabe.
-      const texto = `${res.message || res.verdict}${res.vinculo?.cuponsNovos ? " · campanha nova no sistema" : ""}`;
-      setResultados(rs => [{ code: item.code, url: item.url, verdict: res.verdict, texto, em: new Date().toISOString() },
-        ...rs.filter(r => r.code !== item.code)].slice(0, 20));
-      setAviso(null);
-      return res;
-    } finally {
-      setTestando(null);
-      setPassoAtual(null);
-      onTestando?.(null);
-    }
-  }, [emSerie, onTestado, onTestando, depurar]);
+  // O store pede a releitura a cada cupom testado — inclusive os que terminaram
+  // enquanto esta aba estava fechada. A primeira leitura fica com o laço abaixo.
+  const primeiraRef = useRef(true);
+  useEffect(() => {
+    if (primeiraRef.current) { primeiraRef.current = false; return; }
+    carregar();
+  }, [recargas, carregar]);
 
-  // O laço automático. Lê o AGORA num ref: o efeito monta uma vez só.
+  // O relógio do cupom atual: anda de segundo em segundo só enquanto há teste.
+  const [agora, setAgora] = useState(() => Date.now());
+  useEffect(() => {
+    if (!testando) return undefined;
+    const id = setInterval(() => setAgora(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [testando]);
+
+  // O laço automático. Lê o AGORA num ref: o efeito monta uma vez só. Ele é da
+  // aba aberta — fechada, a fila não anda sozinha —, mas o teste que ele começou
+  // continua no store, e voltar no meio não dispara outro por cima.
   const agoraRef = useRef(null);
   useEffect(() => {
-    agoraRef.current = { temCheckout, lote, testando, testarItem };
+    agoraRef.current = { temCheckout, lote, testando, depurar };
   });
   const olharRef = useRef(null);
   useEffect(() => {
@@ -110,11 +95,10 @@ export default function FilaCheckoutRepasse({ temCheckout, emSerie, ocupadoRef, 
       try {
         const r = await carregar();
         const x = agoraRef.current;
-        if (!vivo || !r?.auto || !x?.temCheckout || x.lote || x.testando || ocupadoRef.current > 0) return;
+        if (!vivo || !r?.auto || !x?.temCheckout || x.lote || x.testando || ocupado()) return;
         const p = (r.itens || []).find(i => !i.reservado);
         if (!p) return;
-        await x.testarItem(p, "repasse-checkout-auto");
-        if (vivo) await carregar();
+        await testarUmNaFila(p, "repasse-checkout-auto", { depurar: x.depurar });
       } catch (err) {
         if (vivo) setAviso(errText(err, "A fila automática não conseguiu testar agora."));
       } finally {
@@ -125,39 +109,19 @@ export default function FilaCheckoutRepasse({ temCheckout, emSerie, ocupadoRef, 
     olhar();
     const id = setInterval(olhar, FILA_INTERVALO_MS);
     return () => { vivo = false; clearInterval(id); olharRef.current = null; };
-  }, [carregar, ocupadoRef]);
+  }, [carregar, setAviso]);
   // Assim que se sabe que a extensão está aí, a primeira volta não espera 30s.
   useEffect(() => { if (temCheckout) olharRef.current?.(); }, [temCheckout]);
 
   const testarUm = async (item) => {
     try {
-      await testarItem(item, "repasse-checkout");
+      await testarUmNaFila(item, "repasse-checkout", { depurar });
     } catch (err) {
       setAviso(errText(err, `Não deu pra testar ${item.code} agora.`));
     }
-    await carregar();
   };
 
-  // A fila inteira, na ordem, um de cada vez. Parar vale ENTRE itens: o que está
-  // no meio do checkout termina (fechar a aba no meio deixaria o carrinho sujo).
-  const testarTodos = async () => {
-    pararRef.current = false;
-    setLote(true);
-    try {
-      const alvo = (fila?.itens || []).filter(i => !i.reservado);
-      for (const item of alvo) {
-        if (pararRef.current) break;
-        try {
-          await testarItem(item, "repasse-checkout");
-        } catch (err) {
-          setAviso(errText(err, `Não deu pra testar ${item.code}.`));
-        }
-        await carregar();
-      }
-    } finally {
-      setLote(false);
-    }
-  };
+  const testarTodos = () => testarTodosNaFila(fila?.itens || [], { depurar });
 
   const trocarAuto = async (v) => {
     setSalvandoAuto(true);
@@ -211,7 +175,7 @@ export default function FilaCheckoutRepasse({ temCheckout, emSerie, ocupadoRef, 
             Modo depuração
           </label>
           {lote ? (
-            <button onClick={() => { pararRef.current = true; }} style={botaoSecundario}>■ Parar</button>
+            <button onClick={parar} style={botaoSecundario}>■ Parar</button>
           ) : (
             <button
               onClick={testarTodos}
@@ -234,9 +198,29 @@ export default function FilaCheckoutRepasse({ temCheckout, emSerie, ocupadoRef, 
         {depurar && " Modo depuração: a aba abre na frente e cada passo espera 3s."}
       </div>
 
+      {(lote || testando) && (
+        <div style={{ marginBottom: 12 }} aria-label="Andamento do teste no checkout">
+          {lote && (
+            <Barra
+              valor={lote.feitos}
+              total={lote.total}
+              rotulo={`Testando a fila: ${Math.min(lote.feitos + (testando ? 1 : 0), lote.total)} de ${lote.total}`}
+            />
+          )}
+          {testando && (
+            <Barra
+              valor={Math.round((passo?.fracao || 0) * 100)}
+              total={100}
+              rotulo={`${testando}: ${passo?.rotulo || "abrindo o produto"}`}
+              direita={inicioEm ? segundos(Math.max(0, agora - inicioEm)) : null}
+            />
+          )}
+        </div>
+      )}
+
       {depurar && testando && (
         <div style={{ fontSize: 12, marginBottom: 10, fontFamily: "monospace" }}>
-          🐞 {testando}: {passoAtual || "abrindo a aba…"}
+          🐞 {testando}: {passo?.rotulo || "abrindo a aba…"}
         </div>
       )}
 

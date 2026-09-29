@@ -28,6 +28,7 @@ import Modal from "../components/ui/Modal";
 import { ImportarCampanhaModal } from "./AdminCupomPalavra";
 import { testarPalavra } from "../data/cupomPalavra";
 import { extensaoTestaNoCheckout, extensaoDepuraCheckout, testarNoCheckout } from "../data/cupomCheckoutRepasse";
+import { useFilaCheckout, emSerie, registrarAoTestar } from "../data/filaCheckoutRepasse";
 import { VERDICT, OUTCOME_LABEL } from "../data/cupomRotulos";
 import { useLembrado, umDe } from "../data/useLembrado";
 import {
@@ -108,7 +109,7 @@ export default function CuponsDoRepasse() {
   // A extensão instalada sabe testar no checkout? null = ainda não se sabe.
   const [temCheckout, setTemCheckout] = useState(null);
   // O cupom que a fila (card de cima) está testando agora.
-  const [naFila, setNaFila] = useState(null);
+  const { testando: naFila } = useFilaCheckout();
   // Modo depuração: todo teste no checkout desta aba roda com a aba na frente e
   // devagar. Lembrado só neste navegador.
   const [depurar, setDepurar] = useLembrado(CHAVE_DEPURAR, false);
@@ -122,15 +123,8 @@ export default function CuponsDoRepasse() {
     return () => { vivo = false; };
   }, []);
 
-  // Um teste no Chrome de cada vez, venha do botão ou da fila.
-  const serieRef = useRef(Promise.resolve());
-  const ocupadoRef = useRef(0);
-  const emSerie = useCallback((fn) => {
-    ocupadoRef.current += 1;
-    const p = serieRef.current.then(fn, fn).finally(() => { ocupadoRef.current -= 1; });
-    serieRef.current = p.catch(() => {});
-    return p;
-  }, []);
+  // Um teste no Chrome de cada vez, venha do botão ou da fila: o `emSerie` mora
+  // em data/filaCheckoutRepasse.js, para valer também entre uma montagem e outra.
 
   const carregar = useCallback(async () => {
     setCarregando(true);
@@ -206,6 +200,7 @@ export default function CuponsDoRepasse() {
       items: d.items.map(i => (i.code === code ? { ...i, ...patchDoCheckout(linha, res) } : i)),
     }));
   }, []);
+  useEffect(() => registrarAoTestar(aoTestarNaFila), [aoTestarNaFila]);
 
   const items = dados?.items || [];
   const totalPages = Math.max(1, Math.ceil((dados?.total || 0) / PAGE_SIZE));
@@ -215,10 +210,6 @@ export default function CuponsDoRepasse() {
       <CouponAutotest />
       <FilaCheckoutRepasse
         temCheckout={temCheckout}
-        emSerie={emSerie}
-        ocupadoRef={ocupadoRef}
-        onTestado={aoTestarNaFila}
-        onTestando={setNaFila}
         depurar={depurar && !!temDepurar}
         temDepurar={temDepurar}
         onDepurar={trocarDepurar}

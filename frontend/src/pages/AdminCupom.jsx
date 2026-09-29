@@ -1,4 +1,4 @@
-// Admin › Cupom — os cupons do Mercado Livre: a lista que o ML oferece para a
+// Admin › Scraping Cupons — os cupons do Mercado Livre: a lista que o ML oferece para a
 // conta do sistema, os códigos que a captura pescou nos grupos líderes e o
 // dicionário palavra → campanha.
 import { useState } from "react";
@@ -30,7 +30,7 @@ export default function PageAdminCupom() {
   return (
     <div>
       <div style={{ marginBottom: 18 }}>
-        <h1 style={{ fontSize: 20, marginBottom: 4 }}>Cupom</h1>
+        <h1 style={{ fontSize: 20, marginBottom: 4 }}>Scraping Cupons</h1>
         <div style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>
           Confere um cupom antes de ele ir pro grupo — e guarda os cupons que o ML oferece.
         </div>

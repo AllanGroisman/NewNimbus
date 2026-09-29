@@ -56,9 +56,11 @@ import {
   adminRepasseCupomCheckoutAuto, adminRepasseCupomCheckoutManual, adminRepasseCupomCheckoutManualRemover,
 } from "../data/api";
 import { _zerarParaTestes as zerarPrefsAdmin, gravar as gravarPref } from "../data/preferenciasAdmin";
+import { _zerarParaTestes as zerarFila } from "../data/filaCheckoutRepasse";
 
-// As preferências de tela do admin vivem num módulo que dura a suíte inteira.
-beforeEach(() => zerarPrefsAdmin());
+// As preferências de tela do admin e a fila do checkout vivem em módulos que
+// duram a suíte inteira.
+beforeEach(() => { zerarPrefsAdmin(); zerarFila(); });
 
 const cupom = (extra = {}) => ({
   code: "JBL20",
@@ -621,6 +623,53 @@ describe("Admin › Cupom › Repasse — teste no checkout", () => {
     soltar();
 
     await waitFor(() => expect(screen.getByText(/Testar todos/)).toBeTruthy());
+    expect(cupomNoCheckout).toHaveBeenCalledTimes(1);
+  });
+
+  it("sair no meio do Testar todos e voltar mostra a barra e o Parar, sem teste duplicado", async () => {
+    comExtensao();
+    adminRepasseCupomCheckoutPendentes.mockResolvedValue(fila([itemManual(), itemRepasse()], { checkoutAuto: true, auto: true }));
+    const soltar = [];
+    cupomNoCheckout.mockImplementation((_p, { onProgresso }) => {
+      onProgresso({ tipo: "cupons-modal" });
+      return new Promise(r => { soltar.push(() => r(MATERIAL)); });
+    });
+    adminRepasseCupomCheckoutResultado.mockResolvedValue(RESPOSTA);
+    // Automático ligado de propósito: a volta à aba não pode disparar outro teste.
+    adminRepasseCoupons.mockResolvedValue(lista([cupom({ link: LINK })]));
+    const { unmount } = render(<CuponsDoRepasse />);
+    await waitFor(() => expect(cupomNoCheckout).toHaveBeenCalledTimes(1));
+    unmount();
+
+    render(<CuponsDoRepasse />);
+    expect(await within(cardDaFila()).findByText(/MELIKIDS: abrindo os cupons/)).toBeTruthy();
+    expect(cupomNoCheckout).toHaveBeenCalledTimes(1);
+
+    soltar[0]();
+    await waitFor(() => expect(within(cardDaFila()).queryByRole("progressbar")).toBeNull());
+    expect(await within(cardDaFila()).findByText("Testados agora há pouco nesta aba:")).toBeTruthy();
+  });
+
+  it("Testar todos mostra a barra da fila e o Parar depois de sair e voltar", async () => {
+    comExtensao();
+    adminRepasseCupomCheckoutPendentes.mockResolvedValue(fila([itemManual(), itemRepasse()], { checkoutAuto: false, auto: false }));
+    const soltar = [];
+    cupomNoCheckout.mockImplementation(() => new Promise(r => { soltar.push(() => r(MATERIAL)); }));
+    adminRepasseCupomCheckoutResultado.mockResolvedValue(RESPOSTA);
+    adminRepasseCoupons.mockResolvedValue(lista([cupom({ link: LINK })]));
+    const { unmount } = render(<CuponsDoRepasse />);
+    const botao = await screen.findByText(/Testar todos \(2\)/);
+    await waitFor(() => expect(botao.disabled).toBe(false));
+    fireEvent.click(botao);
+    await waitFor(() => expect(cupomNoCheckout).toHaveBeenCalledTimes(1));
+    unmount();
+
+    render(<CuponsDoRepasse />);
+    expect(await within(cardDaFila()).findByText("Testando a fila: 1 de 2")).toBeTruthy();
+    fireEvent.click(within(cardDaFila()).getByText("■ Parar"));
+    soltar[0]();
+
+    await waitFor(() => expect(within(cardDaFila()).getByText(/Testar todos/)).toBeTruthy());
     expect(cupomNoCheckout).toHaveBeenCalledTimes(1);
   });
 

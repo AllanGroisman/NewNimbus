@@ -305,7 +305,7 @@ export const sidebarItems = [
   { id: "admin-amazon",   icon: "◇", label: "Amazon",         adminOnly: true },
   { id: "admin-shopee",   icon: "◈", label: "Shopee",         adminOnly: true },
   { id: "admin-repasse",  icon: "⟲", label: "Repasse",        adminOnly: true },
-  { id: "admin-cupom",    icon: "🎟", label: "Cupom",          adminOnly: true },
+  { id: "admin-cupom",    icon: "🎟", label: "Scraping Cupons", adminOnly: true },
   { id: "admin-downloader", icon: "⤓", label: "Downloader",    adminOnly: true },
   { id: "admin-users",          icon: "♟", label: "Usuários",       adminOnly: true },
   { id: "admin-backups",        icon: "⊡", label: "Backups",        adminOnly: true },
