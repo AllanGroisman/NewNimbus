@@ -1,0 +1,94 @@
+{
+  "_origem": "Formato real do conversionReport da Shopee Affiliate Open API (introspecção + resposta da conta do usuário em 29/09/2026). As conversões A, B (item 1) e D têm os números reais; os nomes de produto/loja e os ids foram trocados, e foram acrescentados: um segundo item no pedido B, a conversão cancelada C (comprada às 23h30 de Brasília do dia 20, que em UTC já é dia 21), as marcas de grupo (utmContent) e a taxa de MCN. Três páginas encadeadas por scrollId; a última vem vazia, como a Shopee faz.",
+  "pagina1": {
+    "data": {
+      "conversionReport": {
+        "nodes": [
+          {
+            "conversionId": 1001,
+            "clickTime": 1790175047,
+            "purchaseTime": 1790331731,
+            "conversionStatus": "COMPLETED",
+            "utmContent": "g123----",
+            "mcnManagementFee": "0",
+            "orders": [
+              {
+                "orderId": "PEDIDO-A",
+                "items": [
+                  { "itemId": 11, "itemName": "Relógio Masculino", "imageUrl": "https://cf.shopee.com.br/file/relogio", "shopName": "Loja Relógios", "qty": 1, "actualAmount": "386.18", "itemTotalCommission": "11.5854", "displayItemStatus": "COMPLETED", "fraudStatus": "VERIFIED" }
+                ]
+              }
+            ]
+          },
+          {
+            "conversionId": 1002,
+            "clickTime": 1790041137,
+            "purchaseTime": 1790099941,
+            "conversionStatus": "PENDING",
+            "utmContent": "----",
+            "mcnManagementFee": "0",
+            "orders": [
+              {
+                "orderId": "PEDIDO-B",
+                "items": [
+                  { "itemId": 21, "itemName": "Envelopes de Figurinhas", "imageUrl": "https://cf.shopee.com.br/file/envelopes", "shopName": "Banca", "qty": 1, "actualAmount": "40.52", "itemTotalCommission": "1.2156", "displayItemStatus": "PENDING", "fraudStatus": "VERIFIED" },
+                  { "itemId": 22, "itemName": "Álbum de Figurinhas", "imageUrl": "https://cf.shopee.com.br/file/album", "shopName": "Banca", "qty": 2, "actualAmount": "20.00", "itemTotalCommission": "0.6", "displayItemStatus": "PENDING", "fraudStatus": "UNVERIFIED" }
+                ]
+              }
+            ]
+          }
+        ],
+        "pageInfo": { "hasNextPage": true, "scrollId": "scroll-1" }
+      }
+    }
+  },
+  "pagina2": {
+    "data": {
+      "conversionReport": {
+        "nodes": [
+          {
+            "conversionId": 1003,
+            "clickTime": 1789950000,
+            "purchaseTime": 1789957800,
+            "conversionStatus": "CANCELLED",
+            "utmContent": "----",
+            "mcnManagementFee": "0",
+            "orders": [
+              {
+                "orderId": "PEDIDO-C",
+                "items": [
+                  { "itemId": 31, "itemName": "Caneca Cancelada", "imageUrl": "https://cf.shopee.com.br/file/caneca", "shopName": "Loja Casa", "qty": 1, "actualAmount": "50", "itemTotalCommission": "1.5", "displayItemStatus": "CANCELLED", "fraudStatus": "VERIFIED" }
+                ]
+              }
+            ]
+          },
+          {
+            "conversionId": 1004,
+            "clickTime": 1790261798,
+            "purchaseTime": 1790262000,
+            "conversionStatus": "PENDING",
+            "utmContent": "g999----",
+            "mcnManagementFee": "0.5",
+            "orders": [
+              {
+                "orderId": "PEDIDO-D",
+                "items": [
+                  { "itemId": 41, "itemName": "Cartas Colecionáveis", "imageUrl": "https://cf.shopee.com.br/file/cartas", "shopName": "Loja Cartas", "qty": 10, "actualAmount": "284.05", "itemTotalCommission": "8.5215", "displayItemStatus": "PENDING", "fraudStatus": "UNVERIFIED" }
+                ]
+              }
+            ]
+          }
+        ],
+        "pageInfo": { "hasNextPage": true, "scrollId": "scroll-2" }
+      }
+    }
+  },
+  "pagina3": {
+    "data": {
+      "conversionReport": {
+        "nodes": [],
+        "pageInfo": { "hasNextPage": false, "scrollId": null }
+      }
+    }
+  }
+}

@@ -522,9 +522,29 @@ async function fetchShopeeItemByIds(userId, itemId, shopId) {
   }
 }
 
-function buildShopeeShortLinkPayload(originUrl) {
+// Sub_ids: a Shopee aceita até 5 marcas por link e devolve cada venda com elas
+// (`utmContent` do conversionReport, unidas por "-"). A primeira é o grupo que
+// mandou o link — é o que a aba Desempenho usa pra dizer quanto cada grupo
+// vendeu. Só letras e números: o "-" é o separador na volta, e aspas quebrariam
+// o GraphQL.
+const SUBIDS_POR_LINK = 5;
+const SUBID_GRUPO_RE = /^g(\d+)$/;
+
+function limpaSubId(v) {
+  return String(v ?? "").replace(/[^A-Za-z0-9]/g, "").slice(0, 50);
+}
+
+// Marca do grupo de campanha no link. Id que não é número (grupo sem id, teste
+// avulso) fica sem marca, em vez de inventar uma.
+function subIdDoGrupo(groupId) {
+  const id = String(groupId ?? "");
+  return /^\d+$/.test(id) ? `g${id}` : "";
+}
+
+function buildShopeeShortLinkPayload(originUrl, subIds = []) {
   const safe = String(originUrl).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-  const query = `mutation{generateShortLink(input:{originUrl:"${safe}",subIds:["","","","",""]}){shortLink}}`;
+  const marcas = Array.from({ length: SUBIDS_POR_LINK }, (_, i) => `"${limpaSubId(subIds[i])}"`).join(",");
+  const query = `mutation{generateShortLink(input:{originUrl:"${safe}",subIds:[${marcas}]}){shortLink}}`;
   return JSON.stringify({ query });
 }
 
@@ -542,18 +562,23 @@ function buildShopeeProductOfferPayload({ keyword, productCatId, page = 1, limit
   return JSON.stringify({ query });
 }
 
-async function gerarLinkAfiliadoShopee(userId, linkOriginal) {
+// `subId` marca o link com o grupo que vai mandá-lo (ver subIdDoGrupo). O mesmo
+// produto em dois grupos são dois links curtos diferentes — daí a marca na chave
+// do cache.
+async function gerarLinkAfiliadoShopee(userId, linkOriginal, { subId = "" } = {}) {
   if (!linkOriginal || typeof linkOriginal !== "string") return null;
   const { appId, appSecret } = readShopeeConfig(userId);
   if (!appId || !appSecret) return null;
 
+  const marca = limpaSubId(subId);
+  const chave = `${marca}|${linkOriginal}`;
   const cache = getCache(shopeeCache, userId);
-  const cached = cache.get(linkOriginal);
+  const cached = cache.get(chave);
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.shortUrl;
 
   const s = ensureStats(userId).shopee;
   const timestamp = Math.floor(Date.now() / 1000);
-  const payload = buildShopeeShortLinkPayload(linkOriginal);
+  const payload = buildShopeeShortLinkPayload(linkOriginal, [marca]);
   const authHeader = signShopeeRequest({ appId, appSecret, timestamp, payload });
 
   try {
@@ -589,7 +614,7 @@ async function gerarLinkAfiliadoShopee(userId, linkOriginal) {
       console.warn(`[afiliados Shopee] ${s.lastFailureReason}: ${JSON.stringify(data).slice(0, 200)}`);
       return null;
     }
-    cache.set(linkOriginal, { shortUrl: short, ts: Date.now() });
+    cache.set(chave, { shortUrl: short, ts: Date.now() });
     s.lastSuccessAt = new Date().toISOString();
     s.lastFailureReason = null;
     return short;
@@ -1135,6 +1160,9 @@ module.exports = {
   writeShopeeScraperFilters,
   passesShopeeFilters,
   SHOPEE_FILTERS_DEFAULTS,
+  SHOPEE_ENDPOINT,
+  subIdDoGrupo,
+  SUBID_GRUPO_RE,
   // Puros — testes
   parseSoldText,
   signShopeeRequest,

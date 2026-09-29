@@ -31,6 +31,7 @@ import PageWhatsApp from "./pages/WhatsApp";
 import PageSettings from "./pages/Settings";
 import PageSubscription from "./pages/Subscription";
 import PageAffiliateML from "./pages/AffiliateML";
+import PageDesempenho from "./pages/Desempenho";
 import PageAffiliateAmazon from "./pages/AffiliateAmazon";
 import PageAffiliateShopee from "./pages/AffiliateShopee";
 import PageAdminScraper from "./pages/AdminScraper";
@@ -1128,6 +1129,16 @@ export default function App() {
     "mercado-livre": lockedStore("ml") || <PageAffiliateML onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
     "amazon": lockedStore("amazon") || <PageAffiliateAmazon onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
     "shopee": lockedStore("shopee") || <PageAffiliateShopee onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
+    // Uma aba por loja liberada (loja trancada não tem o que medir); abre na
+    // Shopee só quando é ela, e não o ML, que tem afiliado configurado.
+    desempenho: lockedStore("ml") && lockedStore("shopee") ? lockedStore("ml") : (
+      <PageDesempenho
+        lojas={["ml", "shopee"].filter(id => !lockedStore(id))}
+        lojaInicial={!affiliateStatus.ml && affiliateStatus.shopee ? "shopee" : "ml"}
+        onGoToML={() => requestNavigation(() => setPage("mercado-livre"))}
+        onGoToShopee={() => requestNavigation(() => setPage("shopee"))}
+      />
+    ),
     "admin-cupons":   user?.role === "admin" ? <PageAdminCupons /> : fallbackPage,
     "admin-scraper":  user?.role === "admin" ? <PageAdminScraper /> : fallbackPage,
     "admin-scrap-tester": user?.role === "admin" ? <PageAdminScrapTester /> : fallbackPage,

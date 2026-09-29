@@ -14,6 +14,8 @@ const auth = require("./auth");
 const storage = require("./storage");
 const scheduler = require("./scheduler");
 const affiliate = require("./scraping/affiliate");
+const mlDesempenho = require("./affiliate-reports/ml");
+const shopeeDesempenho = require("./affiliate-reports/shopee");
 const catalog = require("./catalog");
 const adminScraper = require("./scraping/admin");
 const storeLocks = require("./scraping/store-locks");
@@ -1596,6 +1598,32 @@ app.post("/api/affiliate/test", auth.requireAuth, requireStoreUnlocked("ml"), as
     res.json({ ok: true, shortUrl: short });
   } catch (err) {
     httpErrors.serverError(res, err, { req, ctx: "POST /api/affiliate/test", expose: true });
+  }
+});
+
+// Desempenho de afiliado no ML (cliques, pedidos, ganhos), lido da API do painel
+// de Métricas do ML com o cookie do próprio usuário — ver affiliate-reports/ml.js.
+// `refresh=1` fura o cache curto de lá (com freio de 1 min).
+app.get("/api/affiliate/ml/desempenho", auth.requireAuth, requireStoreUnlocked("ml"), async (req, res) => {
+  try {
+    const { from, to, refresh } = req.query;
+    res.json(await mlDesempenho.desempenhoDoUsuario(req.user.id, { from, to, refresh: refresh === "1" }));
+  } catch (err) {
+    if (err instanceof mlDesempenho.DesempenhoError) return res.status(err.status).json({ error: err.message, kind: err.kind });
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/affiliate/ml/desempenho" });
+  }
+});
+
+// Desempenho de afiliado da Shopee — pela Affiliate Open API, com o App ID e a
+// senha DESTE usuário (affiliate-reports/shopee.js). Pedidos, vendas, comissão
+// e vendas por grupo (sub_id do link); a API não tem cliques.
+app.get("/api/affiliate/shopee/desempenho", auth.requireAuth, requireStoreUnlocked("shopee"), async (req, res) => {
+  try {
+    const { from, to, refresh } = req.query;
+    res.json(await shopeeDesempenho.desempenhoDoUsuario(req.user.id, { from, to, refresh: refresh === "1" }));
+  } catch (err) {
+    if (err instanceof shopeeDesempenho.DesempenhoError) return res.status(err.status).json({ error: err.message, kind: err.kind });
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/affiliate/shopee/desempenho" });
   }
 });
 

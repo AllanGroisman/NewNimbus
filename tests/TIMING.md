@@ -76,6 +76,7 @@ O caminho é filtro posicional do vitest, então qualquer pedaço do nome serve.
 | `backend/auth/**`, login, senha, verificação de email | `npm run test:auth` |
 | `backend/whatsapp/**`, sessões, números | `npm run test:whatsapp` |
 | `backend/scraping/affiliate.js`, links de afiliado | `npm run test:affiliate` |
+| `backend/affiliate-reports/**` (desempenho de afiliado) | `vitest run unit/ml-desempenho unit/shopee-desempenho` + `npm run test:affiliate` |
 | rotas `/api/admin/**`, travas de loja, tutoriais | `npm run test:admin` |
 | `backend/catalog/**` | `vitest run -c vitest.integration.config.mjs catalog` |
 | `backend/notifications/**`, e-mails | `vitest run -c vitest.integration.config.mjs emails` |

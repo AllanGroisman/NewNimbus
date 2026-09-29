@@ -97,6 +97,8 @@ describe("sendItem com mensagem original", () => {
     const caption = send.mock.calls[0][4];
     expect(caption).toBe("*Oferta* https://meli.la/MEU e https://s.shopee.com.br/MEU");
     expect(caption).not.toMatch(/MODELO/);
+    // O link da Shopee sai marcado com o grupo que manda (vendas por grupo no Desempenho).
+    expect(affiliate.gerarLinkAfiliadoShopee).toHaveBeenCalledWith("u1", "https://shopee.com.br/x-i.1.2", { subId: "g7" });
   });
 
   it("link extra que não converte sai cru, sem derrubar a mensagem", async () => {

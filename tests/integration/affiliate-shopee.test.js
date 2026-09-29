@@ -2,7 +2,7 @@
 // Verifica: assinatura HMAC-SHA256 e montagem do payload GraphQL.
 
 import "../helpers/env.js";
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import path from "path";
 import crypto from "crypto";
 import { fileURLToPath } from "url";
@@ -77,6 +77,53 @@ describe("buildShopeeShortLinkPayload", () => {
     // Depois de parse do JSON, a query é uma string GraphQL com \" embutida.
     // O importante é que não exploda o JSON.parse acima.
     expect(parsed.query).toContain('\\"');
+  });
+});
+
+describe("sub_ids do link (vendas por grupo)", () => {
+  const subIds = (p) => JSON.parse(p).query.match(/subIds:\[(.*?)\]/)[1];
+
+  it("sem marca: as 5 posições vão vazias, como sempre foi", () => {
+    expect(subIds(affiliate.buildShopeeShortLinkPayload("https://shopee.com.br/i.1.2"))).toBe('"","","","",""');
+  });
+
+  it("a marca do grupo vai na primeira posição, e só letras e números passam", () => {
+    const p = affiliate.buildShopeeShortLinkPayload("https://shopee.com.br/i.1.2", ["g1727640000000", 'a-b"c d']);
+    expect(subIds(p)).toBe('"g1727640000000","abcd","","",""');
+    expect(subIds(affiliate.buildShopeeShortLinkPayload("u", ["x".repeat(80)]))).toBe(`"${"x".repeat(50)}","","","",""`);
+  });
+
+  it("subIdDoGrupo: g + id numérico; id que não é número fica sem marca", () => {
+    expect(affiliate.subIdDoGrupo(1727640000000)).toBe("g1727640000000");
+    expect(affiliate.subIdDoGrupo("42")).toBe("g42");
+    expect(affiliate.subIdDoGrupo(undefined)).toBe("");
+    expect(affiliate.subIdDoGrupo("abc")).toBe("");
+    expect(affiliate.SUBID_GRUPO_RE.exec("g42")[1]).toBe("42");
+  });
+
+  it("o mesmo produto em grupos diferentes gera links diferentes (cache separado por marca)", async () => {
+    affiliate.writeShopeeConfig(TEST_USER_ID, { appId: "1234567", appSecret: "0123456789abcdef" });
+    let n = 0;
+    const fetchMock = vi.fn(async (_url, opts) => {
+      const marca = JSON.parse(opts.body).query.match(/subIds:\["(\w*)"/)[1];
+      return new Response(JSON.stringify({ data: { generateShortLink: { shortLink: `https://s.shopee.com.br/${marca || "sem"}-${++n}` } } }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const url = "https://shopee.com.br/produto-i.9.9";
+      const a = await affiliate.gerarLinkAfiliadoShopee(TEST_USER_ID, url, { subId: "g1" });
+      const b = await affiliate.gerarLinkAfiliadoShopee(TEST_USER_ID, url, { subId: "g2" });
+      const a2 = await affiliate.gerarLinkAfiliadoShopee(TEST_USER_ID, url, { subId: "g1" });
+      const semMarca = await affiliate.gerarLinkAfiliadoShopee(TEST_USER_ID, url);
+      expect(a).toMatch(/\/g1-/);
+      expect(b).toMatch(/\/g2-/);
+      expect(a2).toBe(a);   // do cache
+      expect(semMarca).toMatch(/\/sem-/);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.unstubAllGlobals();
+      affiliate.clearShopeeConfig(TEST_USER_ID);
+    }
   });
 });
 

@@ -23,6 +23,7 @@ Servidor Node.js do Nimbus. Recebe as chamadas do frontend, faz scraping, agenda
 | **`billing/`** | Stripe (Checkout/Portal/webhooks), assinaturas, trial automático, limites por plano. |
 | **`whatsapp/`** | Tudo que fala com o WhatsApp (Baileys): sessões, envio, QR code. |
 | **`scraping/`** | Puppeteer (scraper de ML, Amazon e Shopee), conversão pra link de afiliado (ML/Amazon/Shopee) e o agendador do admin-scraper. |
+| **`affiliate-reports/`** | Desempenho de afiliado de cada usuário, consultado ao vivo com cache curto (`comum.js`). `ml.js`: cliques, pedidos e ganhos pela API JSON do painel do ML, com o cookie do usuário (a sonda que achou os endpoints é `scripts/ml-afiliados-desempenho-probe.js`). `shopee.js`: pedidos, vendas e comissão pelo `conversionReport` da Affiliate Open API, com o App ID do usuário, e vendas por grupo pelo sub_id `g<id do grupo>` que o scheduler põe no link (`affiliate.subIdDoGrupo`). |
 | **`infra/`** | "Encanamento": logger, métricas Prometheus, Sentry, fila BullMQ, heartbeat do worker, cache de status de sessão WA. |
 | **`scripts/`** | Scripts manuais (backup remoto S3). |
 | **`prisma/`** | Schema do banco + migrations geradas pelo Prisma. |

@@ -180,6 +180,13 @@ describe("sidebarItems — estrutura e ícones", () => {
     expect(PAGE_TO_PATH["admin-downloader"]).toBe("/admin/downloader");
   });
 
+  it("Desempenho é uma aba de usuário com rota própria", () => {
+    const item = sidebarItems.find(i => i.id === "desempenho");
+    expect(item).toBeTruthy();
+    expect(item.adminOnly).toBeFalsy();
+    expect(PAGE_TO_PATH.desempenho).toBe("/desempenho");
+  });
+
   it("todos os itens têm id, label e icon preenchidos", () => {
     for (const item of sidebarItems) {
       expect(item.id).toBeTruthy();

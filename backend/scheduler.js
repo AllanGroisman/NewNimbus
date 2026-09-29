@@ -363,7 +363,9 @@ function isRepasse(group) {
 //   - Afiliado CONFIGURADO e falhou: DESCARTA (pula) — não queremos enviar link
 //     sem comissão quando o usuário configurou pra ganhar
 // Retorna { ok, link, reason }. link=null significa "mantém o original".
-async function convertItemAffiliate(userId, item, affStatus) {
+// `group` é a campanha que vai mandar o item: o link da Shopee sai marcado com
+// ela (sub_id), pra aba Desempenho saber quanto cada grupo vendeu.
+async function convertItemAffiliate(userId, item, affStatus, group) {
   if (!item || !item.link || typeof item.link !== "string") {
     return { ok: true, link: null };
   }
@@ -381,7 +383,7 @@ async function convertItemAffiliate(userId, item, affStatus) {
   }
   if (item.store === "Shopee") {
     if (!affStatus.shopee.configured) return { ok: true, link: null };
-    const aff = await affiliate.gerarLinkAfiliadoShopee(userId, item.link);
+    const aff = await affiliate.gerarLinkAfiliadoShopee(userId, item.link, { subId: affiliate.subIdDoGrupo(group?.id) });
     if (aff) return { ok: true, link: aff };
     return { ok: false, reason: "Shopee conversion failed" };
   }
@@ -530,7 +532,7 @@ async function refillQueue(userId, group) {
   const newItems = [];
   const skippedAff = { ml: 0, amazon: 0, shopee: 0, total: 0 };
   for (const item of rawItems) {
-    const r = await convertItemAffiliate(userId, item, affStatus);
+    const r = await convertItemAffiliate(userId, item, affStatus, group);
     if (!r.ok) {
       skippedAff.total++;
       if (item.store === "Mercado Livre") skippedAff.ml++;
@@ -630,10 +632,11 @@ async function couponRuleForItem(item) {
 // Conversão de link de afiliado por loja. Tabela em vez de três `else if`
 // idênticos: o descarte precisava do mesmo tratamento nos três, e repetir a
 // gravação do log três vezes é como ela sairia de sincronia.
+// `g` é a campanha que manda: só a Shopee usa (sub_id do grupo no link).
 const AFFILIATE_CONVERTERS = {
   "Mercado Livre": { statusKey: "ml", label: "ML", convert: (u, l) => affiliate.gerarLinkAfiliadoML(u, l) },
   "Amazon": { statusKey: "amazon", label: "Amazon", convert: (u, l) => affiliate.gerarLinkAfiliadoAmazon(u, l) },
-  "Shopee": { statusKey: "shopee", label: "Shopee", convert: (u, l) => affiliate.gerarLinkAfiliadoShopee(u, l) },
+  "Shopee": { statusKey: "shopee", label: "Shopee", convert: (u, l, g) => affiliate.gerarLinkAfiliadoShopee(u, l, { subId: affiliate.subIdDoGrupo(g?.id) }) },
 };
 
 // Grava no log de Repasse o descarte que acontece no ENVIO. Só pra itens que
@@ -685,7 +688,7 @@ async function sendItem(userId, group, whatsappGroups, item) {
     const pairs = [];
     for (const [i, l] of item.originalLinks.entries()) {
       const conv = AFFILIATE_CONVERTERS[l.store];
-      const aff = conv ? await conv.convert(userId, l.link) : null;
+      const aff = conv ? await conv.convert(userId, l.link, group) : null;
       if (!aff && i > 0) {
         console.warn(`[scheduler] afiliado ${conv?.label || l.store} falhou pra um link extra da mensagem original de "${item.name?.slice(0, 40)}" — vai cru`);
         continue;
@@ -707,7 +710,7 @@ async function sendItem(userId, group, whatsappGroups, item) {
     // Mesma política de convertItemAffiliate: se o afiliado está configurado e a
     // conversão falha, NÃO manda link sem comissão — descarta (lança erro).
     const { statusKey, convert, label } = AFFILIATE_CONVERTERS[item.store];
-    const aff = await convert(userId, item.link);
+    const aff = await convert(userId, item.link, group);
     if (aff) {
       itemForSend = { ...item, link: aff };
     } else if (affiliate.status(userId)[statusKey].configured) {

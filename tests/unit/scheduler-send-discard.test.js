@@ -92,6 +92,14 @@ describe("descarte no envio vira linha no log de repasse", () => {
     await expect(scheduler.sendItem("u1", GRUPO, WA, itemRepasse())).rejects.toThrow(/sem link com comissão/);
   });
 
+  it("item Shopee sem link pronto é convertido com o sub_id do grupo", async () => {
+    const shopee = vi.spyOn(affiliate, "gerarLinkAfiliadoShopee").mockResolvedValue(null);
+    await expect(scheduler.sendItem("u1", GRUPO, WA, itemRepasse({
+      store: "Shopee", link: "https://shopee.com.br/x-i.1.2",
+    }))).rejects.toThrow(/Afiliado Shopee falhou/);
+    expect(shopee).toHaveBeenCalledWith("u1", "https://shopee.com.br/x-i.1.2", { subId: "g4242" });
+  });
+
   it("conversão bem-sucedida não gera descarte nem log", async () => {
     affiliate.gerarLinkAfiliadoML.mockResolvedValue("https://mercadolivre.com/sec/COMISSAO");
     // O envio em si falha porque não há WhatsApp de verdade neste teste — o que

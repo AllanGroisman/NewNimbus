@@ -382,6 +382,19 @@ export async function saveAffiliate(payload)    { return http("PUT",    "/api/af
 export async function clearAffiliate()          { return http("DELETE", "/api/affiliate"); }
 // Os testes de afiliado batem no site da loja — usam o teto maior.
 export async function testAffiliate(url)        { return http("POST",   "/api/affiliate/test", url ? { url } : {}, { timeoutMs: SLOW_TIMEOUT_MS }); }
+// Desempenho de afiliado no ML (cliques, pedidos, ganhos) do período, datas
+// AAAA-MM-DD inclusivas. `refresh` fura o cache curto do backend.
+export async function getMLDesempenho(from, to, { refresh = false } = {}) {
+  const qs = new URLSearchParams({ from, to, ...(refresh ? { refresh: "1" } : {}) });
+  return http("GET", `/api/affiliate/ml/desempenho?${qs}`, undefined, { timeoutMs: SLOW_TIMEOUT_MS });
+}
+
+// Desempenho de afiliado na Shopee (pedidos, vendas, comissão, vendas por grupo)
+// do período, datas AAAA-MM-DD inclusivas. `refresh` fura o cache curto do backend.
+export async function getShopeeDesempenho(from, to, { refresh = false } = {}) {
+  const qs = new URLSearchParams({ from, to, ...(refresh ? { refresh: "1" } : {}) });
+  return http("GET", `/api/affiliate/shopee/desempenho?${qs}`, undefined, { timeoutMs: SLOW_TIMEOUT_MS });
+}
 
 // ─── Afiliados Amazon ──────────────────────────────────────────────────
 export async function saveAmazonAffiliate(tag)  { return http("PUT",    "/api/affiliate/amazon", { tag }); }

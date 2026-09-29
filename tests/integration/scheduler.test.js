@@ -3,7 +3,7 @@
 
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { app, createTestUser, catalog, scheduler, storage, affiliate, waCalls, resetWa, waConnect } from "../helpers/app.js";
-import { mlProduct, makeGroup, makeWhatsAppGroup } from "../helpers/fixtures.js";
+import { mlProduct, shopeeProduct, makeGroup, makeWhatsAppGroup } from "../helpers/fixtures.js";
 
 // Mock do gerarLinkAfiliadoML — evita chamadas HTTP reais ao ML (cookie de teste é inválido).
 // O módulo affiliate é compartilhado por CJS cache, então o spyOn afeta o scheduler também.
@@ -674,5 +674,32 @@ describe("POST /api/state/groups/:gid/send-now — endpoint HTTP", () => {
     expect(r.status).toBe(200);
     expect(r.body.ok).toBe(true);
     expect(waCalls.sendText.length).toBeGreaterThan(0);
+  });
+});
+
+// O link da Shopee sai marcado com o grupo que vai mandá-lo (sub_id "g<id>"):
+// é por essa marca que a aba Desempenho separa as vendas por grupo.
+describe("link da Shopee marcado com o grupo", () => {
+  it("o refill gera o link com o sub_id do grupo", async () => {
+    await catalog.upsertProducts([shopeeProduct(901, { category: "beleza" })]);
+    const spy = vi.spyOn(affiliate, "gerarLinkAfiliadoShopee").mockImplementation(async (_u, url) => `https://s.shopee.com.br/t?u=${encodeURIComponent(url)}`);
+    try {
+      const { user, auth } = await createTestUser({ plan: "pro" });
+      affiliate.writeShopeeConfig(user.id, { appId: "123456", appSecret: "segredo-de-teste-123456" });
+      const group = makeGroup({ id: 120, categories: ["beleza"], sources: ["shopee"], auto: true });
+      await auth("put", "/api/state").send({ groups: [group] });
+
+      await scheduler.refillNow(user.id, 120);
+
+      expect(spy).toHaveBeenCalled();
+      for (const [uid, , opts] of spy.mock.calls) {
+        expect(uid).toBe(user.id);
+        expect(opts).toEqual({ subId: "g120" });
+      }
+      const g = (await storage.loadState(user.id)).groups.find(g => g.id === 120);
+      expect(g.queue.some(i => String(i.affiliateLink).startsWith("https://s.shopee.com.br/t"))).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

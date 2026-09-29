@@ -1,0 +1,65 @@
+{
+  "_origem": "Respostas reais de /affiliate-program/api/dashboard/* capturadas pela sonda backend/scripts/ml-afiliados-desempenho-probe.js em 29/09/2026. A conta não tinha venda nenhuma: os NÚMEROS de pedido, produto, venda e ganho foram editados para não serem zero (e a tag foi trocada); os NOMES e o formato dos campos são os que o ML mandou.",
+  "general": {
+    "data": [
+      { "id": "clicks", "current_amount": 20, "variation": 100, "variation_indicator": "INCREASE" },
+      { "id": "buyers", "current_amount": 3 },
+      { "id": "requests", "current_amount": 7 },
+      { "id": "orders", "current_amount": 4 },
+      { "id": "sales", "current_amount": 5 }
+    ],
+    "commissions": [
+      { "id": "summary", "current_amount": 18.5, "data": [{ "id": "marketplace", "value": 12 }, { "id": "seller", "value": 4.5 }, { "id": "brand", "value": 2 }] },
+      { "id": "marketplace", "current_amount": 12, "variation": 0, "variation_indicator": "SUMMARY" },
+      { "id": "seller", "current_amount": 4.5, "variation": 0, "variation_indicator": "SUMMARY" },
+      { "id": "brand", "current_amount": 2, "variation": 0, "variation_indicator": "SUMMARY" }
+    ],
+    "sales": [
+      { "id": "total_gross_sales", "current_amount": 310.9 },
+      { "id": "total_estimated_sales", "current_amount": 250.9 },
+      { "id": "total_not_effective_sales", "current_amount": 60 },
+      { "id": "count_not_effective_sales", "current_amount": 1 }
+    ],
+    "filter_time_range": "1782864000000--1790640000000",
+    "filter_type": "GENERAL",
+    "last_update": "2026-09-29T13:26:24Z",
+    "show_modal_new_metrics": false
+  },
+  "detalheDiarioPagina1": {
+    "item_list": [
+      { "date": "2026-09-24", "quantity": 3, "orders": 2, "earnings": 11.5, "cvr": 0.5, "touchpoints": 4, "coupons": 1 },
+      { "date": "2026-09-21", "quantity": 2, "orders": 2, "earnings": 7, "cvr": 1, "touchpoints": 2, "coupons": 0 }
+    ],
+    "filter_time_range": "1790478000000--1790650800000",
+    "filter_type": "GENERAL",
+    "page": 1,
+    "items_per_page": 2,
+    "total_results": 3,
+    "order_by": "earnings",
+    "sort": "DESC"
+  },
+  "detalheDiarioPagina2": {
+    "item_list": [
+      { "date": "2026-09-22", "quantity": 0, "orders": 0, "earnings": 0, "cvr": 0, "touchpoints": 14, "coupons": 0 }
+    ],
+    "filter_time_range": "1790478000000--1790650800000",
+    "filter_type": "GENERAL",
+    "page": 2,
+    "items_per_page": 2,
+    "total_results": 3,
+    "order_by": "earnings",
+    "sort": "DESC"
+  },
+  "ganancias": {
+    "item_list": [
+      { "tag": "tag-secundaria", "clicks": 5, "quantity": 1, "earnings": 3, "cvr": 0.2, "touchpoints": 5 },
+      { "tag": "minha-tag", "clicks": 15, "quantity": 4, "earnings": 15.5, "cvr": 0.27, "touchpoints": 15 }
+    ],
+    "filter_time_range": "1782864000000--1790640000000",
+    "page": 1,
+    "items_per_page": 10,
+    "total_results": 2,
+    "order_by": "QUANTITY",
+    "sort": "DESC"
+  }
+}
