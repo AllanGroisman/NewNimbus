@@ -1,16 +1,17 @@
 # docs/
 
-Pasta reservada pra documentos do projeto. Hoje só contém este README — todo o material técnico vivo está em outros lugares.
+Pasta reservada pra documentos do projeto.
+
+- **[`operacao.md`](operacao.md)** — instalação local (Windows), VPS de produção, scripts e backup em nuvem.
+- **[`infra-capacidade.md`](infra-capacidade.md)** — levantamento de capacidade da VPS e roteiro de escala.
 
 ## Onde está cada coisa
 
-- **`CLAUDE.md`** (raiz) — *mapa técnico*: arquitetura, comandos, env vars, fluxos críticos (auth, scheduler, catálogo, afiliado, WhatsApp, billing, fila). Atualizado junto com o código.
-- **`README.md`** (raiz) — visão geral do projeto pra quem chega agora.
-- **`PLANO.md`** (raiz) — backlog/TODO informal de coisas a fazer (não é roadmap formal).
+- **`README.md`** (raiz) — visão geral do projeto: o que faz, stack, arquitetura e decisões técnicas.
 - **`backend/README.md`** — overview de cada pasta do backend.
 - Cada subpasta com lógica relevante tem o próprio `README.md` (ex.: `backend/scraping/`, `backend/billing/`, `frontend/src/pages/`).
 - **`deploy/README.md`** — instalação na VPS Ubuntu.
-- **`tests/README.md`** — cobertura de testes (~287 testes em 3 camadas).
+- **`tests/README.md`** — cobertura de testes (~2.500 testes em 3 camadas).
 
 ## Quando faz sentido adicionar um doc aqui
 
