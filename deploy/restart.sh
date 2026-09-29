@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Reinicia o Nimbus: roda o stop.sh e, em seguida, o start.sh.
 #
+# Inclui o Downloader: o stop.sh encerra yt-dlp/ffmpeg que sobrarem e limpa o
+# tmp/ dele; o start.sh garante/atualiza o yt-dlp e confere o ffmpeg.
+#
 # O banco LOCAL nunca é sobrescrito: exportamos NIMBUS_SKIP_RESTORE=1, que é o
 # mesmo que responder "N" na pergunta "Restaurar banco do Backblaze? [s/N]" do
 # start.sh — ou seja, o restart nunca fica travado esperando teclado.

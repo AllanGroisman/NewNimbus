@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Sobe tudo: Postgres + Redis (docker compose), backend + worker (PM2).
+# Sobe tudo: Postgres + Redis (docker compose), backend + worker (PM2) e o
+# Downloader (garante/atualiza yt-dlp e ffmpeg).
 # Roda DEPOIS de install.sh (que já configurou tudo).
 #
 # Uso (da raiz do repo):
@@ -25,7 +26,7 @@ fi
 
 # Postgres + Redis (sobe primeiro — restore precisa do container)
 echo
-echo "[1/6] Postgres + Redis..."
+echo "[1/7] Postgres + Redis..."
 cd "$REPO_DIR"
 sudo docker compose up -d
 for i in {1..30}; do
@@ -43,11 +44,11 @@ done
 # restaura da nuvem — equivale a responder "N" no prompt abaixo.
 echo
 if [[ "${NIMBUS_SKIP_RESTORE:-0}" == "1" ]]; then
-  echo "[2/6] Restore remoto: pulado (NIMBUS_SKIP_RESTORE=1 — mantendo banco local)."
+  echo "[2/7] Restore remoto: pulado (NIMBUS_SKIP_RESTORE=1 — mantendo banco local)."
 elif [[ "$ALREADY_RUNNING" == "1" ]]; then
-  echo "[2/5] Backup remoto: pulado (reinício de sistema já rodando)."
+  echo "[2/7] Backup remoto: pulado (reinício de sistema já rodando)."
 else
-echo "[2/6] Verificando backup remoto (Backblaze)..."
+echo "[2/7] Verificando backup remoto (Backblaze)..."
 _ENV_FILE="$REPO_DIR/backend/.env"
 _B2_BUCKET=""
 _B2_KEY_ID=""
@@ -95,11 +96,44 @@ fi
 
 # Backend: deps + migrations
 echo
-echo "[3/5] Backend: npm install + migrations + PM2..."
+echo "[3/7] Backend: npm install + migrations..."
 cd "$REPO_DIR/backend"
 npm install --omit=dev
 npx prisma generate
 npx prisma migrate deploy
+
+# Downloader (Admin > Downloader): roda dentro do nimbus-backend, mas depende de
+# dois binários que o npm install sozinho não garante — o yt-dlp mora FORA do
+# node_modules e o ffmpeg do ffmpeg-static é baixado no install do pacote (se
+# o arquivo sumir, o pacote não mudou e o install não roda de novo).
+# Mesma lógica do botão "Atualizar yt-dlp" (downloader/ytdlp.js): se o binário
+# não existe, baixa; se existe, `-U` só baixa quando há versão nova — assim o
+# restart não rebaixa 40MB toda vez, mas pega as correções que o YouTube/TikTok
+# vivem exigindo. Nunca aborta o start: GitHub fora do ar não impede o resto.
+echo
+echo "[4/7] Downloader: yt-dlp + ffmpeg..."
+_YTDLP="$REPO_DIR/backend/downloader/bin/yt-dlp"
+if [[ -x "$_YTDLP" ]]; then
+  timeout 120 "$_YTDLP" -U \
+    || echo "  !! yt-dlp nao atualizado - use o botao 'Atualizar yt-dlp' em Admin > Downloader."
+else
+  node scripts/setup-ytdlp.js \
+    || echo "  !! yt-dlp nao baixado - use o botao 'Atualizar yt-dlp' em Admin > Downloader."
+fi
+if [[ -x "$_YTDLP" ]]; then
+  echo "  yt-dlp: $("$_YTDLP" --version 2>/dev/null || echo '?')"
+fi
+_FFMPEG=$(node -e 'process.stdout.write(require("ffmpeg-static") || "")' 2>/dev/null || true)
+if [[ -z "$_FFMPEG" || ! -x "$_FFMPEG" ]]; then
+  echo "  ffmpeg-static sem binário — reinstalando..."
+  npm rebuild ffmpeg-static \
+    || echo "  !! ffmpeg nao instalado - o Downloader nao vai conseguir juntar/renderizar videos."
+else
+  echo "  ffmpeg: ok"
+fi
+
+echo
+echo "[5/7] PM2: backend + worker..."
 # startOrRestart: sobe o que não existe e reinicia o que já estiver rodando — em
 # um comando só, sem erro de "already launched". Funciona tanto no boot inicial
 # quanto no reinício (sem precisar de stop.sh antes).
@@ -108,7 +142,7 @@ pm2 save >/dev/null
 
 # Frontend: build
 echo
-echo "[4/5] Frontend: build..."
+echo "[6/7] Frontend: build..."
 cd "$REPO_DIR/frontend"
 npm install
 npm run build
@@ -116,7 +150,7 @@ chmod -R o+rX "$REPO_DIR/frontend/dist"
 
 # Nginx (caso esteja parado)
 echo
-echo "[5/5] Nginx..."
+echo "[7/7] Nginx..."
 sudo systemctl start nginx 2>/dev/null || true
 sudo systemctl reload nginx
 

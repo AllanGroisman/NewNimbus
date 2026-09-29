@@ -2,6 +2,9 @@
 # Reinicia o Nimbus em modo TESTES (ngrok): roda o stop.sh e, em seguida, o
 # ngrok_start.sh.
 #
+# Inclui o Downloader: o stop.sh encerra yt-dlp/ffmpeg que sobrarem e limpa o
+# tmp/ dele; o start.sh garante/atualiza o yt-dlp e confere o ffmpeg.
+#
 # Não precisa exportar NIMBUS_SKIP_RESTORE: o ngrok_start.sh já define
 # NIMBUS_MODE=ngrok e NIMBUS_SKIP_RESTORE=1 por conta própria, então o banco
 # LOCAL nunca é sobrescrito e o restart não fica travado esperando teclado.

@@ -2,6 +2,9 @@
 # Reinicia o Nimbus em modo TESTES (ngrok): para tudo e sobe de novo.
 # Atalho pra: bash deploy/stop.sh && bash deploy/ngrok_start.sh
 #
+# Inclui o Downloader: o stop.sh encerra yt-dlp/ffmpeg que sobrarem e limpa o
+# tmp/ dele; o start.sh garante/atualiza o yt-dlp e confere o ffmpeg.
+#
 # Uso (da raiz do repo):
 #   bash deploy/update_ngrok.sh
 #
