@@ -8,10 +8,13 @@
 //
 // Adicionar, dos dois lados, é o mesmo popup: primeiro o WhatsApp, depois o grupo
 // daquele WhatsApp. No destino, o popup também cria um grupo novo.
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../../data/constants";
-import { getWAGroupPicture, getWAInvite, errText } from "../../data/api";
+import { getWAGroupPicture, getWAInvite, listDmBroadcasts, cancelDmBroadcast, errText } from "../../data/api";
 import Modal from "../ui/Modal";
+import DmMembersModal from "./DmMembersModal";
+import DmProgresso from "./DmProgresso";
+import { partesPorGrupo, parteAtiva, chaveDaParte, lerDispensados, gravarDispensados } from "./dmPartes";
 import Badge from "../ui/Badge";
 import UsageBadge from "../ui/UsageBadge";
 
@@ -193,19 +196,20 @@ function GroupCard({ name, jid, number, numberMissing, connected, members, extra
   );
 }
 
-function SectionHeader({ title, count, limit, limitLabel, sub, addLabel, onAdd, addDisabled, addTitle, tourAdd }) {
+function SectionHeader({ title, count, limit, limitLabel, sub, addLabel, onAdd, addDisabled, addTitle, tourAdd, actions }) {
   return (
     <div style={{ marginBottom: 10 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <div style={{ fontSize: 15, fontWeight: 600 }}>{title}</div>
         <UsageBadge current={count} limit={limit} label={limitLabel} />
+        {actions && <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>{actions}</div>}
         <button
           data-tour={tourAdd}
           onClick={onAdd}
           disabled={addDisabled}
           title={addTitle}
           aria-label={addLabel}
-          style={{ marginLeft: "auto", padding: "6px 12px", borderRadius: 8, border: "none", fontSize: 12, fontWeight: 600, background: addDisabled ? "var(--color-border-secondary)" : PRIMARY, color: "#fff", cursor: addDisabled ? "not-allowed" : "pointer" }}
+          style={{ marginLeft: actions ? 0 : "auto", padding: "6px 12px", borderRadius: 8, border: "none", fontSize: 12, fontWeight: 600, background: addDisabled ? "var(--color-border-secondary)" : PRIMARY, color: "#fff", cursor: addDisabled ? "not-allowed" : "pointer" }}
         >+ Adicionar</button>
       </div>
       {sub && <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 3, lineHeight: 1.4 }}>{sub}</div>}
@@ -408,14 +412,58 @@ export default function GroupsTab({
   leaderLimit, destLimit, loadGroups, knownGroups = {},
   onAddLeader, onRemoveLeader, onLinkExisting, onImportAndLink, onUnlink, onCreateGroup,
   onUpdateWhatsappGroup, onRevokeInvite, computeCloneName, onError,
+  isAdmin = false, campaignId = null,
 }) {
   const [modal, setModal] = useState(null);       // { modo, inicio }
-  const [confirmar, setConfirmar] = useState(null); // { tipo, alvo }
+  const [confirmar, setConfirmar] = useState(null); // { tipo, alvo, dm }
   const [aviso, setAviso] = useState(null);
   const [editDesc, setEditDesc] = useState(null);  // { id, texto }
-  const avisar = (texto) => { setAviso(texto); setTimeout(() => setAviso(a => (a === texto ? null : a)), 2500); };
+  const [dm, setDm] = useState(null);              // { grupos, todos } — popup de mensagem no privado
+  const [dmLista, setDmLista] = useState([]);      // envios no privado desta campanha, com a parte de cada grupo
+  const [dmDispensados, setDmDispensados] = useState(lerDispensados);
+  const avisar = (texto, ms = 2500) => { setAviso(texto); setTimeout(() => setAviso(a => (a === texto ? null : a)), ms); };
+
+  // Mensagem no privado (tasks 4 e 6, só admin): o envio roda no servidor e cada
+  // cartão destino mostra a parte dele (DmProgresso). Consulta ao abrir a aba e,
+  // só enquanto alguma parte anda, a cada 10s — o envio leva horas. Montando a
+  // lista, que leva segundos, a cada 5s.
+  const podeDm = isAdmin && campaignId != null;
+  const recarregarDm = useCallback(async () => {
+    if (!podeDm) return;
+    try {
+      const r = await listDmBroadcasts(campaignId);
+      setDmLista(r?.broadcasts || []);
+    } catch { /* a faixa é acessória: a próxima consulta tenta de novo */ }
+  }, [podeDm, campaignId]);
+  useEffect(() => {
+    if (!podeDm) return undefined;
+    let vivo = true;   // trocou de campanha antes da resposta: a antiga não vale
+    listDmBroadcasts(campaignId).then(r => { if (vivo) setDmLista(r?.broadcasts || []); }).catch(() => {});
+    return () => { vivo = false; };
+  }, [podeDm, campaignId]);
+  const dmAndando = dmLista.some(b => (b.grupos || []).some(parteAtiva));
+  const dmMontando = dmLista.some(b => b.status === "preparing");
+  useEffect(() => {
+    if (!dmAndando) return undefined;
+    const t = setInterval(recarregarDm, dmMontando ? 5000 : 10_000);
+    return () => clearInterval(t);
+  }, [dmAndando, dmMontando, recarregarDm]);
+  const dmPorGrupo = useMemo(() => partesPorGrupo(dmLista, dmDispensados), [dmLista, dmDispensados]);
+  const dmOcupado = (w) => parteAtiva(dmPorGrupo.get(w.id)?.parte);
+  const dispensarDm = ({ parte, broadcast }) => setDmDispensados(d => gravarDispensados([...d, chaveDaParte(broadcast, parte)]));
+  const cancelarDm = async (w, { broadcast }) => {
+    try {
+      await cancelDmBroadcast(campaignId, broadcast.id, w.id);
+    } catch (err) {
+      onError?.(errText(err, "Não foi possível cancelar o envio."));
+    }
+    recarregarDm();
+  };
 
   const numberOf = (id) => numbers.find(n => n.id === id) || null;
+  const conectado = (w) => w.status !== "disconnected" && numberOf(w.numberId)?.status === "connected";
+  const abrirDm = (grupos, todos = false) => setDm({ grupos: grupos.map(w => ({ ...w, connected: conectado(w), ocupado: dmOcupado(w) })), todos });
+  const dmLivres = linkedWGs.filter(w => conectado(w) && !dmOcupado(w));
   const leaderKeys = new Set(leaders.map(l => `${l.numberId}::${l.jid}`));
   const destKeys = new Set(linkedWGs.map(w => `${w.numberId}::${w.id}`));
   const leaderFull = leaderLimit != null && leaders.length >= leaderLimit;
@@ -508,6 +556,16 @@ export default function GroupsTab({
         addLabel="Adicionar grupo destino" onAdd={() => setModal({ modo: "destino" })} tourAdd="wg-add"
         addDisabled={semNumero || destFull}
         addTitle={semNumero ? "Conecte um número de WhatsApp primeiro" : destFull ? `Limite de ${destLimit} do seu plano` : "Adicionar grupo a esta campanha"}
+        actions={podeDm && linkedWGs.length > 0 ? (
+          <button
+            onClick={() => abrirDm(linkedWGs, true)}
+            disabled={!dmLivres.length}
+            title={dmLivres.length
+              ? "Mandar uma mensagem no privado para os membros de todos os grupos destino"
+              : linkedWGs.some(conectado) ? "Todos os grupos conectados já têm uma mensagem no privado indo" : "Nenhum número destes grupos está conectado"}
+            style={{ padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 500, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", cursor: dmLivres.length ? "pointer" : "not-allowed", opacity: dmLivres.length ? 1 : 0.5 }}
+          >✉ Mensagem a todos</button>
+        ) : null}
       />
       {linkedWGs.length === 0 ? (
         <div style={vazioStyle}>
@@ -524,6 +582,8 @@ export default function GroupsTab({
             const on = w.status !== "disconnected" && n?.status === "connected";
             const cheio = w.duplicatedTo ? byId.get(w.duplicatedTo) : null;
             const editando = editDesc?.id === w.id;
+            const dmParte = podeDm ? dmPorGrupo.get(w.id) : null;
+            const dmIndo = parteAtiva(dmParte?.parte);
             return (
               <GroupCard
                 key={w.id}
@@ -547,6 +607,11 @@ export default function GroupsTab({
                     avisar(w.autoDuplicate ? `Duplicação automática desligada em "${w.name}".` : `"${w.name}" vai ser duplicado sozinho quando chegar a 1.000 membros.`);
                   } },
                   { label: "✎ Editar descrição", onClick: () => setEditDesc({ id: w.id, texto: w.description || "" }) },
+                  podeDm && {
+                    label: "✉ Mensagem no privado aos membros", disabled: !on || dmIndo,
+                    hint: !on ? "O número deste grupo está desconectado" : dmIndo ? "Já tem uma mensagem no privado indo para este grupo" : "Manda uma mensagem no privado para cada membro deste grupo",
+                    onClick: () => abrirDm([w]),
+                  },
                   { label: "Remover da campanha", danger: true, onClick: () => setConfirmar({ tipo: "destino", alvo: w }) },
                 ]} />}
               >
@@ -561,6 +626,14 @@ export default function GroupsTab({
                 ) : w.description ? (
                   <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 5, fontStyle: "italic", whiteSpace: "pre-wrap" }}>{w.description}</div>
                 ) : null}
+                {dmParte && (
+                  <DmProgresso
+                    parte={dmParte.parte}
+                    broadcast={dmParte.broadcast}
+                    onCancelar={() => setConfirmar({ tipo: "dm", alvo: w, dm: dmParte })}
+                    onDispensar={() => dispensarDm(dmParte)}
+                  />
+                )}
               </GroupCard>
             );
           })}
@@ -572,7 +645,7 @@ export default function GroupsTab({
   return (
     <div>
       {aviso && (
-        <div role="status" style={{ fontSize: 12, padding: "8px 12px", borderRadius: 8, background: PRIMARY_LIGHT, color: PRIMARY_DARK, marginBottom: 10, wordBreak: "break-all" }}>{aviso}</div>
+        <div role="status" style={{ fontSize: 12, padding: "8px 12px", borderRadius: 8, background: PRIMARY_LIGHT, color: PRIMARY_DARK, marginBottom: 10, overflowWrap: "anywhere" }}>{aviso}</div>
       )}
       {isRepasse ? (
         <div className="groups-flow">
@@ -600,7 +673,37 @@ export default function GroupsTab({
         />
       )}
 
-      {confirmar && (
+      {dm && (
+        <DmMembersModal
+          campaignId={campaignId}
+          grupos={dm.grupos}
+          todos={dm.todos}
+          onStarted={() => {
+            setDm(null);
+            avisar("✉ O envio começou em segundo plano — o andamento aparece no cartão de cada grupo.", 5000);
+            recarregarDm();
+          }}
+          onClose={() => setDm(null)}
+        />
+      )}
+
+      {confirmar?.tipo === "dm" && (
+        <Modal title="Cancelar a mensagem no privado?" onClose={() => setConfirmar(null)}>
+          <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+            Para de mandar para quem ainda não recebeu em <strong style={{ color: "var(--color-text-primary)" }}>{confirmar.alvo.name}</strong>. Quem já recebeu, recebeu.
+            {(confirmar.dm.broadcast.grupos || []).filter(parteAtiva).length > 1 && " Os outros grupos deste envio continuam."}
+          </p>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button onClick={() => setConfirmar(null)} style={btnSec}>Voltar</button>
+            <button
+              onClick={() => { cancelarDm(confirmar.alvo, confirmar.dm); setConfirmar(null); }}
+              style={{ ...btnSec, border: "0.5px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", fontWeight: 500 }}
+            >Cancelar envio</button>
+          </div>
+        </Modal>
+      )}
+
+      {confirmar && confirmar.tipo !== "dm" && (
         <Modal title={confirmar.tipo === "origem" ? "Remover grupo de origem?" : "Remover grupo da campanha?"} onClose={() => setConfirmar(null)}>
           <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
             {confirmar.tipo === "origem"

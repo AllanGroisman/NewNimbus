@@ -1214,6 +1214,19 @@ async function getGroupMetadata(userId, numberId, jid) {
   return s.sock.groupMetadata(jid);
 }
 
+// Os destinos no privado dos membros de um grupo (task 4): PN quando se sabe,
+// @lid quando não, sem o próprio número. A resolução mora aqui, no dono do
+// socket, porque é ele quem tem o mapeamento LID→PN e o `sock.user`.
+async function groupMemberJids(userId, numberId, jid) {
+  const s = ensureConnected(userId, numberId);
+  const meta = (s.groupMeta ? await s.groupMeta(jid) : undefined) || await s.sock.groupMetadata(jid);
+  const lidMapping = s.sock.signalRepository?.lidMapping;
+  return require("./group-members").memberJids(meta?.participants || [], {
+    selfIds: [s.sock.user?.id, s.sock.user?.lid],
+    pnForLid: lidMapping ? (lid) => lidMapping.getPNForLID(lid) : undefined,
+  });
+}
+
 // A URL da miniatura da foto do grupo (task 24), ou null quando o grupo não tem
 // foto — o WhatsApp responde "item-not-found" e isso não é erro. A URL é do CDN
 // do WhatsApp e expira em alguns dias; quem guarda (server.js) guarda por horas.
@@ -1441,6 +1454,7 @@ module.exports = {
   listGroups,
   leaveGroup,
   getGroupMetadata,
+  groupMemberJids,
   getGroupPicture,
   restoreSessions,
   closeAll,
@@ -1476,6 +1490,7 @@ function makeStub() {
     listGroups: fail,
     leaveGroup: fail,
     getGroupMetadata: fail,
+    groupMemberJids: fail,
     getGroupPicture: fail,
     restoreSessions: () => {},
     closeAll: () => Promise.resolve(),

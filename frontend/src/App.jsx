@@ -42,6 +42,7 @@ import PageAdminShopee from "./pages/AdminShopee";
 import PageAdminUsers from "./pages/AdminUsers";
 import PageAdminBackups from "./pages/AdminBackups";
 import PageAdminDownloader from "./pages/AdminDownloader";
+import PageAdminExtensao from "./pages/AdminExtensao";
 import PageAdminNotifications from "./pages/AdminNotifications";
 import PageAdminNotifTemplates from "./pages/AdminNotifTemplates";
 import PageAdminTutoriais from "./pages/AdminTutoriais";
@@ -1148,6 +1149,7 @@ export default function App() {
     "admin-repasse":  user?.role === "admin" ? <PageAdminRepasse /> : fallbackPage,
     "admin-cupom":    user?.role === "admin" ? <PageAdminCupom /> : fallbackPage,
     "admin-downloader": user?.role === "admin" ? <PageAdminDownloader /> : fallbackPage,
+    "admin-extensao": user?.role === "admin" ? <PageAdminExtensao /> : fallbackPage,
     "admin-users":          user?.role === "admin" ? <PageAdminUsers currentUser={user} /> : fallbackPage,
     "admin-backups":        user?.role === "admin" ? <PageAdminBackups /> : fallbackPage,
     "admin-notifications":  user?.role === "admin" ? <PageAdminNotifications onGoToWhatsNimbus={() => requestNavigation(() => setPage("admin-whatsnimbus"))} /> : fallbackPage,
@@ -1316,6 +1318,7 @@ export default function App() {
               onUpdateCustomTemplate={updateCustomTemplate}
               limits={billing?.limits}
               tourActive={!!activeTour}
+              isAdmin={user?.role === "admin"}
             />
           : (String(page).startsWith("admin-") && user?.role === "admin" && !prefsAdminProntas)
             ? <div style={{ padding: 24, color: "var(--color-text-secondary)" }}>Carregando…</div>

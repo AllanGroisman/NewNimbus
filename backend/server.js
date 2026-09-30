@@ -42,6 +42,7 @@ const stripeMod = require("./billing/stripe");
 const backupApi = require("./backup/api");
 // Admin › Downloader — yt-dlp + ffmpeg. Router próprio; ver backend/downloader/routes.js.
 const downloaderRoutes = require("./downloader/routes");
+const extensaoRoutes = require("./extensao/routes");
 const downloaderJobs = require("./downloader/jobs");
 const diskInfo = require("./infra/disk");
 const backupMonitor = require("./backup/monitor");
@@ -1719,6 +1720,135 @@ app.post("/api/state/groups/:gid/send-now", auth.requireAuth, requireActiveSubsc
   }
 });
 
+// ── Mensagem no privado para os membros dos grupos destino (tasks 4 e 6) ──
+// Só admin, por decisão do produto: DM em massa é o que mais bane número, e a
+// função fica nos números do admin até provar que o ritmo do runner aguenta.
+// Quem envia é o dm-broadcast/runner.js, em segundo plano; aqui só cria, lista
+// e cancela. Vários disparos podem andar juntos: números diferentes enviam ao
+// mesmo tempo, e no mesmo número o mais novo espera na fila.
+const dmRunner = require("./dm-broadcast/runner");
+const dmProgress = require("./dm-broadcast/progress");
+const { prisma: dmPrisma } = require("./db");
+const DM_TEXT_MAX = 4096;
+
+function dmBroadcastOut(b) {
+  return {
+    id: String(b.id), campaignId: String(b.campaignId), whatsappGroupIds: b.whatsappGroupIds || [],
+    text: b.text, status: b.status, total: b.total, sent: b.sent, failed: b.failed,
+    error: b.error || null, createdAt: b.createdAt,
+    startedAt: b.startedAt, finishedAt: b.finishedAt,
+    // A parte de cada grupo, para o cartão do grupo (dm-broadcast/progress.js).
+    grupos: b.grupos || [],
+  };
+}
+
+async function dmBroadcastsOut(userId, rows, state) {
+  return (await dmProgress.comPartes(userId, rows, state.whatsappGroups)).map(dmBroadcastOut);
+}
+
+// A campanha do usuário, ou null (404). Mesmo critério das outras rotas de campanha.
+async function campaignOf(req) {
+  const groupId = isNaN(Number(req.params.gid)) ? req.params.gid : Number(req.params.gid);
+  const state = await storage.loadState(req.user.id);
+  const group = (state.groups || []).find(g => g.id === groupId);
+  return group ? { state, group } : null;
+}
+
+app.get("/api/state/groups/:gid/dm-broadcasts", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const found = await campaignOf(req);
+    if (!found) return res.status(404).json({ error: "Campanha não encontrada" });
+    const rows = await dmPrisma().dmBroadcast.findMany({
+      where: { userId: req.user.id, campaignId: BigInt(found.group.id) },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+    });
+    res.json({ broadcasts: await dmBroadcastsOut(req.user.id, rows, found.state) });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/state/groups/:gid/dm-broadcasts" });
+  }
+});
+
+app.post("/api/state/groups/:gid/dm-broadcasts", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const found = await campaignOf(req);
+    if (!found) return res.status(404).json({ error: "Campanha não encontrada" });
+    const { state, group } = found;
+    const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
+    if (!text) return res.status(400).json({ error: "Escreva a mensagem." });
+    if (text.length > DM_TEXT_MAX) return res.status(400).json({ error: `A mensagem passa de ${DM_TEXT_MAX} caracteres.` });
+
+    const linked = (group.whatsappGroupIds || []).map(String);
+    const todos = req.body?.whatsappGroupIds === undefined;
+    let alvo = linked;
+    if (!todos) {
+      if (!Array.isArray(req.body.whatsappGroupIds) || !req.body.whatsappGroupIds.length) {
+        return res.status(400).json({ error: "Escolha ao menos um grupo." });
+      }
+      alvo = [...new Set(req.body.whatsappGroupIds.map(String))];
+      const fora = alvo.find(id => !linked.includes(id));
+      if (fora !== undefined) {
+        return res.status(400).json({ error: "Esse grupo não é destino desta campanha.", code: "not_linked", whatsappGroupId: fora });
+      }
+    }
+    // Número pausado pelo plano ou fora do estado não envia nada — nem DM.
+    const usaveis = new Set(
+      scheduler.usableWhatsappGroups(state.whatsappGroups || [], state.planPaused, state.numbers).map(w => String(w.id))
+    );
+    alvo = alvo.filter(id => usaveis.has(id));
+    if (!alvo.length) return res.status(400).json({ error: "Nenhum destes grupos tem um número ativo para enviar." });
+
+    // Grupo com envio andando fica de fora, para ninguém receber dois sem querer.
+    // Escolhido a dedo, é recusa; no "todos", ele só é pulado.
+    const ocupados = await dmProgress.gruposOcupados(req.user.id, state.whatsappGroups);
+    const ocupado = alvo.find(id => ocupados.has(id));
+    if (!todos && ocupado !== undefined) {
+      const nome = (state.whatsappGroups || []).find(w => String(w.id) === ocupado)?.name || ocupado;
+      return res.status(409).json({
+        error: `"${nome}" já tem uma mensagem no privado indo. Espere terminar ou cancele no cartão do grupo.`,
+        code: "dm_group_active", whatsappGroupId: ocupado,
+      });
+    }
+    alvo = alvo.filter(id => !ocupados.has(id));
+    if (!alvo.length) {
+      return res.status(409).json({ error: "Todos estes grupos já têm uma mensagem no privado indo.", code: "dm_group_active" });
+    }
+
+    const b = await dmPrisma().dmBroadcast.create({
+      data: { userId: req.user.id, campaignId: BigInt(group.id), whatsappGroupIds: alvo, text },
+    });
+    dmRunner.kick(b.id);
+    res.status(201).json({ broadcast: (await dmBroadcastsOut(req.user.id, [b], state))[0] });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/state/groups/:gid/dm-broadcasts" });
+  }
+});
+
+// Com `whatsappGroupId` no corpo, cancela só a parte daquele grupo (o cancelar do
+// cartão); sem, o disparo inteiro.
+app.post("/api/state/groups/:gid/dm-broadcasts/:id/cancel", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const found = await campaignOf(req);
+    if (!found) return res.status(404).json({ error: "Campanha não encontrada" });
+    let id;
+    try { id = BigInt(req.params.id); } catch { return res.status(404).json({ error: "Envio não encontrado" }); }
+    const b = await dmPrisma().dmBroadcast.findFirst({ where: { id, userId: req.user.id, campaignId: BigInt(found.group.id) } });
+    if (!b) return res.status(404).json({ error: "Envio não encontrado" });
+    const wgId = req.body?.whatsappGroupId != null ? String(req.body.whatsappGroupId) : null;
+    if (wgId != null && !(b.whatsappGroupIds || []).map(String).includes(wgId)) {
+      return res.status(404).json({ error: "Esse grupo não está neste envio" });
+    }
+    if (dmRunner.ATIVOS.includes(b.status)) {
+      const w = wgId != null ? (found.state.whatsappGroups || []).find(x => String(x.id) === wgId) : null;
+      await dmRunner.cancelar(b, { whatsappGroupId: wgId, groupJid: w?.jid || wgId });
+    }
+    const atual = await dmPrisma().dmBroadcast.findUnique({ where: { id } });
+    res.json({ broadcast: (await dmBroadcastsOut(req.user.id, [atual], found.state))[0] });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/state/groups/:gid/dm-broadcasts/:id/cancel" });
+  }
+});
+
 // Aprovar item pendente: move de pending pra queue (final).
 app.post("/api/state/groups/:gid/pending/:pid/approve", auth.requireAuth, requireActiveSubscription, async (req, res) => {
   try {
@@ -2331,6 +2461,12 @@ app.get("/api/admin/users/:id/detail", auth.requireAuth, auth.requireAdmin, asyn
 // O requireAuth/requireAdmin mora dentro do router: as duas rotas que entregam
 // arquivo precisam ficar de fora dele (ver downloader/routes.js).
 app.use("/api/admin/downloader", downloaderRoutes);
+
+// ────────────────────────────────────────────────────────────────────────
+// Admin — Extensão (zip da pasta extension/ para instalar/atualizar)
+// ────────────────────────────────────────────────────────────────────────
+
+app.use("/api/admin/extensao", extensaoRoutes);
 
 // ────────────────────────────────────────────────────────────────────────
 // Admin — Backups
@@ -4551,6 +4687,8 @@ async function boot() {
     // Grupo destino cheio vira o próximo da série (task 25). Mesmo processo do
     // scheduler: as operações de grupo passam pela fachada `whatsapp`.
     require("./whatsapp/auto-duplicate").start();
+    // Mensagem no privado para membros (tasks 4 e 6): retoma o que estava no meio.
+    require("./dm-broadcast/runner").start();
     adminScraper.start();
     scrapTester.start();
     // A rodada GERAL de cupons do ML continua sendo o botão do admin, mas o

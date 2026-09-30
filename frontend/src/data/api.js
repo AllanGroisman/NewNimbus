@@ -224,6 +224,21 @@ export async function loadAppOps() {
 export async function sendNextNow(groupId) {
   return http("POST", `/api/state/groups/${groupId}/send-now`);
 }
+
+// Mensagem no privado para os membros dos grupos destino (tasks 4 e 6, só admin).
+// Sem `whatsappGroupIds`, vale para todos os destinos da campanha. Quem envia é o
+// servidor, em segundo plano e devagar; a tela acompanha pela lista, que traz a
+// parte de cada grupo em `grupos`.
+export async function listDmBroadcasts(groupId) {
+  return http("GET", `/api/state/groups/${groupId}/dm-broadcasts`);
+}
+export async function startDmBroadcast(groupId, { whatsappGroupIds, text }) {
+  return http("POST", `/api/state/groups/${groupId}/dm-broadcasts`, { whatsappGroupIds, text });
+}
+// Com `whatsappGroupId`, cancela só a parte daquele grupo; sem, o envio inteiro.
+export async function cancelDmBroadcast(groupId, id, whatsappGroupId) {
+  return http("POST", `/api/state/groups/${groupId}/dm-broadcasts/${encodeURIComponent(id)}/cancel`, { whatsappGroupId });
+}
 // Força refill da fila a partir do catálogo (consulta com filtros atuais da campanha).
 // Aceita { signal } pra suportar AbortController do chamador (UI cancelar).
 export async function refillQueueNow(groupId, overrides, { signal } = {}) {
@@ -984,3 +999,41 @@ export async function adminDlTemplatesRestore()    { return http("POST", "/api/a
 export async function adminDlJobCreate(payload)    { return http("POST", "/api/admin/downloader/jobs", payload, { timeoutMs: SLOW_TIMEOUT_MS }); }
 export async function adminDlJob(id)               { return http("GET",  `/api/admin/downloader/jobs/${encodeURIComponent(id)}`); }
 export async function adminDlUpdateYtdlp()         { return http("POST", "/api/admin/downloader/update-ytdlp", undefined, { timeoutMs: VERY_SLOW_TIMEOUT_MS }); }
+
+// ─── Admin / Extensão (zip da pasta extension/) ─────────────────────────────
+export async function adminExtensaoInfo()          { return http("GET",  "/api/admin/extensao/info"); }
+
+// O zip não passa pelo http() (que sempre lê JSON): é um fetch com o Bearer,
+// lido como blob e entregue ao navegador por um <a download> temporário.
+export async function adminExtensaoBaixar() {
+  const token = getToken();
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/api/admin/extensao/zip`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+  } catch (err) {
+    const failure = offlineError(`${err?.name || "Error"}: ${err?.message || err} em GET /api/admin/extensao/zip`);
+    reportFailure(failure);
+    throw failure;
+  }
+  if (!res.ok) {
+    let payload = null;
+    try { payload = await res.json(); } catch { /* corpo não-JSON */ }
+    throw new NimbusError(payload?.error || (res.status >= 500 ? MSG_INTERNAL : MSG_REQUEST), {
+      status: res.status, code: payload?.code || "request_failed", body: payload || {},
+      raw: `GET /api/admin/extensao/zip → ${res.status}`,
+    });
+  }
+  reportSuccess();
+  const nome = /filename="?([^";]+)"?/i.exec(res.headers.get("Content-Disposition") || "")?.[1] || "nimbus-extensao.zip";
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nome;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  return { arquivo: nome };
+}

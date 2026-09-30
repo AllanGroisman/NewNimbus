@@ -180,6 +180,14 @@ describe("sidebarItems — estrutura e ícones", () => {
     expect(PAGE_TO_PATH["admin-downloader"]).toBe("/admin/downloader");
   });
 
+  it("Extensão é uma aba de admin com rota própria", () => {
+    const item = sidebarItems.find(i => i.id === "admin-extensao");
+    expect(item).toBeTruthy();
+    expect(item.adminOnly).toBe(true);
+    expect(item.icon.length).toBe(1); // símbolo, não emoji
+    expect(PAGE_TO_PATH["admin-extensao"]).toBe("/admin/extensao");
+  });
+
   it("Desempenho é uma aba de usuário com rota própria", () => {
     const item = sidebarItems.find(i => i.id === "desempenho");
     expect(item).toBeTruthy();

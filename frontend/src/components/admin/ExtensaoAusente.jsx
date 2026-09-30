@@ -14,8 +14,8 @@ export default function ExtensaoAusente({ compacto = false }) {
           Chrome,{" "}
         </>
       )}
-      {compacto ? "Para instalar: " : ""}instale a extensão da pasta <code>extension/</code> do
-      projeto (chrome://extensions › modo do desenvolvedor › “Carregar sem compactação”) e recarregue
+      {compacto ? "Para instalar: " : ""}baixe a extensão em <b>Admin › Extensão</b>, instale
+      (chrome://extensions › modo do desenvolvedor › “Carregar sem compactação”) e recarregue
       esta página. Se já instalou e ela não respondeu, o endereço desta página —{" "}
       <code>{origem}</code> — precisa estar em{" "}
       <code>content_scripts.matches</code> do <code>extension/manifest.json</code>; depois de mexer,

@@ -18,6 +18,7 @@ const calls = {
   deleteSession: [],
   listGroups: [],
   createGroup: [],
+  groupMemberJids: [],
 };
 
 // Gancho de falha: quando setado, sendText lança com esta mensagem. Serve pros
@@ -30,11 +31,16 @@ let sendError = null;
 let msgStatsResult = { known: true, retries: 0, lastRetryAt: null };
 let msgIdSeq = 0;
 
+// Membros por jid de grupo, para o groupMemberJids (mensagem no privado, task 4).
+// Já no formato que o real devolve: [{ jid }], sem o próprio número.
+let groupMembers = new Map();
+
 function reset() {
   for (const k of Object.keys(calls)) calls[k].length = 0;
   sendError = null;
   msgStatsResult = { known: true, retries: 0, lastRetryAt: null };
   msgIdSeq = 0;
+  groupMembers = new Map();
 }
 
 const fakeSessions = new Map();
@@ -122,6 +128,7 @@ const mock = {
   __connect: connect,
   // Setter do gancho de falha (null desliga).
   __failSend: (msg) => { sendError = msg; },
+  __setGroupMembers: (jid, members) => { groupMembers.set(jid, members); },
   // Setter do resultado do msgStats — simula o aparelho pedindo (ou não) reenvio.
   __setMsgStats: (stats) => { msgStatsResult = { known: true, retries: 0, lastRetryAt: null, ...stats }; },
   // Espelha backend/whatsapp/local.js:232-233 — o módulo real exporta os dois.
@@ -143,6 +150,10 @@ const mock = {
   async getInviteLink() { return "https://chat.whatsapp.com/fakeinvite"; },
   async revokeInvite() { return "https://chat.whatsapp.com/fakeinvite-revoked"; },
   async leaveGroup() { return { ok: true }; },
+  async groupMemberJids(userId, numberId, jid) {
+    calls.groupMemberJids.push({ userId, numberId, jid });
+    return (groupMembers.get(jid) || []).map(m => (typeof m === "string" ? { jid: m } : m));
+  },
   async restoreSessions() { return; },
   async status() { return { count: fakeSessions.size }; },
 };
@@ -163,3 +174,4 @@ function installMock() {
 export { installMock, mock, calls, reset, connect };
 export const failSend = (msg) => mock.__failSend(msg);
 export const setMsgStats = (stats) => mock.__setMsgStats(stats);
+export const setGroupMembers = (jid, members) => mock.__setGroupMembers(jid, members);

@@ -165,8 +165,8 @@ function CardExtensao({ info, onRever }) {
       {info && !info.instalada && <ExtensaoAusente compacto />}
       {!!faltando.length && (
         <div style={{ fontSize: 11, color: "var(--color-text-secondary)", lineHeight: 1.6 }}>
-          Recarregue a extensão da pasta <code>extension/</code> em <code>chrome://extensions</code> (↻)
-          e dê F5 nesta página. Enquanto isso, o que falta continua rodando pelo servidor.
+          Baixe a versão nova em <b>Admin › Extensão</b>, extraia por cima da pasta de antes, clique ↻
+          em <code>chrome://extensions</code> e dê F5 nesta página. Enquanto isso, o que falta continua rodando pelo servidor.
         </div>
       )}
     </Card>

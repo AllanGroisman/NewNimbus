@@ -1330,6 +1330,8 @@ module.exports = {
   start, stop, tick, sendNextNow, refillNow, manualAdd, addItemToGroup,
   isRepasse, isAutoApprove, isAutoRefill, resolveSources, activeSources, sourcesForCampaign,
   status, processSendJob,
+  // O disparo no privado (server.js › dm-broadcasts) filtra os grupos pelo mesmo critério.
+  usableWhatsappGroups,
   // O descarte por conversão de afiliado acontece dentro do sendItem, antes de
   // qualquer envio — exportado pra tests/unit/scheduler-send-discard.test.js
   // poder cobrir esse caminho sem subir WhatsApp.

@@ -27,10 +27,13 @@ vi.mock("../data/api", () => ({
   rejectAllPending: vi.fn(),
   getWAGroupPicture: vi.fn().mockResolvedValue({ url: null }),
   getWAInvite: vi.fn().mockResolvedValue({ inviteLink: "https://chat.whatsapp.com/ABC" }),
+  listDmBroadcasts: vi.fn().mockResolvedValue({ broadcasts: [] }),
+  startDmBroadcast: vi.fn(),
+  cancelDmBroadcast: vi.fn(),
 }));
 
 import GroupDashboard from "../components/GroupDashboard.jsx";
-import { createWAGroup, fetchUrlMetadata, listWAGroups, getWAInvite, getWAGroupPicture } from "../data/api";
+import { createWAGroup, fetchUrlMetadata, listWAGroups, getWAInvite, getWAGroupPicture, listDmBroadcasts, startDmBroadcast, cancelDmBroadcast } from "../data/api";
 
 function makeGroup(overrides = {}) {
   return {
@@ -156,6 +159,86 @@ describe("GroupDashboard — voltar", () => {
 // ações atrás do "⋯", e o popup de adicionar que escolhe o WhatsApp e depois o grupo.
 const abrirMenu = (nome) => fireEvent.click(screen.getByRole("button", { name: `Mais ações — ${nome}` }));
 const itemDoMenu = (nome) => screen.getByRole("menuitem", { name: nome });
+
+// Mensagem no privado para os membros (tasks 4 e 6): só admin vê, o popup manda
+// o grupo certo para a API e fecha, e o andamento fica no cartão de cada grupo.
+describe("GroupDashboard — mensagem no privado (aba Grupos)", () => {
+  beforeEach(() => vi.clearAllMocks());
+  afterEach(() => listDmBroadcasts.mockResolvedValue({ broadcasts: [] }));
+
+  function renderGrupos(extra = {}) {
+    const r = renderDashboard({
+      group: { whatsappGroupIds: ["wg-1", "wg-2"] },
+      numbers: [{ id: "num-1", label: "Número 1", phone: "5511999999999", status: "connected" }],
+      whatsappGroups: [
+        { id: "wg-1", name: "Grupo Um", numberId: "num-1", members: 5, jid: "wg-1" },
+        { id: "wg-2", name: "Grupo Dois", numberId: "num-1", members: 3, jid: "wg-2" },
+      ],
+      ...extra,
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Grupos/ }));
+    return r;
+  }
+  const parte = (whatsappGroupId, extra = {}) => ({ whatsappGroupId, numberId: "num-1", total: 40, sent: 12, failed: 0, canceled: 0, pending: 28, fase: "sending", nextAt: null, motivo: null, ...extra });
+  const faixas = () => screen.getAllByRole("status", { name: "Mensagem no privado" });
+
+  it("usuário comum não vê nem o item do ⋯ nem o botão geral", () => {
+    renderGrupos();
+    abrirMenu("Grupo Um");
+    expect(screen.queryByRole("menuitem", { name: /Mensagem no privado/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Mensagem a todos/ })).not.toBeInTheDocument();
+    expect(listDmBroadcasts).not.toHaveBeenCalled();
+  });
+
+  it("admin: o ⋯ envia só para aquele grupo, o popup fecha e o cartão mostra o andamento", async () => {
+    const novo = { id: "9", status: "preparing", total: 0, sent: 0, failed: 0, text: "Oi!", grupos: [parte("wg-1", { fase: "preparing", total: 0, sent: 0, pending: 0 })] };
+    startDmBroadcast.mockResolvedValue({ broadcast: novo });
+    listDmBroadcasts.mockResolvedValueOnce({ broadcasts: [] }).mockResolvedValue({ broadcasts: [novo] });
+    renderGrupos({ isAdmin: true });
+    abrirMenu("Grupo Um");
+    fireEvent.click(itemDoMenu("✉ Mensagem no privado aos membros"));
+    expect(screen.getByText(/Até ~4 pessoas/)).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "Mensagem" }), { target: { value: "Oi!" } });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar no privado" }));
+    await waitFor(() => expect(startDmBroadcast).toHaveBeenCalledWith(1, { whatsappGroupIds: ["wg-1"], text: "Oi!" }));
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Mensagem" })).not.toBeInTheDocument());
+    expect(screen.getByText(/começou em segundo plano/)).toBeInTheDocument();
+    await waitFor(() => expect(faixas()).toHaveLength(1));
+    expect(faixas()[0]).toHaveTextContent(/Montando a lista de membros/);
+  });
+
+  it("admin: o botão geral manda para todos os destinos (sem lista)", async () => {
+    startDmBroadcast.mockResolvedValue({ broadcast: { id: "10", status: "preparing", total: 0, sent: 0, failed: 0, text: "Oi", grupos: [] } });
+    renderGrupos({ isAdmin: true });
+    fireEvent.click(screen.getByRole("button", { name: /Mensagem a todos/ }));
+    expect(screen.getByText(/Todos os 2 grupos destino/)).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "Mensagem" }), { target: { value: "Oi" } });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar no privado" }));
+    await waitFor(() => expect(startDmBroadcast).toHaveBeenCalledWith(1, { whatsappGroupIds: undefined, text: "Oi" }));
+  });
+
+  it("admin: cada cartão mostra a parte dele; o ⋯ trava e o cancelar para só aquele grupo", async () => {
+    cancelDmBroadcast.mockResolvedValue({ broadcast: {} });
+    listDmBroadcasts.mockResolvedValue({ broadcasts: [{
+      id: "7", status: "running", total: 60, sent: 20, failed: 0, text: "Oi",
+      grupos: [parte("wg-1"), parte("wg-2", { total: 20, sent: 8, pending: 12, fase: "waiting", nextAt: new Date().toISOString(), motivo: "número desconectado" })],
+    }] });
+    renderGrupos({ isAdmin: true });
+    await waitFor(() => expect(faixas()).toHaveLength(2));
+    expect(faixas()[0]).toHaveTextContent(/12 de 40.*Enviando…/);
+    expect(faixas()[1]).toHaveTextContent(/8 de 20.*Aguardando até .*número desconectado/);
+
+    abrirMenu("Grupo Um");
+    expect(itemDoMenu("✉ Mensagem no privado aos membros")).toBeDisabled();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.getByRole("button", { name: /Mensagem a todos/ })).toBeDisabled();
+
+    fireEvent.click(within(faixas()[0]).getByRole("button", { name: "Cancelar" }));
+    expect(screen.getByText(/Os outros grupos deste envio continuam/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar envio" }));
+    await waitFor(() => expect(cancelDmBroadcast).toHaveBeenCalledWith(1, "7", "wg-1"));
+  });
+});
 
 describe("GroupDashboard — remover grupo destino (aba Grupos)", () => {
   // Setup: campanha com 1 grupo de WhatsApp vinculado, na aba "Grupos".

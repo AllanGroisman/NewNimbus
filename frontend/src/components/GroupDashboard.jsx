@@ -406,7 +406,7 @@ const manageSubStyle = { marginTop: 16, paddingTop: 14, borderTop: "0.5px solid 
 const manageSubTitleStyle = { fontSize: 13, fontWeight: 600, marginBottom: 4 };
 const manageLabelStyle = { fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 };
 
-export default function GroupDashboard({ group, numbers, whatsappGroups = [], affiliateConfigured = true, affiliateStatus = null, storeLocks = {}, onBack, onUpdate, onDelete, onCreateWhatsappGroup, onUpdateWhatsappGroup, onGoToSettings, notificationSettings = null, onGoToAffiliate, onGoToWhatsapp, customTemplates = [], onAddCustomTemplate, onDeleteCustomTemplate, onUpdateCustomTemplate, limits, tourActive = false }) {
+export default function GroupDashboard({ group, numbers, whatsappGroups = [], affiliateConfigured = true, affiliateStatus = null, storeLocks = {}, onBack, onUpdate, onDelete, onCreateWhatsappGroup, onUpdateWhatsappGroup, onGoToSettings, notificationSettings = null, onGoToAffiliate, onGoToWhatsapp, customTemplates = [], onAddCustomTemplate, onDeleteCustomTemplate, onUpdateCustomTemplate, limits, tourActive = false, isAdmin = false }) {
   const [tab, setTab] = useState(() => readSavedTab(group.id, group?.scraping?.kind === "repasse"));
   // Guarda a aba atual por campanha pra restaurar no F5.
   useEffect(() => { writeSavedTab(group.id, tab); }, [group.id, tab]);
@@ -2314,7 +2314,9 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             onUpdateWhatsappGroup={onUpdateWhatsappGroup}
             onRevokeInvite={refreshInvite}
             computeCloneName={computeCloneName}
-            onError={setActionError}
+onError={setActionError}
+            isAdmin={isAdmin}
+            campaignId={group.id}
           />
         </div>
       )}

@@ -70,6 +70,10 @@ e a extensão só clica no que vier.
 
 ## Instalar (uma vez)
 
+O zip desta pasta sai pronto em **Admin › Extensão** no próprio sistema, com a
+versão que o servidor tem e o passo a passo. Para atualizar: extraia por cima da
+mesma pasta e clique ↻. Instalando direto desta pasta:
+
 1. Abra `chrome://extensions`
 2. Ligue o **Modo do desenvolvedor** (canto superior direito)
 3. **Carregar sem compactação** → escolha esta pasta (`extension/`)

@@ -2,6 +2,13 @@
 
 2. [x] Quero acrescentar para puxar dados de afiliados para saber os desempenhos. Pode começar pelo do ML. Mas quero fazer pela api nada de scraping de pagina. (ML e Shopee feitos; na Shopee, vendas por grupo via sub_id do link)
  
+3. [x] Quero um botão para baixar (se for possivel instalar direto?) a ultima versão da extensão que pega os cupons pelo proprio sistema. Pode colocar  ele em uma aba nova de Extensão na sessão de admin. (Admin › Extensão: baixa o zip e compara a versão do Chrome com a do servidor. Instalar direto não dá: fora da Chrome Web Store o Chrome só aceita "Carregar sem compactação".)
+
+4. [x] Quero uma função nova nas campanhas que é mandar mensagem no privado para todos os membros de um grupo do whatsapp especifico ou para todos de uma campanha. Pode acrescentar o botão nos ... de cada grupo lá na aba de grupos ou acrescentar um botão geral ali para fazer em todos os grupos. Deve-se abrir um popup e a partir dali ser possível escrever a mensagem que será enviada. (Só admin. Envio em segundo plano: 20–45s entre mensagens, até 200 por número por dia, para depois de 5 falhas seguidas.)
+
+5. [] No mobile ta esquisito de usar, o menu hamburguer ta em cima na direita e abre na esquerda, as paginas geralmente são abertas com um zoom e preciso tirar pra usar, etc.. Quero que tu de uma boa revisada e me apresente um plano para deixar o sistema adaptado e redondo no mobile também.
+
+6. [x] A funcao que manda mensagens para os membros do grupo, quero que rode sempre em segundo plano, com o progresso pequeno no proprio grupo, podendo cancelar no meio. Assim fico livre pra fazer outras coisas. (Enviar fecha o popup e o cartão de cada grupo destino mostra o andamento, com um cancelar que para só aquele grupo. Números diferentes enviam ao mesmo tempo; no mesmo número, o envio novo espera na fila.)
 
 Rodar o Claude na VPS e desligar o computador (via tmux):
 

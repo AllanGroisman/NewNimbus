@@ -127,6 +127,7 @@ model Group {
   history GroupHistory[]
   queue   GroupQueueItem[]
   pending GroupPendingItem[]
+  dmBroadcasts DmBroadcast[]
 
   @@index([userId])
   @@index([paused])
@@ -154,6 +155,59 @@ model GroupHistory {
   @@index([groupId, sentAt(sort: Desc)])
   @@index([groupId, productKey])
   @@map("group_history")
+}
+
+// Mensagem no privado para os membros dos grupos destino de uma campanha
+// (tasks 4 e 6). Roda em segundo plano (dm-broadcast/runner.js), devagar de
+// propósito — DM em massa é o que mais bane número —, e por isso o estado mora
+// aqui: sobrevive a restart e a tela acompanha por polling.
+// status: preparing | running | done | canceled | failed ("waiting" era da
+// task 4; desde a task 6 quem espera é o número, em memória no runner)
+model DmBroadcast {
+  id               BigInt    @id @default(autoincrement())
+  userId           String
+  campaignId       BigInt
+  whatsappGroupIds Json      @default("[]")
+  text             String
+  status           String    @default("preparing")
+  total            Int       @default(0)
+  sent             Int       @default(0)
+  failed           Int       @default(0)
+  error            String?
+  // Sem uso desde a task 6 (a espera passou a ser do número). Fica para não
+  // mexer na migration já aplicada.
+  nextAt           DateTime?
+  createdAt        DateTime  @default(now())
+  startedAt        DateTime?
+  finishedAt       DateTime?
+
+  campaign   Group                  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  recipients DmBroadcastRecipient[]
+
+  @@index([userId, status])
+  @@index([campaignId, createdAt(sort: Desc)])
+  @@map("dm_broadcasts")
+}
+
+// Um destinatário de um disparo. O unique (broadcastId, jid) é o dedupe de quem
+// está em mais de um grupo: entra uma vez, pelo número do primeiro grupo.
+// status: pending | sent | failed | canceled (cancelado no cartão do grupo)
+model DmBroadcastRecipient {
+  id          BigInt    @id @default(autoincrement())
+  broadcastId BigInt
+  numberId    String
+  jid         String
+  groupJid    String
+  status      String    @default("pending")
+  error       String?
+  sentAt      DateTime?
+
+  broadcast DmBroadcast @relation(fields: [broadcastId], references: [id], onDelete: Cascade)
+
+  @@unique([broadcastId, jid])
+  @@index([broadcastId, status])
+  @@index([numberId, status, sentAt])
+  @@map("dm_broadcast_recipients")
 }
 
 // Log de captura de campanhas de repasse — uma linha por (link, campanha)
