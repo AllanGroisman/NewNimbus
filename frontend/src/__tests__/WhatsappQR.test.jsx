@@ -123,6 +123,19 @@ describe("WhatsappQR — modo código de pareamento", () => {
     await act(async () => { screen.getByText("Código de 8 dígitos").click(); });
   }
 
+  it("no celular (toque) já abre no código: não dá pra escanear o QR na própria tela", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = (q) => ({ matches: q === "(pointer: coarse)", media: q, addEventListener() {}, removeEventListener() {} });
+    try {
+      await act(async () => { render(<WhatsappQR sessionId="num-touch" onConnected={vi.fn()} />); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+      expect(screen.getByPlaceholderText("(11) 99999-9999")).toBeTruthy();
+      expect(screen.queryByAltText("QR Code WhatsApp")).toBeNull();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
   it("trocar de modo revela o campo de telefone", async () => {
     await abrirModoCodigo();
     expect(screen.getByPlaceholderText("(11) 99999-9999")).toBeTruthy();

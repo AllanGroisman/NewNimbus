@@ -200,7 +200,9 @@ export default function Login({ onLogin }) {
       g.renderButton(googleBtnRef.current, {
         theme: "outline",
         size: "large",
-        width: 296,
+        // Largura do card, não fixa: os 296px de antes passavam da borda do
+        // formulário no celular. O Google aceita de 200 a 400.
+        width: Math.max(200, Math.min(400, googleBtnRef.current.offsetWidth || 296)),
         text: mode === "register" ? "signup_with" : "signin_with",
         shape: "rectangular",
         logo_alignment: "left",
@@ -368,17 +370,17 @@ export default function Login({ onLogin }) {
 
         {mode === "login" && (
           <div style={{ textAlign: "center", marginTop: 12, fontSize: 12 }}>
-            <span onClick={() => switchMode("forgot")} style={{ cursor: "pointer", color: PRIMARY }}>Esqueci minha senha</span>
+            <button type="button" onClick={() => switchMode("forgot")} style={{ background: "transparent", border: "none", padding: "8px 4px", cursor: "pointer", fontSize: 12, fontFamily: "inherit", color: PRIMARY }}>Esqueci minha senha</button>
           </div>
         )}
         {mode === "forgot" && (
           <div style={{ textAlign: "center", marginTop: 12, fontSize: 12 }}>
-            <span onClick={() => switchMode("login")} style={{ cursor: "pointer", color: "var(--color-text-secondary)" }}>Voltar para o login</span>
+            <button type="button" onClick={() => switchMode("login")} style={{ background: "transparent", border: "none", padding: "8px 4px", cursor: "pointer", fontSize: 12, fontFamily: "inherit", color: "var(--color-text-secondary)" }}>Voltar para o login</button>
           </div>
         )}
         {mode === "reset" && (
           <div style={{ textAlign: "center", marginTop: 12, fontSize: 12 }}>
-            <span onClick={() => switchMode("login")} style={{ cursor: "pointer", color: "var(--color-text-secondary)" }}>Voltar para o login</span>
+            <button type="button" onClick={() => switchMode("login")} style={{ background: "transparent", border: "none", padding: "8px 4px", cursor: "pointer", fontSize: 12, fontFamily: "inherit", color: "var(--color-text-secondary)" }}>Voltar para o login</button>
           </div>
         )}
       </form>
@@ -390,8 +392,8 @@ export default function Login({ onLogin }) {
   const showTabs = (mode === "login" || mode === "register") && signupOpen;
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 16, padding: 32, width: "100%", maxWidth: 360 }}>
+    <div className="auth-page" style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div className="auth-card" style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 16, padding: 32, width: "100%", maxWidth: 360 }}>
         <div style={{ textAlign: "center", marginBottom: 24 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, fontSize: 28, fontWeight: 500, color: "var(--color-brand)" }}>
             <Logo size={34} />

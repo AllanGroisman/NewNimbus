@@ -6,6 +6,7 @@ import {
 import { browseCatalog, errText } from "../../data/api";
 import Toggle from "../ui/Toggle";
 import Modal from "../ui/Modal";
+import { useMedia, TOUCH } from "../../data/useMedia";
 import UsageBadge from "../ui/UsageBadge";
 import Badge from "../ui/Badge";
 import { ProductGridCard } from "../ui/ProductCard";
@@ -174,6 +175,7 @@ export default function ProductSearchTab({
   const naFila = queue.length + pending.length;
   const vagas = Math.max(0, batch - naFila);
   const filaCheia = vagas === 0;
+  const touch = useMedia(TOUCH);
   // Adicionar a dedo pelo card passa por cima do máximo de propósito — é escolha
   // explícita do usuário, e o backend não bloqueia (addItemToGroup). O que a tela
   // precisa é parar de fingir que o máximo é intransponível: acima dele o
@@ -629,6 +631,7 @@ export default function ProductSearchTab({
                   disabled={last}
                   aria-label={`Tirar ${categoryLabel(id)}`}
                   title={last ? "A campanha precisa de pelo menos uma categoria" : "Tirar esta categoria"}
+                  className="hit"
                   style={{
                     background: "transparent", border: "none", padding: 0, margin: 0,
                     color: "inherit", fontSize: 12, fontFamily: "inherit",
@@ -779,6 +782,7 @@ export default function ProductSearchTab({
                         onClick={() => setScraping(s => ({ ...s, refillTimes: (s.refillTimes || []).filter((_, j) => j !== i) }))}
                         title="Remover este horário"
                         aria-label={`Remover horário ${i + 1}`}
+                        className="hit"
                         style={{ ...linkBtnStyle, textDecoration: "none", fontSize: 13 }}
                       >
                         ✕
@@ -855,8 +859,10 @@ export default function ProductSearchTab({
       {/* ── 3. Busca por palavras-chave (+ filtros no botão ao lado) ──── */}
       <div data-tour="pr-search" style={{ ...cardStyle, marginBottom: 14 }}>
         <label style={fieldLabelStyle} htmlFor="pr-keywords">Busca por palavras-chave</label>
-        <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-          <div style={{ position: "relative", flex: 1 }}>
+        {/* O campo pede 240px: no celular "Buscar" e "Filtros" descem pra linha de
+            baixo em vez de espremer o campo até o exemplo sumir. */}
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div style={{ position: "relative", flex: "1 1 240px", minWidth: 0 }}>
             <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14, color: "var(--color-text-secondary)", pointerEvents: "none" }}>🔍</span>
             <input
               id="pr-keywords"
@@ -881,6 +887,7 @@ export default function ProductSearchTab({
                 onClick={() => { applyFilter("keywords", ""); keywordsRef.current?.focus(); }}
                 aria-label="Limpar a busca"
                 title="Limpar a busca"
+                className="hit"
                 style={{
                   position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
                   background: "transparent", border: "none", padding: 4, lineHeight: 1,
@@ -1188,6 +1195,12 @@ export default function ProductSearchTab({
               {refillMsg.text}
             </span>
           )}
+          {/* No toque não há tooltip: o porquê da fila cheia vira texto. */}
+          {touch && filaCheia && !noSources && (
+            <span style={{ flexBasis: "100%", fontSize: 12, color: "var(--color-text-secondary)" }}>
+              A fila está em {naFila}, no máximo de {batch}. O preenchimento fica parado até ela baixar — ou suba o máximo em "Preenchimento automático".
+            </span>
+          )}
         </div>
         </div>
 
@@ -1245,7 +1258,7 @@ export default function ProductSearchTab({
           </div>
         )}
 
-        <div style={{
+        <div className="grid-2-mobile" style={{
           display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12,
           transition: "opacity 0.15s",
           // Enquanto a próxima página não chega, a atual fica apagada e sem
@@ -1533,13 +1546,13 @@ const chipStyle = ({ active, disabled }) => ({
 });
 
 const activeChipStyle = {
-  padding: "3px 10px", borderRadius: 6, border: `0.5px solid ${PRIMARY}`,
+  padding: "6px 10px", borderRadius: 6, border: `0.5px solid ${PRIMARY}`,
   background: PRIMARY_LIGHT, color: PRIMARY_DARK,
   fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "inherit",
 };
 
 const linkBtnStyle = {
-  background: "transparent", border: "none", padding: "3px 4px",
+  background: "transparent", border: "none", padding: "6px 4px",
   color: "var(--color-text-secondary)", fontSize: 12, fontFamily: "inherit",
   cursor: "pointer", textDecoration: "underline",
 };

@@ -2,6 +2,7 @@ import { useState } from "react";
 import Badge from "../../ui/Badge";
 import Spinner from "../../ui/Spinner";
 import { PRIMARY } from "../../../data/constants";
+import { isTouch } from "../../../data/useMedia";
 import { cardStyle, botaoPrimario, botaoSecundario, hintStyle } from "./downloaderEstilos";
 
 const STATUS = {
@@ -27,10 +28,6 @@ function itemPercent(item, hasTemplate) {
 // em backend/downloader/jobs.js.
 const BASE = "/api/admin/downloader/jobs";
 
-// Celular: .zip não abre na galeria, então lá o caminho é arquivo por arquivo —
-// "Salvar" ou "Compartilhar", que manda o vídeo direto para o app do TikTok /
-// YouTube / WhatsApp pela folha de compartilhamento do sistema.
-const isTouch = () => typeof window !== "undefined" && Boolean(window.matchMedia?.("(pointer: coarse)").matches);
 
 const canShareFiles = () => {
   try {
@@ -50,6 +47,9 @@ export default function DownloadPanel({ job, onClose }) {
   const errors = job.items.filter((i) => i.status === "error").length;
   const total = job.items.length;
   const overall = job.items.reduce((s, i) => s + itemPercent(i, job.hasTemplate), 0) / total;
+  // Celular: .zip não abre na galeria, então lá o caminho é arquivo por arquivo —
+  // "Salvar" ou "Compartilhar", que manda o vídeo direto para o app do TikTok /
+  // YouTube / WhatsApp pela folha de compartilhamento do sistema.
   const [touch] = useState(isTouch);
   const [share] = useState(canShareFiles);
 

@@ -135,11 +135,13 @@ function reviewsText(product) {
 // Card compacto para filas/pendentes (horizontal).
 // `extra` (opcional) entra na linha dos selos — quem usa hoje é a revisão de
 // pendentes do GroupDashboard, que põe ali o cupom editável do item.
+// Quebra linha: no celular preço + botões não cabiam ao lado do nome e a
+// página inteira rolava de lado; lá os botões descem pra uma linha própria.
 export function ProductRow({ product, actions, index, extra }) {
   const hasLink = !!product.link;
   return (
     <div style={{
-      display: "flex", alignItems: "center", gap: 12,
+      display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
       background: "var(--color-background-primary)",
       border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12,
       padding: "10px 14px",
@@ -209,7 +211,7 @@ export function ProductRow({ product, actions, index, extra }) {
           <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2 }}>Envio: {product.sendAt}</div>
         )}
       </div>
-      {actions && <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>{actions}</div>}
+      {actions && <div className="row-actions" style={{ display: "flex", gap: 6, flexShrink: 0 }}>{actions}</div>}
     </div>
   );
 }

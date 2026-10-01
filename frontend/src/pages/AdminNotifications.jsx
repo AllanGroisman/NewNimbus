@@ -116,7 +116,7 @@ export default function PageAdminNotifications({ onGoToWhatsNimbus }) {
   const filteredGroups = groups.filter(g => !q || (g.name || "").toLowerCase().includes(q));
 
   return (
-    <div style={{ padding: "28px 32px", maxWidth: 640 }}>
+    <div className="unpad-mobile" style={{ padding: "28px 32px", maxWidth: 640 }}>
       <div style={{ marginBottom: 24 }}>
         <div style={{ fontSize: 20, fontWeight: 700, color: "var(--color-text-primary)" }}>Notificações WhatsApp</div>
         <div style={{ fontSize: 13, color: "var(--color-text-secondary)", marginTop: 4 }}>

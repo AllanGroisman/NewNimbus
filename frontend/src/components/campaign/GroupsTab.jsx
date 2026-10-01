@@ -12,6 +12,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../../data/constants";
 import { getWAGroupPicture, getWAInvite, listDmBroadcasts, cancelDmBroadcast, errText } from "../../data/api";
 import Modal from "../ui/Modal";
+import { useMedia, isTouch, TOUCH } from "../../data/useMedia";
 import DmMembersModal from "./DmMembersModal";
 import DmProgresso from "./DmProgresso";
 import { partesPorGrupo, parteAtiva, chaveDaParte, lerDispensados, gravarDispensados } from "./dmPartes";
@@ -95,17 +96,31 @@ export function GroupAvatar({ numberId, jid, name, canFetch = true, size = 40, l
 
 // ── Menu "⋯" ─────────────────────────────────────────────────────────────────
 // items: [{ label, onClick, danger, checked (undefined = item comum), disabled, hint }]
+// `hint` é tooltip no mouse; no toque (sem tooltip) vira uma 2ª linha no item.
 export function KebabMenu({ label, items }) {
   const [aberto, setAberto] = useState(false);
+  // Perto do rodapé o menu abre pra cima — pra baixo ele saía da tela.
+  const [paraCima, setParaCima] = useState(false);
+  const touch = useMedia(TOUCH);
   const ref = useRef(null);
   useEffect(() => {
     if (!aberto) return undefined;
+    // pointerdown e não mousedown: no iPhone tocar numa área sem clique não
+    // gera mousedown, e o menu não fechava tocando fora.
     const fora = (e) => { if (ref.current && !ref.current.contains(e.target)) setAberto(false); };
     const esc = (e) => { if (e.key === "Escape") setAberto(false); };
-    document.addEventListener("mousedown", fora);
+    document.addEventListener("pointerdown", fora);
     document.addEventListener("keydown", esc);
-    return () => { document.removeEventListener("mousedown", fora); document.removeEventListener("keydown", esc); };
+    return () => { document.removeEventListener("pointerdown", fora); document.removeEventListener("keydown", esc); };
   }, [aberto]);
+  const alternar = () => {
+    if (!aberto) {
+      const r = ref.current?.getBoundingClientRect?.();
+      const abaixo = r ? window.innerHeight - r.bottom : Infinity;
+      setParaCima(abaixo < 280 && r.top > abaixo);
+    }
+    setAberto(a => !a);
+  };
   return (
     <div ref={ref} style={{ position: "relative", flexShrink: 0 }}>
       <button
@@ -113,12 +128,14 @@ export function KebabMenu({ label, items }) {
         aria-label={label}
         aria-haspopup="menu"
         aria-expanded={aberto}
-        onClick={() => setAberto(a => !a)}
-        style={{ width: 30, height: 30, borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: aberto ? "var(--color-background-secondary)" : "transparent", cursor: "pointer", fontSize: 16, lineHeight: 1, color: "var(--color-text-primary)" }}
+        onClick={alternar}
+        style={{ width: 36, height: 36, borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: aberto ? "var(--color-background-secondary)" : "transparent", cursor: "pointer", fontSize: 16, lineHeight: 1, color: "var(--color-text-primary)" }}
       >⋯</button>
       {aberto && (
+        // z 96: acima do botão flutuante de suporte (95), abaixo dos modais (100).
         <div role="menu" style={{
-          position: "absolute", right: 0, top: 34, zIndex: 50, minWidth: 250, padding: 4,
+          position: "absolute", right: 0, ...(paraCima ? { bottom: 40 } : { top: 40 }), zIndex: 96,
+          minWidth: 250, maxWidth: "calc(100vw - 24px)", padding: 4,
           background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-secondary)",
           borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.16)",
         }}>
@@ -133,7 +150,7 @@ export function KebabMenu({ label, items }) {
               onClick={() => { setAberto(false); it.onClick(); }}
               style={{
                 display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left",
-                padding: "8px 10px", borderRadius: 7, border: "none", background: "transparent", fontSize: 13,
+                padding: touch ? "11px 10px" : "8px 10px", borderRadius: 7, border: "none", background: "transparent", fontSize: 13,
                 cursor: it.disabled ? "not-allowed" : "pointer", opacity: it.disabled ? 0.5 : 1,
                 color: it.danger ? "var(--danger-text)" : "var(--color-text-primary)",
               }}
@@ -145,7 +162,10 @@ export function KebabMenu({ label, items }) {
                   {it.checked ? "✓" : ""}
                 </span>
               )}
-              <span style={{ flex: 1 }}>{it.label}</span>
+              <span style={{ flex: 1 }}>
+                {it.label}
+                {touch && it.hint && <span style={{ display: "block", fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>{it.hint}</span>}
+              </span>
             </button>
           ))}
         </div>
@@ -196,7 +216,11 @@ function GroupCard({ name, jid, number, numberMissing, connected, members, extra
   );
 }
 
-function SectionHeader({ title, count, limit, limitLabel, sub, addLabel, onAdd, addDisabled, addTitle, tourAdd, actions }) {
+// `actionsHint`: por que a ação extra (`actions`) está travada. No toque não há
+// tooltip, então esse porquê — e o do "+ Adicionar" — aparece como texto.
+function SectionHeader({ title, count, limit, limitLabel, sub, addLabel, onAdd, addDisabled, addTitle, tourAdd, actions, actionsHint }) {
+  const touch = useMedia(TOUCH);
+  const travas = touch ? [addDisabled && addTitle, actionsHint].filter(Boolean) : [];
   return (
     <div style={{ marginBottom: 10 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -213,6 +237,7 @@ function SectionHeader({ title, count, limit, limitLabel, sub, addLabel, onAdd, 
         >+ Adicionar</button>
       </div>
       {sub && <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 3, lineHeight: 1.4 }}>{sub}</div>}
+      {travas.map(t => <div key={t} style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 3 }}>🔒 {t}</div>)}
     </div>
   );
 }
@@ -282,7 +307,7 @@ function AddGroupModal({ modo, numbers, loadGroups, statusOf, onPick, onCreate, 
   return (
     <Modal title={titulo} onClose={onClose} confirmOnClickOutside={passo === "criar"}>
       {/* Trilha: 1. WhatsApp → 2. Grupo */}
-      <div style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
+      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
         <span style={{ fontWeight: passo === "numero" ? 600 : 400, color: passo === "numero" ? PRIMARY_DARK : undefined }}>1. WhatsApp</span>
         <span>→</span>
         <span style={{ fontWeight: passo !== "numero" ? 600 : 400, color: passo !== "numero" ? PRIMARY_DARK : undefined }}>2. {passo === "criar" ? "Novo grupo" : "Grupo"}</span>
@@ -301,7 +326,7 @@ function AddGroupModal({ modo, numbers, loadGroups, statusOf, onPick, onCreate, 
           {numbers.length === 0 ? (
             <div style={{ fontSize: 12, color: "var(--warn-text)", padding: "10px 12px", background: "var(--warn-bg)", borderRadius: 8 }}>Nenhum WhatsApp conectado. Conecte um número na página WhatsApp.</div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 320, overflowY: "auto" }}>
+            <div className="unclamp-mobile" style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 320, overflowY: "auto" }}>
               {numbers.map(n => {
                 const on = n.status === "connected";
                 return (
@@ -336,7 +361,7 @@ function AddGroupModal({ modo, numbers, loadGroups, statusOf, onPick, onCreate, 
               <span style={{ fontSize: 13, fontWeight: 600 }}>Criar grupo novo neste WhatsApp</span>
             </button>
           )}
-          <input autoFocus aria-label="Buscar grupo" value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar grupo pelo nome..." style={{ ...campo, marginBottom: 10 }} />
+          <input autoFocus={!isTouch()} aria-label="Buscar grupo" value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar grupo pelo nome..." style={{ ...campo, marginBottom: 10 }} />
           {erro && <div style={{ fontSize: 12, color: "var(--danger-text)", padding: "8px 10px", background: "var(--danger-bg)", borderRadius: 8, marginBottom: 8 }}>{erro}</div>}
           {carregando ? (
             <div style={{ fontSize: 12, color: "var(--color-text-secondary)", padding: "20px 0", textAlign: "center" }}>⟳ Carregando grupos do WhatsApp...</div>
@@ -345,7 +370,7 @@ function AddGroupModal({ modo, numbers, loadGroups, statusOf, onPick, onCreate, 
           ) : filtrados.length === 0 ? (
             <div style={{ fontSize: 12, color: "var(--color-text-secondary)", padding: "20px 0", textAlign: "center", fontStyle: "italic" }}>Nenhum grupo bate com "{busca}".</div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 340, overflowY: "auto" }}>
+            <div className="unclamp-mobile" style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 340, overflowY: "auto" }}>
               {filtrados.map(g => {
                 const st = statusOf(numberId, g) || {};
                 const travado = !!st.done;
@@ -364,7 +389,7 @@ function AddGroupModal({ modo, numbers, loadGroups, statusOf, onPick, onCreate, 
                         {g.members || 0} membro{g.members === 1 ? "" : "s"}{st.warn ? ` · ${st.warn}` : ""}
                       </div>
                     </div>
-                    <span style={{ fontSize: 11, color: travado ? "var(--color-text-secondary)" : PRIMARY_DARK, fontWeight: 500, whiteSpace: "nowrap" }}>
+                    <span style={{ fontSize: 11, color: travado ? "var(--color-text-secondary)" : PRIMARY_DARK, fontWeight: 500, maxWidth: 96, textAlign: "right", lineHeight: 1.3, flexShrink: 0 }}>
                       {indo ? "⟳ Adicionando..." : (st.label || "+ Adicionar")}
                     </span>
                   </button>
@@ -556,6 +581,9 @@ export default function GroupsTab({
         addLabel="Adicionar grupo destino" onAdd={() => setModal({ modo: "destino" })} tourAdd="wg-add"
         addDisabled={semNumero || destFull}
         addTitle={semNumero ? "Conecte um número de WhatsApp primeiro" : destFull ? `Limite de ${destLimit} do seu plano` : "Adicionar grupo a esta campanha"}
+        actionsHint={podeDm && linkedWGs.length > 0 && !dmLivres.length
+          ? `Mensagem a todos: ${linkedWGs.some(conectado) ? "todos os grupos conectados já têm uma mensagem no privado indo" : "nenhum número destes grupos está conectado"}`
+          : null}
         actions={podeDm && linkedWGs.length > 0 ? (
           <button
             onClick={() => abrirDm(linkedWGs, true)}

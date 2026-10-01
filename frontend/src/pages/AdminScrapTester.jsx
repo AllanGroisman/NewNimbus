@@ -395,7 +395,7 @@ export default function PageAdminScrapTester() {
                     <img src={linkResult.product.img} alt="" style={{ width: 110, height: 110, objectFit: "contain", borderRadius: 8, background: "var(--color-background-secondary)" }} />
                   </a>
                 )}
-                <div style={{ flex: "1 1 260px", minWidth: 240 }}>
+                <div style={{ flex: "1 1 260px", minWidth: "min(240px, 100%)" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                     <tbody>
                       {(linkResult.checks || []).map(c => (
@@ -403,7 +403,7 @@ export default function PageAdminScrapTester() {
                           <td style={{ ...tdStyle, width: 130, color: "var(--color-text-secondary)" }}>
                             {c.label}{c.critical && <span style={{ color: "var(--danger-text)", marginLeft: 3 }}>*</span>}
                           </td>
-                          <td style={{ ...tdStyle, color: c.ok ? "var(--color-text-primary)" : (c.critical ? "var(--danger-text)" : "var(--warn-text)") }}>
+                          <td style={{ ...tdStyle, overflowWrap: "anywhere", color: c.ok ? "var(--color-text-primary)" : (c.critical ? "var(--danger-text)" : "var(--warn-text)") }}>
                             {c.ok ? "✓ " : "✕ "}
                             {c.value === null || c.value === "" ? "não veio" : String(c.value).slice(0, 90)}
                           </td>

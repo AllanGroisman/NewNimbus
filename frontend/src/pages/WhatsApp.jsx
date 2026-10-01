@@ -82,6 +82,7 @@ function TestResult({ result, onDismiss }) {
       <button
         onClick={onDismiss}
         aria-label="Fechar resultado do teste"
+        className="hit"
         style={{ background: "transparent", border: "none", cursor: "pointer", color: "inherit", fontSize: 16, lineHeight: 1, padding: 0 }}
       >&times;</button>
     </div>
@@ -316,7 +317,7 @@ export default function PageWhatsApp({
       {actionError && (
         <div role="alert" style={{ background: "var(--danger-bg)", border: "0.5px solid var(--danger-border)", color: "var(--danger-text)", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 14, display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ flex: 1 }}>{actionError}</span>
-          <button onClick={() => setActionError(null)} aria-label="Fechar aviso" style={{ background: "transparent", border: "none", cursor: "pointer", color: "inherit", fontSize: 18, lineHeight: 1, padding: 0 }}>&times;</button>
+          <button onClick={() => setActionError(null)} aria-label="Fechar aviso" className="hit" style={{ background: "transparent", border: "none", cursor: "pointer", color: "inherit", fontSize: 18, lineHeight: 1, padding: 0 }}>&times;</button>
         </div>
       )}
 
@@ -374,7 +375,7 @@ export default function PageWhatsApp({
                           onClick={() => setEditingLabel({ id: n.id, value: n.label })}
                           title="Editar apelido"
                           aria-label={`Editar apelido de ${n.label}`}
-                          style={{ background: "transparent", border: "none", cursor: "pointer", padding: "2px 4px", color: "var(--color-text-secondary)", fontSize: 12, borderRadius: 4 }}
+                          style={{ background: "transparent", border: "none", cursor: "pointer", padding: "6px 8px", margin: "-6px 0", color: "var(--color-text-secondary)", fontSize: 13, borderRadius: 4 }}
                         >✎</button>
                       </>
                     )}
@@ -387,7 +388,7 @@ export default function PageWhatsApp({
                     {n.lastActivity && <Badge color="gray">Atividade: {n.lastActivity}</Badge>}
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                   {planPausedNumber && (
                     <button
                       onClick={() => onActivatePlanPaused?.(n.id)}
@@ -414,7 +415,7 @@ export default function PageWhatsApp({
                       <Spinner size={14} />
                       Conectando...
                       {stuck && (
-                        <button onClick={() => reconnect(n.id)} style={{ background: "transparent", border: "none", color: PRIMARY, cursor: "pointer", fontSize: 12, padding: 0, textDecoration: "underline" }}>Reconectar</button>
+                        <button onClick={() => reconnect(n.id)} style={{ background: "transparent", border: `0.5px solid ${PRIMARY}`, borderRadius: 8, color: PRIMARY, cursor: "pointer", fontSize: 12, padding: "6px 12px", fontWeight: 500 }}>Reconectar</button>
                       )}
                     </span>
                   ) : (

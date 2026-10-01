@@ -256,13 +256,15 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
                   )}
 
                   <div style={{ fontWeight: 500, fontSize: 13, marginTop: 16, marginBottom: 4 }}>Quais avisos você quer receber</div>
+                  {/* O texto da linha também liga/desliga: no dedo, acertar só a
+                      chavinha de 22px era difícil. */}
                   {WHATSNIMBUS_EVENTS.map(ev => (
                     <div key={ev.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "0.5px solid var(--color-border-tertiary)", gap: 12 }}>
-                      <div>
+                      <div onClick={() => setWnEvent(ev.key, wnEvents[ev.key] === false)} style={{ flex: 1, cursor: "pointer" }}>
                         <div style={{ fontSize: 13, fontWeight: 500 }}>{ev.label}</div>
                         <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>{ev.desc}</div>
                       </div>
-                      <Toggle value={wnEvents[ev.key] !== false} onChange={v => setWnEvent(ev.key, v)} />
+                      <Toggle label={ev.label} value={wnEvents[ev.key] !== false} onChange={v => setWnEvent(ev.key, v)} />
                     </div>
                   ))}
                   <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 10 }}>
@@ -282,11 +284,11 @@ export default function PageSettings({ user, setUser, onLogout, settings = {}, s
                 { key: "weeklyReport", label: "Relatório semanal", desc: "Resumo de envios toda segunda-feira" },
               ].map(n => (
                 <div key={n.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 0", borderBottom: "0.5px solid var(--color-border-tertiary)", gap: 12 }}>
-                  <div>
+                  <div onClick={() => setNotifications(s => ({ ...s, [n.key]: !s[n.key] }))} style={{ flex: 1, cursor: "pointer" }}>
                     <div style={{ fontSize: 13, fontWeight: 500 }}>{n.label}</div>
                     <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>{n.desc}</div>
                   </div>
-                  <Toggle value={notifications[n.key]} onChange={v => setNotifications(s => ({ ...s, [n.key]: v }))} />
+                  <Toggle label={n.label} value={notifications[n.key]} onChange={v => setNotifications(s => ({ ...s, [n.key]: v }))} />
                 </div>
               ))}
             </div>

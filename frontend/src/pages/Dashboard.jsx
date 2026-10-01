@@ -86,7 +86,7 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
-        <h2 style={{ fontSize: 18, fontWeight: 500, display: "flex", alignItems: "center", gap: 8 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 500, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           Campanhas
           {/* O limite vale sobre as ATIVAS — as pausadas pelo plano não contam. */}
           <UsageBadge current={groups.filter(g => !isPlanPaused(g)).length} limit={limits?.groups} label="campanhas ativas" />
@@ -209,7 +209,10 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
                     </button>
                   </div>
 
+                  {/* No celular a grade de 150px virava uma coluna só (6 linhas por
+                      campanha); lá são sempre duas. */}
                   <div
+                    className="grid-2-mobile"
                     style={{
                       display: "grid",
                       gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",

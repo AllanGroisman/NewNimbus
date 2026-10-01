@@ -3,14 +3,17 @@ import { PRIMARY, PRIMARY_DARK } from "../data/constants";
 import { startWASession, getWASession, deleteWASession, requestWAPairingCode, listWASessions, errText } from "../data/api";
 import { maskWhatsappPhoneInput, toWhatsappPhone, formatWhatsappPhone } from "../data/phone";
 import Spinner from "./ui/Spinner";
+import { isTouch } from "../data/useMedia";
 
 // Inicia (ou retoma) a sessão Baileys do `sessionId` no backend e
 // faz polling no status. Chama onConnected({ phone, name, jid }) ao conectar.
 //
 // Dois modos de vincular, sobre a MESMA sessão e o MESMO socket:
-//   - "qr":   mostra o QR pra câmera do celular (padrão, fluxo de sempre).
+//   - "qr":   mostra o QR pra câmera do celular (padrão no computador).
 //   - "code": o usuário digita o telefone, recebe 8 caracteres e os digita no
 //             celular (Dispositivos vinculados › Vincular com número de telefone).
+//             Padrão no celular: não dá pra escanear um QR que está na tela do
+//             próprio aparelho.
 // Pedir um código reabre o socket no backend (o `browser` do pareamento precisa
 // ser diferente — ver PAIRING_BROWSER em whatsapp/local.js), mas isso é invisível
 // aqui: o polling, o branch "conectado" e o onConnected são os mesmos nos dois.
@@ -40,7 +43,7 @@ function mmss(seconds) {
 
 export default function WhatsappQR({ sessionId, onConnected, onError, autoStart = true, defaultPhone = "", knownNumberIds = [] }) {
   const [state, setState] = useState({ status: "starting", qr: null, info: null, error: null });
-  const [mode, setMode] = useState("qr");
+  const [mode, setMode] = useState(() => (isTouch() ? "code" : "qr"));
   // phase: form (pedindo o telefone) → loading → code (mostrando) → expired.
   const [pair, setPair] = useState({
     phase: "form", phone: maskWhatsappPhoneInput(defaultPhone || ""),
@@ -298,7 +301,7 @@ export default function WhatsappQR({ sessionId, onConnected, onError, autoStart 
               {!codeOver ? (
                 <>
                   <div style={{ marginTop: 8, display: "flex", gap: 10, justifyContent: "center", alignItems: "center" }}>
-                    <button type="button" onClick={copyCode} style={{ background: "transparent", border: "none", color: PRIMARY, cursor: "pointer", fontSize: 12, padding: 0 }}>
+                    <button type="button" onClick={copyCode} style={{ background: "transparent", border: "none", color: PRIMARY, cursor: "pointer", fontSize: 12, padding: "8px 4px" }}>
                       {copied ? "Copiado!" : "Copiar código"}
                     </button>
                     {remaining !== null && (
@@ -362,7 +365,7 @@ export default function WhatsappQR({ sessionId, onConnected, onError, autoStart 
           </div>
         ) : state.status === "awaiting_qr" && state.qr ? (
           <>
-            <img src={state.qr} alt="QR Code WhatsApp" style={{ width: 240, height: 240, borderRadius: 8, background: "#fff", padding: 8 }} />
+            <img src={state.qr} alt="QR Code WhatsApp" style={{ width: "min(240px, 100%)", height: "auto", aspectRatio: "1", borderRadius: 8, background: "#fff", padding: 8 }} />
             <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 12, lineHeight: 1.5, textAlign: "left", maxWidth: 280, margin: "12px auto 0" }}>
               1. Abra o WhatsApp no celular<br />
               2. <strong>Menu</strong> &rarr; <strong>Dispositivos vinculados</strong><br />
@@ -379,7 +382,7 @@ export default function WhatsappQR({ sessionId, onConnected, onError, autoStart 
       {!connected && (
         <div style={{ fontSize: 11, color: "var(--color-text-secondary)", textAlign: "center" }}>
           {mode === "qr" ? "O QR expira em ~30s. " : "O código vale por ~2 minutos. "}
-          Se não funcionar, <button onClick={cancelAndCleanup} style={{ background: "transparent", border: "none", color: PRIMARY, cursor: "pointer", fontSize: 11, padding: 0 }}>cancele e tente novamente</button>.
+          Se não funcionar, <button onClick={cancelAndCleanup} className="hit" style={{ background: "transparent", border: "none", color: PRIMARY, cursor: "pointer", fontSize: 11, padding: 0 }}>cancele e tente novamente</button>.
         </div>
       )}
     </div>

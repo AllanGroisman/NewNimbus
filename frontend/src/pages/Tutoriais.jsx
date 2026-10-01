@@ -93,7 +93,7 @@ export function TutorialBody({ tutorial }) {
         </a>
       )}
       {temTexto && (
-        <div style={{ fontSize: 13, lineHeight: 1.7, color: "var(--color-text-primary)", whiteSpace: "pre-wrap" }}>
+        <div style={{ fontSize: 13, lineHeight: 1.7, color: "var(--color-text-primary)", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
           {tutorial.content}
         </div>
       )}
@@ -262,6 +262,7 @@ export default function PageTutoriais({ targetTutorialId = null, onboarding = nu
         {query && (
           <button
             onClick={() => setQuery("")}
+            className="hit"
             style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "transparent", border: "none", cursor: "pointer", color: "var(--color-text-secondary)", fontSize: 14, padding: 4 }}
             title="Limpar busca"
           >×</button>

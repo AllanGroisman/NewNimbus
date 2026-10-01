@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { PRIMARY_DARK, PRIMARY_LIGHT, sidebarItems, getGroupStats, STORE_ID_TO_PAGE, storeLockMessage, planLabel } from "../data/constants";
 import Logo from "./ui/Logo";
 
@@ -11,6 +12,22 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
 
   const visibleItems = sidebarItems.filter(it => !it.adminOnly);
   const adminItems = sidebarItems.filter(it => it.adminOnly);
+  // Título da barra do topo no celular: onde a pessoa está, já que o menu fica
+  // escondido na gaveta.
+  const currentTitle = selectedGroup?.name || sidebarItems.find(it => it.id === page)?.label || "Nimbus";
+
+  // Gaveta aberta: ESC fecha e o fundo não rola por baixo dela.
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const onKey = (e) => { if (e.key === "Escape") onToggleMobile(false); };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [mobileOpen, onToggleMobile]);
 
   // Nível de alerta por aba: "red" (crítico) ou "amber" (atenção).
   // Afiliado: vermelho quando a loja não está configurada.
@@ -36,7 +53,8 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
   };
   for (const pageId of Object.keys(lockedPages)) alertLevel[pageId] = null;
 
-  const renderItem = (item) => {
+  // `inDrawer`: na gaveta do celular os itens ficam mais altos (alvo de dedo).
+  const renderItem = (item, inDrawer) => {
     const isActive = page === item.id && !selectedGroup;
     const lockMsg = lockedPages[item.id] || null;
     const level = alertLevel[item.id] || null;
@@ -53,7 +71,7 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
         onClick={() => nav(item.id)}
         title={lockMsg || (showAlert ? alertTitle : undefined)}
         style={{
-          display: "flex", alignItems: "center", gap: 10, padding: "9px 16px",
+          display: "flex", alignItems: "center", gap: 10, padding: inDrawer ? "12px 16px" : "9px 16px",
           background: isActive ? PRIMARY_LIGHT : "transparent",
           border: "none", cursor: "pointer", textAlign: "left",
           color: isActive ? PRIMARY_DARK : (showAlert ? alertTextColor : "var(--color-text-primary)"),
@@ -78,7 +96,7 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
     );
   };
 
-  const sidebarContent = (
+  const sidebarContent = (inDrawer) => (
     <>
       <div style={{ padding: "0 16px 16px", borderBottom: "0.5px solid var(--color-border-tertiary)", marginBottom: 8 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -94,14 +112,14 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
             </button>
             {subtitle && <div style={{ fontSize: 11, color: "var(--color-text-primary)", fontWeight: 500, opacity: 0.75 }}>{subtitle}</div>}
           </div>
-          <button className="mobile-only" aria-label="Fechar menu" onClick={() => onToggleMobile(false)} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 20, color: "var(--color-text-secondary)", padding: "4px" }}>✕</button>
+          <button className="mobile-only" aria-label="Fechar menu" onClick={() => onToggleMobile(false)} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 20, color: "var(--color-text-secondary)", width: 40, height: 40, marginRight: -8, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
         </div>
       </div>
-      {visibleItems.map(renderItem)}
+      {visibleItems.map(it => renderItem(it, inDrawer))}
       {isAdmin && adminItems.length > 0 && (
         <div style={{ margin: "8px 10px 0", borderTop: "0.5px solid var(--color-border-tertiary)", paddingTop: 8 }}>
           <div style={{ fontSize: 11, color: "var(--color-text-primary)", padding: "4px 6px", marginBottom: 4, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Admin</div>
-          {adminItems.map(renderItem)}
+          {adminItems.map(it => renderItem(it, inDrawer))}
         </div>
       )}
       <div style={{ margin: "8px 10px 0", borderTop: "0.5px solid var(--color-border-tertiary)", paddingTop: 8 }}>
@@ -122,7 +140,7 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
               key={g.id}
               onClick={() => selGroup(g)}
               style={{
-                display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "7px 6px",
+                display: "flex", alignItems: "center", gap: 8, width: "100%", padding: inDrawer ? "11px 6px" : "7px 6px",
                 background: selectedGroup?.id === g.id ? PRIMARY_LIGHT : "transparent",
                 border: "none", cursor: "pointer", textAlign: "left", borderRadius: 8, fontSize: 12,
                 color: selectedGroup?.id === g.id ? PRIMARY_DARK : "var(--color-text-primary)",
@@ -138,29 +156,49 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
         })}
       </div>
       <div style={{ marginTop: "auto", padding: "16px 16px 0", borderTop: "0.5px solid var(--color-border-tertiary)" }}>
-        <button onClick={onLogout} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 13, color: "var(--color-text-primary)", fontWeight: 500 }}>&larr; Sair</button>
+        <button onClick={onLogout} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 13, color: "var(--color-text-primary)", fontWeight: 500, padding: inDrawer ? "10px 0" : 0 }}>&larr; Sair</button>
       </div>
     </>
   );
 
+  // Os alertas das abas também acendem no ☰: com a gaveta fechada, é o único
+  // jeito de ver no celular que tem WhatsApp caído ou afiliado faltando.
+  const menuAlert = Object.values(alertLevel).includes("red") ? "#E24B4A"
+    : Object.values(alertLevel).includes("amber") ? "#EF9F27"
+    : null;
+
   return (
     <>
-      {/* Mobile top bar */}
+      {/* Barra do topo no celular. O ☰ fica à esquerda, do mesmo lado de onde a
+          gaveta sai — antes ele ficava à direita e a gaveta abria do outro lado.
+          A altura bate com --topbar-h do index.css. */}
       <div className="mobile-only" style={{
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "10px 16px", borderBottom: "0.5px solid var(--color-border-tertiary)",
+        display: "flex", alignItems: "center", gap: 4, height: 52,
+        padding: "0 8px 0 4px", borderBottom: "0.5px solid var(--color-border-tertiary)",
         background: "var(--color-background-primary)", position: "sticky", top: 0, zIndex: 90,
       }}>
+        <button
+          onClick={() => onToggleMobile(true)}
+          aria-label="Abrir menu"
+          aria-expanded={mobileOpen}
+          style={{ position: "relative", background: "transparent", border: "none", cursor: "pointer", fontSize: 22, color: "var(--color-text-primary)", width: 44, height: 44, lineHeight: 1, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
+        >
+          ☰
+          {menuAlert && (
+            <span aria-hidden="true" style={{ position: "absolute", top: 9, right: 7, width: 8, height: 8, borderRadius: "50%", background: menuAlert, border: "1.5px solid var(--color-background-primary)" }} />
+          )}
+        </button>
+        <div style={{ flex: 1, minWidth: 0, fontSize: 15, fontWeight: 600, color: "var(--color-text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {currentTitle}
+        </div>
         <button
           onClick={() => nav("dashboard")}
           title="Ir para o início"
           aria-label="Nimbus — ir para Campanhas"
-          style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 16, fontWeight: 500, color: "var(--color-brand)", background: "transparent", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}
+          style={{ background: "transparent", border: "none", cursor: "pointer", width: 44, height: 44, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}
         >
-          <Logo size={20} />
-          <span>Nimbus</span>
+          <Logo size={22} />
         </button>
-        <button onClick={() => onToggleMobile(true)} aria-label="Abrir menu" style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 22, color: "var(--color-text-primary)", padding: "4px 8px", lineHeight: 1 }}>☰</button>
       </div>
 
       {/* Desktop sidebar */}
@@ -168,25 +206,25 @@ export default function Sidebar({ page, selectedGroup, groups, whatsappGroups = 
         width: 200, flexShrink: 0, borderRight: "0.5px solid var(--color-border-tertiary)",
         display: "flex", flexDirection: "column", padding: "16px 0",
       }}>
-        {sidebarContent}
+        {sidebarContent(false)}
       </div>
 
       {/* Mobile drawer overlay */}
       {mobileOpen && (
-        <div className="mobile-only" onClick={() => onToggleMobile(false)} style={{
+        <div className="mobile-only drawer-backdrop" onClick={() => onToggleMobile(false)} style={{
           position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 98,
         }} />
       )}
 
       {/* Mobile drawer */}
       {mobileOpen && (
-        <div className="mobile-only" style={{
-          position: "fixed", top: 0, left: 0, bottom: 0, width: 260, zIndex: 99,
-          display: "flex", flexDirection: "column", padding: "16px 0",
-          background: "var(--color-background-primary)", overflowY: "auto",
+        <div className="mobile-only drawer" role="dialog" aria-modal="true" aria-label="Menu" style={{
+          position: "fixed", top: 0, left: 0, bottom: 0, width: "min(280px, 85vw)", zIndex: 99,
+          display: "flex", flexDirection: "column", padding: "12px 0 20px",
+          background: "var(--color-background-primary)", overflowY: "auto", overscrollBehavior: "contain",
           boxShadow: "2px 0 12px rgba(0,0,0,0.15)",
         }}>
-          {sidebarContent}
+          {sidebarContent(true)}
         </div>
       )}
     </>

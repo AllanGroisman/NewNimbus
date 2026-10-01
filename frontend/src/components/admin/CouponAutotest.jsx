@@ -114,6 +114,7 @@ function Diario({ itens }) {
     );
   }
   return (
+    <div className="scroll-x">
     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
       <thead>
         <tr style={{ textAlign: "left", color: "var(--color-text-secondary)", borderBottom: "0.5px solid var(--color-border-tertiary)" }}>
@@ -154,6 +155,7 @@ function Diario({ itens }) {
         })}
       </tbody>
     </table>
+    </div>
   );
 }
 
@@ -301,7 +303,7 @@ export default function CouponAutotest() {
                 </div>
               )}
 
-              <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 18 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 18 }}>
                 <button onClick={salvar} disabled={salvando} style={{ ...botaoSecundario, borderColor: PRIMARY_DARK, color: PRIMARY_DARK }}>
                   {salvando ? "Salvando..." : "Salvar"}
                 </button>

@@ -2,6 +2,11 @@ import StatCard from "../ui/StatCard";
 import { Card, Linha, PorDia } from "./comum";
 import { formatBRL, formatInt, conversao } from "../../data/desempenho";
 
+// Célula numérica das tabelas: vão à esquerda e sem quebrar — no celular o
+// "R$ 1.234,56" quebrava em duas linhas e as colunas encostavam umas nas outras.
+// A tabela já mora num overflowX: auto, então ela rola em vez de espremer.
+const celulaNum = { paddingLeft: 12, whiteSpace: "nowrap" };
+
 // Números de afiliado do Mercado Livre (resposta de /api/affiliate/ml/desempenho).
 // A casca (pages/Desempenho.jsx) cuida de período, carregamento e erro.
 
@@ -58,18 +63,18 @@ export default function DesempenhoML({ dados }) {
               <thead>
                 <tr style={{ color: "var(--color-text-secondary)", fontSize: 11, textAlign: "right" }}>
                   <th style={{ textAlign: "left", fontWeight: 400, paddingBottom: 6 }}>Etiqueta</th>
-                  <th style={{ fontWeight: 400 }}>Cliques</th>
-                  <th style={{ fontWeight: 400 }}>Produtos</th>
-                  <th style={{ fontWeight: 400 }}>Ganho</th>
+                  <th style={{ ...celulaNum, fontWeight: 400 }}>Cliques</th>
+                  <th style={{ ...celulaNum, fontWeight: 400 }}>Produtos</th>
+                  <th style={{ ...celulaNum, fontWeight: 400 }}>Ganho</th>
                 </tr>
               </thead>
               <tbody>
                 {dados.tags.map(t => (
                   <tr key={t.tag} style={{ textAlign: "right", borderTop: "0.5px solid var(--color-border-tertiary)" }}>
                     <td style={{ textAlign: "left", padding: "6px 0" }}>{t.tag}</td>
-                    <td>{formatInt(t.clicks)}</td>
-                    <td>{formatInt(t.units)}</td>
-                    <td>{formatBRL(t.earnings)}</td>
+                    <td style={celulaNum}>{formatInt(t.clicks)}</td>
+                    <td style={celulaNum}>{formatInt(t.units)}</td>
+                    <td style={celulaNum}>{formatBRL(t.earnings)}</td>
                   </tr>
                 ))}
               </tbody>

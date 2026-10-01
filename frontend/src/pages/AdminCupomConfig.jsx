@@ -121,9 +121,9 @@ function Card({ tom, titulo, veredito, children, acoes }) {
   const t = SEMAFORO[tom] || SEMAFORO.neutro;
   return (
     <div style={{ ...cardStyle, background: t.fundo, borderColor: t.borda }}>
-      <div style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
         <span>{t.icone}</span>
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: "1 1 200px", minWidth: 0 }}>
           <div style={{ fontWeight: 500 }}>{titulo}</div>
           <div style={{ fontSize: 12, color: t.cor, marginTop: 3, lineHeight: 1.5 }}>{veredito}</div>
         </div>

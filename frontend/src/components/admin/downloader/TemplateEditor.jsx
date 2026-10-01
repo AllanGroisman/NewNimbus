@@ -113,7 +113,7 @@ const Cor = ({ value, onChange }) => (
     onChange={(e) => onChange(e.target.value)} />
 );
 
-const row = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 };
+const row = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8, marginBottom: 8 };
 
 // Os dois de fábrica ("Faixa no topo", "Barras + vídeo reduzido") são
 // templates comuns: editar e salvar muda o padrão. "Restaurar padrões" traz de
@@ -252,7 +252,7 @@ export default function TemplateEditor({ templates, initialId, refVideo, onClose
             </span>
           </div>
 
-          <div style={{ flex: 1, minWidth: 300, display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ flex: 1, minWidth: "min(300px, 100%)", display: "flex", flexDirection: "column", gap: 14 }}>
             <div>
               <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
                 <span style={hintStyle}>Formato:</span>
@@ -320,10 +320,10 @@ export default function TemplateEditor({ templates, initialId, refVideo, onClose
             value={draft.name || ""}
             onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
             placeholder="Nome do template"
-            style={{ ...inputStyle, width: "auto", minWidth: 200 }}
+            style={{ ...inputStyle, width: "auto", minWidth: "min(200px, 100%)" }}
           />
           {erro && <span style={{ fontSize: 12, color: "var(--danger-text)" }}>{erro}</span>}
-          <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
             {draft.id && <button type="button" style={botaoSecundario} onClick={excluir} disabled={busy}>Excluir</button>}
             <button type="button" style={botaoPrimario(busy)} onClick={salvar} disabled={busy}>
               {busy ? "Salvando…" : "Salvar template"}

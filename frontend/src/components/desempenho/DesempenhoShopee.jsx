@@ -4,6 +4,11 @@ import Badge from "../ui/Badge";
 import { Card, Linha, PorDia } from "./comum";
 import { formatBRL, formatInt, diaCurto } from "../../data/desempenho";
 
+// Célula numérica das tabelas: vão à esquerda e sem quebrar — no celular o
+// "R$ 1.234,56" quebrava em duas linhas e as colunas encostavam umas nas outras.
+// A tabela já mora num overflowX: auto, então ela rola em vez de espremer.
+const celulaNum = { paddingLeft: 12, whiteSpace: "nowrap" };
+
 // Números de afiliado da Shopee (resposta de /api/affiliate/shopee/desempenho).
 // A casca (pages/Desempenho.jsx) cuida de período, carregamento e erro.
 //
@@ -38,7 +43,9 @@ function ListaVendas({ vendas, total }) {
               ? <img src={v.image} alt="" width={36} height={36} loading="lazy" style={{ borderRadius: 6, objectFit: "cover", flexShrink: 0 }} />
               : <div style={{ width: 36, height: 36, flexShrink: 0 }} />}
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div title={v.name} style={{ fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {/* Até 2 linhas: com uma só, no celular o nome virava "Fone Blue…" e o
+                  resto ficava só no tooltip, que não existe no toque. */}
+              <div title={v.name} style={{ fontSize: 13, lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", overflowWrap: "anywhere" }}>
                 {v.qty > 1 ? `${formatInt(v.qty)}× ` : ""}{v.name}
               </div>
               <div style={{ ...secundario, marginTop: 3, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
@@ -56,7 +63,7 @@ function ListaVendas({ vendas, total }) {
       {vendas.length > limite && (
         <button
           onClick={() => setLimite(l => l + POR_VEZ)}
-          style={{ marginTop: 8, background: "transparent", border: "none", padding: 0, fontSize: 12, color: "var(--color-text-secondary)", cursor: "pointer", fontFamily: "inherit" }}
+          style={{ marginTop: 2, background: "transparent", border: "none", padding: "8px 0", fontSize: 12, color: "var(--color-text-secondary)", cursor: "pointer", fontFamily: "inherit" }}
         >
           Mostrar mais ({formatInt(vendas.length - limite)})
         </button>
@@ -107,18 +114,18 @@ export default function DesempenhoShopee({ dados }) {
               <thead>
                 <tr style={{ color: "var(--color-text-secondary)", fontSize: 11, textAlign: "right" }}>
                   <th style={{ textAlign: "left", fontWeight: 400, paddingBottom: 6 }}>Grupo</th>
-                  <th style={{ fontWeight: 400 }}>Pedidos</th>
-                  <th style={{ fontWeight: 400 }}>Vendas</th>
-                  <th style={{ fontWeight: 400 }}>Comissão</th>
+                  <th style={{ ...celulaNum, fontWeight: 400 }}>Pedidos</th>
+                  <th style={{ ...celulaNum, fontWeight: 400 }}>Vendas</th>
+                  <th style={{ ...celulaNum, fontWeight: 400 }}>Comissão</th>
                 </tr>
               </thead>
               <tbody>
                 {grupos.map(g => (
                   <tr key={g.groupId || "sem-grupo"} style={{ textAlign: "right", borderTop: "0.5px solid var(--color-border-tertiary)" }}>
                     <td style={{ textAlign: "left", padding: "6px 0", color: g.groupId ? "inherit" : "var(--color-text-secondary)" }}>{g.name}</td>
-                    <td>{formatInt(g.orders)}</td>
-                    <td>{formatBRL(g.sales)}</td>
-                    <td>{formatBRL(g.commission)}</td>
+                    <td style={celulaNum}>{formatInt(g.orders)}</td>
+                    <td style={celulaNum}>{formatBRL(g.sales)}</td>
+                    <td style={celulaNum}>{formatBRL(g.commission)}</td>
                   </tr>
                 ))}
               </tbody>

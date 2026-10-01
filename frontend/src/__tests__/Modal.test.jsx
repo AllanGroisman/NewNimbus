@@ -57,6 +57,21 @@ describe("Modal — acessibilidade e foco", () => {
     expect(document.activeElement).toBe(screen.getByLabelText("Nome"));
   });
 
+  it("no toque foca a caixa, não o campo (o teclado abriria por cima do modal)", () => {
+    const original = window.matchMedia;
+    window.matchMedia = (q) => ({ matches: q === "(pointer: coarse)", media: q, addEventListener() {}, removeEventListener() {} });
+    try {
+      render(
+        <Modal title="Teste" onClose={() => {}}>
+          <input aria-label="Nome" />
+        </Modal>
+      );
+      expect(document.activeElement).toBe(screen.getByRole("dialog"));
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
   it("trava o scroll do fundo enquanto aberto e restaura ao fechar", () => {
     const { unmount } = render(<Modal title="Teste" onClose={() => {}}><p>x</p></Modal>);
     expect(document.body.style.overflow).toBe("hidden");

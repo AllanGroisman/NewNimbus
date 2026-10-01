@@ -7,6 +7,7 @@ import { leadersOf, withLeaders } from "../data/repasseLeaders";
 import { useUnsavedGuard, useRequestNavigation } from "../data/navGuard";
 import { useTextHistory } from "../data/textHistory";
 import { TOUR_TAB_EVENT } from "../data/onboarding";
+import { useMedia, TOUCH } from "../data/useMedia";
 import BusyOverlay from "./ui/BusyOverlay";
 import AlertBanner from "./ui/AlertBanner";
 
@@ -209,7 +210,7 @@ function CouponField({ value, onSave, compact = false }) {
 
   const iconBtn = (extra = {}) => ({
     border: "none", background: "transparent", cursor: saving ? "wait" : "pointer",
-    padding: "0 3px", fontSize: 12, lineHeight: 1, color: "var(--color-text-secondary)",
+    padding: "6px 7px", borderRadius: 6, fontSize: 13, lineHeight: 1, color: "var(--color-text-secondary)",
     ...extra,
   });
 
@@ -276,7 +277,7 @@ function CouponField({ value, onSave, compact = false }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 500 }}>
         Cupom
-        <button onClick={open} title={has ? "Editar o cupom deste produto" : "Adicionar um cupom a este produto"} style={iconBtn({ padding: 0 })}>✎</button>
+        <button onClick={open} className="hit" title={has ? "Editar o cupom deste produto" : "Adicionar um cupom a este produto"} style={iconBtn({ padding: 0 })}>✎</button>
       </div>
       <div style={{
         fontSize: 12,
@@ -305,7 +306,9 @@ function OriginalTextPreview({ text }) {
   );
 }
 
-function QueueItemCard({ item, idx, eta, onRemove, onMoveToTop, onSaveCoupon, onDragStart, onDragOver, onDragEnd, onDrop, isDragOver, isDragging }) {
+// `touch`: arrastar (drag HTML5) não funciona no dedo — no celular o card não é
+// arrastável e ganha os botões ↑ ↓ no lugar.
+function QueueItemCard({ item, idx, eta, isLast, touch, onRemove, onMoveToTop, onMoveUp, onMoveDown, onSaveCoupon, onDragStart, onDragOver, onDragEnd, onDrop, isDragOver, isDragging }) {
   const addedAt = item.addedAt ? new Date(item.addedAt) : null;
   const addedAtStr = addedAt && !isNaN(addedAt.getTime()) ? addedAt.toLocaleString("pt-BR") : null;
   const discountStr = !isEmpty(item.discount) ? (typeof item.discount === "number" ? `${item.discount}%` : String(item.discount)) : null;
@@ -317,7 +320,7 @@ function QueueItemCard({ item, idx, eta, onRemove, onMoveToTop, onSaveCoupon, on
 
   return (
     <div
-      draggable
+      draggable={!touch}
       onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDragEnd={onDragEnd}
@@ -327,17 +330,23 @@ function QueueItemCard({ item, idx, eta, onRemove, onMoveToTop, onSaveCoupon, on
         border,
         borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 12,
         opacity: isDragging ? 0.4 : 1,
-        cursor: "grab",
+        cursor: touch ? "default" : "grab",
         transition: "border-color 0.15s, opacity 0.15s",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "var(--color-text-secondary)" }}>
-          <span title="Arraste para reordenar" style={{ cursor: "grab", color: "var(--color-text-secondary)", fontSize: 14, lineHeight: 1, userSelect: "none" }}>⋮⋮</span>
+          {!touch && <span title="Arraste para reordenar" style={{ cursor: "grab", color: "var(--color-text-secondary)", fontSize: 14, lineHeight: 1, userSelect: "none" }}>⋮⋮</span>}
           <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 18, padding: "0 6px", borderRadius: 9, background: idx === 0 ? PRIMARY_LIGHT : "var(--color-background-secondary)", color: idx === 0 ? PRIMARY_DARK : "var(--color-text-secondary)", fontWeight: 500, fontSize: 11 }}>#{idx + 1}</span>
           <span>⏱ {idx === 0 ? "Próximo às" : "Previsto"} <strong style={{ color: idx === 0 ? PRIMARY_DARK : "var(--color-text-primary)" }}>{formatETA(eta)}</strong></span>
         </div>
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          {touch && (
+            <>
+              <button onClick={onMoveUp} disabled={idx === 0} aria-label="Subir uma posição" style={{ ...queueArrowBtn, opacity: idx === 0 ? 0.35 : 1 }}>↑</button>
+              <button onClick={onMoveDown} disabled={isLast} aria-label="Descer uma posição" style={{ ...queueArrowBtn, opacity: isLast ? 0.35 : 1 }}>↓</button>
+            </>
+          )}
           {idx > 0 && (
             <button
               onClick={onMoveToTop}
@@ -365,7 +374,9 @@ function QueueItemCard({ item, idx, eta, onRemove, onMoveToTop, onSaveCoupon, on
         ) : (
           <div style={{ width: 72, height: 72, borderRadius: 10, background: "var(--color-background-secondary)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, color: "var(--color-text-secondary)" }}>📦</div>
         )}
-        <div style={{ flex: 1, minWidth: 0, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
+        {/* No celular sobram ~220px ao lado da foto: a grade de 140px virava uma
+            coluna só e o card passava de meio metro. Duas colunas fixas lá. */}
+        <div className="grid-2-mobile" style={{ flex: 1, minWidth: 0, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
           <div style={{ gridColumn: "1 / -1", display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
             <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 500 }}>Produto</div>
             <div style={{ fontSize: 13, fontWeight: 500, lineHeight: 1.35, wordBreak: "break-word", color: isEmpty(item.name) ? "var(--color-text-secondary)" : "var(--color-text-primary)", fontStyle: isEmpty(item.name) ? "italic" : "normal" }}>
@@ -400,6 +411,8 @@ function QueueItemCard({ item, idx, eta, onRemove, onMoveToTop, onSaveCoupon, on
   );
 }
 
+const queueArrowBtn = { width: 36, height: 32, borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 15, cursor: "pointer" };
+
 // Cartões e subseções da aba Gerenciar (task 26).
 const manageCardStyle = { background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 };
 const manageSubStyle = { marginTop: 16, paddingTop: 14, borderTop: "0.5px solid var(--color-border-tertiary)" };
@@ -408,6 +421,7 @@ const manageLabelStyle = { fontSize: 11, color: "var(--color-text-secondary)", d
 
 export default function GroupDashboard({ group, numbers, whatsappGroups = [], affiliateConfigured = true, affiliateStatus = null, storeLocks = {}, onBack, onUpdate, onDelete, onCreateWhatsappGroup, onUpdateWhatsappGroup, onGoToSettings, notificationSettings = null, onGoToAffiliate, onGoToWhatsapp, customTemplates = [], onAddCustomTemplate, onDeleteCustomTemplate, onUpdateCustomTemplate, limits, tourActive = false, isAdmin = false }) {
   const [tab, setTab] = useState(() => readSavedTab(group.id, group?.scraping?.kind === "repasse"));
+  const touch = useMedia(TOUCH);
   // Guarda a aba atual por campanha pra restaurar no F5.
   useEffect(() => { writeSavedTab(group.id, tab); }, [group.id, tab]);
   // O tour guiado entra nas abas por conta própria (task 38). Não passa pelo
@@ -1006,6 +1020,13 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     whatsappGroups,
     { affiliateConfigured: affiliateStatus || affiliateConfigured },
   );
+  // Por que o "Enviar próximo agora" está travado (null = liberado).
+  const sendNowBlock = stats.pausedManual ? "Campanha pausada — retome pra enviar"
+    : stats.pausedByAffiliateML ? "Configure o afiliado do Mercado Livre"
+    : stats.pausedByAffiliateShopee ? "Configure o afiliado da Shopee"
+    : stats.pausedNoWindow ? "Campanha pausada — crie uma janela de envio na aba Janelas de envio"
+    : (group.whatsappGroupIds || []).length === 0 ? "Vincule um grupo de WhatsApp primeiro"
+    : null;
 
   // Status do afiliado pode vir como bool (App.jsx) ou objeto { configured } (testes).
   const isAffOk = (key) => {
@@ -1530,7 +1551,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           onCancel={cancelRefill}
         />
       )}
-      <button onClick={onBack} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 16, display: "flex", alignItems: "center", gap: 6 }}>&larr; Voltar</button>
+      <button onClick={onBack} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 13, color: "var(--color-text-secondary)", margin: "-8px 0 8px -4px", padding: "8px 4px", display: "flex", alignItems: "center", gap: 6 }}>&larr; Voltar</button>
       <AlertBanner tone="error" message={actionError} onDismiss={() => setActionError(null)} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <div>
@@ -1753,7 +1774,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 8, flexWrap: "wrap" }}>
               <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-secondary)" }}>Últimos 5 produtos enviados</div>
               {(group.history || []).length > 5 && (
-                <button onClick={() => setTab("history")} style={{ background: "transparent", border: "none", padding: 0, color: PRIMARY_DARK, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
+                <button onClick={() => setTab("history")} className="hit" style={{ background: "transparent", border: "none", padding: 0, color: PRIMARY_DARK, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
                   Ver histórico completo →
                 </button>
               )}
@@ -2369,7 +2390,7 @@ onError={setActionError}
                   data-tour="qu-send-now"
                   onClick={triggerSendNow}
                   disabled={sendingNow || (group.whatsappGroupIds || []).length === 0 || stats.paused}
-                  title={stats.pausedManual ? "Campanha pausada — retome pra enviar" : stats.pausedByAffiliateML ? "Configure o afiliado do Mercado Livre" : stats.pausedByAffiliateShopee ? "Configure o afiliado da Shopee" : stats.pausedNoWindow ? "Campanha pausada — crie uma janela de envio na aba Janelas de envio" : (group.whatsappGroupIds || []).length === 0 ? "Vincule um grupo de WhatsApp primeiro" : "Envia o próximo produto agora e reseta o intervalo"}
+                  title={sendNowBlock || "Envia o próximo produto agora e reseta o intervalo"}
                   style={{ padding: "5px 12px", borderRadius: 7, background: PRIMARY, color: "#fff", border: "none", fontSize: 12, cursor: (sendingNow || !(group.whatsappGroupIds || []).length || stats.paused) ? "not-allowed" : "pointer", fontWeight: 500, opacity: (sendingNow || !(group.whatsappGroupIds || []).length || stats.paused) ? 0.5 : 1 }}
                 >
                   {sendingNow ? "⟳ Enviando..." : "▶ Enviar próximo agora"}
@@ -2389,6 +2410,11 @@ onError={setActionError}
               )}
             </div>
           </div>
+          {/* No toque não existe tooltip: o porquê do "Enviar próximo agora"
+              travado vira texto. */}
+          {touch && queue.length > 0 && sendNowBlock && (
+            <div style={{ marginBottom: 10, fontSize: 12, color: "var(--color-text-secondary)" }}>▶ Envio manual travado: {sendNowBlock}.</div>
+          )}
           {sendNowMsg && (
             <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: sendNowMsg.type === "ok" ? PRIMARY_LIGHT : "var(--danger-bg)", color: sendNowMsg.type === "ok" ? PRIMARY_DARK : "var(--danger-text)" }}>{sendNowMsg.text}</div>
           )}
@@ -2489,7 +2515,9 @@ onError={setActionError}
               <div data-tour="qu-list" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {queue.length > 1 && (
                   <div style={{ fontSize: 11, color: "var(--color-text-secondary)", padding: "0 4px" }}>
-                    💡 Arraste os cards para reordenar a fila, ou use "Enviar primeiro" para furar a fila com um produto.
+                    {touch
+                      ? <>💡 Use ↑ ↓ para reordenar a fila, ou "Enviar primeiro" para furar a fila com um produto.</>
+                      : <>💡 Arraste os cards para reordenar a fila, ou use "Enviar primeiro" para furar a fila com um produto.</>}
                   </div>
                 )}
                 {queue.map((item, idx) => (
@@ -2498,8 +2526,12 @@ onError={setActionError}
                     item={item}
                     idx={idx}
                     eta={etas[idx]}
+                    isLast={idx === queue.length - 1}
+                    touch={touch}
                     onRemove={() => setConfirmRemoveQueueItem(item)}
                     onMoveToTop={handleQueueMoveToTop(idx)}
+                    onMoveUp={() => moveQueueItem(idx, idx - 1)}
+                    onMoveDown={() => moveQueueItem(idx, idx + 1)}
                     onSaveCoupon={c => saveCoupon("queue", item.id ?? item.key, c)}
                     onDragStart={handleQueueDragStart(idx)}
                     onDragOver={handleQueueDragOver(idx)}
@@ -2554,7 +2586,7 @@ onError={setActionError}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
                 <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-secondary)" }}>Janela {idx + 1}</div>
                 {/* Dá pra remover todas: sem janela a campanha simplesmente fica pausada. */}
-                <button onClick={() => removeWindow(w.id)} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 12, color: "var(--danger-text)" }}>Remover</button>
+                <button onClick={() => removeWindow(w.id)} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 12, color: "var(--danger-text)", padding: "8px 4px", margin: "-8px -4px" }}>Remover</button>
               </div>
               <div className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
                 {[["Início", "from", "time"], ["Fim", "to", "time"], ["Intervalo entre produtos", "interval", "select"]].map(([label, field, type]) => (
@@ -2614,7 +2646,7 @@ onError={setActionError}
                         : <span style={{ fontSize: 18, color: "var(--color-text-secondary)" }}>📦</span>
                       }
                     </div>
-                    <div style={{ minWidth: 64, fontSize: 11, color: "var(--color-text-secondary)", lineHeight: 1.3 }}>
+                    <div className="desktop-only" style={{ minWidth: 64, fontSize: 11, color: "var(--color-text-secondary)", lineHeight: 1.3 }}>
                       <div>{dateStr}</div>
                       {timeStr && <div style={{ fontWeight: 500, color: "var(--color-text-primary)" }}>{timeStr}</div>}
                     </div>
@@ -2624,6 +2656,8 @@ onError={setActionError}
                         : <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={h.name}>{h.name}</div>
                       }
                       <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                        {/* No celular a coluna de data some (o nome ficava com ~70px) e a data vem aqui. */}
+                        <span className="mobile-only">{dateStr}{timeStr && ` ${timeStr}`} · </span>
                         {h.store || "—"}
                         {h.groupCount > 0 && <> · enviado pra {h.groupCount} grupo{h.groupCount !== 1 ? "s" : ""}</>}
                       </div>
@@ -2850,12 +2884,11 @@ onError={setActionError}
             <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Link do produto</label>
             <div style={{ display: "flex", gap: 6 }}>
               <input
-                autoFocus
                 value={manualForm.url}
                 onChange={e => updateManualField("url", e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter") fetchManualMetadata(); }}
                 placeholder="ex: https://www.mercadolivre.com.br/..."
-                style={{ flex: 1, padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", fontFamily: "monospace" }}
+                style={{ flex: 1, minWidth: 0, padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", fontFamily: "monospace" }}
               />
               <button
                 onClick={fetchManualMetadata}

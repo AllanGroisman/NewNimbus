@@ -466,7 +466,7 @@ export default function PageSubscription({ user, setUser }) {
       {currentPlan !== "free" && (
         <>
           <h3 style={{ fontSize: 14, fontWeight: 500, marginBottom: 12 }}>Seu plano em uso</h3>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12, marginBottom: 28 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(260px, 100%), 1fr))", gap: 12, marginBottom: 28 }}>
             {/* Benefícios × uso */}
             <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10, padding: 14 }}>
               <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 10 }}>Benefícios e uso</div>
@@ -690,7 +690,7 @@ export default function PageSubscription({ user, setUser }) {
                 <button
                   onClick={() => startCheckout(id)}
                   disabled={!!busy}
-                  style={{ marginTop: 8, background: "none", border: "none", padding: 0, fontSize: 11, color: "var(--color-text-secondary)", textDecoration: "underline", cursor: busy ? "wait" : "pointer" }}
+                  style={{ marginTop: 2, background: "none", border: "none", padding: "8px 4px", fontSize: 11, color: "var(--color-text-secondary)", textDecoration: "underline", cursor: busy ? "wait" : "pointer" }}
                 >
                   ou assinar direto por {fmtPrice(price)}/mês
                 </button>
@@ -734,14 +734,14 @@ export default function PageSubscription({ user, setUser }) {
                           )}
                         </td>
                         <td style={{ padding: "9px 8px 9px 0" }}>
-                          <span style={{ background: b.bg, color: b.color, border: `0.5px solid ${b.border}`, fontSize: 11, padding: "2px 8px", borderRadius: 6, fontWeight: 500 }}>{b.label}</span>
+                          <span style={{ display: "inline-block", whiteSpace: "nowrap", background: b.bg, color: b.color, border: `0.5px solid ${b.border}`, fontSize: 11, padding: "2px 8px", borderRadius: 6, fontWeight: 500 }}>{b.label}</span>
                         </td>
                         <td style={{ padding: "9px 0", textAlign: "right", whiteSpace: "nowrap" }}>
                           {inv.hostedUrl && (
-                            <a href={inv.hostedUrl} target="_blank" rel="noreferrer" style={{ color: PRIMARY_DARK, marginRight: 10 }}>Abrir</a>
+                            <a href={inv.hostedUrl} target="_blank" rel="noreferrer" style={{ color: PRIMARY_DARK, display: "inline-block", padding: "6px 4px", marginRight: 6 }}>Abrir</a>
                           )}
                           {inv.pdfUrl && (
-                            <a href={inv.pdfUrl} target="_blank" rel="noreferrer" style={{ color: PRIMARY_DARK }}>PDF</a>
+                            <a href={inv.pdfUrl} target="_blank" rel="noreferrer" style={{ color: PRIMARY_DARK, display: "inline-block", padding: "6px 4px" }}>PDF</a>
                           )}
                         </td>
                       </tr>
@@ -756,7 +756,7 @@ export default function PageSubscription({ user, setUser }) {
 
       {/* ─── GERENCIAR / CANCELAR ─── */}
       <h3 style={{ fontSize: 14, fontWeight: 500, marginBottom: 12 }}>Gerenciar assinatura</h3>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12, marginBottom: 28 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(260px, 100%), 1fr))", gap: 12, marginBottom: 28 }}>
         <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10, padding: 14 }}>
           <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Cartão e faturas</div>
           <div style={{ fontSize: 12, color: "var(--color-text-secondary)", lineHeight: 1.5, marginBottom: 12 }}>
@@ -951,7 +951,7 @@ function UsageRow({ label, used, limit }) {
   const full = !unlimited && limit > 0 && u !== null && u >= limit;
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12, marginBottom: 3 }}>
         <span style={{ color: "var(--color-text-secondary)" }}>{label}</span>
         <span style={{ fontWeight: 500 }}>
           {u === null ? "—" : u}/{unlimited ? "Ilimitado" : limit}

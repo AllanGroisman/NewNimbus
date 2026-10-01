@@ -166,6 +166,24 @@ describe("GroupDashboard — aba Fila com itens", () => {
     expect(persisted.map(i => i.name)).toEqual(["Teclado Mecânico", "Mouse Gamer"]);
   });
 
+  it("no toque o card não arrasta: ↑ ↓ reordenam a fila e persistem", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = (q) => ({ matches: q === "(pointer: coarse)", media: q, addEventListener() {}, removeEventListener() {} });
+    try {
+      const { props } = renderQueueTab();
+      expect(screen.queryByText(/Arraste os cards/)).toBeNull();
+      expect(screen.getAllByRole("button", { name: "Subir uma posição" })[0]).toBeDisabled();
+      expect(screen.getAllByRole("button", { name: "Descer uma posição" })[1]).toBeDisabled();
+
+      fireEvent.click(screen.getAllByRole("button", { name: "Descer uma posição" })[0]);
+      const call = props.onUpdate.mock.calls.find(([, patch]) => patch.queue);
+      expect(call[1].queue.map(i => i.name)).toEqual(["Teclado Mecânico", "Mouse Gamer"]);
+      await waitFor(() => expect(saveGroupQueue).toHaveBeenCalledTimes(1));
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
   it("'Remover' pede confirmação e, confirmado, tira o item da fila e persiste", async () => {
     const { props } = renderQueueTab();
     // 2 itens → 2 botões Remover; remove o primeiro (Mouse)

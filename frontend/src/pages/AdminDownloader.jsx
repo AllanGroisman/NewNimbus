@@ -314,7 +314,7 @@ export default function PageAdminDownloader() {
 
       {result && videos.length > 0 && (
         <>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 4 }}>
             <h2 style={{ fontSize: 16 }}>{isList ? "Lista de vídeos" : result.channel || "Vídeos"}</h2>
             {!isList && <PlatformBadge platform={result.platform} />}
             <span style={hintStyle}>

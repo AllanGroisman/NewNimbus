@@ -549,12 +549,17 @@ function Linha({ cupom, aberto, onToggle, onPatch, onImportar, onExcluir, temChe
       {aberto && (
         <tr>
           <td style={{ ...td, background: "var(--color-background-secondary)" }} colSpan={6}>
-            <Produtos
-              cupom={cupom} onPatch={onPatch}
-              temCheckout={temCheckout} naFila={naFila} emSerie={emSerie} depurar={depurar}
-            />
-            <div style={{ fontWeight: 500, margin: "14px 0 6px" }}>Capturas</div>
-            <Capturas code={cupom.code} />
+            {/* width 0 + minWidth 100%: o conteúdo não conta na largura da
+                tabela (mesmo truque do AdminCupomML). Sem isso um nome ou URL
+                comprido alargava a tabela toda. */}
+            <div style={{ width: 0, minWidth: "100%" }}>
+              <Produtos
+                cupom={cupom} onPatch={onPatch}
+                temCheckout={temCheckout} naFila={naFila} emSerie={emSerie} depurar={depurar}
+              />
+              <div style={{ fontWeight: 500, margin: "14px 0 6px" }}>Capturas</div>
+              <Capturas code={cupom.code} />
+            </div>
           </td>
         </tr>
       )}

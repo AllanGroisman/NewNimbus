@@ -47,6 +47,7 @@ function caberNoPedido(material) {
 
 function TabelaDeCupons({ cupons }) {
   return (
+    <div className="scroll-x">
     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
       <thead>
         <tr style={{ textAlign: "left", color: "var(--color-text-secondary)" }}>
@@ -83,6 +84,7 @@ function TabelaDeCupons({ cupons }) {
         ))}
       </tbody>
     </table>
+    </div>
   );
 }
 
@@ -205,7 +207,7 @@ export default function CuponsDoProduto() {
         )}
         {passo && <div style={{ fontSize: 12, color: PRIMARY_DARK, marginTop: 8 }}>{passo}</div>}
         {sonda && (
-          <div style={{ fontSize: 12, marginTop: 10, lineHeight: 1.6 }}>
+          <div style={{ fontSize: 12, marginTop: 10, lineHeight: 1.6, overflowWrap: "anywhere" }}>
             <div>Guardado em <code>backend/{sonda.pasta}</code></div>
             {sonda.resumo.checkout?.ok && (
               <div style={{ margin: "6px 0 8px" }}>

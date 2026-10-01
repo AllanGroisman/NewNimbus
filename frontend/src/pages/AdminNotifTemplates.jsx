@@ -136,7 +136,7 @@ export default function PageAdminNotifTemplates() {
   }
 
   return (
-    <div style={{ padding: "28px 32px", maxWidth: 680 }}>
+    <div className="unpad-mobile" style={{ padding: "28px 32px", maxWidth: 680 }}>
       <div style={{ marginBottom: 24 }}>
         <div style={{ fontSize: 20, fontWeight: 700, color: "var(--color-text-primary)" }}>Modelos de Notificações</div>
         <div style={{ fontSize: 13, color: "var(--color-text-secondary)", marginTop: 4 }}>

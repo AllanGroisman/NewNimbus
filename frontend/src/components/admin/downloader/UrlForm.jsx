@@ -75,7 +75,7 @@ export default function UrlForm({ loading, adding, onSubmit, onAddVideos, initia
         </div>
       ) : (
         <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginTop: 14, alignItems: "center" }}>
-          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
             <span style={hintStyle}>Quantidade:</span>
             {LIMITS.map((l) => (
               <button key={l.value} type="button" onClick={() => setLimit(l.value)} style={chipStyle({ active: limit === l.value })}>

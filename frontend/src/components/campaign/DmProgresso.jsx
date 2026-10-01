@@ -7,7 +7,7 @@
 import { PRIMARY } from "../../data/constants";
 import { parteAtiva, textoDaParte } from "./dmPartes";
 
-const btnMini = { padding: "3px 10px", borderRadius: 6, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 11, cursor: "pointer", flexShrink: 0 };
+const btnMini = { padding: "6px 12px", borderRadius: 6, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 11, cursor: "pointer", flexShrink: 0 };
 
 export default function DmProgresso({ parte, broadcast, onCancelar, onDispensar }) {
   const ativa = parteAtiva(parte);
@@ -38,7 +38,7 @@ export default function DmProgresso({ parte, broadcast, onCancelar, onDispensar 
       {ativa ? (
         <button type="button" onClick={onCancelar} style={{ ...btnMini, color: "var(--danger-text)" }}>Cancelar</button>
       ) : (
-        <button type="button" onClick={onDispensar} aria-label="Dispensar" title="Dispensar" style={{ ...btnMini, border: "none", fontSize: 14, color: "var(--color-text-secondary)" }}>×</button>
+        <button type="button" onClick={onDispensar} aria-label="Dispensar" title="Dispensar" className="hit" style={{ ...btnMini, padding: "2px 8px", border: "none", fontSize: 14, color: "var(--color-text-secondary)" }}>×</button>
       )}
     </div>
   );

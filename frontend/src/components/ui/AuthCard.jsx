@@ -5,8 +5,10 @@ import Logo from "./Logo";
 // moldura da tela de login — é a mesma pessoa, no meio do mesmo caminho.
 export default function AuthCard({ subtitle, maxWidth = 360, children }) {
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 16, padding: 32, width: "100%", maxWidth }}>
+    // auth-page/auth-card (index.css): menos margem no celular e altura que
+    // desconta a barra do navegador.
+    <div className="auth-page" style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div className="auth-card" style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 16, padding: 32, width: "100%", maxWidth }}>
         <div style={{ textAlign: "center", marginBottom: 24 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, fontSize: 28, fontWeight: 500, color: "var(--color-brand)" }}>
             <Logo size={34} />

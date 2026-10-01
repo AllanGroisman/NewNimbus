@@ -24,7 +24,8 @@ export default function SelectionBar({
 
   return (
     <div style={{
-      position: "sticky", top: 0, zIndex: 10,
+      // Abaixo da barra fixa do topo no celular (--topbar-h é 0 no desktop).
+      position: "sticky", top: "var(--topbar-h)", zIndex: 10,
       display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
       padding: "10px 0", marginBottom: 12,
       background: "var(--color-background-secondary)",

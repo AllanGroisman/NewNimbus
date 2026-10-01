@@ -24,7 +24,7 @@ export function Chip({ ativo, onClick, children, disabled }) {
       disabled={disabled}
       aria-pressed={ativo}
       style={{
-        padding: "5px 12px", borderRadius: 999, fontSize: 12, fontFamily: "inherit",
+        padding: "7px 12px", borderRadius: 999, fontSize: 12, fontFamily: "inherit",
         cursor: disabled ? "default" : "pointer",
         border: `0.5px solid ${ativo ? PRIMARY : "var(--color-border-secondary)"}`,
         background: ativo ? PRIMARY : "transparent",

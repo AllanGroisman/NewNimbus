@@ -10,7 +10,7 @@
 // Pra ASSISTIR: `npm run test:e2e:ui` (passo-a-passo) ou `npm run test:e2e:headed`
 // (opcional: E2E_SLOWMO=400 deixa cada ação visível).
 
-import { defineConfig } from "@playwright/test";
+import { defineConfig, devices } from "@playwright/test";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -98,6 +98,15 @@ export default defineConfig({
     {
       name: "chromium",
       use: { browserName: "chromium" },
+      testIgnore: /mobile\.spec\.js/,
+    },
+    // Celular (task 5): telefone Android de 360px, com toque. Só roda o
+    // mobile.spec.js — os outros specs clicam na sidebar, que no celular fica
+    // escondida na gaveta.
+    {
+      name: "mobile",
+      use: { ...devices["Pixel 7"], viewport: { width: 360, height: 740 } },
+      testMatch: /mobile\.spec\.js/,
     },
   ],
 });

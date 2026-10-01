@@ -97,7 +97,7 @@ export default function PageDesempenho({ lojas = ["ml", "shopee"], lojaInicial, 
           <button
             onClick={() => nova({ refresh: true })}
             disabled={carregando}
-            style={{ background: "transparent", border: "none", padding: 0, color: PRIMARY, fontSize: 12, cursor: carregando ? "default" : "pointer", fontFamily: "inherit", opacity: carregando ? 0.5 : 1 }}
+            style={{ background: "transparent", border: "none", padding: "8px 4px", margin: "-8px -4px", color: PRIMARY, fontSize: 12, cursor: carregando ? "default" : "pointer", fontFamily: "inherit", opacity: carregando ? 0.5 : 1 }}
           >
             {carregando ? "Buscando…" : "↻ Atualizar"}
           </button>

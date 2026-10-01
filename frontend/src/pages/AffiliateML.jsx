@@ -96,6 +96,7 @@ export default function PageAffiliateML({ onAffiliateChange, onOpenTutorial }) {
         <h2 style={{ fontSize: 18, fontWeight: 500, margin: 0 }}>Mercado Livre</h2>
         {onOpenTutorial && (
           <button
+            className="hit"
             onClick={() => onOpenTutorial(TUTORIAL_IDS.AFILIADO_ML)}
             style={{ background: "transparent", border: "none", padding: 0, color: PRIMARY, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}
           >
@@ -176,7 +177,7 @@ export default function PageAffiliateML({ onAffiliateChange, onOpenTutorial }) {
           <AlertBanner
             tone={affMsg.type === "ok" ? "success" : "error"}
             onDismiss={() => setAffMsg(null)}
-            style={{ marginTop: 10, marginBottom: 0, wordBreak: "break-all" }}
+            style={{ marginTop: 10, marginBottom: 0 }}
           >
             {affMsg.text}
             {affMsg.link && (
@@ -186,7 +187,7 @@ export default function PageAffiliateML({ onAffiliateChange, onOpenTutorial }) {
                   href={affMsg.link}
                   target="_blank"
                   rel="noreferrer"
-                  style={{ color: "inherit", textDecoration: "underline", fontFamily: "monospace" }}
+                  style={{ color: "inherit", textDecoration: "underline", fontFamily: "monospace", overflowWrap: "anywhere" }}
                 >
                   {affMsg.link}
                 </a>

@@ -58,6 +58,7 @@ export default function AlertBanner({
           type="button"
           onClick={onDismiss}
           aria-label="Fechar aviso"
+          className="hit"
           style={{ background: "none", border: "none", color: c.text, cursor: "pointer", fontSize: 16, lineHeight: 1, padding: "0 2px" }}
         >
           ×

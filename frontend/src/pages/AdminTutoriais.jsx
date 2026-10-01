@@ -130,7 +130,7 @@ function SectionEditor({ section, index, total, onChange, onMove, onDelete }) {
 
   return (
     <div style={cardStyle}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
         <span style={{ fontSize: 18, color: PRIMARY }}>{section.icon}</span>
         <h3 style={{ flex: 1, fontSize: 15, fontWeight: 500, margin: 0 }}>
           {section.title || <em style={{ color: "var(--color-text-secondary)" }}>(seção sem título)</em>}
@@ -283,7 +283,7 @@ export default function PageAdminTutoriais() {
           {/* Barra de ação fixa: com a árvore toda aberta o botão de salvar
               ficaria longe demais do que está sendo editado. */}
           <div style={{
-            position: "sticky", bottom: 0, display: "flex", alignItems: "center", gap: 12,
+            position: "sticky", bottom: 0, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
             padding: "12px 16px", marginTop: 8,
             background: "var(--color-background-primary)",
             border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10,

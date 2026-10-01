@@ -2,7 +2,7 @@ import { PRIMARY } from "../../data/constants";
 
 // Chavinha liga/desliga. É um <button role="switch"> (e não uma div) pra
 // funcionar no teclado e ter nome no leitor de tela — passe `label` com o que
-// a chave controla.
+// a chave controla. O `hit` estende a área de toque além dos 22px de altura.
 export default function Toggle({ value, onChange, label, disabled = false }) {
   return (
     <button
@@ -11,6 +11,7 @@ export default function Toggle({ value, onChange, label, disabled = false }) {
       aria-checked={value}
       aria-label={label}
       disabled={disabled}
+      className="hit"
       onClick={() => { if (!disabled) onChange(!value); }}
       style={{
         width: 40, height: 22, borderRadius: 11, padding: 0,

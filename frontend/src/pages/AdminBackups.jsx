@@ -53,7 +53,7 @@ function BackupRow({ item, source, busy, onRestore, onPush, onDelete }) {
     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderBottom: "0.5px solid var(--color-border-tertiary)", flexWrap: "wrap" }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 12, fontWeight: 500, fontFamily: "monospace", color: "var(--color-text-primary)", marginBottom: 2 }}>{nameToDate(item.name)}</div>
-        <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{item.name} · {fmtSize(item.size)}</div>
+        <div style={{ fontSize: 11, color: "var(--color-text-secondary)", overflowWrap: "anywhere" }}>{item.name} · {fmtSize(item.size)}</div>
       </div>
       <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
         {onPush && (
@@ -249,7 +249,7 @@ export default function PageAdminBackups() {
             {remoteNewer && <span style={{ color: "#B45309" }}>▼ Remoto mais novo</span>}
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button onClick={handleDisk} disabled={diskBusy} style={s.btn("default", diskBusy)}>
             {diskBusy ? "Lendo..." : "⛁ Espaço em disco"}
           </button>
@@ -334,7 +334,7 @@ export default function PageAdminBackups() {
       {loading && local.length === 0 ? (
         <div style={{ textAlign: "center", padding: 40, color: "var(--color-text-secondary)", fontSize: 13 }}>Carregando...</div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <div className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
 
           {/* Coluna Local */}
           <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, overflow: "hidden" }}>

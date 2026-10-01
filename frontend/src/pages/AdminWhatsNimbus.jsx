@@ -173,7 +173,7 @@ export default function PageAdminWhatsNimbus() {
   const showQr = snap.status === "awaiting_qr" && snap.qr;
 
   return (
-    <div style={{ padding: "28px 32px", maxWidth: 640 }}>
+    <div className="unpad-mobile" style={{ padding: "28px 32px", maxWidth: 640 }}>
       <div style={{ marginBottom: 24 }}>
         <div style={{ fontSize: 20, fontWeight: 700, color: "var(--color-text-primary)" }}>WhatsNimbus</div>
         <div style={{ fontSize: 13, color: "var(--color-text-secondary)", marginTop: 4 }}>
@@ -201,7 +201,7 @@ export default function PageAdminWhatsNimbus() {
           </div>
         ) : showQr ? (
           <div style={{ textAlign: "center", marginTop: 12 }}>
-            <img src={snap.qr} alt="QR Code WhatsNimbus" style={{ width: 240, height: 240, borderRadius: 8, background: "#fff", padding: 8 }} />
+            <img src={snap.qr} alt="QR Code WhatsNimbus" style={{ width: "min(240px, 100%)", height: "auto", aspectRatio: "1", borderRadius: 8, background: "#fff", padding: 8 }} />
             <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 12, lineHeight: 1.5, textAlign: "left", maxWidth: 280, margin: "12px auto 0" }}>
               1. Abra o WhatsApp no celular<br />
               2. <strong>Menu</strong> &rarr; <strong>Dispositivos vinculados</strong><br />

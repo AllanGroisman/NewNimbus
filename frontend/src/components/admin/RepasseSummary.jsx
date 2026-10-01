@@ -174,16 +174,18 @@ export default function RepasseSummary({ summary, hours, onHours, onPickKind }) 
         </div>
       </div>
 
-      {/* Linha do tempo por hora: o corte fica visível de relance. */}
+      {/* Linha do tempo por hora: o corte fica visível de relance. As barras
+          encolhem até sumir o vão: com "7d" são 168, e com largura mínima elas
+          empurravam a página inteira pro lado no celular. */}
       {(summary?.byHour || []).length > 1 && (
-        <div style={{ ...card, display: "flex", alignItems: "flex-end", gap: 2, height: 56 }}>
+        <div style={{ ...card, display: "flex", alignItems: "flex-end", gap: summary.byHour.length > 48 ? 0 : 2, height: 56 }}>
           {summary.byHour.map(h => {
             const max = Math.max(...summary.byHour.map(x => x.total)) || 1;
             return (
               <div
                 key={h.hour}
                 title={`${new Date(h.hour).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit" })}h — ${h.ok} ok / ${h.discarded} descartados`}
-                style={{ flex: 1, height: `${(h.total / max) * 100}%`, display: "flex", flexDirection: "column", justifyContent: "flex-end", minWidth: 3 }}
+                style={{ flex: 1, height: `${(h.total / max) * 100}%`, display: "flex", flexDirection: "column", justifyContent: "flex-end", minWidth: 0 }}
               >
                 <div style={{ height: `${(h.discarded / h.total) * 100}%`, background: "var(--danger-text)" }} />
                 <div style={{ height: `${(h.ok / h.total) * 100}%`, background: "#1B7A43" }} />

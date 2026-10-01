@@ -7,7 +7,9 @@
 import { PRIMARY } from "../../data/constants";
 
 export const cardStyle = { background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16, marginBottom: 18 };
-export const inputStyle = { padding: "7px 10px", borderRadius: 7, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box" };
+// maxWidth: as telas dão larguras fixas (240, 280px) em cima deste estilo, e no
+// celular elas passavam da borda do card.
+export const inputStyle = { padding: "7px 10px", borderRadius: 7, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", maxWidth: "100%" };
 export const labelStyle = { fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 6 };
 export const th = { padding: "6px 8px", fontWeight: 500, whiteSpace: "nowrap" };
 export const td = { padding: "8px", verticalAlign: "top" };

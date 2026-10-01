@@ -173,8 +173,12 @@ export default function TourOverlay({ tour, onNavigate, onFinish }) {
   let left = 0;
   if (rect) {
     const below = rect.top + rect.height + PAD + 12;
+    const above = rect.top - PAD - 12 - balloonH;
     const fitsBelow = below + balloonH + 12 <= vh;
-    top = fitsBelow ? below : Math.max(12, rect.top - PAD - 12 - balloonH);
+    // Alvo mais alto que a tela (comum no celular, com tudo empilhado): não
+    // cabe nem embaixo nem em cima, e o balão vai pro rodapé da tela — preso no
+    // topo ele cobria justamente o começo do que estava sendo mostrado.
+    top = fitsBelow ? below : above >= 12 ? above : Math.max(12, vh - balloonH - 12);
     left = Math.min(Math.max(12, rect.left), vw - width - 12);
   }
 
@@ -213,6 +217,9 @@ export default function TourOverlay({ tour, onNavigate, onFinish }) {
         tabIndex={-1}
         style={{
           position: "fixed", zIndex: 9002, top, left, width,
+          // Texto longo em tela baixa (celular deitado): rola dentro do balão em
+          // vez de empurrar os botões pra fora da tela, com a página travada.
+          maxHeight: vh - 24, overflowY: "auto",
           background: "var(--color-background-primary)",
           border: "0.5px solid var(--color-border-tertiary)",
           borderRadius: 12, padding: 16, outline: "none",
@@ -226,8 +233,8 @@ export default function TourOverlay({ tour, onNavigate, onFinish }) {
         <div style={{ fontSize: 13, color: "var(--color-text-secondary)", lineHeight: 1.5, marginBottom: 14 }}>
           {step.text}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <button onClick={finish} style={btn({ background: "transparent", color: "var(--color-text-secondary)", padding: "7px 4px" })}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <button onClick={finish} style={btn({ background: "transparent", color: "var(--color-text-secondary)", padding: "9px 6px", marginLeft: -6, whiteSpace: "nowrap" })}>
             Sair do tour
           </button>
           <div style={{ flex: 1 }} />

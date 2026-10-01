@@ -37,6 +37,7 @@ npm run test:journey              # só jornada
 npm run test:repasse              # atalhos por área — ver TIMING.md
 RUN_REDIS_TESTS=1 npm run test:db # inclui redis-queue (BullMQ real)
 npm run test:e2e                  # Playwright (auto-sobe servers)
+npx playwright test --project=mobile  # só o celular (360px, toque) — rode antes o test:e2e:setup
 npm run test:watch                # watch mode (unitários)
 npm run test:timing               # remede o tempo de cada arquivo
 
@@ -101,6 +102,7 @@ moram lá.
 - `billing.spec.js` — planos renderizam, Stripe desabilitado.
 - `whatsapp.spec.js` — modal de adicionar número inicia o QR.
 - `admin-scraper.spec.js`, `admin-shopee-filters.spec.js`, `admin-misc.spec.js` — telas de admin.
+- `mobile.spec.js` — projeto `mobile` (Pixel 7 a 360px, com toque): nenhuma rota nem aba de campanha pode rolar de lado, todo input tem fonte ≥ 16px (senão o iPhone dá zoom ao focar), ☰ à esquerda com a gaveta do mesmo lado, modal no toque sem focar campo. Screenshots de cada tela ficam em `test-results/`. Cria o próprio admin (não depende do `DEFAULT_ADMIN_*`).
 - `global-setup.js` — cria/migra o DB `nimbus_test_e2e` (docker exec local; psql direto no CI).
 
 ### `helpers/` — utilitários

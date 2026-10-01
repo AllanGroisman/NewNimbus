@@ -94,6 +94,7 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
         <h2 style={{ fontSize: 18, fontWeight: 500, margin: 0 }}>Shopee</h2>
         {onOpenTutorial && (
           <button
+            className="hit"
             onClick={() => onOpenTutorial(TUTORIAL_IDS.AFILIADO_SHOPEE)}
             style={{ background: "transparent", border: "none", padding: 0, color: PRIMARY, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}
           >
@@ -152,6 +153,7 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
             <button
               type="button"
               onClick={() => setShowSecret(s => !s)}
+              className="hit"
               style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", padding: "2px 8px", borderRadius: 6, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-primary)", fontSize: 10, cursor: "pointer", color: "var(--color-text-secondary)" }}
             >
               {showSecret ? "ocultar" : "mostrar"}
@@ -183,7 +185,7 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
           <AlertBanner
             tone={msg.type === "ok" ? "success" : "error"}
             onDismiss={() => setMsg(null)}
-            style={{ marginTop: 10, marginBottom: 0, wordBreak: "break-all" }}
+            style={{ marginTop: 10, marginBottom: 0 }}
           >
             {msg.text}
             {msg.link && (
@@ -193,7 +195,7 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
                   href={msg.link}
                   target="_blank"
                   rel="noreferrer"
-                  style={{ color: "inherit", textDecoration: "underline", fontFamily: "monospace" }}
+                  style={{ color: "inherit", textDecoration: "underline", fontFamily: "monospace", overflowWrap: "anywhere" }}
                 >
                   {msg.link}
                 </a>

@@ -197,7 +197,7 @@ export default function PageAdminEmails() {
   }
 
   return (
-    <div style={{ padding: "28px 32px" }}>
+    <div className="unpad-mobile" style={{ padding: "28px 32px" }}>
       <div style={{ marginBottom: 18 }}>
         <div style={{ fontSize: 20, fontWeight: 600, color: "var(--color-text-primary)" }}>E-mails do sistema</div>
         <div style={{ fontSize: 13, color: "var(--color-text-secondary)", marginTop: 4 }}>
@@ -227,7 +227,7 @@ export default function PageAdminEmails() {
 
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
         {/* Lista */}
-        <div style={{ ...cardStyle, width: 268, flexShrink: 0, padding: "12px 10px", maxHeight: "72vh", overflowY: "auto" }}>
+        <div className="full-mobile" style={{ ...cardStyle, width: 268, flexShrink: 0, padding: "12px 10px", maxHeight: "72vh", overflowY: "auto" }}>
           {groups.map(g => (
             <div key={g.id} style={{ marginBottom: 12 }}>
               <div style={{ ...labelStyle, padding: "0 8px", marginBottom: 4 }}>{g.label}</div>
@@ -262,7 +262,7 @@ export default function PageAdminEmails() {
 
         {/* Editor */}
         {spec && draft && (
-          <div style={{ ...cardStyle, flex: "1 1 400px", minWidth: 360 }}>
+          <div style={{ ...cardStyle, flex: "1 1 400px", minWidth: "min(360px, 100%)" }}>
             <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 15, fontWeight: 600, color: "var(--color-text-primary)" }}>{spec.label}</div>
@@ -412,7 +412,7 @@ export default function PageAdminEmails() {
         )}
 
         {/* Pré-visualização */}
-        <div style={{ ...cardStyle, flex: "1 1 380px", minWidth: 340, position: "sticky", top: 20, padding: 0, overflow: "hidden" }}>
+        <div className="static-mobile" style={{ ...cardStyle, flex: "1 1 380px", minWidth: "min(340px, 100%)", position: "sticky", top: 20, padding: 0, overflow: "hidden" }}>
           <div style={{ padding: "12px 14px", borderBottom: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)" }}>
             <div style={{ ...labelStyle, marginBottom: 5 }}>Como o cliente vê (dados de exemplo)</div>
             <div style={{ fontSize: 13, color: "var(--color-text-primary)", wordBreak: "break-word", lineHeight: 1.4 }}>

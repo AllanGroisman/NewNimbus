@@ -1129,10 +1129,11 @@ function Produtos({ dados }) {
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {dados.items.map(p => (
-          <div key={p.productKey} style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 12 }}>
+          <div key={p.productKey} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", fontSize: 12 }}>
             {p.catalog?.img && <img src={p.catalog.img} alt="" width={34} height={34} style={{ objectFit: "contain", borderRadius: 6, flexShrink: 0 }} />}
-            {/* Só o nome encolhe (cortado com "…"); o resto tem tamanho fixo. */}
-            <a href={p.productUrl} target="_blank" rel="noreferrer" title={p.catalog?.name || p.productUrl} style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "inherit" }}>
+            {/* Só o nome encolhe (cortado com "…"); o resto tem tamanho fixo e,
+                no celular, desce pra linha de baixo em vez de zerar o nome. */}
+            <a href={p.productUrl} target="_blank" rel="noreferrer" title={p.catalog?.name || p.productUrl} style={{ flex: "1 1 160px", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "inherit" }}>
               {p.catalog?.name || p.productUrl}
             </a>
             <span style={{ color: "var(--color-text-secondary)", flexShrink: 0, whiteSpace: "nowrap" }}>{brl(p.catalog?.price)}</span>

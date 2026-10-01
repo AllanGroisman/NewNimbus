@@ -261,8 +261,12 @@ export default function FilaCheckoutRepasse({ temCheckout, depurar = false, temD
                 return (
                   <tr key={`${item.origem}-${item.manualId || item.code}`} style={{ borderBottom: "0.5px solid var(--color-border-tertiary)" }}>
                     <td style={{ ...td, fontFamily: "monospace", fontWeight: 500 }}>{item.code}</td>
-                    <td style={{ ...td, maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      <a href={item.url} target="_blank" rel="noreferrer" title={item.url}>{linkCurto(item.url)}</a>
+                    {/* Reticências num div de dentro: maxWidth direto no <td> o
+                        navegador nem sempre respeita, e a tabela alargava. */}
+                    <td style={td}>
+                      <div style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <a href={item.url} target="_blank" rel="noreferrer" title={item.url}>{linkCurto(item.url)}</a>
+                      </div>
                     </td>
                     <td style={td}>
                       {item.origem === "manual" ? "manual" : `repasse · ${item.capturas ?? "?"} captura(s)`}

@@ -95,6 +95,7 @@ export default function PageAffiliateAmazon({ onAffiliateChange, onOpenTutorial 
         <h2 style={{ fontSize: 18, fontWeight: 500, margin: 0 }}>Amazon</h2>
         {onOpenTutorial && (
           <button
+            className="hit"
             onClick={() => onOpenTutorial(TUTORIAL_IDS.AFILIADO_AMAZON)}
             style={{ background: "transparent", border: "none", padding: 0, color: PRIMARY, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}
           >
@@ -158,7 +159,7 @@ export default function PageAffiliateAmazon({ onAffiliateChange, onOpenTutorial 
           <AlertBanner
             tone={amzMsg.type === "ok" ? "success" : "error"}
             onDismiss={() => setAmzMsg(null)}
-            style={{ marginTop: 10, marginBottom: 0, wordBreak: "break-all" }}
+            style={{ marginTop: 10, marginBottom: 0 }}
           >
             {amzMsg.text}
             {amzMsg.link && (
@@ -168,7 +169,7 @@ export default function PageAffiliateAmazon({ onAffiliateChange, onOpenTutorial 
                   href={amzMsg.link}
                   target="_blank"
                   rel="noreferrer"
-                  style={{ color: "inherit", textDecoration: "underline", fontFamily: "monospace" }}
+                  style={{ color: "inherit", textDecoration: "underline", fontFamily: "monospace", overflowWrap: "anywhere" }}
                 >
                   {amzMsg.link}
                 </a>

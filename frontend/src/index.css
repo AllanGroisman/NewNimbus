@@ -147,6 +147,13 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* iPhone deitado aumentava o texto sozinho. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+
+  /* Altura da barra fixa do topo no celular (Sidebar). Quem gruda no topo usa
+     `top: var(--topbar-h)` pra não sumir embaixo dela. */
+  --topbar-h: 0px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -295,10 +302,14 @@ input, select, textarea, button {
 }
 
 /* Retorno visual no hover. `filter` funciona igual nos botões coloridos e nos
-   transparentes, sem precisar tocar em nenhum dos estilos inline das telas. */
-button:not(:disabled):hover,
-[role="button"]:not([aria-disabled="true"]):hover {
-  filter: brightness(0.95);
+   transparentes, sem precisar tocar em nenhum dos estilos inline das telas.
+   Só pra quem tem mouse: no toque o :hover gruda no último botão tocado e ele
+   fica "apagado" até tocar em outro lugar. */
+@media (hover: hover) {
+  button:not(:disabled):hover,
+  [role="button"]:not([aria-disabled="true"]):hover {
+    filter: brightness(0.95);
+  }
 }
 button:disabled {
   cursor: not-allowed;
@@ -421,25 +432,108 @@ textarea::placeholder {
   .groups-flow-arrow-v { display: inline; }
 }
 
-/* Mobile responsive */
+/* ══ Celular ═══════════════════════════════════════════════════════════════
+   Quase todo estilo das telas é inline, e inline não aceita media query. As
+   classes abaixo são o jeito de mudar o layout no celular: o `!important` é o
+   que vence o `style={{…}}` do elemento. Comportamento (autofoco, modo do QR,
+   arrastar × botões) fica no JS, em data/useMedia.js.
+*/
+
+/* Rede de segurança contra rolagem lateral: algo mais largo que a tela fazia o
+   navegador abrir a página "com zoom" (dava pra arrastar pro lado e era preciso
+   tirar o zoom pra usar). `clip` e não `hidden`: não cria contêiner de rolagem,
+   então os `position: sticky` de dentro continuam grudando. */
+.main-content { overflow-x: clip; }
+
+/* Área de toque maior que o desenho: o ::after invisível estende o alvo 8px
+   pra cada lado sem mexer no layout. Pros botõezinhos de ícone (✕, ✎, ⋯). */
+.hit { position: relative; }
+.hit::after { content: ""; position: absolute; inset: -8px; }
+
+/* Tabela larga rola dentro do próprio card em vez de empurrar a página. */
+.scroll-x { overflow-x: auto; max-width: 100%; }
+
+/* Modal (ui/Modal): cabeçalho parado e só o corpo rola — o ✕ não some mais
+   rolando um formulário comprido. dvh desconta a barra do navegador do
+   iPhone; o vh antes é pra navegador que não conhece dvh. */
+.modal-box { max-height: 90vh; max-height: 90dvh; }
+.modal-head { padding: 24px 24px 0; }
+.modal-body { padding: 0 24px 24px; overscroll-behavior: contain; }
+
+/* Telas de fora do sistema (login, /assinar, /bem-vindo — ui/AuthCard). */
+.auth-page { min-height: 100vh; min-height: 100dvh; }
+/* E-mail comprido não tem onde quebrar e vazava do card no celular. */
+.auth-card { overflow-wrap: anywhere; }
+
+/* Gaveta do menu no celular: entra deslizando. Fechar desmonta na hora, como
+   os painéis da busca de produtos. */
+@keyframes nimbus-drawer-in {
+  from { transform: translateX(-100%); }
+  to   { transform: none; }
+}
+@keyframes nimbus-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.drawer          { animation: nimbus-drawer-in 0.22s ease-out; }
+.drawer-backdrop { animation: nimbus-fade-in 0.22s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .drawer, .drawer-backdrop { animation: none; }
+}
+
+/* Zoom do iPhone ao focar um campo: o Safari amplia qualquer input com fonte
+   abaixo de 16px, e a página fica ampliada depois. Todo input do sistema era
+   13px — por isso as telas "abriam com zoom" (o Modal foca o 1º campo ao
+   abrir). Vale também pra tablet (toque), que passa dos 768px. */
+@media (max-width: 768px), (pointer: coarse) {
+  input, select, textarea { font-size: 16px !important; }
+}
+
 @media (max-width: 768px) {
+  :root { --topbar-h: 52px; }
   .sec-panel.join-left, .sec-panel.join-right {
     border-top-left-radius: 0;
     border-top-right-radius: 0;
   }
   .desktop-only { display: none !important; }
   .app-layout { flex-direction: column !important; }
-  .main-content { padding: 14px 12px !important; }
+  /* Embaixo sobra espaço pro botão flutuante de suporte não cobrir o último
+     botão da tela (ex.: "Excluir campanha"). */
+  .main-content { padding: 14px 12px 72px !important; }
   .grid-collapse { grid-template-columns: 1fr !important; }
-  .settings-layout { grid-template-columns: 1fr !important; }
+  .settings-layout { grid-template-columns: minmax(0, 1fr) !important; }
+  /* Quebra linha em vez de rolar: rolando, "Zona de perigo" ficava fora da
+     tela e o iPhone não mostra barra de rolagem pra avisar que tinha mais. */
   .settings-nav {
     flex-direction: row !important;
-    overflow-x: auto !important;
+    flex-wrap: wrap !important;
     gap: 4px !important;
     padding-bottom: 8px;
     border-bottom: 0.5px solid var(--color-border-tertiary);
     margin-bottom: 4px;
   }
+
+  .auth-page { padding: 12px !important; }
+  .auth-card { padding: 20px !important; }
+
+  .modal-backdrop { padding: 12px !important; align-items: flex-start !important; }
+  .modal-box { max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); }
+  .modal-head { padding: 16px 16px 0; }
+  .modal-body { padding: 0 16px 16px; }
+
+  /* Botões de uma linha de produto (ui/ProductCard ProductRow): linha própria,
+     largura inteira, cada botão metade — alvo grande pro polegar. */
+  .row-actions { flex-basis: 100% !important; }
+  .row-actions > * { flex: 1; min-height: 36px; }
+  /* Lista com rolagem própria dentro de modal: no celular o modal já rola, e
+     duas rolagens uma dentro da outra brigam pelo dedo. */
+  .unclamp-mobile { max-height: none !important; overflow-y: visible !important; }
+  .grid-2-mobile { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .full-mobile { width: 100% !important; min-width: 0 !important; }
+  .static-mobile { position: static !important; }
+  /* Página admin com padding próprio somado ao do .main-content: no celular
+     sobravam ~240px de largura útil. */
+  .unpad-mobile { padding: 0 !important; }
 }
 @media (min-width: 769px) {
   .mobile-only { display: none !important; }
