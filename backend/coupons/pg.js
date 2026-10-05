@@ -8,6 +8,7 @@
 // catálogo. O scraping normal reescreve o payload do produto inteiro a cada
 // rodada (catalog/pg.js:toRow), então o vínculo com o cupom mora numa COLUNA
 // própria (`catalog_products.couponCampaignId`) que só este arquivo escreve.
+const { Prisma } = require("@prisma/client");
 const { prisma } = require("../db");
 
 // Um cupom vencido não pode continuar carimbado no produto: a fila do repasse
@@ -128,8 +129,15 @@ async function replaceCouponProducts(campaignId, items, { origem = "vitrine" } =
   // `productsSyncedAt` quer dizer "a VITRINE foi raspada" e continua querendo
   // dizer só isso — a vitrine parcial não pode carimbar esse campo, senão
   // a tela pararia de oferecer o botão de raspar justamente onde ele é preciso.
-  if (origem === "vitrine") {
-    await prisma().mlCoupon.update({ where: { campaignId }, data: { productsSyncedAt: nowish() } }).catch(() => {});
+  //
+  // E a vitrine que trouxe produto deixou de ser vazia (task 8) — seja ela inteira
+  // ou um pedaço.
+  const data = {
+    ...(origem === "vitrine" ? { productsSyncedAt: nowish() } : {}),
+    ...(pares.length ? { vitrineVaziaAt: null } : {}),
+  };
+  if (Object.keys(data).length) {
+    await prisma().mlCoupon.update({ where: { campaignId }, data }).catch(() => {});
   }
 
   return r;
@@ -336,7 +344,21 @@ async function recordCodeCheck({ code, verdict, campaignId = null, message = nul
 // Leitura
 // ────────────────────────────────────────────────────────────────────────
 
-function buildCouponWhere({ q = "", scope = null, grouping = null, onlyActive = false, onlyValid = false, withCode = false } = {}) {
+// Em que pé estão os produtos de cada cupom. Os quatro estados somam todos os
+// cupons, e são os mesmos no filtro da tabela e no resumo do card do botão 2 (stats):
+//   completa — a vitrine inteira foi raspada (`productsSyncedAt`);
+//   vazia    — a vitrine abriu sem card nenhum (task 8). Não é "sem nenhum produto":
+//              lá não há o que buscar, e por isso ela sai das filas do botão 2;
+//   parcial  — tem algum vínculo, mas não a vitrine fechada;
+//   nenhum   — nada ainda.
+const ESTADO_PRODUTOS = {
+  completa: { productsSyncedAt: { not: null } },
+  vazia: { productsSyncedAt: null, vitrineVaziaAt: { not: null } },
+  parcial: { productsSyncedAt: null, vitrineVaziaAt: null, products: { some: {} } },
+  nenhum: { productsSyncedAt: null, vitrineVaziaAt: null, products: { none: {} } },
+};
+
+function buildCouponWhere({ q = "", scope = null, grouping = null, onlyActive = false, onlyValid = false, withCode = false, produtos = null } = {}) {
   const AND = [];
   if (q && String(q).trim()) {
     const t = String(q).trim();
@@ -355,6 +377,7 @@ function buildCouponWhere({ q = "", scope = null, grouping = null, onlyActive = 
   if (onlyActive) AND.push({ activated: true });
   if (onlyValid) AND.push({ OR: [{ expiresAt: null }, { expiresAt: { gt: nowish() } }] });
   if (withCode) AND.push({ code: { not: null } });
+  if (produtos && Object.hasOwn(ESTADO_PRODUTOS, produtos)) AND.push(ESTADO_PRODUTOS[produtos]);
   return AND.length ? { AND } : undefined;
 }
 
@@ -594,13 +617,14 @@ async function stats() {
   ]);
   const catalogo = await prisma().catalogProduct.count({ where: { couponCampaignId: { not: null } } });
   // Os cupons repartidos pelo que já têm de produto — o resumo do card "Buscar
-  // Produtos Dos Cupons". São três grupos que somam `cupons`: vitrine fechada
-  // (carimbada), algum vínculo sem a vitrine fechada, e nada.
-  const [parciaisCupons, semNada] = await Promise.all([
-    prisma().mlCoupon.count({ where: { productsSyncedAt: null, products: { some: {} } } }),
-    prisma().mlCoupon.count({ where: { productsSyncedAt: null, products: { none: {} } } }),
+  // Produtos Dos Cupons". São os quatro estados do ESTADO_PRODUTOS, que somam
+  // `cupons`; a vitrine vazia fica fora do "sem nada" (task 8).
+  const [parciaisCupons, semNada, vitrineVazia] = await Promise.all([
+    prisma().mlCoupon.count({ where: ESTADO_PRODUTOS.parcial }),
+    prisma().mlCoupon.count({ where: ESTADO_PRODUTOS.nenhum }),
+    prisma().mlCoupon.count({ where: ESTADO_PRODUTOS.vazia }),
   ]);
-  const produtosPorCupom = { completos: comVitrine, parciais: parciaisCupons, semNada };
+  const produtosPorCupom = { completos: comVitrine, parciais: parciaisCupons, semNada, vitrineVazia };
   return { cupons, validos, comVitrine, vinculos, parciais, comCodigo, catalogo, produtosPorCupom, ultimaColeta: ultimo?.lastSeenAt || null, porCategoria: await countByGrouping() };
 }
 
@@ -724,6 +748,24 @@ async function setVitrineTotal(campaignId, total) {
   });
 }
 
+// A vitrine do cupom abriu e não tinha card nenhum (task 8). Quem decide que é
+// vazia — e não muro — é a etapa 2 na tela (data/produtosNoChrome.js): só chega
+// aqui a coleta que terminou sem verificação pendente. Os vínculos que o cupom já
+// tiver ficam: vitrine vazia não prova que o checkout ou o repasse erraram.
+async function marcarVitrineVazia(campaignId, { total = null } = {}) {
+  const agora = nowish();
+  const { count } = await prisma().mlCoupon.updateMany({
+    where: { campaignId: String(campaignId || "") },
+    data: {
+      vitrineVaziaAt: agora,
+      // O total que a vitrine declarou, se declarou ("0 resultados").
+      ...(Number.isInteger(total) && total >= 0 ? { vitrineTotal: total, vitrineTotalAt: agora } : {}),
+    },
+  });
+  if (!count) throw new Error("Esse cupom não está no sistema — puxe os cupons primeiro.");
+  return { ok: true };
+}
+
 // Os cupons que ainda NÃO têm vitrine raspada, separados pelo que falta em cada um.
 //
 // A separação é o ponto: `containerUrl` só existe depois do "Eu quero", então os
@@ -746,13 +788,17 @@ const TETO_FILA_PRODUTOS = 2000;
 
 async function couponsSemVitrine({ limit = TETO_FILA_PRODUTOS, campaignIds = null, soSemProdutos = false } = {}) {
   const teto = Math.min(TETO_FILA_PRODUTOS, Math.max(1, Number(limit) || TETO_FILA_PRODUTOS));
-  const alvo = Array.isArray(campaignIds) && campaignIds.length
-    ? { campaignId: { in: campaignIds.map(String) } }
-    : {};
+  const escolhidos = Array.isArray(campaignIds) && campaignIds.length;
+  const alvo = escolhidos ? { campaignId: { in: campaignIds.map(String) } } : {};
   // Cupom vencido não tem vitrine que valha uma aba aberta com a conta do sistema.
+  //
+  // A vitrine que já abriu vazia também não (task 8): abrir de novo é mais uma aba
+  // na conta do ML para ler o mesmo nada. Ela sai das DUAS filas — mas não do botão
+  // da linha, que manda o cupom escolhido a dedo e é o jeito de tentar de novo.
   const semVitrine = {
     ...alvo,
     productsSyncedAt: null,
+    ...(escolhidos ? {} : { vitrineVaziaAt: null }),
     OR: [{ expiresAt: null }, { expiresAt: { gt: nowish() } }],
   };
   const semNadaDoMl = { products: { none: { origem: { not: "repasse" } } } };
@@ -877,6 +923,116 @@ async function deleteCoupon(campaignId) {
   return { vinculos: vinculos.count, catalogoLimpo: catalogo.count };
 }
 
+// Os produtos do catálogo que só existem por causa da vitrine destas campanhas — os
+// que podem sair junto com ela (tasks 9 e 10). Precisa das três coisas:
+//
+//   - a linha nasceu da vitrine e nada mais a escreveu depois (`soDaVitrine`,
+//     catalog/pg.js:upsertProducts) — o scraping, que reescreve a linha, desmarca;
+//   - ela tem vínculo de vitrine (inteira ou parcial) com uma destas campanhas;
+//   - e NENHUM outro vínculo: nem com campanha de fora (outro cupom ainda a
+//     segura), nem de checkout ou repasse (de qualquer campanha) — produto que o
+//     grupo mandou ou o checkout testou não veio só pela vitrine.
+//
+// Fragmento SQL sobre `catalog_products cp`, para a contagem da prévia e o DELETE
+// usarem a mesma regra. A lista vai como UM parâmetro (array): os vencidos passam
+// de mil, e o `in` do Prisma gastaria um parâmetro por campanha.
+function soDaVitrineDe(ids) {
+  return Prisma.sql`cp."soDaVitrine"
+    AND EXISTS (
+      SELECT 1 FROM "ml_coupon_products" p
+       WHERE p."productKey" = cp."key"
+         AND p."campaign_id" = ANY(${ids}::text[])
+         AND p."origem" IN ('vitrine', 'parcial'))
+    AND NOT EXISTS (
+      SELECT 1 FROM "ml_coupon_products" p
+       WHERE p."productKey" = cp."key"
+         AND (p."campaign_id" <> ALL(${ids}::text[]) OR p."origem" NOT IN ('vitrine', 'parcial')))`;
+}
+
+// Quantos produtos do catálogo vieram pela vitrine destas campanhas, e quantos
+// deles sairiam. A diferença é o que fica — por ter outra origem.
+async function contarProdutosDaVitrine(ids) {
+  const [r] = await prisma().$queryRaw`
+    SELECT COUNT(*)::int AS "ligados",
+           (COUNT(*) FILTER (WHERE ${soDaVitrineDe(ids)}))::int AS "apagaveis"
+      FROM "catalog_products" cp
+     WHERE EXISTS (
+       SELECT 1 FROM "ml_coupon_products" p
+        WHERE p."productKey" = cp."key"
+          AND p."campaign_id" = ANY(${ids}::text[])
+          AND p."origem" IN ('vitrine', 'parcial'))`;
+  return { ligados: r?.ligados || 0, apagaveis: r?.apagaveis || 0 };
+}
+
+// Apaga os cupons VENCIDOS e os produtos que vieram só pela vitrine deles (task 9).
+//
+// `simular` é a prévia do modal: as mesmas contas, sem apagar nada.
+//
+// Mesma ordem do `deleteCoupon`, numa transação: o carimbo do catálogo primeiro
+// (coluna solta, sem FK), depois os produtos — que precisam dos vínculos ainda no
+// banco para a regra do `soDaVitrineDe` —, os vínculos e por fim os cupons. O
+// produto que também estava num cupom válido fica, e o `syncCatalogCoupons` do fim
+// o carimba nesse outro. As palavras (`ml_coupon_codes`) ficam, como no `deleteCoupon`.
+async function apagarVencidos({ simular = false } = {}) {
+  const agora = nowish();
+  const ids = (await prisma().mlCoupon.findMany({
+    where: { expiresAt: { not: null, lt: agora } },
+    select: { campaignId: true },
+  })).map(c => c.campaignId);
+  if (!ids.length) return { cupons: 0, vinculos: 0, produtos: 0, produtosMantidos: 0 };
+
+  const { ligados, apagaveis } = await contarProdutosDaVitrine(ids);
+  if (simular) {
+    const [{ n }] = await prisma().$queryRaw`
+      SELECT COUNT(*)::int AS n FROM "ml_coupon_products" WHERE "campaign_id" = ANY(${ids}::text[])`;
+    return { cupons: ids.length, vinculos: n, produtos: apagaveis, produtosMantidos: ligados - apagaveis };
+  }
+
+  const [, produtos, vinculos, cupons] = await prisma().$transaction([
+    prisma().$executeRaw`
+      UPDATE "catalog_products" SET "couponCampaignId" = NULL WHERE "couponCampaignId" = ANY(${ids}::text[])`,
+    prisma().$executeRaw`DELETE FROM "catalog_products" cp WHERE ${soDaVitrineDe(ids)}`,
+    prisma().$executeRaw`DELETE FROM "ml_coupon_products" WHERE "campaign_id" = ANY(${ids}::text[])`,
+    prisma().$executeRaw`DELETE FROM "ml_coupons" WHERE "campaign_id" = ANY(${ids}::text[])`,
+  ]);
+  await syncCatalogCoupons();
+  return {
+    cupons: Number(cupons),
+    vinculos: Number(vinculos),
+    produtos: Number(produtos),
+    produtosMantidos: Math.max(0, ligados - Number(produtos)),
+  };
+}
+
+// Apaga os produtos que vieram pela vitrine de UM cupom (task 10): os vínculos de
+// vitrine (inteira e parcial) e as linhas do catálogo que só existiam por causa
+// dela. Os vínculos de checkout e de repasse ficam — não vieram da vitrine.
+//
+// O cupom volta para a fila do botão 2: sem `productsSyncedAt` (a vitrine que ele
+// carimbava não está mais aqui) e sem a marca de vitrine vazia.
+async function apagarProdutosDaVitrine(campaignId) {
+  const id = String(campaignId || "");
+  if (!id) throw new Error("Sem campanha.");
+  const cupom = await prisma().mlCoupon.findUnique({ where: { campaignId: id }, select: { campaignId: true } });
+  if (!cupom) throw new Error("Esse cupom não está no sistema.");
+
+  const ids = [id];
+  const { ligados } = await contarProdutosDaVitrine(ids);
+  const [produtos, vinculos] = await prisma().$transaction([
+    prisma().$executeRaw`DELETE FROM "catalog_products" cp WHERE ${soDaVitrineDe(ids)}`,
+    prisma().$executeRaw`
+      DELETE FROM "ml_coupon_products" WHERE "campaign_id" = ${id} AND "origem" IN ('vitrine', 'parcial')`,
+    prisma().mlCoupon.update({ where: { campaignId: id }, data: { productsSyncedAt: null, vitrineVaziaAt: null } }),
+  ]);
+  // O carimbo de quem ficou no catálogo e perdeu o vínculo com este cupom.
+  await syncCatalogCoupons();
+  return {
+    vinculos: Number(vinculos),
+    produtos: Number(produtos),
+    produtosMantidos: Math.max(0, ligados - Number(produtos)),
+  };
+}
+
 // O produto que chegou com o cupom num grupo do repasse (repasse/coupon-products.js).
 // É o vínculo mais FRACO: foi o grupo quem disse que o cupom vale ali, o ML não
 // confirmou. Por isso ele nunca rebaixa um vínculo que já existe — no conflito só
@@ -920,6 +1076,9 @@ module.exports = {
   upsertCoupons,
   clearAll,
   deleteCoupon,
+  apagarVencidos,
+  apagarProdutosDaVitrine,
+  marcarVitrineVazia,
   couponsSemVitrine,
   TETO_FILA_PRODUTOS,
   vincularPorCheckout,

@@ -1104,6 +1104,14 @@ async function warmup() {
   await store.warmup();
 }
 
+// Worker: relê a config de afiliado do banco a cada 30 s (ver affiliate-store).
+// Quem mudou perde os links curtos em cache — saíram com a TAG de antes.
+function startAutoRefresh(intervalMs) {
+  store.startAutoRefresh(intervalMs, (userId) => {
+    for (const cache of [mlCache, amazonCache, shopeeCache]) cache.delete(userId);
+  });
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // API pública
 // ────────────────────────────────────────────────────────────────────────
@@ -1174,4 +1182,5 @@ module.exports = {
   clearConfig: clearMLConfig,
   status,
   warmup,
+  startAutoRefresh,
 };

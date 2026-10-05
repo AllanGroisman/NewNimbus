@@ -483,7 +483,7 @@ async function persistRun(result) {
     if (!v.ok) continue;
     const itens = (v.products || []).map(p => ({ ...p, key: productKey(p) }));
     if (itens.length) {
-      const r = await catalog.upsertProducts(itens);
+      const r = await catalog.upsertProducts(itens, { soDaVitrine: true });
       produtosNoCatalogo += r.inserted + r.updated;
     }
     // `parcial` = a raspagem viu só um pedaço da vitrine (muro, teto de páginas).
@@ -1442,7 +1442,7 @@ async function syncOneCoupon(campaignId, { maxProducts = null } = {}) {
 // passa isso carimba uma vez no fim.
 async function gravarVitrine(campaignId, produtos, { parcial, carimbar = true }) {
   const itens = produtos.map(p => ({ ...p, key: productKey(p) }));
-  if (itens.length) await catalog.upsertProducts(itens);
+  if (itens.length) await catalog.upsertProducts(itens, { soDaVitrine: true });
   const v = await coupons.replaceCouponProducts(
     campaignId,
     itens.map(p => ({ productKey: p.key, productUrl: p.link })),
@@ -1645,7 +1645,7 @@ async function importCampaign(campaignId, { withProducts = true, maxProducts = n
   let vinculos = 0;
   if (achado.products?.length) {
     const itens = achado.products.map(p => ({ ...p, key: productKey(p) }));
-    await catalog.upsertProducts(itens);
+    await catalog.upsertProducts(itens, { soDaVitrine: true });
     const v = await coupons.replaceCouponProducts(
       id,
       itens.map(p => ({ productKey: p.key, productUrl: p.link })),

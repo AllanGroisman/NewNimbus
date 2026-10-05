@@ -171,12 +171,12 @@ describe("soSemProdutos — a fila sem os parciais (task 11)", () => {
     }
   });
 
-  it("stats reparte os cupons em completos, parciais e sem nada — e os três somam o total", async () => {
+  it("stats reparte os cupons em completos, parciais, sem nada e vitrine vazia — e os quatro somam o total", async () => {
     await coupons.replaceCouponProducts(PRONTO, [{ productKey: productKey(produto), productUrl: produto.link }], { origem: "parcial" });
     const s = await coupons.stats();
-    expect(s.produtosPorCupom).toEqual({ completos: 1, parciais: 1, semNada: 1 });
-    const { completos, parciais, semNada } = s.produtosPorCupom;
-    expect(completos + parciais + semNada).toBe(s.cupons);
+    expect(s.produtosPorCupom).toEqual({ completos: 1, parciais: 1, semNada: 1, vitrineVazia: 0 });
+    const { completos, parciais, semNada, vitrineVazia } = s.produtosPorCupom;
+    expect(completos + parciais + semNada + vitrineVazia).toBe(s.cupons);
   });
 
   it("a rota lê o filtro da query", async () => {

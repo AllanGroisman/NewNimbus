@@ -14,6 +14,7 @@ const auth = require("./auth");
 const storage = require("./storage");
 const scheduler = require("./scheduler");
 const affiliate = require("./scraping/affiliate");
+const mlEtiquetas = require("./scraping/ml-etiquetas");
 const mlDesempenho = require("./affiliate-reports/ml");
 const shopeeDesempenho = require("./affiliate-reports/shopee");
 const catalog = require("./catalog");
@@ -1615,6 +1616,34 @@ app.get("/api/affiliate/ml/desempenho", auth.requireAuth, requireStoreUnlocked("
   }
 });
 
+// Etiquetas de afiliado da conta ML do próprio admin (scraping/ml-etiquetas.js):
+// listar e trocar a "em uso" — no ML e na TAG salva aqui. Só admin, por pedido.
+// Erro esperado (cookie vencido, etiqueta que não existe) sai direto com o texto,
+// sem virar Sentry.
+function etiquetaErro(res, err, req, ctx) {
+  if (err instanceof httpErrors.AppError) {
+    return res.status(err.status).json({ error: err.message, code: err.code || "bad_request" });
+  }
+  httpErrors.serverError(res, err, { req, ctx });
+}
+
+app.get("/api/affiliate/ml/etiquetas", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    res.json(await mlEtiquetas.listarEtiquetas(req.user.id));
+  } catch (err) {
+    etiquetaErro(res, err, req, "GET /api/affiliate/ml/etiquetas");
+  }
+});
+
+app.put("/api/affiliate/ml/etiquetas", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const r = await mlEtiquetas.trocarEtiqueta(req.user.id, req.body?.tag);
+    res.json({ ...r, status: affiliate.status(req.user.id) });
+  } catch (err) {
+    etiquetaErro(res, err, req, "PUT /api/affiliate/ml/etiquetas");
+  }
+});
+
 // Desempenho de afiliado da Shopee — pela Affiliate Open API, com o App ID e a
 // senha DESTE usuário (affiliate-reports/shopee.js). Pedidos, vendas, comissão
 // e vendas por grupo (sub_id do link); a API não tem cliques.
@@ -2994,6 +3023,41 @@ app.delete("/api/admin/ml-cupons/codes", auth.requireAuth, auth.requireAdmin, as
   }
 });
 
+// Os cupons VENCIDOS e os produtos que vieram só pela vitrine deles (task 9). O GET
+// é a prévia do modal — as mesmas contas, sem apagar nada. Ficam ANTES da rota de
+// apagar um cupom pelo mesmo motivo do "codes".
+app.get("/api/admin/ml-cupons/vencidos", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    res.json(await couponsStore.apagarVencidos({ simular: true }));
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/ml-cupons/vencidos" });
+  }
+});
+
+app.delete("/api/admin/ml-cupons/vencidos", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  if (mlCupons.status().running) {
+    return res.status(409).json({ error: "Tem uma rodada de cupons rodando — espere ela terminar." });
+  }
+  try {
+    res.json({ ok: true, ...await couponsStore.apagarVencidos() });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "DELETE /api/admin/ml-cupons/vencidos" });
+  }
+});
+
+// Os produtos que vieram pela vitrine de UM cupom (task 10). O cupom fica, e volta
+// para a fila do botão 2.
+app.delete("/api/admin/ml-cupons/:campaignId/produtos", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  if (mlCupons.status().running) {
+    return res.status(409).json({ error: "Tem uma rodada de cupons rodando — espere ela terminar." });
+  }
+  try {
+    res.json({ ok: true, ...await couponsStore.apagarProdutosDaVitrine(String(req.params.campaignId)) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // Apaga UM cupom (o 🗑 da linha da tabela). Mesma recusa do "apagar todos": mexer
 // na lista no meio de uma varredura é apagar o que ela está gravando.
 app.delete("/api/admin/ml-cupons/:campaignId", auth.requireAuth, auth.requireAdmin, async (req, res) => {
@@ -3018,6 +3082,8 @@ app.get("/api/admin/ml-cupons", auth.requireAuth, auth.requireAdmin, async (req,
       onlyActive: req.query.onlyActive === "true",
       onlyValid: req.query.onlyValid === "true",
       withCode: req.query.withCode === "true",
+      // completa | parcial | nenhum | vazia (coupons/pg.js:ESTADO_PRODUTOS).
+      produtos: req.query.produtos || null,
       sortBy: req.query.sortBy || "lastSeen_desc",
     });
     res.json(out);
@@ -3102,6 +3168,20 @@ app.post("/api/admin/ml-cupons/:campaignId/vitrine-local", auth.requireAuth, aut
     res.json(r);
   } catch (err) {
     console.error("[ml-cupons.vitrine-local]", err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// A vitrine abriu e não tinha card nenhum (task 8). A tela só manda aqui a coleta que
+// terminou sem verificação pendente: muro não é vitrine vazia.
+app.post("/api/admin/ml-cupons/:campaignId/vitrine-vazia", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const total = req.body?.total;
+    res.json(await couponsStore.marcarVitrineVazia(String(req.params.campaignId), {
+      // Mesma régua do vitrine-local: só um inteiro ≥ 0 vale; o resto é "não sei".
+      total: Number.isInteger(Number(total)) && total !== null && total !== "" && Number(total) >= 0 ? Number(total) : null,
+    }));
+  } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });

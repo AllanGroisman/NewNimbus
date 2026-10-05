@@ -50,6 +50,11 @@ afterEach(async () => { if (sync.localAtivo()) await sync.fimLocalRun({ cancelad
 // que isso transformava todo teste de ATIVAÇÃO daqui numa bomba-relógio, que
 // estourou sozinha no dia 01/09 sem ninguém ter mexido no código. Quem congela o
 // relógio é o teste, não o código.
+//
+// A segunda bomba estourou em 02/10: a gravação da rodada faz a faxina dos cupons
+// vencidos há mais de 30 dias (`pruneExpired`, no persistRun), e os da fixture
+// passaram a sair do banco no mesmo instante em que entravam. Por isso todo
+// `describe` que GRAVA cupom da fixture e confere o banco também congela.
 const DIA_DA_FIXTURE = new Date("2026-08-27T12:00:00Z").getTime();
 function comORelogioDaFixture() {
   let real;
@@ -126,6 +131,8 @@ describe("ativacoesLocais (a etapa 2 ativando os alvos)", () => {
 });
 
 describe("paginaLocal", () => {
+  comORelogioDaFixture();
+
   it("pede a próxima página enquanto a lista rende e o teto não chegou", async () => {
     sync.startLocalRun({ limiteCupons: 200, carimbarCategorias: false });
     const r = await sync.paginaLocal({ grouping: null, props: PROPS });
@@ -319,6 +326,7 @@ describe("fimLocalRun", () => {
 // tudo entra sem categoria, porque o ML não diz a vertical do cupom na lista — a
 // categoria que o sistema grava é o filtro que a varredura pediu na URL.
 describe("startLocalRun: a lista geral e o carimbo por categoria", () => {
+  comORelogioDaFixture();
   beforeEach(() => {
     appConfig.del("ml-cupons-groupings");
     // O dicionário de nomes é o que diz quais categorias existem NO COMEÇO da
@@ -383,6 +391,7 @@ describe("startLocalRun: a lista geral e o carimbo por categoria", () => {
 // VISITANDO-A, a rodada nunca sairia dali sozinha. O ML manda a lista completa em
 // toda página de `/cupons/filter`; é de lá que ela sai agora.
 describe("a rodada descobre as categorias que o ML mostra", () => {
+  comORelogioDaFixture();
   beforeEach(() => { appConfig.del("ml-cupons-groupings"); });
 
   it("a fila cresce na primeira página da lista geral, não na rodada seguinte", async () => {
@@ -492,6 +501,7 @@ describe("o carimbo vai fundo na vertical", () => {
 // o banco já sabe a de todo cupom carimbado antes. Sem isto a segunda rodada
 // demorava o mesmo que a primeira: a conta inteira relida uma vez por vertical.
 describe("o carimbo só procura o que ainda não tem categoria", () => {
+  comORelogioDaFixture();
   beforeEach(() => {
     appConfig.del("ml-cupons-groupings");
     sync.mergeGroupingLabels([
@@ -548,6 +558,7 @@ describe("o carimbo só procura o que ainda não tem categoria", () => {
 // banco antes da última página da última vertical. Um muro do ML, uma aba fechada
 // ou o watchdog no meio jogavam a rodada inteira fora.
 describe("a rodada grava a cada categoria, não só no fim", () => {
+  comORelogioDaFixture();
   beforeEach(() => {
     appConfig.del("ml-cupons-groupings");
     sync.mergeGroupingLabels([{ key: "ce_vertical", title: "Eletrônicos" }]);

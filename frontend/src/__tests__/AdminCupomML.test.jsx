@@ -30,6 +30,11 @@ vi.mock("../data/api", () => ({
   adminMlCuponsDelete: vi.fn(),
   adminMlCuponsAlvosProdutos: vi.fn(),
   adminMlCuponsImportVitrine: vi.fn(),
+  // A vitrine que abriu sem card nenhum (task 8) e as limpezas das tasks 9 e 10.
+  adminMlCuponsVitrineVazia: vi.fn(() => Promise.resolve({ ok: true })),
+  adminMlCuponsVencidos: vi.fn(),
+  adminMlCuponsApagarVencidos: vi.fn(),
+  adminMlCuponsApagarProdutos: vi.fn(),
   // O carimbo do catálogo uma vez por lote (task 14).
   adminMlCuponsCarimbar: vi.fn(() => Promise.resolve({ carimbados: 0, limpos: 0 })),
   adminMlCuponsLocalStart: vi.fn(),
@@ -73,6 +78,7 @@ import {
   adminMlCuponsRodadaFim,
 } from "../data/api";
 import { adminMlCuponsImportCampaign, adminMlCuponsImportStatus } from "../data/api";
+import { adminMlCuponsVencidos, adminMlCuponsApagarVencidos, adminMlCuponsApagarProdutos } from "../data/api";
 import { adminMlCuponsAgendaPendentes, adminMlCuponsAgendaReivindicar, adminMlCuponsAgendaFalhou } from "../data/api";
 import { coletorInfo, coletorEntende, raparVitrine, paginaDeCupons, fecharAbaDoColetor } from "../data/coletor";
 import { _zerarParaTestes } from "../data/rodadaCupons";
@@ -179,15 +185,17 @@ describe("as duas etapas são dois botões", () => {
   it("o resumo reparte os cupons em sem nenhum produto, parciais e completos", async () => {
     adminMlCuponsStatus.mockResolvedValue({
       config: {}, running: false,
-      stats: { cupons: 10, porCategoria: [], produtosPorCupom: { semNada: 3, parciais: 2, completos: 5 } },
+      stats: { cupons: 12, porCategoria: [], produtosPorCupom: { semNada: 3, parciais: 2, completos: 5, vitrineVazia: 2 } },
     });
     await abrirTela();
 
     const resumo = await screen.findByRole("group", { name: "Resumo dos produtos" });
-    expect(within(resumo).getByText("Cupons no sistema").previousSibling).toHaveTextContent("10");
+    expect(within(resumo).getByText("Cupons no sistema").previousSibling).toHaveTextContent("12");
     expect(within(resumo).getByText("Sem nenhum produto").previousSibling).toHaveTextContent("3");
     expect(within(resumo).getByText("Parciais").previousSibling).toHaveTextContent("2");
     expect(within(resumo).getByText("Completos").previousSibling).toHaveTextContent("5");
+    // Task 8: a vitrine vazia conta à parte, e não como "sem nenhum produto".
+    expect(within(resumo).getByText("Vitrine vazia").previousSibling).toHaveTextContent("2");
   });
 
   it("sem nada faltando, o botão dos produtos fica desligado", async () => {
@@ -684,6 +692,20 @@ describe("produtos na linha do cupom", () => {
     expect(screen.getByText("45")).toBeInTheDocument();
     expect(screen.queryByText(/45\//)).toBeNull();
   });
+
+  // Task 8.
+  it("a vitrine que abriu vazia aparece como tal, e não como 'nenhum'", async () => {
+    adminMlCupons.mockResolvedValue({ ...VAZIO, total: 1, items: [linha({ products: 0, vitrineVaziaAt: "2026-10-01T12:00:00.000Z" })] });
+    await abrirTela();
+    expect(await screen.findByText("vitrine vazia", { selector: "div" })).toHaveAttribute("title", expect.stringMatching(/sem produto nenhum/));
+    expect(screen.queryByText("nenhum")).toBeNull();
+  });
+
+  it("o filtro de estado pede as vitrines vazias ao backend", async () => {
+    await abrirTela();
+    fireEvent.change(screen.getByLabelText("Estado dos produtos"), { target: { value: "vazia" } });
+    await waitFor(() => expect(adminMlCupons).toHaveBeenLastCalledWith(expect.objectContaining({ produtos: "vazia", page: 1 })));
+  });
 });
 
 describe("apagar cupons", () => {
@@ -715,6 +737,53 @@ describe("apagar cupons", () => {
 
     await waitFor(() => expect(screen.queryByText("Apagar este cupom?")).toBe(null));
     expect(adminMlCuponsDelete).not.toHaveBeenCalled();
+  });
+
+  // Task 9: a prévia vem do servidor antes de qualquer coisa ser apagada.
+  it("'Apagar vencidos' mostra a prévia e só apaga depois de confirmar", async () => {
+    adminMlCuponsStatus.mockResolvedValue({ config: {}, running: false, stats: { cupons: 10, validos: 7, porCategoria: [] } });
+    adminMlCuponsVencidos.mockResolvedValue({ cupons: 3, vinculos: 40, produtos: 25, produtosMantidos: 15 });
+    adminMlCuponsApagarVencidos.mockResolvedValue({ ok: true, cupons: 3, vinculos: 40, produtos: 25, produtosMantidos: 15 });
+    await abrirTela();
+
+    fireEvent.click(await screen.findByRole("button", { name: "🗑 Apagar vencidos (3)" }));
+    expect(await screen.findByText("Apagar os cupons vencidos?")).toBeInTheDocument();
+    expect(await screen.findByText("25")).toBeInTheDocument();
+    expect(screen.getByText("15")).toBeInTheDocument();
+    expect(adminMlCuponsApagarVencidos).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Apagar vencidos" }));
+    await waitFor(() => expect(adminMlCuponsApagarVencidos).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText(/Apaguei 3 cupom\(ns\) vencido\(s\), 40 vínculo\(s\) e 25 produto\(s\) do catálogo — 15 ficaram/)).toBeInTheDocument();
+  });
+
+  it("sem cupom vencido, o botão fica desligado", async () => {
+    adminMlCuponsStatus.mockResolvedValue({ config: {}, running: false, stats: { cupons: 10, validos: 10, porCategoria: [] } });
+    await abrirTela();
+    expect(await screen.findByRole("button", { name: "🗑 Apagar vencidos" })).toBeDisabled();
+  });
+
+  // Task 10: só os produtos da vitrine; o cupom fica.
+  it("'apagar produtos' da linha pede confirmação e apaga só os daquele cupom", async () => {
+    adminMlCupons.mockResolvedValue({ ...VAZIO, total: 1, items: [cupom] });
+    adminMlCuponsApagarProdutos.mockResolvedValue({ ok: true, vinculos: 5, produtos: 2, produtosMantidos: 3 });
+    await abrirTela();
+
+    fireEvent.click(await screen.findByRole("button", { name: "apagar produtos" }));
+    expect(await screen.findByText("Apagar os produtos deste cupom?")).toBeInTheDocument();
+    expect(adminMlCuponsApagarProdutos).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Apagar produtos" }));
+    await waitFor(() => expect(adminMlCuponsApagarProdutos).toHaveBeenCalledWith("42"));
+    expect(adminMlCuponsDelete).not.toHaveBeenCalled();
+    expect(await screen.findByText(/Um cupom: saíram 5 vínculo\(s\) de vitrine e 2 produto\(s\) do catálogo — 3 ficaram/)).toBeInTheDocument();
+  });
+
+  it("cupom sem produto não ganha o 'apagar produtos'", async () => {
+    adminMlCupons.mockResolvedValue({ ...VAZIO, total: 1, items: [{ ...cupom, products: 0 }] });
+    await abrirTela();
+    await screen.findByText("Um cupom");
+    expect(screen.queryByRole("button", { name: "apagar produtos" })).toBeNull();
   });
 });
 

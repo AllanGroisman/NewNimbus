@@ -397,6 +397,10 @@ export async function saveAffiliate(payload)    { return http("PUT",    "/api/af
 export async function clearAffiliate()          { return http("DELETE", "/api/affiliate"); }
 // Os testes de afiliado batem no site da loja — usam o teto maior.
 export async function testAffiliate(url)        { return http("POST",   "/api/affiliate/test", url ? { url } : {}, { timeoutMs: SLOW_TIMEOUT_MS }); }
+// Etiquetas da conta ML do admin (só admin): listar e trocar a "em uso" — a
+// troca vale no ML e na TAG salva aqui. Os dois batem no ML.
+export async function getMLEtiquetas()          { return http("GET",    "/api/affiliate/ml/etiquetas", undefined, { timeoutMs: SLOW_TIMEOUT_MS }); }
+export async function trocarMLEtiqueta(tag)     { return http("PUT",    "/api/affiliate/ml/etiquetas", { tag }, { timeoutMs: SLOW_TIMEOUT_MS }); }
 // Desempenho de afiliado no ML (cliques, pedidos, ganhos) do período, datas
 // AAAA-MM-DD inclusivas. `refresh` fura o cache curto do backend.
 export async function getMLDesempenho(from, to, { refresh = false } = {}) {
@@ -682,6 +686,16 @@ export async function adminMlCuponsClearAll() { return http("DELETE", "/api/admi
 export async function adminMlCuponsDelete(campaignId) {
   return http("DELETE", `/api/admin/ml-cupons/${encodeURIComponent(campaignId)}`, undefined, { timeoutMs: SLOW_TIMEOUT_MS });
 }
+// Os cupons vencidos e os produtos que vieram só pela vitrine deles (task 9). O GET é
+// a prévia do modal (as mesmas contas, sem apagar); o DELETE apaga.
+export async function adminMlCuponsVencidos() { return http("GET", "/api/admin/ml-cupons/vencidos"); }
+export async function adminMlCuponsApagarVencidos() {
+  return http("DELETE", "/api/admin/ml-cupons/vencidos", undefined, { timeoutMs: SLOW_TIMEOUT_MS });
+}
+// Os produtos que vieram pela vitrine de UM cupom (task 10). O cupom fica.
+export async function adminMlCuponsApagarProdutos(campaignId) {
+  return http("DELETE", `/api/admin/ml-cupons/${encodeURIComponent(campaignId)}/produtos`, undefined, { timeoutMs: SLOW_TIMEOUT_MS });
+}
 export async function adminMlCuponsCodes(limit = 50) { return http("GET",  `/api/admin/ml-cupons/codes?limit=${limit}`); }
 export async function adminMlCuponsClearCodes()        { return http("DELETE", "/api/admin/ml-cupons/codes"); }
 // `source` marca de onde veio a palavra (`ml_coupon_codes.source`): "admin" quando
@@ -710,6 +724,10 @@ export async function adminMlCuponsSyncProducts(campaignId) {
 export async function adminMlCuponsImportVitrine(campaignId, { products, parcial = false, carimbar = true, total = null } = {}) {
   return http("POST", `/api/admin/ml-cupons/${encodeURIComponent(campaignId)}/vitrine-local`, { products, parcial, carimbar, total }, { timeoutMs: SLOW_TIMEOUT_MS });
 }
+// A vitrine abriu e não tinha card nenhum (task 8): o cupom sai das filas do botão 2.
+export async function adminMlCuponsVitrineVazia(campaignId, { total = null } = {}) {
+  return http("POST", `/api/admin/ml-cupons/${encodeURIComponent(campaignId)}/vitrine-vazia`, { total });
+}
 // O carimbo do catálogo que a etapa 2 adia com `carimbar: false` — uma vez por lote.
 export async function adminMlCuponsCarimbar() {
   return http("POST", "/api/admin/ml-cupons/carimbar", {}, { timeoutMs: SLOW_TIMEOUT_MS });
@@ -724,7 +742,7 @@ export async function adminMlCuponsDiagnosticoLink(url) {
 export async function adminMlCuponsProducts(campaignId, { page = 1, pageSize = 50 } = {}) {
   return http("GET", `/api/admin/ml-cupons/${encodeURIComponent(campaignId)}/produtos?page=${page}&pageSize=${pageSize}`);
 }
-export async function adminMlCupons({ page = 1, pageSize = 50, q, scope, grouping, onlyActive, onlyValid, withCode, sortBy } = {}) {
+export async function adminMlCupons({ page = 1, pageSize = 50, q, scope, grouping, onlyActive, onlyValid, withCode, produtos, sortBy } = {}) {
   const params = new URLSearchParams();
   params.set("page", page);
   params.set("pageSize", pageSize);
@@ -734,6 +752,8 @@ export async function adminMlCupons({ page = 1, pageSize = 50, q, scope, groupin
   if (onlyActive) params.set("onlyActive", "true");
   if (onlyValid) params.set("onlyValid", "true");
   if (withCode) params.set("withCode", "true");
+  // O estado dos produtos: completa | parcial | nenhum | vazia.
+  if (produtos) params.set("produtos", produtos);
   if (sortBy) params.set("sortBy", sortBy);
   return http("GET", `/api/admin/ml-cupons?${params}`);
 }

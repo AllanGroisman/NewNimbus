@@ -259,11 +259,19 @@ async function main() {
     const doMenu = await page.$$eval("a[href]", (as) => as.map(a => a.href)).catch(() => []);
     const extras = flags("--pagina").map(p => (p.startsWith("http") ? p : `${BASE}${p}`));
     const soPaginas = args.includes("--so-paginas");
+    // O hub sai da lista do menu (é onde a sonda já começou), mas um --pagina
+    // explícito passa: é o jeito de usar --clicar nos itens do menu do hub
+    // ("Administrar etiquetas", "Gerador de links"), que não são <a> — navegam
+    // por JS, então o varrer do menu não os acha.
+    const doMenuFiltrado = doMenu
+      .filter(h => /^https:\/\/www\.mercadolivre\.com\.br\/afiliados(\/|$|\?)/i.test(h))
+      .map(h => h.split("#")[0])
+      .filter(u => !/\/afiliados\/hub(\/|$|\?)/i.test(u));
     const fila = [...new Set(soPaginas ? extras : [
-      ...doMenu.filter(h => /^https:\/\/www\.mercadolivre\.com\.br\/afiliados(\/|$|\?)/i.test(h)).map(h => h.split("#")[0]),
+      ...doMenuFiltrado,
       ...PAGINAS_CANDIDATAS.map(p => `${BASE}${p}`),
       ...extras,
-    ])].filter(u => u !== START_URL && !/\/afiliados\/hub(\/|$|\?)/i.test(u)).slice(0, MAX_PAGINAS);
+    ])].filter(u => u !== START_URL).slice(0, MAX_PAGINAS);
     console.log(`[sonda] ${fila.length} página(s) do painel pra visitar`);
 
     for (const url of fila) {

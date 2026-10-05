@@ -9,6 +9,7 @@ const api = vi.hoisted(() => ({
   adminMlCuponsImportVitrine: vi.fn(),
   adminMlCuponsLocalFim: vi.fn(),
   adminMlCuponsCarimbar: vi.fn(),
+  adminMlCuponsVitrineVazia: vi.fn(),
 }));
 const lista = vi.hoisted(() => ({ percorrerLista: vi.fn() }));
 const coletor = vi.hoisted(() => ({ raparVitrine: vi.fn(), fecharAbaDoColetor: vi.fn() }));
@@ -27,6 +28,7 @@ beforeEach(() => {
   coletor.raparVitrine.mockResolvedValue({ produtos: [{ name: "x" }, { name: "y" }], parcial: false });
   api.adminMlCuponsImportVitrine.mockResolvedValue({});
   api.adminMlCuponsCarimbar.mockResolvedValue({ carimbados: 0, limpos: 0 });
+  api.adminMlCuponsVitrineVazia.mockResolvedValue({ ok: true });
   api.adminMlCuponsLocalFim.mockResolvedValue({ resumo: { ativados: 0, salvos: 0 } });
   lista.percorrerLista.mockResolvedValue({ tabId: 1, parado: null, resumo: null });
 });
@@ -166,6 +168,47 @@ describe("o andamento que o ciclo anuncia (task 7) e o filtro dos parciais (task
     await umCiclo({ campaignIds: ["C1"], soSemProdutos: true });
 
     expect(api.adminMlCuponsAlvosProdutos).toHaveBeenCalledWith({ campaignId: "C1" });
+  });
+});
+
+// Task 8: a vitrine que abriu sem card nenhum vai para o servidor, que a tira das
+// filas do botão 2. Muro não é vitrine vazia.
+describe("a vitrine vazia (task 8)", () => {
+  const umPronto = { prontos: [cupom(1, { containerUrl: "https://ml/1" })], precisamAtivar: [], config };
+
+  it("vazia sem motivo é gravada, com o total que a página declarou", async () => {
+    api.adminMlCuponsAlvosProdutos.mockResolvedValue(umPronto);
+    coletor.raparVitrine.mockResolvedValue({ produtos: [], parcial: false, motivo: null, total: 0 });
+
+    const r = await umCiclo({});
+
+    expect(api.adminMlCuponsVitrineVazia).toHaveBeenCalledWith("C1", { total: 0 });
+    expect(api.adminMlCuponsImportVitrine).not.toHaveBeenCalled();
+    expect(r.feitos[0]).toMatchObject({ campaignId: "C1", ok: false, vazia: true });
+  });
+
+  it("vazia por verificação não resolvida não é gravada", async () => {
+    api.adminMlCuponsAlvosProdutos.mockResolvedValue(umPronto);
+    coletor.raparVitrine.mockResolvedValue({ produtos: [], parcial: true, motivo: "o Mercado Livre pediu verificação e ela não foi resolvida" });
+
+    await umCiclo({});
+
+    expect(api.adminMlCuponsVitrineVazia).not.toHaveBeenCalled();
+  });
+
+  it("falhar ao gravar não derruba o laço", async () => {
+    api.adminMlCuponsAlvosProdutos.mockResolvedValue({
+      prontos: [cupom(1, { containerUrl: "https://ml/1" }), cupom(2, { containerUrl: "https://ml/2" })],
+      precisamAtivar: [], config,
+    });
+    coletor.raparVitrine
+      .mockResolvedValueOnce({ produtos: [], parcial: false, motivo: null })
+      .mockResolvedValueOnce({ produtos: [{ name: "x" }], parcial: false });
+    api.adminMlCuponsVitrineVazia.mockRejectedValue(new Error("caiu"));
+
+    const r = await umCiclo({});
+
+    expect(r.feitos.map(f => [f.campaignId, f.ok, !!f.vazia])).toEqual([["C1", false, true], ["C2", true, false]]);
   });
 });
 

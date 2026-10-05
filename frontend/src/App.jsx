@@ -1127,7 +1127,7 @@ export default function App() {
     />,
     settings: <PageSettings user={user} setUser={setUser} onLogout={handleLogout} settings={settings} setSettings={setSettings} numbers={liveNumbers} onAffiliateChange={applyAffiliateStatus} />,
     subscription: <PageSubscription user={user} setUser={setUser} />,
-    "mercado-livre": lockedStore("ml") || <PageAffiliateML onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
+    "mercado-livre": lockedStore("ml") || <PageAffiliateML onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} isAdmin={user?.role === "admin"} />,
     "amazon": lockedStore("amazon") || <PageAffiliateAmazon onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
     "shopee": lockedStore("shopee") || <PageAffiliateShopee onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
     // Uma aba por loja liberada (loja trancada não tem o que medir); abre na

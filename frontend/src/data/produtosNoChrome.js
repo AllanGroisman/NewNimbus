@@ -20,6 +20,7 @@ import { percorrerLista } from "./rodadaNoChrome";
 import { raparVitrine, fecharAbaDoColetor } from "./coletor";
 import {
   adminMlCuponsAlvosProdutos, adminMlCuponsImportVitrine, adminMlCuponsLocalFim, adminMlCuponsCarimbar,
+  adminMlCuponsVitrineVazia,
 } from "./api";
 
 // O que uma rodada da etapa 2 VAI fazer, calculado da resposta do `/alvos-produtos`.
@@ -391,6 +392,14 @@ async function colherVitrines(fila, { cfg, paralelo = 1, freio = null, pular, pa
       if (!r.produtos.length) {
         feito = { campaignId: c.campaignId, title: c.title, ok: false, vazia: true, produtos: 0, erro: r.motivo || null };
         log("aviso", `${c.title}: a vitrine veio vazia${r.motivo ? ` (${r.motivo})` : ""}`);
+        // Vazia de verdade só quando a coleta terminou sem motivo: com `motivo` ela
+        // parou numa verificação que ninguém resolveu, e isso é muro, não vitrine
+        // vazia. Gravada, ela sai das filas do botão 2 (task 8) — e não gravar não
+        // derruba o laço: o cupom só volta na próxima fila, como antes.
+        if (!r.motivo) {
+          await adminMlCuponsVitrineVazia(c.campaignId, { total: r.total })
+            .catch(err => log("aviso", `${c.title}: não consegui marcar a vitrine vazia (${err.message})`));
+        }
       } else {
         // `parcial` viaja intacto: coleta que parou no muro ou no teto de páginas
         // não pode entrar como lista fechada, senão o sistema passa a dizer "fora

@@ -374,6 +374,13 @@ model CatalogProduct {
   // aqui é SÓ a sincronização de cupons (backend/coupons/pg.js) — o `toRow` nem
   // conhece este campo, e é isso que o mantém vivo entre as raspagens.
   couponCampaignId String?
+  // O produto só existe no catálogo por causa da vitrine de um cupom: `true`
+  // enquanto TODA escrita na linha veio de uma vitrine (catalog/pg.js:upsertProducts
+  // com `soDaVitrine`), e qualquer outra fonte — scraping, repasse — derruba para
+  // `false`. É o que deixa os botões "apagar vencidos" e "apagar produtos" do cupom
+  // (coupons/pg.js) levarem o produto junto sem tocar no que veio de outro caminho.
+  // Linhas de antes desta coluna ficam `false`: ninguém sabe de onde vieram.
+  soDaVitrine   Boolean  @default(false)
   // Número do ANÚNCIO do ML (catalog/product-key.js:mlAnuncioIdFromUrl). O
   // productKey usa o nº que aparece no caminho — de catálogo (/p/MLB…) na vitrine
   // do cupom, de anúncio (/MLB-…) no scraping —, então o mesmo produto chegava
@@ -552,6 +559,10 @@ model MlCoupon {
   // extensão na etapa 2 — o "200" do "45/200" da tabela.
   vitrineTotal     Int?
   vitrineTotalAt   DateTime?
+  // A etapa 2 abriu a vitrine e ela não tinha card nenhum (sem muro no caminho).
+  // Tira o cupom das filas do botão 2 e da conta de "sem nenhum produto"; o
+  // "buscar produtos" da linha ainda tenta de novo, e uma vitrine com produto zera.
+  vitrineVaziaAt   DateTime?
   code             String?
   origin           String    @default("page")
   // Da varredura pela landing (removida): sem uso, mantidas para não apagar dado.

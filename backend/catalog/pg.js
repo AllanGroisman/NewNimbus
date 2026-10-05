@@ -27,7 +27,7 @@ function parseSold(s) {
 const INDEXED_FIELDS = new Set([
   "key", "name", "link", "img", "price", "originalPrice",
   "discount", "store", "category", "rating", "sold", "soldCount",
-  "mlAnuncioId", "nameSearch", "firstSeenAt", "lastSeenAt",
+  "mlAnuncioId", "nameSearch", "firstSeenAt", "lastSeenAt", "soDaVitrine",
 ]);
 
 function toRow(p, key, now) {
@@ -132,7 +132,12 @@ async function resolveKeys(items) {
   return mapa;
 }
 
-async function upsertProducts(products) {
+// `soDaVitrine`: quem grava é a vitrine de um cupom (coupons/sync.js). A linha
+// nova nasce marcada; a que já existe NÃO é marcada — ela veio de outro caminho, e
+// continua contando como "outra origem" para os botões de apagar dos cupons. Já
+// qualquer outra fonte (scraping, repasse) desmarca: o produto deixou de existir
+// só por causa da vitrine.
+async function upsertProducts(products, { soDaVitrine = false } = {}) {
   const now = new Date();
   let inserted = 0, updated = 0, fundidos = 0;
 
@@ -164,10 +169,11 @@ async function upsertProducts(products) {
       // nunca passa pelo upsert, então continua na linha.
       const fundindo = key !== alvo;
       const { link: _link, ...semLink } = row;
+      const origem = soDaVitrine ? {} : { soDaVitrine: false };
       const res = await prisma().catalogProduct.upsert({
         where: { key: alvo },
-        create: { ...row, firstSeenAt: now },
-        update: fundindo ? semLink : { ...row },
+        create: { ...row, firstSeenAt: now, soDaVitrine: !!soDaVitrine },
+        update: fundindo ? { ...semLink, ...origem } : { ...row, ...origem },
       });
       if (fundindo) fundidos++;
       // Detecta se foi inserção ou update comparando timestamps

@@ -22,6 +22,7 @@ import { useLembrado, lerLembrado, gravarLembrado } from "../data/useLembrado";
 import {
   adminMlCupons, adminMlCuponsStatus,
   adminMlCuponsProducts, adminMlCuponsClearAll, adminMlCuponsDelete,
+  adminMlCuponsVencidos, adminMlCuponsApagarVencidos, adminMlCuponsApagarProdutos,
   adminMlCuponsAlvosProdutos, adminMlCuponsSaveConfig, errText,
   adminMlCuponsAgendaPendentes, adminMlCuponsAgendaReivindicar, adminMlCuponsAgendaFalhou,
 } from "../data/api";
@@ -138,15 +139,16 @@ const FONTE_PALAVRA = {
 
 // Os filtros da tabela lembrados neste navegador (ver o `useState` de `filtros`).
 const CHAVE_FILTROS = "cupons.mlFiltros";
-const FILTROS_PADRAO = { q: "", scope: "", grouping: "", onlyValid: true };
+const FILTROS_PADRAO = { q: "", scope: "", grouping: "", produtos: "", onlyValid: true };
 const filtrosSemPagina = (f) => ({
   q: f.q ?? FILTROS_PADRAO.q, scope: f.scope ?? FILTROS_PADRAO.scope,
-  grouping: f.grouping ?? FILTROS_PADRAO.grouping, onlyValid: f.onlyValid ?? FILTROS_PADRAO.onlyValid,
+  grouping: f.grouping ?? FILTROS_PADRAO.grouping, produtos: f.produtos ?? FILTROS_PADRAO.produtos,
+  onlyValid: f.onlyValid ?? FILTROS_PADRAO.onlyValid,
 });
 function sanearFiltros(v) {
   if (!v || typeof v !== "object" || Array.isArray(v)) return null;
   const f = {};
-  for (const k of ["q", "scope", "grouping"]) if (typeof v[k] === "string") f[k] = v[k];
+  for (const k of ["q", "scope", "grouping", "produtos"]) if (typeof v[k] === "string") f[k] = v[k];
   if (typeof v.onlyValid === "boolean") f.onlyValid = v.onlyValid;
   return f;
 }
@@ -218,6 +220,14 @@ export default function CuponsDoML({ buscaInicial = null }) {
   const [confirmarLimpeza, setConfirmarLimpeza] = useState(false);
   const [limpando, setLimpando] = useState(false);
   const [confirmarExclusao, setConfirmarExclusao] = useState(null);  // o cupom a apagar
+  // "Apagar vencidos" (task 9): o modal mostra a prévia que o servidor calculou —
+  // quantos produtos saem e quantos ficam por ter outra origem. `null` fechado,
+  // `{}` carregando.
+  const [vencidos, setVencidos] = useState(null);
+  // "apagar produtos" de uma linha (task 10): o cupom cujos produtos vão sair.
+  const [apagarProdutosDe, setApagarProdutosDe] = useState(null);
+  // O que a última limpeza fez, em uma frase.
+  const [recado, setRecado] = useState(null);
   // A caixa "Trazer campanha por ID": o que foi colado, o recado da última tentativa
   // e a campanha que o modal está buscando.
   const [idColado, setIdColado] = useState("");
@@ -378,6 +388,52 @@ export default function CuponsDoML({ buscaInicial = null }) {
     }
   };
 
+  const abrirVencidos = async () => {
+    setErro(null); setRecado(null);
+    setVencidos({});
+    try {
+      setVencidos(await adminMlCuponsVencidos());
+    } catch (err) {
+      setVencidos(null);
+      setErro(errText(err, "Não deu pra contar os cupons vencidos."));
+    }
+  };
+
+  const apagarVencidos = async () => {
+    setVencidos(null);
+    setErro(null);
+    setLimpando(true);
+    try {
+      const r = await adminMlCuponsApagarVencidos();
+      setAberto(null);
+      setProdutos({});
+      setFiltros(f => ({ ...f, page: 1 }));
+      setRecado(`Apaguei ${r.cupons} cupom(ns) vencido(s), ${r.vinculos} vínculo(s) e ${r.produtos} produto(s) do catálogo`
+        + (r.produtosMantidos ? ` — ${r.produtosMantidos} ficaram por terem outra origem.` : "."));
+      recarregar();
+    } catch (err) {
+      setErro(errText(err, "Não deu pra apagar os cupons vencidos."));
+    } finally {
+      setLimpando(false);
+    }
+  };
+
+  const apagarProdutos = async () => {
+    const c = apagarProdutosDe;
+    setApagarProdutosDe(null);
+    setErro(null); setRecado(null);
+    try {
+      const r = await adminMlCuponsApagarProdutos(c.campaignId);
+      setAberto(null);
+      setProdutos(p => ({ ...p, [c.campaignId]: undefined }));
+      setRecado(`${c.title}: saíram ${r.vinculos} vínculo(s) de vitrine e ${r.produtos} produto(s) do catálogo`
+        + (r.produtosMantidos ? ` — ${r.produtosMantidos} ficaram por terem outra origem.` : "."));
+      recarregar();
+    } catch (err) {
+      setErro(errText(err, "Não deu pra apagar os produtos desse cupom."));
+    }
+  };
+
   const limparTudo = async () => {
     setConfirmarLimpeza(false);
     setErro(null);
@@ -404,6 +460,8 @@ export default function CuponsDoML({ buscaInicial = null }) {
   const labelsCategoria = status?.groupingLabels || {};
   const categorias = s?.porCategoria || [];
   const semCupom = !s?.cupons;
+  const nVencidos = s ? Math.max(0, (s.cupons || 0) - (s.validos || 0)) : 0;
+  const semVencidos = !nVencidos;
   // Quantos cupons ainda esperam produtos. Vem do servidor, não da página da
   // tabela: o botão percorre TODOS os que faltam, e prometer o número da página
   // seria mentir sobre o que ele vai fazer.
@@ -557,13 +615,31 @@ export default function CuponsDoML({ buscaInicial = null }) {
 
         {/* Desabilitado durante a varredura porque a rota devolve 409 — melhor
             não deixar clicar do que explicar o erro depois de confirmar. */}
-        <button
-          onClick={() => setConfirmarLimpeza(true)}
-          disabled={limpando || rodando || rodandoNoChrome || buscandoProdutos || semCupom}
-          style={botaoPerigo(limpando || rodando || rodandoNoChrome || buscandoProdutos || semCupom)}
-        >
-          {limpando ? "Apagando..." : "🗑 Apagar todos"}
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            onClick={() => setConfirmarLimpeza(true)}
+            disabled={limpando || rodando || rodandoNoChrome || buscandoProdutos || semCupom}
+            style={botaoPerigo(limpando || rodando || rodandoNoChrome || buscandoProdutos || semCupom)}
+          >
+            {limpando ? "Apagando..." : "🗑 Apagar todos"}
+          </button>
+          {/* Task 9. O número de vencidos sai do status (todos − válidos); o de
+              produtos só o servidor sabe, e vem na prévia do modal. */}
+          <button
+            onClick={abrirVencidos}
+            disabled={limpando || rodando || rodandoNoChrome || buscandoProdutos || semVencidos}
+            style={botaoPerigo(limpando || rodando || rodandoNoChrome || buscandoProdutos || semVencidos)}
+            title="Apaga os cupons vencidos e os produtos que vieram só pela vitrine deles."
+          >
+            🗑 Apagar vencidos{nVencidos ? ` (${nVencidos})` : ""}
+          </button>
+        </div>
+
+        {recado && (
+          <div role="status" style={{ marginTop: 8, fontSize: 12, color: "var(--color-text-secondary)" }}>
+            {recado}
+          </div>
+        )}
 
         {erro && (
           <div style={{ marginTop: 8, background: "var(--danger-bg)", color: "var(--danger-text)", padding: "8px 10px", borderRadius: 8, fontSize: 12 }}>
@@ -695,17 +771,20 @@ export default function CuponsDoML({ buscaInicial = null }) {
         </div>
 
         {/* O resumo rápido: todos os cupons guardados, repartidos pelo que já têm de
-            produto. Os três grupos somam o total (backend/coupons/pg.js:stats). */}
+            produto. Os quatro grupos somam o total (backend/coupons/pg.js:stats). A
+            vitrine vazia (task 8) não é "sem nenhum produto": lá não há o que buscar. */}
         {s?.produtosPorCupom && (
           <div role="group" aria-label="Resumo dos produtos" style={{ display: "flex", gap: 18, flexWrap: "wrap", fontSize: 12, marginBottom: 4 }}>
             <Numero label="Cupons no sistema" valor={s.cupons} />
             <Numero label="Sem nenhum produto" valor={s.produtosPorCupom.semNada} />
             <Numero label="Parciais" valor={s.produtosPorCupom.parciais} />
             <Numero label="Completos" valor={s.produtosPorCupom.completos} />
+            <Numero label="Vitrine vazia" valor={s.produtosPorCupom.vitrineVazia ?? 0} />
           </div>
         )}
         <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 10 }}>
-          A busca pula os cupons vencidos — por isso as filas abaixo podem ser menores que o resumo.
+          A busca pula os cupons vencidos e os de vitrine vazia — por isso as filas abaixo podem ser
+          menores que o resumo. A vitrine vazia só é aberta de novo pelo “buscar produtos” da linha dela.
         </div>
 
         {buscandoProdutos ? (
@@ -857,6 +936,20 @@ export default function CuponsDoML({ buscaInicial = null }) {
                 ))}
               </select>
             )}
+            {/* O estado dos produtos de cada cupom — o mesmo da coluna "Produtos" e
+                do resumo do card 2 (backend/coupons/pg.js:ESTADO_PRODUTOS). */}
+            <select
+              aria-label="Estado dos produtos"
+              value={filtros.produtos}
+              onChange={e => setFiltros(f => ({ ...f, produtos: e.target.value, page: 1 }))}
+              style={inputStyle}
+            >
+              <option value="">todos os estados</option>
+              <option value="completa">vitrine completa</option>
+              <option value="parcial">parcial</option>
+              <option value="nenhum">sem nenhum produto</option>
+              <option value="vazia">vitrine vazia</option>
+            </select>
             <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
               <input type="checkbox" checked={filtros.onlyValid} onChange={e => setFiltros(f => ({ ...f, onlyValid: e.target.checked, page: 1 }))} />
               só os que ainda valem
@@ -948,6 +1041,15 @@ export default function CuponsDoML({ buscaInicial = null }) {
                               {colhendo === c.campaignId ? "⟳ buscando" : "buscar produtos"}
                             </button>
                           )}
+                          {/* Task 10: só os produtos que vieram pela vitrine — o cupom fica. */}
+                          {c.products > 0 && (
+                            <button
+                              onClick={() => { setRecado(null); setApagarProdutosDe(c); }}
+                              disabled={rodando || rodandoNoChrome || buscandoProdutos || limpando}
+                              style={botaoLink}
+                              title="Apaga os produtos que vieram pela vitrine deste cupom. Os de checkout e repasse ficam."
+                            >apagar produtos</button>
+                          )}
                           <button
                             onClick={() => setConfirmarExclusao(c)}
                             disabled={rodandoNoChrome || buscandoProdutos || limpando}
@@ -982,7 +1084,7 @@ export default function CuponsDoML({ buscaInicial = null }) {
                               alargava a tabela toda e empurrava os botões do
                               cupom para fora da tela. */}
                           <div style={{ width: 0, minWidth: "100%" }}>
-                            <Produtos dados={produtos[c.campaignId]} />
+                            <Produtos dados={produtos[c.campaignId]} vaziaEm={c.vitrineVaziaAt} />
                           </div>
                         </td>
                       </tr>
@@ -1044,6 +1146,55 @@ export default function CuponsDoML({ buscaInicial = null }) {
         </Modal>
       )}
 
+      {apagarProdutosDe && (
+        <Modal title="Apagar os produtos deste cupom?" onClose={() => setApagarProdutosDe(null)} danger>
+          <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+            Saem os vínculos de vitrine (completa e parcial) de{" "}
+            <strong style={{ color: "var(--color-text-primary)" }}>{apagarProdutosDe.title}</strong>, e os produtos do
+            catálogo que vieram <strong style={{ color: "var(--color-text-primary)" }}>só</strong> por essa vitrine.
+            Ficam os vínculos de checkout e de repasse, os produtos que também estão em outro cupom ou que vieram por
+            outro caminho (scraping, repasse), e os colhidos antes desta versão — deles o sistema não sabe a origem.
+            O cupom continua na lista e volta para a fila do botão 2.
+          </p>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button onClick={() => setApagarProdutosDe(null)} style={botaoSecundario}>Cancelar</button>
+            <button
+              onClick={apagarProdutos}
+              style={{ padding: "8px 16px", borderRadius: 8, background: "#E24B4A", color: "#fff", border: "none", fontSize: 13, fontWeight: 500, cursor: "pointer" }}
+            >Apagar produtos</button>
+          </div>
+        </Modal>
+      )}
+
+      {vencidos && (
+        <Modal title="Apagar os cupons vencidos?" onClose={() => setVencidos(null)} danger>
+          {vencidos.cupons == null ? (
+            <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)" }}>contando…</p>
+          ) : (
+            <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+              Os <strong style={{ color: "var(--color-text-primary)" }}>{vencidos.cupons}</strong> cupons vencidos e os{" "}
+              <strong style={{ color: "var(--color-text-primary)" }}>{vencidos.vinculos}</strong> vínculos deles serão apagados, junto com{" "}
+              <strong style={{ color: "var(--color-text-primary)" }}>{vencidos.produtos}</strong> produto(s) do catálogo que vieram só pela
+              vitrine deles.{" "}
+              {vencidos.produtosMantidos > 0 && (
+                <><strong style={{ color: "var(--color-text-primary)" }}>{vencidos.produtosMantidos}</strong> produto(s) ligados a eles ficam:
+                  vieram também por outro caminho (scraping, repasse, checkout), estão num cupom que ainda vale, ou foram
+                  colhidos antes desta versão, e deles o sistema não sabe a origem.{" "}</>
+              )}
+              As palavras testadas continuam guardadas. Esta ação não pode ser desfeita.
+            </p>
+          )}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button onClick={() => setVencidos(null)} style={botaoSecundario}>Cancelar</button>
+            <button
+              onClick={apagarVencidos}
+              disabled={vencidos.cupons == null || !vencidos.cupons}
+              style={{ padding: "8px 16px", borderRadius: 8, background: "#E24B4A", color: "#fff", border: "none", fontSize: 13, fontWeight: 500, cursor: "pointer", opacity: vencidos.cupons ? 1 : 0.5 }}
+            >Apagar vencidos</button>
+          </div>
+        </Modal>
+      )}
+
       {confirmarLimpeza && (
         <Modal title="Apagar todos os cupons?" onClose={() => setConfirmarLimpeza(false)} danger>
           <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
@@ -1099,21 +1250,27 @@ function OndeVale({ cupom, labels }) {
   );
 }
 
+// Os mesmos quatro estados do backend (coupons/pg.js:ESTADO_PRODUTOS), na mesma
+// ordem de precedência — é o que o filtro "Estado dos produtos" filtra.
 function EstadoProdutos({ cupom }) {
-  const [texto, cor] = cupom.productsSyncedAt
+  const [texto, cor, title] = cupom.productsSyncedAt
     ? ["completa", "var(--success-text)"]
-    : cupom.products > 0
-      ? ["parcial", "var(--warn-text)"]
-      : ["nenhum", "var(--color-text-secondary)"];
-  return <div style={{ fontSize: 11, color: cor }}>{texto}</div>;
+    : cupom.vitrineVaziaAt
+      ? ["vitrine vazia", "var(--warn-text)", `A vitrine abriu sem produto nenhum em ${new Date(cupom.vitrineVaziaAt).toLocaleString("pt-BR")}. As filas do botão 2 pulam este cupom; o “buscar produtos” da linha tenta de novo.`]
+      : cupom.products > 0
+        ? ["parcial", "var(--warn-text)"]
+        : ["nenhum", "var(--color-text-secondary)"];
+  return <div style={{ fontSize: 11, color: cor }} title={title}>{texto}</div>;
 }
 
-function Produtos({ dados }) {
+function Produtos({ dados, vaziaEm = null }) {
   if (!dados) return <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>carregando…</span>;
   if (!dados.items.length) {
     return (
       <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
-        Nenhum produto guardado para este cupom — clique em “raspar” para abrir a vitrine dele no ML.
+        {vaziaEm
+          ? `A vitrine deste cupom abriu sem produto nenhum em ${new Date(vaziaEm).toLocaleString("pt-BR")} — “buscar produtos” tenta de novo.`
+          : "Nenhum produto guardado para este cupom — clique em “buscar produtos” para abrir a vitrine dele no ML."}
       </span>
     );
   }

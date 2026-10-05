@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, TEST_URLS } from "../data/constants";
 import Badge from "../components/ui/Badge";
-import { getAffiliateStatus, saveAffiliate, clearAffiliate, testAffiliate, errText } from "../data/api";
+import { getAffiliateStatus, saveAffiliate, clearAffiliate, testAffiliate, getMLEtiquetas, trocarMLEtiqueta, errText } from "../data/api";
 import AlertBanner from "../components/ui/AlertBanner";
 import { TUTORIAL_IDS } from "./Tutoriais";
 
-export default function PageAffiliateML({ onAffiliateChange, onOpenTutorial }) {
+export default function PageAffiliateML({ onAffiliateChange, onOpenTutorial, isAdmin = false }) {
   const [affStatus, setAffStatus] = useState(null);
   const [affTag, setAffTag] = useState("");
   const [affCookie, setAffCookie] = useState("");
@@ -72,6 +72,13 @@ export default function PageAffiliateML({ onAffiliateChange, onOpenTutorial }) {
     } finally {
       setAffTesting(false);
     }
+  }
+
+  // A troca de etiqueta já salvou a TAG no servidor: só alinha a tela.
+  function handleEtiquetaTrocada(s) {
+    setAffStatus(s);
+    setAffTag(s.tag || "");
+    if (onAffiliateChange) onAffiliateChange(s);
   }
 
   async function handleClear() {
@@ -156,6 +163,10 @@ export default function PageAffiliateML({ onAffiliateChange, onOpenTutorial }) {
           </div>
         </div>
 
+        {isAdmin && affStatus?.configured && (
+          <EtiquetaEmUso tagAtual={affStatus.tag} onTrocada={handleEtiquetaTrocada} />
+        )}
+
         {affStatus?.configured && (
           <div style={{ marginTop: 14, paddingTop: 12, borderTop: "0.5px solid var(--color-border-tertiary)" }}>
             <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
@@ -217,6 +228,113 @@ export default function PageAffiliateML({ onAffiliateChange, onOpenTutorial }) {
             {affStatus.updatedAt && <div>Cookie atualizado em: {new Date(affStatus.updatedAt).toLocaleString("pt-BR")}</div>}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// Só admin: as etiquetas da conta ML (as mesmas do "Administrador de etiquetas"
+// do ML) e a troca da "em uso". A troca vale no ML e na TAG salva aqui — o
+// backend só grava a TAG depois que o ML aceitou.
+function EtiquetaEmUso({ tagAtual, onTrocada }) {
+  const [tags, setTags] = useState(null);   // null = lista ainda não buscada
+  const [escolhida, setEscolhida] = useState("");
+  const [carregando, setCarregando] = useState(false);
+  const [trocando, setTrocando] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  async function carregar() {
+    setCarregando(true);
+    setMsg(null);
+    try {
+      const r = await getMLEtiquetas();
+      setTags(r.tags);
+      const padrao = r.tags.find(t => t.tag === r.current) || r.tags.find(t => t.inUse) || r.tags[0];
+      setEscolhida(padrao?.tag || "");
+    } catch (err) {
+      setMsg({ type: "err", text: errText(err, "Não foi possível buscar as etiquetas no Mercado Livre.") });
+    } finally {
+      setCarregando(false);
+    }
+  }
+
+  async function trocar() {
+    setTrocando(true);
+    setMsg(null);
+    try {
+      const r = await trocarMLEtiqueta(escolhida);
+      setTags(r.tags);
+      onTrocada(r.status);
+      setMsg({ type: "ok", text: `Etiqueta trocada — os próximos links saem com ${r.current}.` });
+    } catch (err) {
+      setMsg({ type: "err", text: errText(err, "Não foi possível trocar a etiqueta.") });
+    } finally {
+      setTrocando(false);
+    }
+  }
+
+  const emUsoNoML = tags?.find(t => t.inUse)?.tag || null;
+  const foraDaConta = !!(tags && tagAtual && !tags.some(t => t.tag === tagAtual));
+  // Nada a fazer quando a escolhida já é a TAG daqui E a em uso no ML.
+  const semMudanca = !escolhida || (escolhida === tagAtual && escolhida === emUsoNoML);
+
+  const btnSecundario = (off) => ({ padding: "7px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: off ? "not-allowed" : "pointer", opacity: off ? 0.5 : 1 });
+
+  return (
+    <div style={{ marginTop: 14, paddingTop: 12, borderTop: "0.5px solid var(--color-border-tertiary)" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 13 }}>
+          Etiqueta em uso: <strong style={{ fontFamily: "monospace" }}>{tagAtual || "—"}</strong>
+        </div>
+        {tags === null && (
+          <button onClick={carregar} disabled={carregando} style={btnSecundario(carregando)}>
+            {carregando ? "Buscando no ML..." : "Trocar etiqueta"}
+          </button>
+        )}
+      </div>
+
+      {tags !== null && tags.length === 0 && (
+        <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 8 }}>
+          Esta conta não tem etiquetas no Mercado Livre.
+        </div>
+      )}
+
+      {tags !== null && tags.length > 0 && (
+        <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+          <select
+            aria-label="Etiqueta"
+            value={escolhida}
+            onChange={e => setEscolhida(e.target.value)}
+            disabled={trocando}
+            style={{ flex: "1 1 180px", minWidth: 0, padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, fontFamily: "monospace" }}
+          >
+            {tags.map(t => (
+              <option key={t.tag} value={t.tag}>{t.tag}{t.inUse ? " (em uso no ML)" : ""}</option>
+            ))}
+          </select>
+          <button onClick={trocar} disabled={trocando || semMudanca} style={{ padding: "7px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, fontWeight: 500, cursor: (trocando || semMudanca) ? "not-allowed" : "pointer", opacity: (trocando || semMudanca) ? 0.6 : 1 }}>
+            {trocando ? "Trocando..." : "Usar esta etiqueta"}
+          </button>
+        </div>
+      )}
+
+      {foraDaConta && (
+        <AlertBanner tone="warn" style={{ marginTop: 10, marginBottom: 0 }}
+          message={`A TAG salva (${tagAtual}) não está entre as etiquetas desta conta — os links podem sair sem comissão.`} />
+      )}
+      {emUsoNoML && tagAtual && emUsoNoML !== tagAtual && !foraDaConta && (
+        <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 6 }}>
+          No Mercado Livre a etiqueta em uso é <strong>{emUsoNoML}</strong>.
+        </div>
+      )}
+
+      {msg && (
+        <AlertBanner tone={msg.type === "ok" ? "success" : "error"} message={msg.text} onDismiss={() => setMsg(null)} style={{ marginTop: 10, marginBottom: 0 }} />
+      )}
+
+      <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 6, lineHeight: 1.5 }}>
+        A troca vale aqui e no Mercado Livre (inclusive no link gerado pelo app e pela barra do ML). Etiqueta nova se cria no{" "}
+        <a href="https://www.mercadolivre.com.br/afiliados/adminlabel" target="_blank" rel="noreferrer" style={{ color: PRIMARY }}>Administrador de etiquetas</a> do ML.
       </div>
     </div>
   );

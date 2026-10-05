@@ -22,6 +22,13 @@ Rodar o Claude na VPS e desligar o computador (via tmux):
 3. Passar a tarefa e confirmar que começou a rodar. Depois pode fechar o VS Code e desligar o PC — o tmux mantém o processo vivo na VPS.
 4. No dia seguinte, conectar pelo túnel, abrir um terminal e rodar: `tmux attach -t claude`
 
+7. [x] SÓ PARA QUEM É ADMIN: acrescente na aba em que coloca o cookie do mercado livre, a opção de trocar a Etiqueta em uso. (Configurações › Mercado Livre, só para admin: "Trocar etiqueta" busca no ML as etiquetas da conta (as do Administrador de etiquetas) e "Usar esta etiqueta" troca a em uso no ML e a TAG salva aqui — se o ML recusar, nada muda. Avisa quando a TAG salva não é da conta. O worker agora relê a config de afiliado a cada 30s: antes, trocar TAG ou cookie só valia nos envios depois de reiniciá-lo.) 
 
+8. [x] No buscar produtos dos cupons tem uns que não puxam nada na vitrine, quero poder filtrar ali pra ver eles na propria pagina de scraper de cupons, tb quero que eles não contem como produtos sem cupons normais, que contem como vitrine vazia, saindo da conta e da busca de "só os que não tem nenhum produto". (A vitrine que abre sem card nenhum agora fica gravada no cupom — muro não conta. Ela tem número próprio, "Vitrine vazia", no resumo do card 2 e sai das duas filas do botão 2; só o "buscar produtos" da linha tenta de novo. Na tabela, o novo filtro de estado separa completa / parcial / sem nenhum produto / vitrine vazia. Se a vitrine trouxer produto depois, a marca some.) 
 
+9. [x] Cria um botão de apagar todos os cupons vencidos e todos os produtos que vieram por eles. Cuide para não apagar os produtos que apenas foram vinculados ao cupom, mas que tiveram outra origem que não a vitrine. (Card de cima, "🗑 Apagar vencidos": antes de apagar, mostra quantos produtos saem e quantos ficam. Produto só sai se nasceu da vitrine e não tem mais nada: nem scraping, nem repasse, nem checkout, nem cupom ainda válido. O catálogo agora marca quem nasceu da vitrine (`soDaVitrine`). Os produtos colhidos ANTES desta versão não têm a marca e não são apagados pelos botões — continuam saindo pelo purge diário do scraping.)
+
+10. [x] Cria um botão em cada cupom para apagar seus produtos (somente os que vieram pela vitrine). ("apagar produtos" na linha do cupom: saem os vínculos de vitrine (completa e parcial) e os produtos que só existiam por ela. Ficam os de checkout e repasse e os que estão em outro cupom. O cupom fica na lista e volta para a fila do botão 2.)
+
+12. [] O buscar produtos individual de cada cupom tem qual filtro? Quantos produtos traz?
 

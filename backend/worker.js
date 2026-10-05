@@ -106,6 +106,9 @@ async function main() {
   // Cache de afiliados (tag/cookie por usuário) — sem isso a captura de repasse
   // vê todo mundo como "não configurado" e descarta os links silenciosamente.
   await affiliate.warmup();
+  // Quem grava a config é o server (aba de afiliado): sem o refresh, trocar a
+  // TAG ou recolar o cookie só valeria aqui depois de reiniciar o worker.
+  affiliate.startAutoRefresh();
   await auth.bootSeed();
   await queue.init({ producer: false, consumer: true });
 
