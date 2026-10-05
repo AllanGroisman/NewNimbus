@@ -58,9 +58,9 @@ export function unlockedSources(locks) {
 // pra todas as telas (ML, Amazon, Shopee usuário, Shopee admin).
 // Se uma URL quebrar (produto sumiu), basta editar este arquivo.
 export const TEST_URLS = {
-  ml:     "https://www.mercadolivre.com.br/echo-dot-5a-geraco-alto-falante-preto-amazon-bivolt-preto/p/MLB27190731",
+  ml:     "https://www.mercadolivre.com.br/smart-tv-32-philco-roku-tv-dolby-audio-hdr10-p32crb/p/MLB66055148",   // Smart TV 32" Philco Roku
   amazon: "https://www.amazon.com.br/dp/B09B8VGCR8",   // Echo Dot 5ª geração
-  shopee: "https://shopee.com.br/Fone-Bluetooth-i12-TWS-Inpods12-Sem-Fio-Para-iPhone-Android-Universal-i.355684441.21753556712",
+  shopee: "https://shopee.com.br/Fone-de-Ouvido-Bluetooth-Pro-4-TWS-Sem-Fio-i.1006215031.29320805319",   // Fone Pro 4 TWS (Choice Oficial)
 };
 
 // Categorias — mapeia id → label, cor do badge e ícone (emoji)
