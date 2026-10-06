@@ -393,14 +393,13 @@ export async function authSetInitialPassword(password) {
 
 // ─── Afiliados ML ──────────────────────────────────────────────────────
 export async function getAffiliateStatus()      { return http("GET",    "/api/affiliate"); }
-export async function saveAffiliate(payload)    { return http("PUT",    "/api/affiliate", payload); }
+// Salvar o cookie já o testa no ML (busca as etiquetas da conta) — teto maior.
+export async function saveAffiliate(payload)    { return http("PUT",    "/api/affiliate", payload, { timeoutMs: SLOW_TIMEOUT_MS }); }
 export async function clearAffiliate()          { return http("DELETE", "/api/affiliate"); }
 // Os testes de afiliado batem no site da loja — usam o teto maior.
 export async function testAffiliate(url)        { return http("POST",   "/api/affiliate/test", url ? { url } : {}, { timeoutMs: SLOW_TIMEOUT_MS }); }
-// Etiquetas da conta ML do admin (só admin): listar e trocar a "em uso" — a
-// troca vale no ML e na TAG salva aqui. Os dois batem no ML.
-export async function getMLEtiquetas()          { return http("GET",    "/api/affiliate/ml/etiquetas", undefined, { timeoutMs: SLOW_TIMEOUT_MS }); }
-export async function trocarMLEtiqueta(tag)     { return http("PUT",    "/api/affiliate/ml/etiquetas", { tag }, { timeoutMs: SLOW_TIMEOUT_MS }); }
+// Rebusca as etiquetas da conta ML com o cookie salvo; devolve o status novo.
+export async function atualizarMLEtiquetas()    { return http("POST",   "/api/affiliate/ml/etiquetas", {}, { timeoutMs: SLOW_TIMEOUT_MS }); }
 // Desempenho de afiliado no ML (cliques, pedidos, ganhos) do período, datas
 // AAAA-MM-DD inclusivas. `refresh` fura o cache curto do backend.
 export async function getMLDesempenho(from, to, { refresh = false } = {}) {

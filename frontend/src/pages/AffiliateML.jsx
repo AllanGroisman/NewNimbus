@@ -1,13 +1,12 @@
 import { useState, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, TEST_URLS } from "../data/constants";
 import Badge from "../components/ui/Badge";
-import { getAffiliateStatus, saveAffiliate, clearAffiliate, testAffiliate, getMLEtiquetas, trocarMLEtiqueta, errText } from "../data/api";
+import { getAffiliateStatus, saveAffiliate, clearAffiliate, testAffiliate, atualizarMLEtiquetas, errText } from "../data/api";
 import AlertBanner from "../components/ui/AlertBanner";
 import { TUTORIAL_IDS } from "./Tutoriais";
 
-export default function PageAffiliateML({ onAffiliateChange, onOpenTutorial, isAdmin = false }) {
+export default function PageAffiliateML({ onAffiliateChange, onOpenTutorial }) {
   const [affStatus, setAffStatus] = useState(null);
-  const [affTag, setAffTag] = useState("");
   const [affCookie, setAffCookie] = useState("");
   const [affMsg, setAffMsg] = useState(null);
   const [affSaving, setAffSaving] = useState(false);
@@ -23,24 +22,29 @@ export default function PageAffiliateML({ onAffiliateChange, onOpenTutorial, isA
     getAffiliateStatus().then(s => {
       setLoadError(null);
       setAffStatus(s);
-      if (s.tag) setAffTag(s.tag);
       if (onAffiliateChange) onAffiliateChange(s);
     }).catch(err => setLoadError(errText(err, "Não foi possível carregar sua configuração de afiliado.")));
   };
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const aplica = (s) => {
+    setAffStatus(s);
+    if (onAffiliateChange) onAffiliateChange(s);
+  };
+  const quantas = (s) => {
+    const n = s?.tags?.length || 0;
+    return n === 1 ? "1 etiqueta encontrada" : `${n} etiquetas encontradas`;
+  };
+
+  // Salvar já testa: o backend só grava o cookie se o ML listar as etiquetas com ele.
   async function handleSave() {
     setAffSaving(true);
     setAffMsg(null);
     try {
-      const payload = {};
-      if (affTag.trim()) payload.tag = affTag.trim();
-      if (affCookie.trim()) payload.cookie = affCookie.trim();
-      const s = await saveAffiliate(payload);
-      setAffStatus(s);
+      const s = await saveAffiliate({ cookie: affCookie.trim() });
+      aplica(s);
       setAffCookie("");
-      if (onAffiliateChange) onAffiliateChange(s);
-      setAffMsg({ type: "ok", text: "Salvo!" });
+      setAffMsg({ type: "ok", text: `Cookie salvo — ${quantas(s)}.` });
     } catch (err) {
       setAffMsg({ type: "err", text: errText(err, "Não foi possível concluir. Tente novamente.") });
     } finally {
@@ -48,25 +52,26 @@ export default function PageAffiliateML({ onAffiliateChange, onOpenTutorial, isA
     }
   }
 
+  // Testar = rebuscar as etiquetas com o cookie salvo (é o que diz se ele vale) e,
+  // com uma URL de produto preenchida, gerar um link de verdade.
   async function handleTest() {
-    setAffTesting(true);
     setAffMsg(null);
+    const url = affTestUrl.trim();
+    if (url && !/^https?:\/\/.+mercadolivre\.com/i.test(url) && !/^https?:\/\/(merc\.li|mlb\.li)/i.test(url)) {
+      setAffMsg({ type: "err", text: "URL inválida — precisa ser de mercadolivre.com ou um link curto do ML." });
+      return;
+    }
+    setAffTesting(true);
     try {
-      const url = affTestUrl.trim();
+      const s = await atualizarMLEtiquetas();
+      aplica(s);
       if (!url) {
-        setAffMsg({ type: "err", text: "Cole uma URL de produto do Mercado Livre pra testar." });
-        setAffTesting(false);
-        return;
-      }
-      if (!/^https?:\/\/.+mercadolivre\.com/i.test(url) && !/^https?:\/\/(merc\.li|mlb\.li)/i.test(url)) {
-        setAffMsg({ type: "err", text: "URL inválida — precisa ser de mercadolivre.com ou um link curto do ML." });
-        setAffTesting(false);
+        setAffMsg({ type: "ok", text: `Conexão OK — ${quantas(s)}.` });
         return;
       }
       const r = await testAffiliate(url);
-      setAffMsg({ type: "ok", text: "Funcionou! Link gerado:", link: r.shortUrl });
-      const s = await getAffiliateStatus();
-      setAffStatus(s);
+      setAffMsg({ type: "ok", text: `Funcionou! ${quantas(s)}. Link gerado:`, link: r.shortUrl });
+      setAffStatus(await getAffiliateStatus());
     } catch (err) {
       setAffMsg({ type: "err", text: errText(err, "Não foi possível concluir. Tente novamente.") });
     } finally {
@@ -74,21 +79,13 @@ export default function PageAffiliateML({ onAffiliateChange, onOpenTutorial, isA
     }
   }
 
-  // A troca de etiqueta já salvou a TAG no servidor: só alinha a tela.
-  function handleEtiquetaTrocada(s) {
-    setAffStatus(s);
-    setAffTag(s.tag || "");
-    if (onAffiliateChange) onAffiliateChange(s);
-  }
-
   async function handleClear() {
     setAffSaving(true);
     setAffMsg(null);
     try {
       const s = await clearAffiliate();
-      setAffStatus(s);
-      setAffTag(""); setAffCookie("");
-      if (onAffiliateChange) onAffiliateChange(s);
+      aplica(s);
+      setAffCookie("");
       setAffMsg({ type: "ok", text: "Configuração apagada." });
     } catch (err) {
       setAffMsg({ type: "err", text: errText(err, "Não foi possível concluir. Tente novamente.") });
@@ -112,7 +109,7 @@ export default function PageAffiliateML({ onAffiliateChange, onOpenTutorial, isA
         )}
       </div>
       <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 20 }}>
-        Configure o programa de afiliados para gerar links curtos com sua TAG nos envios.
+        Cole o cookie da sua conta de afiliado: as etiquetas da conta vêm sozinhas, e cada campanha escolhe com qual delas os links saem.
       </div>
 
       {loadError && <AlertBanner tone="error" message={loadError} onRetry={load} />}
@@ -127,23 +124,10 @@ export default function PageAffiliateML({ onAffiliateChange, onOpenTutorial, isA
           )}
         </div>
         <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14, lineHeight: 1.5 }}>
-          Quando configurado, todo link do Mercado Livre enviado vira link curto de afiliado (com a sua TAG).
+          Quando configurado, todo link do Mercado Livre enviado vira link curto de afiliado, com a etiqueta escolhida na campanha.
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <div>
-            <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>TAG de afiliado</label>
-            <input
-              value={affTag}
-              onChange={e => setAffTag(e.target.value)}
-              placeholder="ex: ab12345678901234"
-              style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", fontFamily: "monospace" }}
-            />
-            <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4 }}>
-              Pega em <a href="https://www.mercadolivre.com.br/afiliados" target="_blank" rel="noreferrer" style={{ color: PRIMARY }}>mercadolivre.com.br/afiliados</a>.
-            </div>
-          </div>
-
           <div>
             <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
               Cookie de sessão {affStatus?.cookieLength ? <span style={{ color: PRIMARY_DARK }}>(salvo: {affStatus.cookieLength} caracteres)</span> : null}
@@ -163,14 +147,12 @@ export default function PageAffiliateML({ onAffiliateChange, onOpenTutorial, isA
           </div>
         </div>
 
-        {isAdmin && affStatus?.configured && (
-          <EtiquetaEmUso tagAtual={affStatus.tag} onTrocada={handleEtiquetaTrocada} />
-        )}
+        {affStatus?.configured && <EtiquetasDaConta status={affStatus} />}
 
         {affStatus?.configured && (
           <div style={{ marginTop: 14, paddingTop: 12, borderTop: "0.5px solid var(--color-border-tertiary)" }}>
             <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
-              URL de produto pra testar
+              URL de produto pra testar <span style={{ opacity: 0.7 }}>(opcional)</span>
             </label>
             <input
               value={affTestUrl}
@@ -179,7 +161,7 @@ export default function PageAffiliateML({ onAffiliateChange, onOpenTutorial, isA
               style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 12, boxSizing: "border-box", fontFamily: "monospace" }}
             />
             <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4 }}>
-              Cole o link de qualquer produto do Mercado Livre. A home não funciona — só páginas de produto/oferta geram link curto.
+              Com um link de produto aqui, o teste também gera um link curto de verdade (com a etiqueta padrão). A home não funciona — só páginas de produto/oferta.
             </div>
           </div>
         )}
@@ -208,10 +190,10 @@ export default function PageAffiliateML({ onAffiliateChange, onOpenTutorial, isA
         )}
 
         <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
-          <button onClick={handleSave} disabled={affSaving || (!affTag.trim() && !affCookie.trim())} style={{ padding: "7px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: affSaving ? 0.6 : 1 }}>
-            {affSaving ? "Salvando..." : "Salvar"}
+          <button onClick={handleSave} disabled={affSaving || !affCookie.trim()} title={!affCookie.trim() ? "Cole o cookie primeiro" : "Salva o cookie e busca as etiquetas da conta"} style={{ padding: "7px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: (affSaving || !affCookie.trim()) ? "not-allowed" : "pointer", fontWeight: 500, opacity: (affSaving || !affCookie.trim()) ? 0.6 : 1 }}>
+            {affSaving ? "Testando cookie..." : "Salvar e testar"}
           </button>
-          <button onClick={handleTest} disabled={affTesting || !affStatus?.configured || !affTestUrl.trim()} title={!affStatus?.configured ? "Salve TAG e cookie primeiro" : !affTestUrl.trim() ? "Cole uma URL de produto pra testar" : "Gera um link de teste pra validar"} style={{ padding: "7px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: (!affStatus?.configured || !affTestUrl.trim()) ? "not-allowed" : "pointer", opacity: (!affStatus?.configured || !affTestUrl.trim() || affTesting) ? 0.5 : 1 }}>
+          <button onClick={handleTest} disabled={affTesting || !affStatus?.configured} title={!affStatus?.configured ? "Salve o cookie primeiro" : "Rebusca as etiquetas da conta e, com uma URL de produto, gera um link de teste"} style={{ padding: "7px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: !affStatus?.configured ? "not-allowed" : "pointer", opacity: (!affStatus?.configured || affTesting) ? 0.5 : 1 }}>
             {affTesting ? "Testando..." : "Testar conexão"}
           </button>
           {affStatus?.configured && (
@@ -221,11 +203,12 @@ export default function PageAffiliateML({ onAffiliateChange, onOpenTutorial, isA
           )}
         </div>
 
-        {affStatus && (affStatus.lastSuccessAt || affStatus.lastFailureAt) && (
+        {affStatus && (affStatus.lastSuccessAt || affStatus.lastFailureAt || affStatus.tagsFetchedAt) && (
           <div style={{ marginTop: 14, paddingTop: 12, borderTop: "0.5px solid var(--color-border-tertiary)", fontSize: 11, color: "var(--color-text-secondary)", lineHeight: 1.6 }}>
             {affStatus.lastSuccessAt && <div>✓ Último sucesso: {new Date(affStatus.lastSuccessAt).toLocaleString("pt-BR")}</div>}
             {affStatus.lastFailureAt && <div style={{ color: "var(--danger-text)" }}>✗ Última falha: {new Date(affStatus.lastFailureAt).toLocaleString("pt-BR")} — {affStatus.lastFailureReason}</div>}
             {affStatus.updatedAt && <div>Cookie atualizado em: {new Date(affStatus.updatedAt).toLocaleString("pt-BR")}</div>}
+            {affStatus.tagsFetchedAt && <div>Etiquetas buscadas em: {new Date(affStatus.tagsFetchedAt).toLocaleString("pt-BR")}</div>}
           </div>
         )}
       </div>
@@ -233,108 +216,29 @@ export default function PageAffiliateML({ onAffiliateChange, onOpenTutorial, isA
   );
 }
 
-// Só admin: as etiquetas da conta ML (as mesmas do "Administrador de etiquetas"
-// do ML) e a troca da "em uso". A troca vale no ML e na TAG salva aqui — o
-// backend só grava a TAG depois que o ML aceitou.
-function EtiquetaEmUso({ tagAtual, onTrocada }) {
-  const [tags, setTags] = useState(null);   // null = lista ainda não buscada
-  const [escolhida, setEscolhida] = useState("");
-  const [carregando, setCarregando] = useState(false);
-  const [trocando, setTrocando] = useState(false);
-  const [msg, setMsg] = useState(null);
-
-  async function carregar() {
-    setCarregando(true);
-    setMsg(null);
-    try {
-      const r = await getMLEtiquetas();
-      setTags(r.tags);
-      const padrao = r.tags.find(t => t.tag === r.current) || r.tags.find(t => t.inUse) || r.tags[0];
-      setEscolhida(padrao?.tag || "");
-    } catch (err) {
-      setMsg({ type: "err", text: errText(err, "Não foi possível buscar as etiquetas no Mercado Livre.") });
-    } finally {
-      setCarregando(false);
-    }
-  }
-
-  async function trocar() {
-    setTrocando(true);
-    setMsg(null);
-    try {
-      const r = await trocarMLEtiqueta(escolhida);
-      setTags(r.tags);
-      onTrocada(r.status);
-      setMsg({ type: "ok", text: `Etiqueta trocada — os próximos links saem com ${r.current}.` });
-    } catch (err) {
-      setMsg({ type: "err", text: errText(err, "Não foi possível trocar a etiqueta.") });
-    } finally {
-      setTrocando(false);
-    }
-  }
-
-  const emUsoNoML = tags?.find(t => t.inUse)?.tag || null;
-  const foraDaConta = !!(tags && tagAtual && !tags.some(t => t.tag === tagAtual));
-  // Nada a fazer quando a escolhida já é a TAG daqui E a em uso no ML.
-  const semMudanca = !escolhida || (escolhida === tagAtual && escolhida === emUsoNoML);
-
-  const btnSecundario = (off) => ({ padding: "7px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: off ? "not-allowed" : "pointer", opacity: off ? 0.5 : 1 });
-
+// As etiquetas da conta, como vieram do ML na última busca. Só leitura: quem
+// escolhe é cada campanha (aba Gerenciar); a padrão é a "em uso" no ML.
+function EtiquetasDaConta({ status }) {
+  const tags = Array.isArray(status.tags) ? status.tags : [];
   return (
     <div style={{ marginTop: 14, paddingTop: 12, borderTop: "0.5px solid var(--color-border-tertiary)" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-        <div style={{ fontSize: 13 }}>
-          Etiqueta em uso: <strong style={{ fontFamily: "monospace" }}>{tagAtual || "—"}</strong>
-        </div>
-        {tags === null && (
-          <button onClick={carregar} disabled={carregando} style={btnSecundario(carregando)}>
-            {carregando ? "Buscando no ML..." : "Trocar etiqueta"}
-          </button>
-        )}
-      </div>
-
-      {tags !== null && tags.length === 0 && (
-        <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 8 }}>
-          Esta conta não tem etiquetas no Mercado Livre.
+      <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>Etiquetas da conta</div>
+      {tags.length === 0 ? (
+        <AlertBanner tone="warn" style={{ marginBottom: 0 }}
+          message="Clique em Testar conexão para carregar as etiquetas da conta — é delas que cada campanha escolhe a sua." />
+      ) : (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {tags.map(t => (
+            <span key={t.tag} style={{ padding: "4px 10px", borderRadius: 8, fontSize: 12, fontFamily: "monospace", border: `0.5px solid ${t.tag === status.tag ? PRIMARY : "var(--color-border-tertiary)"}`, color: t.tag === status.tag ? PRIMARY_DARK : "var(--color-text-primary)" }}>
+              {t.tag}{t.tag === status.tag ? " · padrão" : ""}
+            </span>
+          ))}
         </div>
       )}
-
-      {tags !== null && tags.length > 0 && (
-        <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-          <select
-            aria-label="Etiqueta"
-            value={escolhida}
-            onChange={e => setEscolhida(e.target.value)}
-            disabled={trocando}
-            style={{ flex: "1 1 180px", minWidth: 0, padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, fontFamily: "monospace" }}
-          >
-            {tags.map(t => (
-              <option key={t.tag} value={t.tag}>{t.tag}{t.inUse ? " (em uso no ML)" : ""}</option>
-            ))}
-          </select>
-          <button onClick={trocar} disabled={trocando || semMudanca} style={{ padding: "7px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, fontWeight: 500, cursor: (trocando || semMudanca) ? "not-allowed" : "pointer", opacity: (trocando || semMudanca) ? 0.6 : 1 }}>
-            {trocando ? "Trocando..." : "Usar esta etiqueta"}
-          </button>
-        </div>
-      )}
-
-      {foraDaConta && (
-        <AlertBanner tone="warn" style={{ marginTop: 10, marginBottom: 0 }}
-          message={`A TAG salva (${tagAtual}) não está entre as etiquetas desta conta — os links podem sair sem comissão.`} />
-      )}
-      {emUsoNoML && tagAtual && emUsoNoML !== tagAtual && !foraDaConta && (
-        <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 6 }}>
-          No Mercado Livre a etiqueta em uso é <strong>{emUsoNoML}</strong>.
-        </div>
-      )}
-
-      {msg && (
-        <AlertBanner tone={msg.type === "ok" ? "success" : "error"} message={msg.text} onDismiss={() => setMsg(null)} style={{ marginTop: 10, marginBottom: 0 }} />
-      )}
-
-      <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 6, lineHeight: 1.5 }}>
-        A troca vale aqui e no Mercado Livre (inclusive no link gerado pelo app e pela barra do ML). Etiqueta nova se cria no{" "}
-        <a href="https://www.mercadolivre.com.br/afiliados/adminlabel" target="_blank" rel="noreferrer" style={{ color: PRIMARY }}>Administrador de etiquetas</a> do ML.
+      <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 8, lineHeight: 1.5 }}>
+        Cada campanha escolhe a sua etiqueta na aba <strong>Gerenciar</strong>; quem não escolher usa a padrão (a que está em uso no Mercado Livre).
+        Etiqueta nova se cria no{" "}
+        <a href="https://www.mercadolivre.com.br/afiliados/adminlabel" target="_blank" rel="noreferrer" style={{ color: PRIMARY }}>Administrador de etiquetas</a> do ML — depois clique em Testar conexão para ela aparecer aqui.
       </div>
     </div>
   );

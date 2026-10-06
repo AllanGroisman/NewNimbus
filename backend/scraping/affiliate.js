@@ -29,7 +29,7 @@ const SHOPEE_FILTERS_DEFAULTS = {
 };
 
 // Config persistida POR USUÁRIO via affiliate-store. Schema do `raw`:
-//   { ml: { tag, cookie, updatedAt },
+//   { ml: { tag, cookie, tags, tagsFetchedAt, updatedAt },
 //     amazon: { tag, updatedAt },
 //     shopee: { appId, appSecret, updatedAt } }
 // Env vars (ML_AFFILIATE_TAG, AMAZON_AFFILIATE_TAG, SHOPEE_AFFILIATE_APP_ID, …)
@@ -74,16 +74,28 @@ function getCache(map, userId) {
 // Storage helpers
 // ────────────────────────────────────────────────────────────────────────
 
+// ML: o usuário cola só o cookie; as etiquetas vêm da conta dele (ver
+// ml-etiquetas.js). `tag` é a PADRÃO — a "em uso" no ML na última busca —, usada
+// pela campanha que não escolheu outra. `tags` é a lista da conta, na ordem do ML.
+// Config antiga (TAG digitada à mão, sem `tags`) continua valendo até a próxima busca.
 function readMLConfig(userId) {
+  const vazio = { tag: null, cookie: null, tags: [], tagsFetchedAt: null, source: null, updatedAt: null };
   if (process.env.ML_AFFILIATE_TAG && process.env.ML_AFFILIATE_COOKIE) {
-    return { tag: process.env.ML_AFFILIATE_TAG.trim(), cookie: process.env.ML_AFFILIATE_COOKIE, source: "env", updatedAt: null };
+    return { ...vazio, tag: process.env.ML_AFFILIATE_TAG.trim(), cookie: process.env.ML_AFFILIATE_COOKIE, source: "env" };
   }
-  if (!userId) return { tag: null, cookie: null, source: null, updatedAt: null };
+  if (!userId) return vazio;
   const raw = store.getRaw(userId);
   if (raw.ml && (raw.ml.tag || raw.ml.cookie)) {
-    return { tag: raw.ml.tag || null, cookie: raw.ml.cookie || null, source: "file", updatedAt: raw.ml.updatedAt || null };
+    return {
+      tag: raw.ml.tag || null,
+      cookie: raw.ml.cookie || null,
+      tags: Array.isArray(raw.ml.tags) ? raw.ml.tags : [],
+      tagsFetchedAt: raw.ml.tagsFetchedAt || null,
+      source: "file",
+      updatedAt: raw.ml.updatedAt || null,
+    };
   }
-  return { tag: null, cookie: null, source: null, updatedAt: null };
+  return vazio;
 }
 
 function readAmazonConfig(userId) {
@@ -120,7 +132,8 @@ function readShopeeConfig(userId) {
   return { appId: null, appSecret: null, source: null, updatedAt: null };
 }
 
-function writeMLConfig(userId, { tag, cookie }) {
+// `undefined` = "não mexi nisso", em todos os campos.
+function writeMLConfig(userId, { tag, cookie, tags, tagsFetchedAt }) {
   if (!userId) throw new Error("writeMLConfig exige userId");
   if (process.env.ML_AFFILIATE_TAG || process.env.ML_AFFILIATE_COOKIE) {
     throw new Error("Configuração ML vem de variável de ambiente — desligue ML_AFFILIATE_TAG/ML_AFFILIATE_COOKIE pra usar config dinâmica.");
@@ -130,6 +143,8 @@ function writeMLConfig(userId, { tag, cookie }) {
   const next = {
     tag: tag !== undefined ? String(tag || "").trim() : cur.tag,
     cookie: cookie !== undefined ? String(cookie || "").trim() : cur.cookie,
+    tags: tags !== undefined ? tags : cur.tags,
+    tagsFetchedAt: tagsFetchedAt !== undefined ? tagsFetchedAt : cur.tagsFetchedAt,
     updatedAt: new Date().toISOString(),
   };
   raw.ml = next;
@@ -244,6 +259,8 @@ function status(userId) {
     tag: ml.tag || null,
     cookieLength: ml.cookie ? ml.cookie.length : 0,
     cookiePreview: ml.cookie ? ml.cookie.slice(0, 30) + "…" : null,
+    tags: ml.tags,
+    tagsFetchedAt: ml.tagsFetchedAt,
     source: ml.source,
     updatedAt: ml.updatedAt,
     lastSuccessAt: s.ml.lastSuccessAt,
@@ -252,7 +269,10 @@ function status(userId) {
     healthy: mlHealthy,
     ml: {
       configured: !!(ml.tag && ml.cookie),
+      // A etiqueta padrão (ver readMLConfig); `tags` são as que a campanha pode escolher.
       tag: ml.tag || null,
+      tags: ml.tags,
+      tagsFetchedAt: ml.tagsFetchedAt,
       cookieLength: ml.cookie ? ml.cookie.length : 0,
       cookiePreview: ml.cookie ? ml.cookie.slice(0, 30) + "…" : null,
       source: ml.source,
@@ -364,23 +384,46 @@ async function criarLinkAfiliadoMLSistema(url, { signal = undefined } = {}) {
   }
 }
 
+// A etiqueta que a campanha escolheu (`scraping.mlTag`), ou null = a padrão da conta.
+function etiquetaMLDaCampanha(group) {
+  const t = group?.scraping?.mlTag;
+  return typeof t === "string" && t.trim() ? t.trim() : null;
+}
+
+// Com qual etiqueta o link sai de fato. A pedida só vale se ainda for da conta:
+// uma etiqueta apagada no ML gera link sem comissão, então cai na padrão. Lista
+// vazia é config antiga, de antes da busca de etiquetas — aí não há com o que
+// conferir e a pedida passa. Pura → testável.
+function etiquetaMLEfetiva(cfg, pedida) {
+  const tags = Array.isArray(cfg?.tags) ? cfg.tags : [];
+  if (pedida && (!tags.length || tags.some(t => t.tag === pedida))) return pedida;
+  return cfg?.tag || null;
+}
+
 // Cria o link de afiliado e DIZ POR QUE falhou quando falha.
-// Devolve { shortUrl, kind, reason }.
-async function criarLinkAfiliadoML(userId, linkOriginal) {
+// Devolve { shortUrl, kind, reason }. `tag` é a etiqueta da campanha (null = padrão).
+async function criarLinkAfiliadoML(userId, linkOriginal, { tag: pedida = null } = {}) {
   if (!linkOriginal || typeof linkOriginal !== "string") {
     return { shortUrl: null, kind: ML_LINK_KIND.ERRO, reason: "Link vazio." };
   }
-  const { tag, cookie } = readMLConfig(userId);
+  const cfg = readMLConfig(userId);
+  const { cookie } = cfg;
+  const tag = cfg.tag ? etiquetaMLEfetiva(cfg, pedida) : null;
+  if (pedida && tag && tag !== pedida) {
+    console.warn(`[afiliados ML] etiqueta "${pedida}" não está mais na conta — usando a padrão (${tag})`);
+  }
   if (!tag || !cookie) {
     return {
       shortUrl: null,
       kind: ML_LINK_KIND.SEM_CONFIG,
-      reason: "Sem TAG ou cookie de afiliado do Mercado Livre — configure em Configurações › Afiliados.",
+      reason: "Sem o cookie de afiliado do Mercado Livre — cole o cookie na aba Mercado Livre.",
     };
   }
 
+  // O mesmo produto com duas etiquetas são dois links curtos diferentes.
+  const chave = `${tag}|${linkOriginal}`;
   const cache = getCache(mlCache, userId);
-  const cached = cache.get(linkOriginal);
+  const cached = cache.get(chave);
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
     return { shortUrl: cached.shortUrl, kind: ML_LINK_KIND.OK, reason: null };
   }
@@ -423,7 +466,7 @@ async function criarLinkAfiliadoML(userId, linkOriginal) {
         reason: "O Mercado Livre não aceita este link no programa de afiliados — use uma URL de produto ou oferta.",
       };
     }
-    cache.set(linkOriginal, { shortUrl: short, ts: Date.now() });
+    cache.set(chave, { shortUrl: short, ts: Date.now() });
     s.lastSuccessAt = new Date().toISOString();
     s.lastFailureReason = null;
     notifyMLCookie(userId, true, tag);
@@ -436,8 +479,8 @@ async function criarLinkAfiliadoML(userId, linkOriginal) {
   }
 }
 
-async function gerarLinkAfiliadoML(userId, linkOriginal) {
-  const { shortUrl } = await criarLinkAfiliadoML(userId, linkOriginal);
+async function gerarLinkAfiliadoML(userId, linkOriginal, opts = {}) {
+  const { shortUrl } = await criarLinkAfiliadoML(userId, linkOriginal, opts);
   return shortUrl;
 }
 // ────────────────────────────────────────────────────────────────────────
@@ -1122,6 +1165,8 @@ module.exports = {
   // ML
   gerarLinkAfiliadoML,
   criarLinkAfiliadoML,
+  etiquetaMLDaCampanha,
+  etiquetaMLEfetiva,
   ML_LINK_KIND,
   readMLConfig,
   writeMLConfig,

@@ -233,6 +233,9 @@ export default function App() {
       ml: !!(s?.ml?.configured ?? s?.configured),
       amazon: !!s?.amazon?.configured,
       shopee: !!s?.shopee?.configured,
+      // Etiquetas da conta ML: a campanha escolhe uma delas (aba Gerenciar).
+      mlTags: Array.isArray(s?.ml?.tags) ? s.ml.tags : [],
+      mlDefaultTag: s?.ml?.tag || null,
     });
   };
 
@@ -1129,7 +1132,7 @@ export default function App() {
     />,
     settings: <PageSettings user={user} setUser={setUser} onLogout={handleLogout} settings={settings} setSettings={setSettings} numbers={liveNumbers} onAffiliateChange={applyAffiliateStatus} />,
     subscription: <PageSubscription user={user} setUser={setUser} />,
-    "mercado-livre": lockedStore("ml") || <PageAffiliateML onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} isAdmin={user?.role === "admin"} />,
+    "mercado-livre": lockedStore("ml") || <PageAffiliateML onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
     "amazon": lockedStore("amazon") || <PageAffiliateAmazon onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
     "shopee": lockedStore("shopee") || <PageAffiliateShopee onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
     // Uma aba por loja liberada (loja trancada não tem o que medir); abre na

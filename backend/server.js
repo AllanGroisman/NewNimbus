@@ -1570,13 +1570,18 @@ app.get("/api/affiliate", auth.requireAuth, (req, res) => {
   res.json(affiliate.status(req.user.id));
 });
 
-app.put("/api/affiliate", auth.requireAuth, requireStoreUnlocked("ml"), (req, res) => {
+// O ML só pede o cookie: salvar já o testa, buscando as etiquetas da conta
+// (scraping/ml-etiquetas.js). Cookie que o ML não aceita não é gravado.
+app.put("/api/affiliate", auth.requireAuth, requireStoreUnlocked("ml"), async (req, res) => {
+  const cookie = req.body?.cookie;
+  if (!cookie || typeof cookie !== "string" || !cookie.trim()) {
+    return res.status(400).json({ error: "Cole o cookie de afiliado do Mercado Livre." });
+  }
   try {
-    const { tag, cookie } = req.body || {};
-    affiliate.writeConfig(req.user.id, { tag, cookie });
+    await mlEtiquetas.sincronizarEtiquetas(req.user.id, { cookie });
     res.json(affiliate.status(req.user.id));
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    etiquetaErro(res, err, req, "PUT /api/affiliate");
   }
 });
 
@@ -1620,10 +1625,10 @@ app.get("/api/affiliate/ml/desempenho", auth.requireAuth, requireStoreUnlocked("
   }
 });
 
-// Etiquetas de afiliado da conta ML do próprio admin (scraping/ml-etiquetas.js):
-// listar e trocar a "em uso" — no ML e na TAG salva aqui. Só admin, por pedido.
-// Erro esperado (cookie vencido, etiqueta que não existe) sai direto com o texto,
-// sem virar Sentry.
+// Etiquetas de afiliado da conta ML do usuário (scraping/ml-etiquetas.js): o
+// "Testar conexão" da aba rebusca a lista com o cookie salvo e a grava — é dela
+// que cada campanha escolhe a sua. Erro esperado (cookie vencido, conta sem
+// etiqueta) sai direto com o texto, sem virar Sentry.
 function etiquetaErro(res, err, req, ctx) {
   if (err instanceof httpErrors.AppError) {
     return res.status(err.status).json({ error: err.message, code: err.code || "bad_request" });
@@ -1631,20 +1636,12 @@ function etiquetaErro(res, err, req, ctx) {
   httpErrors.serverError(res, err, { req, ctx });
 }
 
-app.get("/api/affiliate/ml/etiquetas", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+app.post("/api/affiliate/ml/etiquetas", auth.requireAuth, requireStoreUnlocked("ml"), async (req, res) => {
   try {
-    res.json(await mlEtiquetas.listarEtiquetas(req.user.id));
+    await mlEtiquetas.sincronizarEtiquetas(req.user.id);
+    res.json(affiliate.status(req.user.id));
   } catch (err) {
-    etiquetaErro(res, err, req, "GET /api/affiliate/ml/etiquetas");
-  }
-});
-
-app.put("/api/affiliate/ml/etiquetas", auth.requireAuth, auth.requireAdmin, async (req, res) => {
-  try {
-    const r = await mlEtiquetas.trocarEtiqueta(req.user.id, req.body?.tag);
-    res.json({ ...r, status: affiliate.status(req.user.id) });
-  } catch (err) {
-    etiquetaErro(res, err, req, "PUT /api/affiliate/ml/etiquetas");
+    etiquetaErro(res, err, req, "POST /api/affiliate/ml/etiquetas");
   }
 });
 

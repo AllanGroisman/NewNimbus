@@ -1,17 +1,17 @@
-// Etiquetas de afiliado do Mercado Livre de um usuário: listar as da conta e
-// trocar a "em uso". Só o admin usa (Configurações › Mercado Livre).
+// Etiquetas de afiliado do Mercado Livre de um usuário. O usuário cola só o
+// cookie na aba dele; daqui sai a lista de etiquetas da conta, que cada campanha
+// usa pra escolher com qual etiqueta os links saem (`scraping.mlTag`).
 //
-// São as chamadas que a própria página "Administrador de etiquetas" do ML
-// (/afiliados/adminlabel) faz, lidas no bundle dela em 01/10/2026:
+// É a chamada que a própria página "Administrador de etiquetas" do ML
+// (/afiliados/adminlabel) faz, lida no bundle dela em 01/10/2026:
 //   GET  /affiliate-program/api/v2/affiliates/getTags
 //        → [{ tag, in_use, generated_date }]
-//   PUT  /affiliate-program/api/v2/affiliates/setTagInUse  { tag }
 // O getTags aceita um fetch cru só com o cookie, igual ao createLink (testado na
-// mesma data); cookie vencido responde 302 pro login.
+// mesma data); cookie vencido responde 302 pro login. Por isso ele é também o
+// teste do cookie: salvar o cookie passa por aqui, e cookie que não lista não
+// é gravado.
 //
-// Trocar mexe nos DOIS lados: primeiro a "em uso" da conta no ML (vale também
-// para o link gerado no app e na barra do ML), depois a TAG salva aqui, que é a
-// que vai no corpo de todo createLink. Se o ML recusar, nada muda aqui.
+// A etiqueta PADRÃO (a da campanha que não escolheu nenhuma) é a "em uso" no ML.
 //
 // O cookie é o que o usuário colou na aba dele (affiliate_config.ml). Nunca o da
 // conta do sistema.
@@ -25,9 +25,8 @@ const TIMEOUT_MS = 20000;
 
 const KIND = affiliate.ML_LINK_KIND;
 
-// Resposta do getTags (e do setTagInUse, que devolve a lista já trocada) →
-// [{ tag, inUse, createdAt }], na ordem do ML. Aceita a lista solta ou dentro
-// de `data`, e ignora item sem etiqueta.
+// Resposta do getTags → [{ tag, inUse, createdAt }], na ordem do ML. Aceita a
+// lista solta ou dentro de `data`, e ignora item sem etiqueta.
 function normalizaListaEtiquetas(json) {
   const lista = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : [];
   return lista
@@ -39,21 +38,18 @@ function normalizaListaEtiquetas(json) {
     }));
 }
 
-const COOKIE_VENCIDO = "O cookie do Mercado Livre venceu — cole um novo nesta aba.";
+const COOKIE_VENCIDO = "O Mercado Livre não aceitou este cookie (sessão vencida) — copie um novo pela extensão e cole nesta aba.";
 
-async function chamaML(caminho, cookie, { method = "GET", body = undefined } = {}) {
+async function chamaML(caminho, cookie) {
   let res;
   try {
     res = await fetch(`${BASE}/${caminho}`, {
-      method,
       headers: {
         "Cookie": cookie,
         "User-Agent": UA,
         "Accept": "application/json, text/plain, */*",
         "Referer": REFERER,
-        ...(body ? { "Content-Type": "application/json", "Origin": "https://www.mercadolivre.com.br" } : {}),
       },
-      body: body ? JSON.stringify(body) : undefined,
       redirect: "manual",
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
@@ -61,69 +57,57 @@ async function chamaML(caminho, cookie, { method = "GET", body = undefined } = {
     throw new AppError(`O Mercado Livre não respondeu (${err.name === "TimeoutError" ? "tempo esgotado" : err.message}).`, { status: 502, code: KIND.ERRO });
   }
   const location = res.headers.get("location") || "";
-  // Na leitura, 403 também é sessão (como no createLink). Na troca, um 403 pode
-  // ser o ML pedindo CSRF — aí o texto mostra o status em vez de culpar o cookie.
-  const loginWall = res.status === 401
-    || (method === "GET" && res.status === 403)
+  // 401/403 é sessão, como no createLink; 302 pro login, idem.
+  const loginWall = res.status === 401 || res.status === 403
     || (res.status >= 300 && res.status < 400 && /login/i.test(location));
   if (loginWall) throw new AppError(COOKIE_VENCIDO, { status: 409, code: KIND.COOKIE });
   if (!res.ok) {
-    const acao = method === "GET" ? "listar as etiquetas" : "trocar a etiqueta";
-    throw new AppError(`O Mercado Livre recusou ${acao} (HTTP ${res.status}).`, { status: 502, code: KIND.ERRO });
+    throw new AppError(`O Mercado Livre recusou listar as etiquetas (HTTP ${res.status}).`, { status: 502, code: KIND.ERRO });
   }
   return res.json().catch(() => null);
 }
 
-function cookieDoUsuario(userId) {
-  const { cookie, source } = affiliate.readMLConfig(userId);
-  if (!cookie) {
-    throw new AppError("Cole o cookie de afiliado do Mercado Livre nesta aba primeiro.", { status: 409, code: KIND.SEM_CONFIG });
-  }
-  return { cookie, source };
+// A padrão: a "em uso" no ML, ou a primeira se nenhuma vier marcada. Pura.
+function escolhePadrao(tags) {
+  return (tags.find(t => t.inUse) || tags[0])?.tag || null;
 }
 
-// { tags, current } — `current` é a TAG salva aqui, que pode não estar na lista
-// (digitada errada, ou de outra conta). A tela avisa quando isso acontece.
-async function listarEtiquetas(userId) {
-  const { cookie } = cookieDoUsuario(userId);
-  const json = await chamaML("getTags", cookie);
+// Busca as etiquetas da conta e grava junto com o cookie. `cookie` novo = o que
+// o usuário acabou de colar (só é gravado se o ML listar com ele); sem `cookie`
+// = rebusca com o salvo. Qualquer erro antes do fim deixa a config como estava.
+async function sincronizarEtiquetas(userId, { cookie = undefined } = {}) {
+  const atual = affiliate.readMLConfig(userId);
+  // writeMLConfig recusa config vinda de env — melhor saber antes de chamar o ML.
+  if (atual.source === "env") {
+    throw new AppError("A configuração do Mercado Livre vem de variável de ambiente — troque por lá.", { status: 409 });
+  }
+  const novo = typeof cookie === "string" ? cookie.trim() : "";
+  const usado = novo || atual.cookie;
+  if (!usado) {
+    throw new AppError("Cole o cookie de afiliado do Mercado Livre nesta aba primeiro.", { status: 409, code: KIND.SEM_CONFIG });
+  }
+
+  const json = await chamaML("getTags", usado);
   if (!Array.isArray(json) && !Array.isArray(json?.data)) {
     throw new AppError("O Mercado Livre devolveu uma lista de etiquetas em formato inesperado.", { status: 502, code: KIND.ERRO });
   }
-  return { tags: normalizaListaEtiquetas(json), current: affiliate.readMLConfig(userId).tag || null };
-}
-
-async function trocarEtiqueta(userId, tag) {
-  const nova = typeof tag === "string" ? tag.trim() : "";
-  if (!nova) throw new AppError("Escolha uma etiqueta.", { status: 400 });
-
-  const { cookie, source } = cookieDoUsuario(userId);
-  // writeMLConfig recusa config vinda de env — melhor saber antes de mexer no ML.
-  if (source === "env") {
-    throw new AppError("A configuração do Mercado Livre vem de variável de ambiente — troque a etiqueta por lá.", { status: 409 });
+  const tags = normalizaListaEtiquetas(json);
+  if (!tags.length) {
+    throw new AppError("Esta conta do Mercado Livre não tem etiquetas — crie uma no Administrador de etiquetas do ML.", { status: 409 });
   }
 
-  // Só etiqueta que a conta tem: uma TAG que não é dela gera link sem comissão.
-  const { tags } = await listarEtiquetas(userId);
-  if (!tags.some(t => t.tag === nova)) {
-    throw new AppError(`A etiqueta "${nova}" não existe nesta conta do Mercado Livre.`, { status: 400 });
-  }
-
-  const resposta = await chamaML("setTagInUse", cookie, { method: "PUT", body: { tag: nova } });
-  affiliate.writeMLConfig(userId, { tag: nova });
-
-  // O setTagInUse devolve a lista já trocada; se vier em outro formato, a lista
-  // de antes com a marca movida serve.
-  const depois = normalizaListaEtiquetas(resposta);
-  return {
-    tags: depois.length ? depois : tags.map(t => ({ ...t, inUse: t.tag === nova })),
-    current: nova,
-  };
+  affiliate.writeMLConfig(userId, {
+    ...(novo ? { cookie: novo } : {}),
+    tag: escolhePadrao(tags),
+    tags,
+    tagsFetchedAt: new Date().toISOString(),
+  });
+  return { tags, current: escolhePadrao(tags) };
 }
 
 module.exports = {
-  listarEtiquetas,
-  trocarEtiqueta,
-  // pura, exportada pros testes
+  sincronizarEtiquetas,
+  // puras, exportadas pros testes
   normalizaListaEtiquetas,
+  escolhePadrao,
 };

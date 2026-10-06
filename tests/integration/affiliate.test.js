@@ -1,8 +1,19 @@
 // Afiliado ML + Amazon: write/read/clear, status. Per-user — cada teste cria
 // um usuário próprio e a config fica isolada ao token dele.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { app, request, createTestUser, affiliate } from "../helpers/app.js";
+
+// Salvar o cookie do ML já o testa no ML (busca as etiquetas da conta): aqui o
+// ML de mentira lista duas, a primeira em uso.
+beforeEach(() => {
+  vi.stubGlobal("fetch", vi.fn(async (url) => (
+    String(url).endsWith("/getTags")
+      ? new Response(JSON.stringify([{ tag: "tag-em-uso", in_use: true }, { tag: "outra", in_use: false }]), { status: 200 })
+      : new Response("", { status: 404 })
+  )));
+});
+afterEach(() => vi.unstubAllGlobals());
 
 describe("GET /api/affiliate — status", () => {
   it("devolve configured=false quando nada esta setado", async () => {
@@ -18,7 +29,7 @@ describe("GET /api/affiliate — status", () => {
     const a = await createTestUser();
     const b = await createTestUser();
     // User A configura ML
-    await a.auth("put", "/api/affiliate").send({ tag: "tag-a", cookie: "cookie-a-sessid" });
+    await a.auth("put", "/api/affiliate").send({ cookie: "cookie-a-sessid" });
     // User B continua sem config
     const resB = await b.auth("get", "/api/affiliate");
     expect(resB.status).toBe(200);
@@ -27,24 +38,25 @@ describe("GET /api/affiliate — status", () => {
     // E A continua com a config dele
     const resA = await a.auth("get", "/api/affiliate");
     expect(resA.body.ml.configured).toBe(true);
-    expect(resA.body.ml.tag).toBe("tag-a");
+    expect(resA.body.ml.tag).toBe("tag-em-uso");
   });
 });
 
 describe("PUT /api/affiliate — config ML", () => {
-  it("salva tag + cookie e ativa configured", async () => {
+  it("salva o cookie, pega as etiquetas da conta e ativa configured", async () => {
     const { auth } = await createTestUser();
-    const res = await auth("put", "/api/affiliate").send({ tag: "minha-tag", cookie: "abc123sessionid" });
+    const res = await auth("put", "/api/affiliate").send({ cookie: "abc123sessionid" });
     expect(res.status).toBe(200);
     expect(res.body.configured).toBe(true);
-    expect(res.body.tag).toBe("minha-tag");
+    expect(res.body.tag).toBe("tag-em-uso");
+    expect(res.body.ml.tags.map(t => t.tag)).toEqual(["tag-em-uso", "outra"]);
     expect(res.body.cookiePreview).toContain("abc");
     expect(res.body.cookieLength).toBeGreaterThan(0);
   });
 
   it("DELETE limpa a config", async () => {
     const { auth } = await createTestUser();
-    await auth("put", "/api/affiliate").send({ tag: "x", cookie: "y-cookie-sessid" });
+    await auth("put", "/api/affiliate").send({ cookie: "y-cookie-sessid" });
     const res = await auth("delete", "/api/affiliate");
     expect(res.status).toBe(200);
     expect(res.body.configured).toBe(false);

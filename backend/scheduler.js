@@ -355,6 +355,11 @@ function isRepasse(group) {
   return group?.scraping?.kind === "repasse";
 }
 
+// Com qual etiqueta do ML esta campanha gera link agora (a dela ou a padrão).
+function etiquetaMLAtual(userId, group) {
+  return affiliate.etiquetaMLEfetiva(affiliate.readMLConfig(userId), affiliate.etiquetaMLDaCampanha(group));
+}
+
 // Tenta gerar link de afiliado pra um item conforme a loja.
 // Decisão de "passa ou pula" no refill:
 //   - Loja não-monetizável (sem afiliado pra ela): mantém link original (passa)
@@ -371,8 +376,10 @@ async function convertItemAffiliate(userId, item, affStatus, group) {
   }
   if (item.store === "Mercado Livre") {
     if (!affStatus.ml.configured) return { ok: true, link: null };
-    const aff = await affiliate.gerarLinkAfiliadoML(userId, item.link);
-    if (aff) return { ok: true, link: aff };
+    const aff = await affiliate.gerarLinkAfiliadoML(userId, item.link, { tag: affiliate.etiquetaMLDaCampanha(group) });
+    // A etiqueta vai junto pro item: se a campanha trocar de etiqueta com ele
+    // ainda na fila, o sendItem sabe que o link precisa ser refeito.
+    if (aff) return { ok: true, link: aff, tag: etiquetaMLAtual(userId, group) };
     return { ok: false, reason: "ML conversion failed" };
   }
   if (item.store === "Amazon") {
@@ -542,7 +549,7 @@ async function refillQueue(userId, group) {
     }
     if (r.link) {
       // Link de afiliado gerado — substitui o link e marca pra sendItem não re-converter.
-      newItems.push({ ...item, link: r.link, originalLink: item.link, affiliateLink: r.link });
+      newItems.push({ ...item, link: r.link, originalLink: item.link, affiliateLink: r.link, ...(r.tag ? { affiliateTag: r.tag } : {}) });
     } else {
       // Loja sem afiliado configurado — mantém link original.
       newItems.push(item);
@@ -632,9 +639,9 @@ async function couponRuleForItem(item) {
 // Conversão de link de afiliado por loja. Tabela em vez de três `else if`
 // idênticos: o descarte precisava do mesmo tratamento nos três, e repetir a
 // gravação do log três vezes é como ela sairia de sincronia.
-// `g` é a campanha que manda: só a Shopee usa (sub_id do grupo no link).
+// `g` é a campanha que manda: o ML usa a etiqueta dela, a Shopee o sub_id do grupo.
 const AFFILIATE_CONVERTERS = {
-  "Mercado Livre": { statusKey: "ml", label: "ML", convert: (u, l) => affiliate.gerarLinkAfiliadoML(u, l) },
+  "Mercado Livre": { statusKey: "ml", label: "ML", convert: (u, l, g) => affiliate.gerarLinkAfiliadoML(u, l, { tag: affiliate.etiquetaMLDaCampanha(g) }) },
   "Amazon": { statusKey: "amazon", label: "Amazon", convert: (u, l) => affiliate.gerarLinkAfiliadoAmazon(u, l) },
   "Shopee": { statusKey: "shopee", label: "Shopee", convert: (u, l, g) => affiliate.gerarLinkAfiliadoShopee(u, l, { subId: affiliate.subIdDoGrupo(g?.id) }) },
 };
@@ -665,6 +672,13 @@ function logSendDiscard(userId, group, item, reason) {
     stage: STAGE.SEND,
     reason,
   })).catch(() => {});
+}
+
+// Item do ML convertido com uma etiqueta que não é mais a da campanha. Item sem
+// `affiliateTag` (de antes da etiqueta por campanha) fica com o link que tem.
+function etiquetaMLMudou(userId, group, item) {
+  if (item.store !== "Mercado Livre" || !item.affiliateTag) return false;
+  return item.affiliateTag !== etiquetaMLAtual(userId, group);
 }
 
 // Faz o envio de UM item para todos os grupos vinculados
@@ -705,17 +719,23 @@ async function sendItem(userId, group, whatsappGroups, item) {
     }
     originalText = originalMessage.rewriteText(item.originalText, pairs);
     previewUrl = pairs[0]?.link || null;
-  } else if (item.affiliateLink) {
+  } else if (item.affiliateLink && !etiquetaMLMudou(userId, group, item)) {
     // Já convertido no refill — usa direto pra evitar nova chamada de API.
     itemForSend = { ...item, link: item.affiliateLink };
   } else if (item.link && AFFILIATE_CONVERTERS[item.store]) {
-    // Fallback pra itens legados ou inseridos manualmente (sem affiliateLink).
+    // Fallback pra itens legados ou inseridos manualmente (sem affiliateLink), e
+    // pros do ML cuja campanha trocou de etiqueta depois do refill — esses
+    // refazem o link a partir do original.
     // Mesma política de convertItemAffiliate: se o afiliado está configurado e a
     // conversão falha, NÃO manda link sem comissão — descarta (lança erro).
     const { statusKey, convert, label } = AFFILIATE_CONVERTERS[item.store];
-    const aff = await convert(userId, item.link, group);
+    const aff = await convert(userId, item.affiliateLink ? (item.originalLink || item.link) : item.link, group);
     if (aff) {
       itemForSend = { ...item, link: aff };
+    } else if (item.affiliateLink) {
+      // Refazer com a etiqueta nova falhou, mas o link de antes já tem comissão
+      // (outra etiqueta da mesma conta) — melhor ele que descartar.
+      itemForSend = { ...item, link: item.affiliateLink };
     } else if (affiliate.status(userId)[statusKey].configured) {
       const err = new Error(`Afiliado ${label} falhou pra "${item.name?.slice(0, 40)}" — item descartado (sem link com comissão).`);
       err.code = "affiliate_conversion_failed";
@@ -1354,6 +1374,8 @@ module.exports = {
   // qualquer envio — exportado pra tests/unit/scheduler-send-discard.test.js
   // poder cobrir esse caminho sem subir WhatsApp.
   sendItem,
+  // Etiqueta do ML da campanha no refill (tests/unit/scheduler-ml-tag.test.js).
+  convertItemAffiliate,
   // Funções puras exportadas só pra teste unitário (tests/unit/scheduler-core.test.js).
   inWindow, activeWindow, windowGate, queueEmptyAlert, cooldownMinutes, renderTemplate,
   affiliateGate,

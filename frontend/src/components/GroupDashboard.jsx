@@ -1082,6 +1082,12 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     if (v && typeof v === "object") return !!v.configured;
     return !!v;
   };
+  // Etiqueta do ML da campanha (aba Gerenciar): só pra campanha que manda ML e
+  // com o afiliado do ML configurado. Sem lojas marcadas, a busca usa todas.
+  const mlTags = Array.isArray(affiliateStatus?.mlTags) ? affiliateStatus.mlTags : [];
+  const mlTagVisible = isAffOk("ml")
+    && (!(scraping.sources || []).length || scraping.sources.includes("Mercado Livre"));
+  const mlTagSumiu = !!scraping.mlTag && mlTags.length > 0 && !mlTags.some(t => t.tag === scraping.mlTag);
   // Mapeia o nome exibido da loja → key do afiliado (só lojas com gating).
   const SOURCE_TO_AFF_KEY = { "Mercado Livre": "ml", "Shopee": "shopee" };
 
@@ -1507,6 +1513,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     || (isRepasseGroup && stableJSON(scraping?.auto) !== stableJSON(group.scraping?.auto))
     || (isRepasseGroup && stableJSON(scraping?.repasse?.messageMode) !== stableJSON(group.scraping?.repasse?.messageMode))
     || stableJSON(scraping?.notifications) !== stableJSON(group.scraping?.notifications)
+    || stableJSON(scraping?.mlTag) !== stableJSON(group.scraping?.mlTag)
     || cooldownDirty;
   const scrapingDirty = stableJSON(scraping) !== stableJSON(group.scraping);
   // A aba de busca edita o scraping E as categorias (que vivem no grupo), então
@@ -1730,7 +1737,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <span style={{ fontSize: 16 }}>⚠️</span>
             <span style={{ fontSize: 13, color: "var(--warn-text)", flex: 1, minWidth: 200 }}>
-              Esta campanha está <strong>pausada</strong> — o afiliado do <strong>Mercado Livre</strong> não está configurado. Sem TAG e cookie, os links sairiam sem comissão.
+              Esta campanha está <strong>pausada</strong> — o afiliado do <strong>Mercado Livre</strong> não está configurado. Sem o cookie de afiliado, os links sairiam sem comissão.
             </span>
             {(onGoToAffiliate || onGoToSettings) && (
               <button onClick={() => (onGoToAffiliate ? onGoToAffiliate("ml") : onGoToSettings())} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--warn-text)", color: "var(--color-background-primary)", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
@@ -1901,6 +1908,44 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 </div>
                 {scraping.sources.length === 0 && (
                   <div style={{ marginTop: 10, fontSize: 11, color: "var(--danger-text)" }}>Selecione ao menos uma fonte para o repasse funcionar.</div>
+                )}
+              </div>
+            )}
+
+            {/* Task 5: a etiqueta do ML com que os links desta campanha saem. As
+                opções são as etiquetas da conta (buscadas na aba Mercado Livre);
+                vazio = a padrão da conta, a "em uso" no ML. */}
+            {mlTagVisible && (
+              <div data-tour="mg-ml-tag" style={manageSubStyle}>
+                <label htmlFor="mg-ml-tag" style={manageSubTitleStyle}>Etiqueta do Mercado Livre</label>
+                <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 10 }}>
+                  Com qual etiqueta da sua conta de afiliado os links do Mercado Livre desta campanha saem.
+                </div>
+                {mlTags.length === 0 ? (
+                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                    As etiquetas da conta ainda não foram carregadas — clique em <strong>Testar conexão</strong> na aba Mercado Livre.
+                    {onGoToAffiliate && (
+                      <>{" "}<button className="hit" onClick={() => requestNavigation(() => onGoToAffiliate("ml"))} style={{ background: "transparent", border: "none", padding: 0, color: PRIMARY, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Abrir Mercado Livre</button></>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <select
+                      id="mg-ml-tag"
+                      value={scraping.mlTag || ""}
+                      onChange={e => setScraping(s => ({ ...s, mlTag: e.target.value || undefined }))}
+                      style={{ width: "100%", maxWidth: 360, padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, fontFamily: "monospace", boxSizing: "border-box" }}
+                    >
+                      <option value="">Padrão da conta{affiliateStatus?.mlDefaultTag ? ` (${affiliateStatus.mlDefaultTag})` : ""}</option>
+                      {mlTags.map(t => <option key={t.tag} value={t.tag}>{t.tag}</option>)}
+                      {mlTagSumiu && <option value={scraping.mlTag}>{scraping.mlTag} (não existe mais)</option>}
+                    </select>
+                    {mlTagSumiu && (
+                      <div style={{ marginTop: 8, fontSize: 12, color: "var(--warn-text)" }}>
+                        A etiqueta <strong>{scraping.mlTag}</strong> não está mais na sua conta do Mercado Livre — os links saem com a padrão até você escolher outra.
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}

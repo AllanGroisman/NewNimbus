@@ -19,3 +19,4 @@ Rodar o Claude na VPS e desligar o computador (via tmux):
 
 4. [] Quantas pessoas entraram/sairam do grupo. Estatisticas dos grupos. Automaticamente os utilizados entram la.
 
+5. [] Quero que na aba do ML seja necessario apenas colocar o cookie. A tag de afiliado manual tu tira fora completamente. Com o cookie pronto quero que ao testa-lo, vá em busca das etiquetas da conta. As etiquetas vão aparecer individualmente nas campanhas onde é possivel escolher a etiqueta a ser utilizada em cada uma delas.

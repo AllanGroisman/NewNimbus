@@ -1,7 +1,7 @@
 // Rotas de trava de loja: admin tranca/destranca + edita a mensagem; usuário
 // comum só lê o estado e fica bloqueado de configurar afiliado da loja trancada.
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
@@ -94,6 +94,12 @@ describe("PUT /api/admin/stores/:store/lock", () => {
 });
 
 describe("Afiliado de loja trancada", () => {
+  // Salvar o cookie do ML já o testa no ML (busca as etiquetas da conta).
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify([{ tag: "minha-tag", in_use: true }]), { status: 200 })));
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
   it("user comum não consegue salvar credenciais da loja trancada", async () => {
     const admin = await makeAdmin();
     await admin.auth("put", "/api/admin/stores/shopee/lock").send({ locked: true, message: "Voltamos já" });
@@ -110,14 +116,14 @@ describe("Afiliado de loja trancada", () => {
     await admin.auth("put", "/api/admin/stores/shopee/lock").send({ locked: true });
 
     const { auth } = await createTestUser();
-    const res = await auth("put", "/api/affiliate").send({ tag: "minha-tag", cookie: "abc123sessionid" });
+    const res = await auth("put", "/api/affiliate").send({ cookie: "abc123sessionid" });
     expect(res.status).toBe(200);
   });
 
   it("admin segue configurando a loja trancada (pra validar antes de liberar)", async () => {
     const admin = await makeAdmin();
     await admin.auth("put", "/api/admin/stores/ml/lock").send({ locked: true });
-    const res = await admin.auth("put", "/api/affiliate").send({ tag: "tag-admin", cookie: "abc123sessionid" });
+    const res = await admin.auth("put", "/api/affiliate").send({ cookie: "abc123sessionid" });
     expect(res.status).toBe(200);
   });
 });

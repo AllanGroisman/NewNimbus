@@ -1,5 +1,5 @@
 {
-  "_comentario": "Formato real do GET /affiliate-program/api/v2/affiliates/getTags (01/10/2026). A conta tinha uma etiqueta só; a segunda foi acrescentada pra testar a troca.",
+  "_comentario": "Formato real do GET /affiliate-program/api/v2/affiliates/getTags (01/10/2026). A conta tinha uma etiqueta só; a segunda foi acrescentada pra testar a escolha por campanha.",
   "getTags": [
     { "tag": "allangroisman", "in_use": true, "generated_date": "2026-07-21 17:27:07.151627" },
     { "tag": "grupo-ofertas", "in_use": false, "generated_date": "2026-09-30 10:00:00.000000" }

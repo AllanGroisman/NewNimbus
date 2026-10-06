@@ -33,7 +33,9 @@ beforeEach(async () => {
     create: { id: TEST_USER_ID, email: `${TEST_USER_ID}@test.local`, name: "Unit", passwordHash: "x" },
     update: {},
   });
-  // writeConfig limpa o cache do usuário — garante teste independente do anterior.
+  // clear + writeConfig limpam o cache e a lista de etiquetas do usuário —
+  // garante teste independente do anterior.
+  affiliate.clearConfig(TEST_USER_ID);
   affiliate.writeConfig(TEST_USER_ID, { tag: "minha-tag", cookie: "ssid=cookie-de-teste" });
   fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
@@ -171,5 +173,65 @@ describe("gerarLinkAfiliadoML", () => {
     expect(await affiliate.gerarLinkAfiliadoML(TEST_USER_ID, LINK)).toBeNull();
     expect(await affiliate.gerarLinkAfiliadoML(TEST_USER_ID, LINK)).toBe("https://s.mercadolivre.com.br/depois");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+// Task 5: cada campanha escolhe uma etiqueta da conta (`scraping.mlTag`); sem
+// escolha, vale a padrão (`tag`, a em uso no ML).
+describe("etiqueta por campanha", () => {
+  const TAGS = [{ tag: "minha-tag", inUse: true, createdAt: null }, { tag: "grupo-b", inUse: false, createdAt: null }];
+  const bodyTag = (i) => JSON.parse(fetchMock.mock.calls[i][1].body).tag;
+
+  beforeEach(() => {
+    affiliate.writeConfig(TEST_USER_ID, { tags: TAGS });
+  });
+
+  it("a etiqueta pedida vai no corpo do createLink", async () => {
+    fetchMock.mockResolvedValue(okResponse("https://meli.la/b"));
+    expect(await affiliate.gerarLinkAfiliadoML(TEST_USER_ID, LINK, { tag: "grupo-b" })).toBe("https://meli.la/b");
+    expect(bodyTag(0)).toBe("grupo-b");
+  });
+
+  it("sem etiqueta pedida, vai a padrão", async () => {
+    fetchMock.mockResolvedValue(okResponse("https://meli.la/p"));
+    await affiliate.gerarLinkAfiliadoML(TEST_USER_ID, LINK, { tag: null });
+    expect(bodyTag(0)).toBe("minha-tag");
+  });
+
+  it("etiqueta que não é mais da conta cai na padrão (link sem comissão, não)", async () => {
+    fetchMock.mockResolvedValue(okResponse("https://meli.la/p"));
+    await affiliate.gerarLinkAfiliadoML(TEST_USER_ID, LINK, { tag: "apagada-no-ml" });
+    expect(bodyTag(0)).toBe("minha-tag");
+  });
+
+  it("config antiga, sem a lista: a pedida passa (não há com o que conferir)", async () => {
+    affiliate.writeConfig(TEST_USER_ID, { tags: [] });
+    fetchMock.mockResolvedValue(okResponse("https://meli.la/x"));
+    await affiliate.gerarLinkAfiliadoML(TEST_USER_ID, LINK, { tag: "qualquer" });
+    expect(bodyTag(0)).toBe("qualquer");
+  });
+
+  it("o cache é por etiqueta: o mesmo produto em duas campanhas são dois links", async () => {
+    fetchMock
+      .mockResolvedValueOnce(okResponse("https://meli.la/padrao"))
+      .mockResolvedValueOnce(okResponse("https://meli.la/b"));
+    expect(await affiliate.gerarLinkAfiliadoML(TEST_USER_ID, LINK)).toBe("https://meli.la/padrao");
+    expect(await affiliate.gerarLinkAfiliadoML(TEST_USER_ID, LINK, { tag: "grupo-b" })).toBe("https://meli.la/b");
+    // E cada um volta do seu cache.
+    expect(await affiliate.gerarLinkAfiliadoML(TEST_USER_ID, LINK, { tag: "minha-tag" })).toBe("https://meli.la/padrao");
+    expect(await affiliate.gerarLinkAfiliadoML(TEST_USER_ID, LINK, { tag: "grupo-b" })).toBe("https://meli.la/b");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("etiquetaMLDaCampanha lê scraping.mlTag; vazio é a padrão", () => {
+    expect(affiliate.etiquetaMLDaCampanha({ scraping: { mlTag: " grupo-b " } })).toBe("grupo-b");
+    expect(affiliate.etiquetaMLDaCampanha({ scraping: { mlTag: "" } })).toBeNull();
+    expect(affiliate.etiquetaMLDaCampanha({ scraping: {} })).toBeNull();
+    expect(affiliate.etiquetaMLDaCampanha(null)).toBeNull();
+  });
+
+  it("o status traz a lista e a padrão", () => {
+    const st = affiliate.status(TEST_USER_ID);
+    expect(st.ml).toMatchObject({ configured: true, tag: "minha-tag", tags: TAGS });
   });
 });

@@ -3,8 +3,8 @@
 // O que importa aqui:
 //   - a lista do getTags vira { tag, inUse, createdAt } sem quebrar com item torto;
 //   - cookie vencido (302 pro login) é "cole um cookie novo", não "erro";
-//   - trocar mexe no ML ANTES da TAG salva aqui — se o ML recusar, nada muda;
-//   - só etiqueta da conta é aceita (TAG de fora gera link sem comissão).
+//   - sincronizar grava o cookie novo, a lista e a padrão (a "em uso") — e só
+//     depois que o ML listou: cookie que não lista não é gravado.
 import "../helpers/env.js";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import path from "path";
@@ -26,18 +26,10 @@ const COOKIE = "ssid=cookie-de-teste";
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const login = () => new Response("Found", { status: 302, headers: { location: "https://www.mercadolivre.com/jms/mlb/lgz/login?go=x" } });
 
-// O ML de mentira: getTags devolve a lista; setTagInUse move a marca de "em uso".
-function mlFake({ getTags = () => json(FX.getTags), setTagInUse = null } = {}) {
-  let lista = FX.getTags.map(t => ({ ...t }));
-  return vi.fn(async (url, init = {}) => {
-    const u = new URL(url);
-    if (u.pathname.endsWith("/getTags")) return getTags();
-    if (u.pathname.endsWith("/setTagInUse")) {
-      if (setTagInUse) return setTagInUse(init);
-      const { tag } = JSON.parse(init.body);
-      lista = lista.map(t => ({ ...t, in_use: t.tag === tag }));
-      return json(lista);
-    }
+// O ML de mentira: o getTags devolve a lista.
+function mlFake({ getTags = () => json(FX.getTags) } = {}) {
+  return vi.fn(async (url) => {
+    if (new URL(url).pathname.endsWith("/getTags")) return getTags();
     return new Response("not found", { status: 404 });
   });
 }
@@ -45,7 +37,7 @@ function mlFake({ getTags = () => json(FX.getTags), setTagInUse = null } = {}) {
 let fetchMock, writeSpy;
 
 beforeEach(() => {
-  vi.spyOn(affiliate, "readMLConfig").mockReturnValue({ tag: "allangroisman", cookie: COOKIE, source: "file", updatedAt: null });
+  vi.spyOn(affiliate, "readMLConfig").mockReturnValue({ tag: "allangroisman", cookie: COOKIE, tags: [], source: "file", updatedAt: null });
   writeSpy = vi.spyOn(affiliate, "writeMLConfig").mockImplementation(() => ({}));
   fetchMock = mlFake();
   vi.stubGlobal("fetch", fetchMock);
@@ -75,90 +67,90 @@ describe("normalizaListaEtiquetas", () => {
   });
 });
 
-describe("listarEtiquetas", () => {
-  it("busca com o cookie do usuário e devolve a TAG salva como `current`", async () => {
-    const r = await etiquetas.listarEtiquetas(USER);
-    expect(r.current).toBe("allangroisman");
-    expect(r.tags.map(t => t.tag)).toEqual(["allangroisman", "grupo-ofertas"]);
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("https://www.mercadolivre.com.br/affiliate-program/api/v2/affiliates/getTags");
-    expect(init.headers.Cookie).toBe(COOKIE);
-    expect(init.redirect).toBe("manual");
+describe("escolhePadrao", () => {
+  const T = (tag, inUse = false) => ({ tag, inUse, createdAt: null });
+
+  it("é a em uso no ML", () => {
+    expect(etiquetas.escolhePadrao([T("a"), T("b", true)])).toBe("b");
   });
 
-  it("sem cookie não chama o ML", async () => {
-    affiliate.readMLConfig.mockReturnValue({ tag: null, cookie: null });
-    await expect(etiquetas.listarEtiquetas(USER)).rejects.toMatchObject({ status: 409, code: affiliate.ML_LINK_KIND.SEM_CONFIG });
+  it("sem nenhuma marcada, a primeira", () => {
+    expect(etiquetas.escolhePadrao([T("a"), T("b")])).toBe("a");
+  });
+
+  it("lista vazia não tem padrão", () => {
+    expect(etiquetas.escolhePadrao([])).toBe(null);
+  });
+});
+
+describe("sincronizarEtiquetas", () => {
+  it("com cookie novo: testa no ML com ELE e grava cookie, lista e padrão", async () => {
+    const r = await etiquetas.sincronizarEtiquetas(USER, { cookie: "  ssid=novo  " });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://www.mercadolivre.com.br/affiliate-program/api/v2/affiliates/getTags");
+    expect(init.headers.Cookie).toBe("ssid=novo");
+    expect(init.redirect).toBe("manual");
+
+    expect(writeSpy).toHaveBeenCalledWith(USER, {
+      cookie: "ssid=novo",
+      tag: "allangroisman",
+      tags: [
+        { tag: "allangroisman", inUse: true, createdAt: "2026-07-21 17:27:07.151627" },
+        { tag: "grupo-ofertas", inUse: false, createdAt: "2026-09-30 10:00:00.000000" },
+      ],
+      tagsFetchedAt: expect.any(String),
+    });
+    expect(r.current).toBe("allangroisman");
+  });
+
+  it("sem cookie novo: rebusca com o salvo e não mexe nele", async () => {
+    await etiquetas.sincronizarEtiquetas(USER);
+    expect(fetchMock.mock.calls[0][1].headers.Cookie).toBe(COOKIE);
+    expect(writeSpy.mock.calls[0][1]).not.toHaveProperty("cookie");
+  });
+
+  it("a padrão segue a em uso no ML, mesmo com outra salva antes", async () => {
+    vi.stubGlobal("fetch", mlFake({ getTags: () => json(FX.getTags.map(t => ({ ...t, in_use: t.tag === "grupo-ofertas" }))) }));
+    await etiquetas.sincronizarEtiquetas(USER);
+    expect(writeSpy.mock.calls[0][1].tag).toBe("grupo-ofertas");
+  });
+
+  it("sem cookie nenhum não chama o ML", async () => {
+    affiliate.readMLConfig.mockReturnValue({ tag: null, cookie: null, tags: [] });
+    await expect(etiquetas.sincronizarEtiquetas(USER)).rejects.toMatchObject({ status: 409, code: affiliate.ML_LINK_KIND.SEM_CONFIG });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("302 pro login é cookie vencido", async () => {
+  it("302 pro login é cookie vencido — e o cookie novo não é gravado", async () => {
     vi.stubGlobal("fetch", mlFake({ getTags: login }));
-    await expect(etiquetas.listarEtiquetas(USER)).rejects.toMatchObject({
-      status: 409, code: affiliate.ML_LINK_KIND.COOKIE, message: expect.stringMatching(/cookie.*venceu/i),
+    await expect(etiquetas.sincronizarEtiquetas(USER, { cookie: "ssid=morto" })).rejects.toMatchObject({
+      status: 409, code: affiliate.ML_LINK_KIND.COOKIE, message: expect.stringMatching(/não aceitou este cookie/i),
     });
+    expect(writeSpy).not.toHaveBeenCalled();
   });
 
-  it("outro erro do ML diz o status", async () => {
+  it("outro erro do ML diz o status e não grava", async () => {
     vi.stubGlobal("fetch", mlFake({ getTags: () => json({}, 500) }));
-    await expect(etiquetas.listarEtiquetas(USER)).rejects.toMatchObject({ status: 502, message: expect.stringMatching(/HTTP 500/) });
+    await expect(etiquetas.sincronizarEtiquetas(USER, { cookie: "ssid=x" })).rejects.toMatchObject({ status: 502, message: expect.stringMatching(/HTTP 500/) });
+    expect(writeSpy).not.toHaveBeenCalled();
   });
 
   it("formato inesperado não vira lista vazia calada", async () => {
     vi.stubGlobal("fetch", mlFake({ getTags: () => json({ algo: "outro" }) }));
-    await expect(etiquetas.listarEtiquetas(USER)).rejects.toMatchObject({ status: 502 });
-  });
-});
-
-describe("trocarEtiqueta", () => {
-  it("troca no ML e depois salva a TAG aqui", async () => {
-    const r = await etiquetas.trocarEtiqueta(USER, "grupo-ofertas");
-
-    const set = fetchMock.mock.calls.find(([url]) => url.endsWith("/setTagInUse"));
-    expect(set[1].method).toBe("PUT");
-    expect(JSON.parse(set[1].body)).toEqual({ tag: "grupo-ofertas" });
-    expect(set[1].headers.Cookie).toBe(COOKIE);
-
-    expect(writeSpy).toHaveBeenCalledWith(USER, { tag: "grupo-ofertas" });
-    expect(r.current).toBe("grupo-ofertas");
-    expect(r.tags.find(t => t.inUse).tag).toBe("grupo-ofertas");
-  });
-
-  it("se o ML recusar, a TAG daqui não muda", async () => {
-    vi.stubGlobal("fetch", mlFake({ setTagInUse: () => json({ message: "forbidden" }, 403) }));
-    await expect(etiquetas.trocarEtiqueta(USER, "grupo-ofertas")).rejects.toMatchObject({ status: 502, message: expect.stringMatching(/HTTP 403/) });
+    await expect(etiquetas.sincronizarEtiquetas(USER)).rejects.toMatchObject({ status: 502 });
     expect(writeSpy).not.toHaveBeenCalled();
   });
 
-  it("cookie vencido na troca também não salva", async () => {
-    vi.stubGlobal("fetch", mlFake({ setTagInUse: login }));
-    await expect(etiquetas.trocarEtiqueta(USER, "grupo-ofertas")).rejects.toMatchObject({ code: affiliate.ML_LINK_KIND.COOKIE });
+  it("conta sem etiqueta: pede pra criar uma, sem gravar", async () => {
+    vi.stubGlobal("fetch", mlFake({ getTags: () => json([]) }));
+    await expect(etiquetas.sincronizarEtiquetas(USER, { cookie: "ssid=x" })).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/não tem etiquetas/) });
     expect(writeSpy).not.toHaveBeenCalled();
   });
 
-  it("recusa etiqueta que não é da conta, sem chamar o setTagInUse", async () => {
-    await expect(etiquetas.trocarEtiqueta(USER, "de-outra-conta")).rejects.toMatchObject({ status: 400 });
-    expect(fetchMock.mock.calls.some(([url]) => url.endsWith("/setTagInUse"))).toBe(false);
-    expect(writeSpy).not.toHaveBeenCalled();
-  });
-
-  it("etiqueta vazia nem chega no ML", async () => {
-    await expect(etiquetas.trocarEtiqueta(USER, "  ")).rejects.toMatchObject({ status: 400 });
+  it("config vinda de variável de ambiente não é mexida", async () => {
+    affiliate.readMLConfig.mockReturnValue({ tag: "env-tag", cookie: COOKIE, tags: [], source: "env" });
+    await expect(etiquetas.sincronizarEtiquetas(USER)).rejects.toMatchObject({ status: 409 });
     expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("config vinda de variável de ambiente não é trocada", async () => {
-    affiliate.readMLConfig.mockReturnValue({ tag: "env-tag", cookie: COOKIE, source: "env" });
-    await expect(etiquetas.trocarEtiqueta(USER, "grupo-ofertas")).rejects.toMatchObject({ status: 409 });
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("resposta do setTagInUse sem lista: usa a de antes com a marca movida", async () => {
-    vi.stubGlobal("fetch", mlFake({ setTagInUse: () => json({ ok: true }) }));
-    const r = await etiquetas.trocarEtiqueta(USER, "grupo-ofertas");
-    expect(r.tags).toEqual([
-      expect.objectContaining({ tag: "allangroisman", inUse: false }),
-      expect.objectContaining({ tag: "grupo-ofertas", inUse: true }),
-    ]);
   });
 });

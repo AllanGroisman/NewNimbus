@@ -100,7 +100,7 @@ export default function PageDashboard({ groups, whatsappGroups = [], onSelectGro
         <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ fontSize: 16 }}>⚠️</span>
           <span style={{ fontSize: 13, color: "var(--warn-text)", flex: 1, minWidth: 200 }}>
-            Campanhas do Mercado Livre estão <strong>pausadas</strong> — configure a TAG e o cookie de afiliado para retomar os envios.
+            Campanhas do Mercado Livre estão <strong>pausadas</strong> — cole o cookie de afiliado na aba Mercado Livre para retomar os envios.
           </span>
           {onGoToSettings && (
             <button onClick={onGoToSettings} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--warn-text)", color: "var(--color-background-primary)", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
