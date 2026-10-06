@@ -369,6 +369,10 @@ app.post("/api/admin/downloader/jobs",
 app.put("/api/admin/downloader/templates/:id",
   auth.requireAuth, auth.requireAdmin, express.json({ limit: "8mb" }));
 
+// Save do estado — o PUT leva campanhas + fila inteira e passa de 2mb em contas
+// com fila grande. Alinhado com o client_max_body_size 10M do nginx nesta rota.
+app.put("/api/state", auth.requireAuth, express.json({ limit: "10mb" }));
+
 app.use(express.json({ limit: "2mb" }));
 
 // Métricas Prometheus (Fase 4) — instrumenta TODOS os requests.
