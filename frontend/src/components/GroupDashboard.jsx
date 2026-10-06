@@ -10,6 +10,7 @@ import { TOUR_TAB_EVENT } from "../data/onboarding";
 import { useMedia, TOUCH } from "../data/useMedia";
 import BusyOverlay from "./ui/BusyOverlay";
 import AlertBanner from "./ui/AlertBanner";
+import InfoTip from "./ui/InfoTip";
 
 // Persiste a aba aberta por campanha (sobrevive ao F5). Mapa { [groupId]: tabId }
 // num único item de localStorage. Validado contra VALID_TABS pra não restaurar
@@ -115,6 +116,36 @@ function renderWhatsappFormatted(text) {
       </div>
     );
   });
+}
+
+// Como a foto vai na mensagem — mora no modelo e é copiado pra campanha ao ativar
+// (`scraping.imageMode`, lido por backend/scheduler.js → deliverItem): "product" =
+// imagem com o texto de legenda; "link" = texto com o cartão da prévia do link.
+const imageModeOf = (x) => (x?.imageMode === "link" ? "link" : "product");
+// Sem {link} no texto não há cartão: o envio cai na foto do produto.
+const templateHasLink = (tpl) => /\{link\}/.test(tpl || "");
+
+// O que vai em cima do texto na prévia: a foto do produto (mensagem de imagem) ou
+// o cartão do link (texto com prévia do link). Só um esboço — os dados reais
+// entram no envio.
+function PreviewImage({ linkCard }) {
+  const photo = (height) => (
+    <div style={{ height, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--color-background-secondary)", color: "var(--color-text-secondary)", fontSize: 11 }}>
+      foto do produto
+    </div>
+  );
+  if (!linkCard) {
+    return <div data-testid="preview-photo" style={{ borderRadius: 6, overflow: "hidden", marginBottom: 8 }}>{photo(120)}</div>;
+  }
+  return (
+    <div data-testid="preview-link-card" style={{ borderRadius: 6, overflow: "hidden", marginBottom: 8, border: "0.5px solid var(--color-border-tertiary)", whiteSpace: "normal" }}>
+      {photo(96)}
+      <div style={{ padding: "6px 8px" }}>
+        <div style={{ fontWeight: 500, fontSize: 12 }}>{TEMPLATE_PREVIEW_DATA.produto}</div>
+        <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{new URL(TEMPLATE_PREVIEW_DATA.link).hostname}</div>
+      </div>
+    </div>
+  );
 }
 
 // Modelos pré-prontos pra o usuário começar de algum lugar. O "Padrão" é
@@ -451,6 +482,8 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     categories: getGroupCategories(group),
     whatsappGroupIds: group.whatsappGroupIds || [],
     messageTemplate: group.messageTemplate,
+    // Imagem do modelo aberto no editor (par do `messageTemplate`).
+    messageImageMode: imageModeOf(group.scraping),
   });
   const [saved, setSaved] = useState(false);
   const [previewPromo, setPreviewPromo] = useState(true); // preview: simula item com/sem promoção
@@ -487,10 +520,15 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   // Aba de modelo selecionada (presets + customs). Inicia tentando casar com o template do grupo.
   const initialActiveTplKey = (() => {
     if (group.messageTemplate) {
-      const preset = MESSAGE_PRESETS.find(p => p.template === group.messageTemplate);
+      const mode = imageModeOf(group.scraping);
+      const sameText = (t) => t.template === group.messageTemplate;
+      const exact = (t) => sameText(t) && imageModeOf(t) === mode;
+      const preset = MESSAGE_PRESETS.find(exact);
       if (preset) return `preset:${preset.id}`;
-      const custom = customTemplates.find(t => t.template === group.messageTemplate);
+      const custom = customTemplates.find(exact) || customTemplates.find(sameText);
       if (custom) return `custom:${custom.id}`;
+      const presetText = MESSAGE_PRESETS.find(sameText);
+      if (presetText) return `preset:${presetText.id}`;
     }
     return MESSAGE_PRESETS[0] ? `preset:${MESSAGE_PRESETS[0].id}` : null;
   })();
@@ -829,14 +867,15 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
   // Lista de abas de modelo (presets + customs). Cada aba é uma "página" estilo Chrome.
   const allTabs = [
-    ...MESSAGE_PRESETS.map(p => ({ key: `preset:${p.id}`, kind: "preset", id: p.id, name: p.name, template: p.template })),
-    ...customTemplates.map(t => ({ key: `custom:${t.id}`, kind: "custom", id: t.id, name: t.name, template: t.template })),
+    ...MESSAGE_PRESETS.map(p => ({ key: `preset:${p.id}`, kind: "preset", id: p.id, name: p.name, template: p.template, imageMode: imageModeOf(p) })),
+    ...customTemplates.map(t => ({ key: `custom:${t.id}`, kind: "custom", id: t.id, name: t.name, template: t.template, imageMode: imageModeOf(t) })),
   ];
   const activeTab = allTabs.find(t => t.key === activeTplKey) || null;
   const isCustomTab = activeTab?.kind === "custom";
-  // "Dirty" = editor diverge do template salvo da aba ativa, OU o nome custom foi renomeado.
+  // "Dirty" = editor diverge do template salvo da aba ativa (texto ou imagem), OU o nome custom foi renomeado.
   const isDirty = !!activeTab && (
     groupInfo.messageTemplate !== activeTab.template ||
+    groupInfo.messageImageMode !== activeTab.imageMode ||
     (isCustomTab && customNameDraft.trim().length > 0 && customNameDraft.trim() !== activeTab.name)
   );
 
@@ -849,7 +888,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const handleTabClick = (t) => {
     setActiveTplKey(t.key);
     tplHistory.reset();
-    setGroupInfo(g => ({ ...g, messageTemplate: t.template }));
+    setGroupInfo(g => ({ ...g, messageTemplate: t.template, messageImageMode: t.imageMode }));
   };
 
   // "+" cria um novo modelo custom usando o conteúdo atual do editor como semente
@@ -863,7 +902,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       name = `${base} ${n}`;
     }
     const seed = (groupInfo.messageTemplate && groupInfo.messageTemplate.trim()) ? groupInfo.messageTemplate : DEFAULT_MESSAGE_TEMPLATE;
-    const newId = onAddCustomTemplate?.(name, seed);
+    const newId = onAddCustomTemplate?.(name, seed, groupInfo.messageImageMode);
     if (newId) {
       setActiveTplKey(`custom:${newId}`);
       tplHistory.reset();
@@ -884,37 +923,44 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     return name;
   };
 
-  // "Modelo ativo" = aquele cujo texto salvo corresponde ao template em uso
-  // pela campanha. Como múltiplas abas podem ter o mesmo texto, marcamos
+  // "Modelo ativo" = aquele cujo texto e imagem salvos correspondem aos que a
+  // campanha usa. Como múltiplas abas podem ter o mesmo conteúdo, marcamos
   // todas que casarem (caso raro, mas o indicador fica consistente).
-  const isTemplateActive = (tpl) => !!group.messageTemplate && tpl === group.messageTemplate;
-  const activeTabIsActive = activeTab && isTemplateActive(activeTab.template);
+  const isTemplateActive = (t) => !!group.messageTemplate
+    && t.template === group.messageTemplate
+    && imageModeOf(t) === imageModeOf(group.scraping);
+  const activeTabIsActive = activeTab && isTemplateActive(activeTab);
 
-  // Passa a campanha a usar este texto nos envios.
-  const applyTemplateToCampaign = (template) => {
-    onUpdate(group.id, { messageTemplate: template });
+  // Passa a campanha a usar este texto e esta imagem nos envios. A imagem mora no
+  // `scraping` da campanha: parte do salvo (não leva de carona edição pendente de
+  // outra aba) e acerta também o local, senão o próximo "Salvar" de outra aba
+  // gravaria o valor antigo por cima.
+  const applyTemplateToCampaign = (template, imageMode) => {
+    const mode = imageMode === "link" ? "link" : "product";
+    onUpdate(group.id, { messageTemplate: template, scraping: { ...group.scraping, imageMode: mode } });
+    setScraping(s => ({ ...s, imageMode: mode }));
     tplHistory.reset();
-    setGroupInfo(g => ({ ...g, messageTemplate: template }));
+    setGroupInfo(g => ({ ...g, messageTemplate: template, messageImageMode: mode }));
   };
 
   // Ativa o modelo da aba atual na campanha.
   const activateActiveTab = () => {
     if (!activeTab || activeTabIsActive) return;
-    applyTemplateToCampaign(activeTab.template);
+    applyTemplateToCampaign(activeTab.template, activeTab.imageMode);
   };
 
   // Depois de salvar um modelo: o que JÁ era o usado pela campanha continua
   // sendo, agora com o texto novo — como o casamento "em uso" é por texto
   // exato, sem isso a campanha seguiria mandando a versão antiga e o modelo
   // apareceria como fora de uso. Os outros abrem o popup perguntando se ativa.
-  const afterTemplateSaved = ({ name, template, wasActive }) => {
+  const afterTemplateSaved = ({ name, template, imageMode, wasActive }) => {
     if (wasActive) {
-      applyTemplateToCampaign(template);
+      applyTemplateToCampaign(template, imageMode);
       return;
     }
-    // Texto salvo idêntico ao que a campanha já usa: não há o que ativar.
-    if (isTemplateActive(template)) return;
-    setActivateTplPrompt({ name, template });
+    // Conteúdo salvo idêntico ao que a campanha já usa: não há o que ativar.
+    if (isTemplateActive({ template, imageMode })) return;
+    setActivateTplPrompt({ name, template, imageMode });
   };
 
   // Grava o conteúdo do editor por cima do modelo customizado aberto.
@@ -925,11 +971,12 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     const wasActive = activeTabIsActive;
     const name = customNameDraft.trim() || activeTab.name;
     const template = groupInfo.messageTemplate;
-    onUpdateCustomTemplate?.(activeTab.id, { name, template });
+    const imageMode = groupInfo.messageImageMode;
+    onUpdateCustomTemplate?.(activeTab.id, { name, template, imageMode });
     if (askActivate) {
-      afterTemplateSaved({ name, template, wasActive });
+      afterTemplateSaved({ name, template, imageMode, wasActive });
     } else if (wasActive) {
-      applyTemplateToCampaign(template);
+      applyTemplateToCampaign(template, imageMode);
     }
   };
 
@@ -965,14 +1012,15 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       ? suggestUniqueTemplateName(cleanName)
       : cleanName;
     const template = groupInfo.messageTemplate;
-    const newId = onAddCustomTemplate?.(finalName, template);
+    const imageMode = groupInfo.messageImageMode;
+    const newId = onAddCustomTemplate?.(finalName, template, imageMode);
     if (newId) {
       setActiveTplKey(`custom:${newId}`);
       setCustomNameDraft(finalName);
     }
     closeSaveTplDialog();
     // Modelo recém-criado nunca é o que a campanha usa — sempre pergunta.
-    afterTemplateSaved({ name: finalName, template, wasActive: false });
+    afterTemplateSaved({ name: finalName, template, imageMode, wasActive: false });
   };
 
   // Quando deleta a aba custom ativa, pula pra primeira aba disponível.
@@ -983,7 +1031,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       if (fallback) {
         setActiveTplKey(`preset:${fallback.id}`);
         tplHistory.reset();
-        setGroupInfo(g => ({ ...g, messageTemplate: fallback.template }));
+        setGroupInfo(g => ({ ...g, messageTemplate: fallback.template, messageImageMode: imageModeOf(fallback) }));
       }
     }
   };
@@ -1472,7 +1520,8 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   // lista é navegação, não edição. E o `isDirty` sozinho também não serve —
   // campanha cujo texto não casa com nenhum modelo abre já divergindo do preset,
   // sem ninguém ter digitado nada.
-  const messageDirty = isDirty && groupInfo.messageTemplate !== group.messageTemplate;
+  const messageDirty = isDirty && (groupInfo.messageTemplate !== group.messageTemplate
+    || groupInfo.messageImageMode !== imageModeOf(group.scraping));
 
   // Alterações não salvas agregadas (todas as abas editáveis). Usado pelo guard
   // de navegação pra avisar ao trocar de aba ou sair da campanha.
@@ -1492,6 +1541,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       // Descartar no editor de modelos = voltar ao texto salvo do modelo aberto
       // (não ao da campanha, que pode ser outro modelo).
       messageTemplate: activeTab ? activeTab.template : group.messageTemplate,
+      messageImageMode: activeTab ? activeTab.imageMode : imageModeOf(group.scraping),
     });
     setCustomNameDraft(activeTab?.kind === "custom" ? activeTab.name : "");
   };
@@ -2025,7 +2075,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           {isRepasse && group.scraping?.repasse?.messageMode === "original" && (
             <AlertBanner
               tone="info"
-              message="Esta campanha repassa a mensagem original do grupo de origem (troca só os links) — o modelo abaixo não é usado. Para voltar a usar o modelo, desligue “Repassar a mensagem original” na aba Gerenciar."
+              message="Esta campanha repassa a mensagem original do grupo de origem (troca só os links) — do modelo em uso vale só a escolha de imagem, o texto não é usado. Para voltar a usar o modelo, desligue “Repassar a mensagem original” na aba Gerenciar."
             />
           )}
           <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
@@ -2049,7 +2099,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                   style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", color: "var(--color-text-primary)", fontSize: 13 }}
                 >
                   {allTabs.map(t => {
-                    const isModelActive = isTemplateActive(t.template);
+                    const isModelActive = isTemplateActive(t);
                     const dirtyMark = t.key === activeTplKey && isDirty ? "• " : "";
                     const suffix = isModelActive
                       ? " — em uso"
@@ -2170,6 +2220,32 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               </button>
             </div>
 
+            {/* Imagem do modelo: foto do produto x prévia do link */}
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
+              <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Imagem:</span>
+              <InfoTip label="Diferença entre foto do produto e prévia do link">
+                <strong>Foto do produto:</strong> a foto vai como imagem, com o texto de legenda.<br />
+                <strong>Prévia do link:</strong> vai só o texto, com o cartão do link em cima, como ao colar o link no WhatsApp.
+              </InfoTip>
+              <div role="radiogroup" aria-label="Imagem da mensagem" style={{ display: "flex", gap: 6, marginLeft: 4 }}>
+                {[["product", "Foto do produto"], ["link", "Prévia do link"]].map(([mode, label]) => {
+                  const on = groupInfo.messageImageMode === mode;
+                  return (
+                    <button
+                      key={mode}
+                      role="radio"
+                      aria-checked={on}
+                      onClick={() => setGroupInfo(g => ({ ...g, messageImageMode: mode }))}
+                      style={{ padding: "4px 10px", borderRadius: 6, border: `0.5px solid ${on ? PRIMARY : "var(--color-border-secondary)"}`, background: on ? PRIMARY_LIGHT : "var(--color-background-secondary)", color: on ? PRIMARY_DARK : "var(--color-text-primary)", fontSize: 12, cursor: "pointer", fontWeight: on ? 500 : 400 }}
+                    >{label}</button>
+                  );
+                })}
+              </div>
+              {groupInfo.messageImageMode === "link" && !templateHasLink(groupInfo.messageTemplate) && (
+                <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Sem {"{link}"} no texto, vai a foto do produto.</span>
+              )}
+            </div>
+
             {/* Toolbar: formatação + variáveis */}
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6, alignItems: "center" }}>
               <span style={{ fontSize: 11, color: "var(--color-text-secondary)", marginRight: 4 }}>Formatar:</span>
@@ -2221,7 +2297,10 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 </div>
                 <div className="wa-preview" style={{ width: "100%", minHeight: 260, padding: 12, borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.5, fontFamily: "inherit", boxSizing: "border-box" }}>
                   {groupInfo.messageTemplate
-                    ? renderWhatsappFormatted(renderTemplate(groupInfo.messageTemplate, { cupom: isRepasse ? undefined : "", promo: previewPromo }))
+                    ? <>
+                        <PreviewImage linkCard={groupInfo.messageImageMode === "link" && templateHasLink(groupInfo.messageTemplate)} />
+                        {renderWhatsappFormatted(renderTemplate(groupInfo.messageTemplate, { cupom: isRepasse ? undefined : "", promo: previewPromo }))}
+                      </>
                     : <span style={{ opacity: 0.6, fontStyle: "italic" }}>Modelo vazio. Comece a digitar à esquerda.</span>}
                 </div>
                 <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 6 }}>
@@ -2270,7 +2349,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
                 <button onClick={() => setActivateTplPrompt(null)} style={{ padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer" }}>Agora não</button>
                 <button
-                  onClick={() => { applyTemplateToCampaign(activateTplPrompt.template); setActivateTplPrompt(null); }}
+                  onClick={() => { applyTemplateToCampaign(activateTplPrompt.template, activateTplPrompt.imageMode); setActivateTplPrompt(null); }}
                   style={{ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500 }}
                 >
                   Ativar

@@ -67,8 +67,11 @@ async function deleteSession(userId, numberId) {
   return queue.callControl("deleteSession", [String(userId), String(numberId)], { timeoutMs: 15000 });
 }
 
+// Com prévia do link o worker baixa e sobe a foto antes de enviar — o mesmo
+// trabalho do sendImage, então o mesmo prazo dele.
 async function sendText(userId, numberId, jid, text, opts) {
-  return queue.callControl("sendText", [String(userId), String(numberId), jid, text, opts], { timeoutMs: 30000 });
+  const timeoutMs = opts?.linkPreview ? 60000 : 30000;
+  return queue.callControl("sendText", [String(userId), String(numberId), jid, text, opts], { timeoutMs });
 }
 
 async function sendImage(userId, numberId, jid, imageUrl, caption, opts) {

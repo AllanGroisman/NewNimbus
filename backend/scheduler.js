@@ -684,6 +684,8 @@ async function sendItem(userId, group, whatsappGroups, item) {
   // falhar, a mensagem cai (mesma política do item comum: sem comissão, não sai).
   // Os extras que falharem saem crus, como vieram do líder.
   let originalText = null;
+  // Link do cartão no modo "Prévia do link": o principal, já afiliado.
+  let previewUrl = null;
   if (item.originalText && Array.isArray(item.originalLinks) && item.originalLinks.length) {
     const pairs = [];
     for (const [i, l] of item.originalLinks.entries()) {
@@ -702,6 +704,7 @@ async function sendItem(userId, group, whatsappGroups, item) {
       pairs.push({ raw: l.raw, link: aff });
     }
     originalText = originalMessage.rewriteText(item.originalText, pairs);
+    previewUrl = pairs[0]?.link || null;
   } else if (item.affiliateLink) {
     // Já convertido no refill — usa direto pra evitar nova chamada de API.
     itemForSend = { ...item, link: item.affiliateLink };
@@ -738,7 +741,7 @@ async function sendItem(userId, group, whatsappGroups, item) {
 
   if (originalText != null) {
     // O texto já está pronto: sem modelo, sem cálculo de cupom (o líder já escreveu o dele).
-    return deliverItem(userId, group, linked, item, itemForSend, originalText);
+    return deliverItem(userId, group, linked, item, itemForSend, originalText, { previewUrl });
   }
 
   // Cupom: o do próprio item (que vem da legenda do grupo líder no repasse, ou
@@ -767,13 +770,26 @@ async function sendItem(userId, group, whatsappGroups, item) {
   // {todos} no modelo = marcar o grupo inteiro. O repasse no modo original não
   // passa por aqui (não tem modelo), então nunca marca ninguém.
   const mentionAll = /\{todos\}/.test(group.messageTemplate || "");
-  return deliverItem(userId, group, linked, item, itemForSend, text, { mentionAll });
+  return deliverItem(userId, group, linked, item, itemForSend, text, { mentionAll, previewUrl: itemForSend.link || null });
+}
+
+// Como a foto vai na mensagem (`scraping.imageMode`): a escolha mora no modelo de
+// mensagem e vem pra campanha quando ele é ativado, junto com o texto.
+// "product" (padrão) = mensagem de imagem com o texto de legenda; "link" = texto
+// com o cartão da prévia do link em cima, como quando se cola o link no WhatsApp.
+function imageModeOf(group) {
+  return group?.scraping?.imageMode === "link" ? "link" : "product";
 }
 
 // Manda o texto pronto pra cada grupo vinculado e monta queue/history/métricas.
-async function deliverItem(userId, group, linked, item, itemForSend, text, { mentionAll = false } = {}) {
+async function deliverItem(userId, group, linked, item, itemForSend, text, { mentionAll = false, previewUrl = null } = {}) {
   // Só vai o argumento extra quando precisa: sem @todos a chamada fica idêntica.
   const extra = mentionAll ? [{ mentionAll: true }] : [];
+  // Prévia do link só quando o link está no texto (modelo sem {link} não tem o
+  // que prever) — aí cai na foto do produto, como no modo padrão.
+  const linkPreview = imageModeOf(group) === "link" && previewUrl && text.includes(previewUrl)
+    ? { url: previewUrl, title: itemForSend.name || "", img: itemForSend.img || null }
+    : null;
   const byNumber = new Map();
   for (const w of linked) {
     const jid = w.jid || w.id;
@@ -790,7 +806,9 @@ async function deliverItem(userId, group, linked, item, itemForSend, text, { men
   for (const [numberId, ws] of byNumber.entries()) {
     for (const w of ws) {
       try {
-        if (itemForSend.img) {
+        if (linkPreview) {
+          await wa.sendText(userId, numberId, w.jid, text, { ...(mentionAll && { mentionAll: true }), linkPreview });
+        } else if (itemForSend.img) {
           await wa.sendImage(userId, numberId, w.jid, itemForSend.img, text, ...extra);
         } else {
           await wa.sendText(userId, numberId, w.jid, text, ...extra);

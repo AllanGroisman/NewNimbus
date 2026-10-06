@@ -66,16 +66,17 @@ const mock = {
   __reset: reset,
   __sessions: fakeSessions,
 
-  async sendText(userId, numberId, jid, text) {
+  // `opts` = 6º/5º argumento do real ({ mentionAll, linkPreview }); undefined quando não vem.
+  async sendText(userId, numberId, jid, text, opts) {
     if (sendError) throw new Error(sendError);
-    calls.sendText.push({ userId, numberId, jid, text });
+    calls.sendText.push({ userId, numberId, jid, text, opts });
     // Como o real (worker.js reduz o WebMessageInfo a { ok, key }): a rota de teste
     // precisa do key.id pra perguntar depois se houve pedido de reenvio.
     return { ok: true, key: { id: `MSG${++msgIdSeq}` } };
   },
   async msgStats() { return msgStatsResult; },
-  async sendImage(userId, numberId, jid, imageUrl, caption) {
-    calls.sendImage.push({ userId, numberId, jid, imageUrl, caption });
+  async sendImage(userId, numberId, jid, imageUrl, caption, opts) {
+    calls.sendImage.push({ userId, numberId, jid, imageUrl, caption, opts });
     return { ok: true };
   },
   async startSession(userId, numberId) {

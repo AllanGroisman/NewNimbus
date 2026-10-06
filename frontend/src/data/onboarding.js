@@ -90,7 +90,7 @@ export const TOURS = {
       { tab: "whatsapp", anchor: "wg-add", title: "Adicionar um grupo", text: "Abre o popup: primeiro você escolhe o WhatsApp, depois o grupo dele — ou cria um grupo novo. A bolinha na foto de cada grupo diz se ele está conectado, e o ⋯ guarda o link de convite, a cópia do grupo e a duplicação automática quando ele enche." },
 
       // ── Modelos de mensagem
-      { tab: "messages", anchor: "tab-messages", title: "Modelos de mensagem", text: "É onde você escolhe como vai ser a mensagem enviada nos grupos: o texto que acompanha cada oferta." },
+      { tab: "messages", anchor: "tab-messages", title: "Modelos de mensagem", text: "É onde você escolhe como vai ser a mensagem enviada nos grupos: o texto que acompanha cada oferta e se a foto vai como imagem ou como prévia do link (igual a colar o link no WhatsApp)." },
       { tab: "messages", anchor: "ms-picker", title: "Escolher e ativar o modelo", text: "Modelos prontos e os seus. Escolha na lista ou crie um do zero; o modelo só passa a ser usado nos envios depois de ativado na campanha." },
 
       // ── Janelas de envio

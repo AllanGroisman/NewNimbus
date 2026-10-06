@@ -494,6 +494,117 @@ describe("GroupDashboard — aba Modelos Mensagens (prévia)", () => {
   });
 });
 
+describe("GroupDashboard — aba Modelos Mensagens (imagem do modelo)", () => {
+  const scrapingBase = { auto: true, sources: ["Amazon"], filters: {} };
+  const comPrevia = { id: "tl", name: "Com prévia", template: "{produto} {link}", imageMode: "link" };
+
+  function renderMessagesTab(overrides = {}) {
+    const out = renderDashboard({
+      customTemplates: [comPrevia],
+      onAddCustomTemplate: vi.fn(() => "t2"),
+      onUpdateCustomTemplate: vi.fn(),
+      onDeleteCustomTemplate: vi.fn(),
+      ...overrides,
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Modelos/ }));
+    return out;
+  }
+  const escolherModelo = (container, key) =>
+    fireEvent.change(container.querySelector("select"), { target: { value: key } });
+  const radio = (name) => screen.getByRole("radio", { name });
+
+  it("modelo padrão é foto do produto, e a prévia mostra a foto", () => {
+    renderMessagesTab({ group: { messageTemplate: "{produto} {link}" } });
+    expect(radio("Foto do produto")).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("preview-photo")).toBeInTheDocument();
+    expect(screen.queryByTestId("preview-link-card")).toBeNull();
+  });
+
+  it("abrir um modelo salvo com prévia do link traz a escolha dele", () => {
+    const { container } = renderMessagesTab();
+    escolherModelo(container, "custom:tl");
+    expect(radio("Prévia do link")).toHaveAttribute("aria-checked", "true");
+    const card = screen.getByTestId("preview-link-card");
+    expect(card.textContent).toContain("Smartphone Samsung Galaxy A55 256GB");
+    expect(card.textContent).toContain("merc.li");
+  });
+
+  it("trocar a imagem é edição do modelo: não salva na campanha, deixa o modelo com alteração", () => {
+    const { props, container } = renderMessagesTab({ group: { messageTemplate: "{produto} {link}", scraping: { ...scrapingBase, imageMode: "link" } } });
+    expect(screen.getByRole("button", { name: "Salvar" })).toBeDisabled();
+    fireEvent.click(radio("Foto do produto"));
+    expect(props.onUpdate).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Salvar" })).not.toBeDisabled();
+    expect(container.querySelector("select").selectedOptions[0].textContent).toMatch(/^• /);
+  });
+
+  it("Salvar grava a imagem no modelo", () => {
+    const { props, container } = renderMessagesTab();
+    escolherModelo(container, "custom:tl");
+    fireEvent.click(radio("Foto do produto"));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    expect(props.onUpdateCustomTemplate).toHaveBeenCalledWith("tl", { name: "Com prévia", template: "{produto} {link}", imageMode: "product" });
+  });
+
+  it("Salvar Como leva a imagem escolhida pro modelo novo", () => {
+    const { props } = renderMessagesTab();
+    fireEvent.click(radio("Prévia do link"));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar Como" }));
+    fireEvent.change(screen.getByPlaceholderText(/minha versão/), { target: { value: "Com cartão" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar como novo" }));
+    expect(props.onAddCustomTemplate).toHaveBeenCalledWith("Com cartão", "{produto} por {preco}", "link");
+  });
+
+  it("ativar o modelo leva a imagem dele pra campanha", () => {
+    const { props, container } = renderMessagesTab();
+    escolherModelo(container, "custom:tl");
+    fireEvent.click(screen.getByRole("button", { name: "Ativar este modelo" }));
+    expect(props.onUpdate).toHaveBeenCalledWith(1, {
+      messageTemplate: "{produto} {link}",
+      scraping: { ...scrapingBase, imageMode: "link" },
+    });
+  });
+
+  it("'em uso' casa texto e imagem: mesmo texto com outra imagem não é o modelo em uso", () => {
+    const { container } = renderMessagesTab({ group: { messageTemplate: "{produto} {link}", scraping: scrapingBase } });
+    escolherModelo(container, "custom:tl");
+    expect(screen.getByRole("button", { name: "Ativar este modelo" })).not.toBeDisabled();
+  });
+
+  it("campanha com prévia do link abre no modelo que casa texto e imagem", () => {
+    renderMessagesTab({ group: { messageTemplate: "{produto} {link}", scraping: { ...scrapingBase, imageMode: "link" } } });
+    expect(screen.getByRole("button", { name: /Ativo na campanha/ })).toBeInTheDocument();
+    expect(radio("Prévia do link")).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("prévia do link sem {link} no texto: avisa e a prévia mostra a foto", () => {
+    const { container } = renderMessagesTab();
+    fireEvent.click(radio("Prévia do link"));
+    fireEvent.change(container.querySelector("textarea"), { target: { value: "{produto} por {preco}" } });
+    expect(screen.getByText(/Sem \{link\} no texto, vai a foto do produto/)).toBeInTheDocument();
+    expect(screen.getByTestId("preview-photo")).toBeInTheDocument();
+  });
+
+  it("o i explica a diferença ao clicar (celular) e fecha ao tocar fora", () => {
+    renderMessagesTab();
+    const info = screen.getByRole("button", { name: /Diferença entre foto do produto e prévia do link/ });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    fireEvent.click(info);
+    expect(screen.getByRole("tooltip").textContent).toMatch(/cartão do link/);
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+
+  it("o i abre ao passar o mouse", () => {
+    renderMessagesTab();
+    const info = screen.getByRole("button", { name: /Diferença entre foto do produto e prévia do link/ });
+    fireEvent.mouseEnter(info.parentElement);
+    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+    fireEvent.mouseLeave(info.parentElement);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+});
+
 describe("GroupDashboard — aba Modelos Mensagens (Salvar / Salvar Como)", () => {
   const meuModelo = { id: "t1", name: "Meu modelo", template: "Texto salvo" };
 
@@ -525,7 +636,7 @@ describe("GroupDashboard — aba Modelos Mensagens (Salvar / Salvar Como)", () =
     fireEvent.change(container.querySelector("textarea"), { target: { value: "Texto novo" } });
     fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
 
-    expect(props.onUpdateCustomTemplate).toHaveBeenCalledWith("t1", { name: "Meu modelo", template: "Texto novo" });
+    expect(props.onUpdateCustomTemplate).toHaveBeenCalledWith("t1", { name: "Meu modelo", template: "Texto novo", imageMode: "product" });
     expect(screen.getByText("Ativar este modelo?")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Ativar" }));
@@ -557,6 +668,6 @@ describe("GroupDashboard — aba Modelos Mensagens (Salvar / Salvar Como)", () =
     fireEvent.change(screen.getByPlaceholderText(/minha versão/), { target: { value: "Promo curta" } });
     fireEvent.click(screen.getByRole("button", { name: "Salvar como novo" }));
 
-    expect(props.onAddCustomTemplate).toHaveBeenCalledWith("Promo curta", "Versão B");
+    expect(props.onAddCustomTemplate).toHaveBeenCalledWith("Promo curta", "Versão B", "product");
   });
 });

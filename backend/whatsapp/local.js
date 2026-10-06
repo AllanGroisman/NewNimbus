@@ -136,6 +136,8 @@ function deviceLabel() {
 // Últimas mensagens enviadas por este processo — serve o getMessage do socket
 // (retry receipt). Módulo puro, sem IO: pode entrar direto no topo.
 const msgStore = require("./msg-store");
+// Cartão da prévia do link (modo "Prévia do link" da campanha).
+const linkPreview = require("./link-preview");
 
 // chave: `${userId}::${numberId}` -> { sock, status, qr, qrDataUrl, info, ... }
 const sessions = new Map();
@@ -1127,11 +1129,32 @@ async function mentionsFor(s, jid, opts) {
   return ids;
 }
 
+// Prévia do link (modo "Prévia do link" da campanha): `opts.linkPreview` traz
+// { url, title, img } e o cartão é montado aqui, no processo do socket — a foto em
+// alta sobe pelo próprio número. Sem `opts.linkPreview` o conteúdo é o de sempre.
+// A prévia nunca derruba o envio: se falhar, a mensagem sai como texto puro.
+async function linkPreviewFor(s, k, opts) {
+  if (!opts?.linkPreview?.url) return undefined;
+  try {
+    return await linkPreview.buildLinkPreview(opts.linkPreview, {
+      upload: s.sock.waUploadToServer, logger: log, cacheKey: k,
+    });
+  } catch (err) {
+    console.warn(`[whatsapp] prévia do link falhou (${err.message}) — enviando sem prévia`);
+    return undefined;
+  }
+}
+
 async function sendText(userId, numberId, jid, text, opts = {}) {
-  return withSendLock(key(userId, numberId), async () => {
+  const k = key(userId, numberId);
+  return withSendLock(k, async () => {
     const s = ensureConnected(userId, numberId);
     const mentions = await mentionsFor(s, jid, opts);
-    const sent = await s.sock.sendMessage(jid, mentions ? { text, mentions } : { text });
+    const preview = await linkPreviewFor(s, k, opts);
+    const content = { text };
+    if (mentions) content.mentions = mentions;
+    if (preview) content.linkPreview = preview;
+    const sent = await s.sock.sendMessage(jid, content);
     msgStore.put(sent);
     return sent;
   });

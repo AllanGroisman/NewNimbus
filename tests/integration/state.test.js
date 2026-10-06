@@ -37,6 +37,29 @@ describe("PUT /api/state — save basico", () => {
     expect(get.body.groups[0].name).toBe("G1");
     expect(get.body.settings.theme).toBe("dark");
   });
+
+  // Aba Modelos Mensagens: "Foto do produto" x "Prévia do link". Mora no topo do
+  // scraping — no repasse, o normalizeRepasse reescreve só o `scraping.repasse`.
+  it("persiste scraping.imageMode, inclusive em campanha de repasse", async () => {
+    const { auth } = await createTestUser({ plan: "pro" });
+    const comum = makeGroup({ id: 1, name: "Busca" });
+    const repasse = makeGroup({ id: 2, name: "Repasse" });
+    const payload = {
+      groups: [
+        { ...comum, scraping: { ...comum.scraping, imageMode: "link" } },
+        { ...repasse, scraping: { ...repasse.scraping, kind: "repasse", imageMode: "link", repasse: { leaders: [], messageMode: "original" } } },
+      ],
+      numbers: [],
+      whatsappGroups: [],
+    };
+    const put = await auth("put", "/api/state").send(payload);
+    expect(put.status).toBe(200);
+    const get = await auth("get", "/api/state");
+    const byId = Object.fromEntries(get.body.groups.map(g => [g.id, g]));
+    expect(byId[1].scraping.imageMode).toBe("link");
+    expect(byId[2].scraping.imageMode).toBe("link");
+    expect(byId[2].scraping.repasse.messageMode).toBe("original");
+  });
 });
 
 describe("OPS_FIELDS — preservacao da escrita do scheduler", () => {

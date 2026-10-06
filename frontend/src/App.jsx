@@ -858,13 +858,14 @@ export default function App() {
   };
 
   // Modelos de mensagem salvos pelo usuário — disponíveis em todas as campanhas.
-  const addCustomTemplate = (name, template) => {
+  // `imageMode`: "product" (foto do produto) ou "link" (prévia do link).
+  const addCustomTemplate = (name, template, imageMode = "product") => {
     const cleanName = String(name || "").trim();
     if (!cleanName || !template) return null;
     const id = `tpl_${Date.now()}`;
     setSettings(s => ({
       ...s,
-      customTemplates: [...(s.customTemplates || []), { id, name: cleanName, template }],
+      customTemplates: [...(s.customTemplates || []), { id, name: cleanName, template, imageMode }],
     }));
     return id;
   };
@@ -885,6 +886,7 @@ export default function App() {
           if (cleanName) next.name = cleanName;
         }
         if (patch.template != null) next.template = patch.template;
+        if (patch.imageMode != null) next.imageMode = patch.imageMode;
         return next;
       }),
     }));

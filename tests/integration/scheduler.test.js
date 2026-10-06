@@ -360,6 +360,34 @@ describe("scheduler.sendNextNow — envia primeiro item da queue", () => {
     expect(waCalls.sendImage.length).toBe(0);
   });
 
+  it("modo \"Prévia do link\": manda texto com linkPreview em vez da foto", async () => {
+    const { user, auth } = await createUserWithMLAffiliate();
+    const waGroups = [makeWhatsAppGroup({ id: "wa-3", numberId: "num-3", jid: "fake3@g.us" })];
+    const base = makeGroup({ id: 303, whatsappGroupIds: ["wa-3"], sources: ["amazon"] });
+    const group = { ...base, scraping: { ...base.scraping, imageMode: "link" } };
+    await auth("put", "/api/state").send({
+      groups: [group],
+      numbers: [{ id: "num-3", phone: "5511num-3" }],
+      whatsappGroups: waGroups,
+    });
+    waConnect(user.id, "num-3");
+    const link = "https://www.amazon.com.br/dp/B0CPREV1234";
+    await storage.updateGroupOps(user.id, 303, {
+      queue: [{ id: "p", key: "p", name: "Produto Prévia", link, img: "https://example.com/p.jpg", price: 100, originalPrice: 200, discount: 50, store: "Amazon", category: "gamer" }],
+    });
+
+    await scheduler.sendNextNow(user.id, 303);
+    expect(waCalls.sendImage.length).toBe(0);
+    expect(waCalls.sendText.length).toBe(1);
+    expect(waCalls.sendText[0].text).toContain(link);
+    expect(waCalls.sendText[0].opts).toEqual({
+      linkPreview: { url: link, title: "Produto Prévia", img: "https://example.com/p.jpg" },
+    });
+    // O histórico continua mostrando a foto do produto (é a mesma do cartão).
+    const st = await storage.loadState(user.id);
+    expect(st.groups.find(g => g.id === 303).history[0].img).toBe("https://example.com/p.jpg");
+  });
+
   it("falha quando campanha pausada", async () => {
     const { user, auth } = await createUserWithMLAffiliate();
     const group = makeGroup({ id: 302 });
