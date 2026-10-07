@@ -15,12 +15,18 @@ const backendDir = path.resolve(__dirname, "..", "..", "backend");
 const autoDup = require(path.join(backendDir, "whatsapp", "auto-duplicate.js"));
 const { prisma } = require(path.join(backendDir, "db"));
 
-function fakeWa({ members = 1000, status = "connected", fail = null } = {}) {
+function fakeWa({ members = 1000, status = "connected", fail = null, desc = undefined, descFail = null } = {}) {
   const calls = [];
+  const descCalls = [];
   return {
     calls,
+    descCalls,
     getSession: async () => ({ status, info: { phone: "5511999990000" } }),
-    getGroupMetadata: async () => ({ participants: Array.from({ length: members }, (_, i) => ({ id: `${i}@s` })) }),
+    getGroupMetadata: async () => ({ desc, participants: Array.from({ length: members }, (_, i) => ({ id: `${i}@s` })) }),
+    setGroupDescription: async (userId, numberId, jid, description) => {
+      descCalls.push({ numberId, jid, description });
+      if (descFail) throw new Error(descFail);
+    },
     createGroup: async (userId, numberId, name, parts) => {
       calls.push({ userId, numberId, name, parts });
       if (fail) throw new Error(fail);
@@ -93,6 +99,23 @@ describe("checkGroup", () => {
     const again = await autoDup.checkGroup(await rowDe("cheio@g.us"), { wa });
     expect(again).toEqual({ skipped: "off" });
     expect(wa.calls.length).toBe(1);
+  });
+
+  // Task 3: a descrição é a do WhatsApp, e o grupo novo nasce com ela.
+  it("o grupo novo herda a descrição do cheio no WhatsApp", async () => {
+    const wa = fakeWa({ members: 1003, desc: "Regras do grupo" });
+    const r = await autoDup.checkGroup(await rowDe("cheio@g.us"), { wa });
+    expect(r).toMatchObject({ duplicated: "novo@g.us" });
+    expect(wa.descCalls).toEqual([{ numberId: "num-1", jid: "novo@g.us", description: "Regras do grupo" }]);
+    const novo = (await storage.loadState(user.id)).whatsappGroups.find(w => w.id === "novo@g.us");
+    expect(novo.description).toBe("Regras do grupo");
+  });
+
+  it("falhar ao copiar a descrição não desfaz a duplicação", async () => {
+    const wa = fakeWa({ members: 1003, desc: "Regras do grupo", descFail: "not-authorized" });
+    const r = await autoDup.checkGroup(await rowDe("cheio@g.us"), { wa });
+    expect(r).toMatchObject({ full: true, duplicated: "novo@g.us", campaigns: 2 });
+    expect(wa.descCalls).toHaveLength(1);
   });
 
   it("número desconectado não faz nada", async () => {

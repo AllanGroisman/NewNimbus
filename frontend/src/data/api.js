@@ -540,6 +540,14 @@ export async function getWAInvite(id, jid) {
 export async function revokeWAInvite(id, jid) {
   return http("POST", `/api/whatsapp/sessions/${id}/groups/${encodeURIComponent(jid)}/invite/revoke`);
 }
+// A descrição do grupo no WhatsApp (task 3): { description } — "" quando não tem.
+export async function getWAGroupDescription(id, jid) {
+  return http("GET", `/api/whatsapp/sessions/${id}/groups/${encodeURIComponent(jid)}/description`);
+}
+// Vazio apaga a descrição no WhatsApp.
+export async function setWAGroupDescription(id, jid, description) {
+  return http("PUT", `/api/whatsapp/sessions/${id}/groups/${encodeURIComponent(jid)}/description`, { description });
+}
 export async function leaveWAGroup(id, jid) {
   return http("DELETE", `/api/whatsapp/sessions/${id}/groups/${encodeURIComponent(jid)}`);
 }

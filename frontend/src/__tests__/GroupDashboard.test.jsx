@@ -27,13 +27,15 @@ vi.mock("../data/api", () => ({
   rejectAllPending: vi.fn(),
   getWAGroupPicture: vi.fn().mockResolvedValue({ url: null }),
   getWAInvite: vi.fn().mockResolvedValue({ inviteLink: "https://chat.whatsapp.com/ABC" }),
+  getWAGroupDescription: vi.fn().mockResolvedValue({ description: "Regras do grupo" }),
+  setWAGroupDescription: vi.fn().mockResolvedValue({ ok: true }),
   listDmBroadcasts: vi.fn().mockResolvedValue({ broadcasts: [] }),
   startDmBroadcast: vi.fn(),
   cancelDmBroadcast: vi.fn(),
 }));
 
 import GroupDashboard from "../components/GroupDashboard.jsx";
-import { createWAGroup, fetchUrlMetadata, listWAGroups, getWAInvite, getWAGroupPicture, listDmBroadcasts, startDmBroadcast, cancelDmBroadcast } from "../data/api";
+import { createWAGroup, fetchUrlMetadata, listWAGroups, getWAInvite, getWAGroupPicture, getWAGroupDescription, setWAGroupDescription, listDmBroadcasts, startDmBroadcast, cancelDmBroadcast } from "../data/api";
 
 function makeGroup(overrides = {}) {
   return {
@@ -301,6 +303,22 @@ describe("GroupDashboard — remover grupo destino (aba Grupos)", () => {
     expect(screen.getByText(/Duplica ao encher/)).toBeInTheDocument();
   });
 
+  // Task 3: a descrição é a do grupo no WhatsApp, num popup — não mais uma nota
+  // do Nimbus editada dentro do cartão.
+  it("'Editar descrição' abre o popup com a descrição do WhatsApp e grava a cópia local", async () => {
+    const { props } = renderWithLinkedGroup({ description: "antiga" });
+    expect(screen.getByText("antiga")).toBeInTheDocument();
+    abrirMenu("Grupo Vinculado");
+    fireEvent.click(itemDoMenu("✎ Editar descrição"));
+    await waitFor(() => expect(screen.getByLabelText("Descrição do grupo")).toHaveValue("Regras do grupo"));
+    expect(getWAGroupDescription).toHaveBeenCalledWith("num-1", "wg-1");
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    await waitFor(() => expect(setWAGroupDescription).toHaveBeenCalledWith("num-1", "wg-1", "Regras do grupo"));
+    await waitFor(() => expect(props.onUpdateWhatsappGroup).toHaveBeenCalledWith("wg-1", { description: "Regras do grupo" }));
+    expect(await screen.findByText(/Descrição de "Grupo Vinculado" salva no WhatsApp/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Descrição do grupo")).not.toBeInTheDocument();
+  });
+
   it("'Duplicar grupo' abre a criação com o próximo nome da série", () => {
     renderWithLinkedGroup();
     abrirMenu("Grupo Vinculado");
@@ -353,13 +371,14 @@ describe("GroupDashboard — adicionar grupo destino (WhatsApp → grupo)", () =
   }
 
   it("primeiro o WhatsApp (desconectado não entra), depois os grupos dele", async () => {
-    listWAGroups.mockResolvedValueOnce([{ jid: "g1@g.us", name: "Grupo Um", members: 12 }]);
+    listWAGroups.mockResolvedValueOnce([{ jid: "g1@g.us", name: "Grupo Um", members: 12, description: "Regras do Um" }]);
     const { props } = abrir();
     expect(screen.getByRole("button", { name: /Número 2/ })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: /Número 1/ }));
     await waitFor(() => expect(listWAGroups).toHaveBeenCalledWith("num-1"));
     fireEvent.click(await screen.findByRole("button", { name: /Grupo Um/ }));
-    await waitFor(() => expect(props.onCreateWhatsappGroup).toHaveBeenCalledWith(expect.objectContaining({ id: "g1@g.us", name: "Grupo Um", numberId: "num-1" })));
+    // A descrição do WhatsApp já vem junto: o cartão mostra antes de abrir o popup.
+    await waitFor(() => expect(props.onCreateWhatsappGroup).toHaveBeenCalledWith(expect.objectContaining({ id: "g1@g.us", name: "Grupo Um", numberId: "num-1", description: "Regras do Um" })));
   });
 
   it("a lista do popup mostra a foto de cada grupo", async () => {

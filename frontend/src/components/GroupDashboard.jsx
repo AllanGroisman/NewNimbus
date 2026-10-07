@@ -1172,6 +1172,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       numberId,
       members: waGroup.members || 0,
       inviteLink: null,
+      description: waGroup.description || "",
     });
     const next = [...(groupInfo.whatsappGroupIds || []), newId];
     setGroupInfo(g => ({ ...g, whatsappGroupIds: next }));

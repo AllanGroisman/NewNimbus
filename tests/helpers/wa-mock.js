@@ -20,6 +20,7 @@ const calls = {
   createGroup: [],
   groupMemberJids: [],
   groupSizes: [],
+  setGroupDescription: [],
 };
 
 // Gancho de falha: quando setado, sendText lança com esta mensagem. Serve pros
@@ -36,12 +37,19 @@ let msgIdSeq = 0;
 // Já no formato que o real devolve: [{ jid }], sem o próprio número.
 let groupMembers = new Map();
 
+// Descrição de cada grupo no WhatsApp (task 3) e as falhas forçadas por jid —
+// a mensagem é a que o Baileys/ensureConnected lançaria.
+let groupDescs = new Map();
+let descErrors = new Map();
+
 function reset() {
   for (const k of Object.keys(calls)) calls[k].length = 0;
   sendError = null;
   msgStatsResult = { known: true, retries: 0, lastRetryAt: null };
   msgIdSeq = 0;
   groupMembers = new Map();
+  groupDescs = new Map();
+  descErrors = new Map();
 }
 
 const fakeSessions = new Map();
@@ -131,6 +139,8 @@ const mock = {
   // Setter do gancho de falha (null desliga).
   __failSend: (msg) => { sendError = msg; },
   __setGroupMembers: (jid, members) => { groupMembers.set(jid, members); },
+  __setGroupDesc: (jid, desc) => { groupDescs.set(jid, desc); },
+  __failGroupDesc: (jid, msg) => { descErrors.set(jid, msg); },
   // Setter do resultado do msgStats — simula o aparelho pedindo (ou não) reenvio.
   __setMsgStats: (stats) => { msgStatsResult = { known: true, retries: 0, lastRetryAt: null, ...stats }; },
   // Espelha backend/whatsapp/local.js:232-233 — o módulo real exporta os dois.
@@ -152,6 +162,16 @@ const mock = {
   async getInviteLink() { return "https://chat.whatsapp.com/fakeinvite"; },
   async revokeInvite() { return "https://chat.whatsapp.com/fakeinvite-revoked"; },
   async leaveGroup() { return { ok: true }; },
+  // Só o que as rotas leem do groupMetadata real: a descrição.
+  async getGroupMetadata(userId, numberId, jid) {
+    if (descErrors.has(jid)) throw new Error(descErrors.get(jid));
+    return { id: jid, desc: groupDescs.get(jid) || undefined, participants: [] };
+  },
+  async setGroupDescription(userId, numberId, jid, description) {
+    if (descErrors.has(jid)) throw new Error(descErrors.get(jid));
+    calls.setGroupDescription.push({ userId, numberId, jid, description });
+    if (description) groupDescs.set(jid, description); else groupDescs.delete(jid);
+  },
   async groupMemberJids(userId, numberId, jid) {
     calls.groupMemberJids.push({ userId, numberId, jid });
     return (groupMembers.get(jid) || []).map(m => (typeof m === "string" ? { jid: m } : m));
@@ -184,3 +204,5 @@ export { installMock, mock, calls, reset, connect };
 export const failSend = (msg) => mock.__failSend(msg);
 export const setMsgStats = (stats) => mock.__setMsgStats(stats);
 export const setGroupMembers = (jid, members) => mock.__setGroupMembers(jid, members);
+export const setGroupDesc = (jid, desc) => mock.__setGroupDesc(jid, desc);
+export const failGroupDesc = (jid, msg) => mock.__failGroupDesc(jid, msg);

@@ -4548,6 +4548,46 @@ app.post("/api/whatsapp/sessions/:id/groups/:jid/invite/revoke", auth.requireAut
   }
 });
 
+// A descrição do grupo no WhatsApp (task 3): o popup "Editar descrição" da aba
+// Grupos lê a atual daqui e grava pelo PUT — um grupo por chamada; o "aplicar em
+// todos" é o popup chamando um a um. O WhatsApp corta em 2048 caracteres.
+const GROUP_DESC_MAX = 2048;
+// As duas falhas que o usuário resolve sozinho voltam com o motivo legível — no
+// "aplicar em todos" é o que aparece ao lado de cada grupo que falhou.
+function groupDescError(res, err, req, ctx) {
+  const msg = String(err?.message || "");
+  if (/não está conectada|não encontrada/i.test(msg)) {
+    return res.status(409).json({ error: "O número deste grupo está desconectado.", code: "not_connected" });
+  }
+  if (/not-authorized|forbidden|\b40[13]\b/i.test(msg)) {
+    return res.status(409).json({ error: "O número não é admin deste grupo.", code: "not_admin" });
+  }
+  return httpErrors.serverError(res, err, { req, ctx });
+}
+
+app.get("/api/whatsapp/sessions/:id/groups/:jid/description", auth.requireAuth, async (req, res) => {
+  try {
+    const md = await wa.getGroupMetadata(req.user.id, req.params.id, req.params.jid);
+    res.json({ description: md?.desc || "" });
+  } catch (err) {
+    groupDescError(res, err, req, "GET /api/whatsapp/sessions/:id/groups/:jid/description");
+  }
+});
+
+app.put("/api/whatsapp/sessions/:id/groups/:jid/description", auth.requireAuth, async (req, res) => {
+  const description = req.body?.description;
+  if (typeof description !== "string") return res.status(400).json({ error: "description obrigatória (texto; vazio apaga)" });
+  if (description.length > GROUP_DESC_MAX) {
+    return res.status(400).json({ error: `A descrição passa de ${GROUP_DESC_MAX} caracteres, o máximo do WhatsApp.` });
+  }
+  try {
+    await wa.setGroupDescription(req.user.id, req.params.id, req.params.jid, description);
+    res.json({ ok: true, description });
+  } catch (err) {
+    groupDescError(res, err, req, "PUT /api/whatsapp/sessions/:id/groups/:jid/description");
+  }
+});
+
 app.delete("/api/whatsapp/sessions/:id/groups/:jid", auth.requireAuth, async (req, res) => {
   try {
     await wa.leaveGroup(req.user.id, req.params.id, req.params.jid);

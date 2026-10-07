@@ -896,7 +896,7 @@ export default function App() {
     }));
   };
 
-  const createWhatsappGroup = ({ id, name, numberId, members = 0, inviteLink, linkToAppGroupId }) => {
+  const createWhatsappGroup = ({ id, name, numberId, members = 0, inviteLink, description, linkToAppGroupId }) => {
     const wgId = id || Date.now();
     const newWG = {
       id: wgId, name, members,
@@ -905,6 +905,7 @@ export default function App() {
       inviteLink: inviteLink || null,
       sentToday: 0, lastSend: "—",
     };
+    if (description) newWG.description = description;
     setWhatsappGroups(ws => [...ws, newWG]);
     if (linkToAppGroupId) {
       setGroups(gs => gs.map(g => g.id === linkToAppGroupId

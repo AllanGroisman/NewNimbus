@@ -1253,6 +1253,13 @@ async function getGroupMetadata(userId, numberId, jid) {
   return s.sock.groupMetadata(jid);
 }
 
+// A descrição do grupo no WhatsApp (task 3). Vazio apaga — o Baileys manda o
+// `delete` quando não vem texto. Só admin muda, salvo grupo sem restrição.
+async function setGroupDescription(userId, numberId, jid, description) {
+  const s = ensureConnected(userId, numberId);
+  await s.sock.groupUpdateDescription(jid, description || undefined);
+}
+
 // Os destinos no privado dos membros de um grupo (task 4): PN quando se sabe,
 // @lid quando não, sem o próprio número. A resolução mora aqui, no dono do
 // socket, porque é ele quem tem o mapeamento LID→PN e o `sock.user`.
@@ -1510,6 +1517,7 @@ module.exports = {
   listGroups,
   leaveGroup,
   getGroupMetadata,
+  setGroupDescription,
   groupMemberJids,
   groupSizes,
   getGroupPicture,
@@ -1547,6 +1555,7 @@ function makeStub() {
     listGroups: fail,
     leaveGroup: fail,
     getGroupMetadata: fail,
+    setGroupDescription: fail,
     groupMemberJids: fail,
     groupSizes: fail,
     getGroupPicture: fail,

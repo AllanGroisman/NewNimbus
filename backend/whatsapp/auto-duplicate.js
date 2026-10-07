@@ -66,9 +66,11 @@ async function checkGroup(row, { wa = getWa(), fullAt = FULL_AT } = {}) {
   if (session?.status !== "connected") return { skipped: "offline" };
 
   let members;
+  let desc = "";
   try {
     const md = await wa.getGroupMetadata(row.userId, row.numberId, row.jid);
     members = Array.isArray(md?.participants) ? md.participants.length : null;
+    desc = md?.desc || "";
   } catch (err) {
     return { skipped: "metadata", error: err.message };
   }
@@ -91,6 +93,16 @@ async function checkGroup(row, { wa = getWa(), fullAt = FULL_AT } = {}) {
     return { members, full: true, error: err.message };
   }
 
+  // O grupo novo herda a descrição do cheio no WhatsApp — é ali que o dono deixa
+  // as regras. Sem ela, o grupo continua valendo: não vale desfazer a duplicação.
+  if (desc) {
+    try {
+      await wa.setGroupDescription(row.userId, row.numberId, created.jid, desc);
+    } catch (err) {
+      console.warn(`[auto-duplicate] descrição não copiada para ${created.jid}: ${err.message}`);
+    }
+  }
+
   const agora = new Date().toISOString();
   const campanhas = await prisma().group.findMany({ where: { userId: row.userId }, select: { id: true, name: true, whatsappGroupIds: true, scraping: true } });
   const afetadas = campanhas.filter(g => Array.isArray(g.whatsappGroupIds) && g.whatsappGroupIds.map(String).includes(String(row.id)));
@@ -105,7 +117,7 @@ async function checkGroup(row, { wa = getWa(), fullAt = FULL_AT } = {}) {
           status: "connected",
           createdAt: new Date().toLocaleDateString("pt-BR"),
           sentToday: 0, lastSend: "—",
-          description: meta.description || "",
+          description: desc || meta.description || "",
           autoDuplicate: true,
           duplicatedFrom: row.id,
         },

@@ -14,6 +14,7 @@ import { getWAGroupPicture, getWAInvite, listDmBroadcasts, cancelDmBroadcast, er
 import Modal from "../ui/Modal";
 import { useMedia, isTouch, TOUCH } from "../../data/useMedia";
 import DmMembersModal from "./DmMembersModal";
+import GroupDescriptionModal from "./GroupDescriptionModal";
 import DmProgresso from "./DmProgresso";
 import { partesPorGrupo, parteAtiva, chaveDaParte, lerDispensados, gravarDispensados } from "./dmPartes";
 import Badge from "../ui/Badge";
@@ -441,7 +442,7 @@ export default function GroupsTab({
   const [modal, setModal] = useState(null);       // { modo, inicio }
   const [confirmar, setConfirmar] = useState(null); // { tipo, alvo, dm }
   const [aviso, setAviso] = useState(null);
-  const [editDesc, setEditDesc] = useState(null);  // { id, texto }
+  const [editDesc, setEditDesc] = useState(null);  // o grupo cujo popup de descrição está aberto
   const [dm, setDm] = useState(null);              // { grupos, todos } — popup de mensagem no privado
   const [dmLista, setDmLista] = useState([]);      // envios no privado desta campanha, com a parte de cada grupo
   const [dmDispensados, setDmDispensados] = useState(lerDispensados);
@@ -608,7 +609,6 @@ export default function GroupsTab({
             const n = numberOf(w.numberId);
             const on = w.status !== "disconnected" && n?.status === "connected";
             const cheio = w.duplicatedTo ? byId.get(w.duplicatedTo) : null;
-            const editando = editDesc?.id === w.id;
             const dmParte = podeDm ? dmPorGrupo.get(w.id) : null;
             const dmIndo = parteAtiva(dmParte?.parte);
             return (
@@ -633,7 +633,7 @@ export default function GroupsTab({
                     onUpdateWhatsappGroup?.(w.id, { autoDuplicate: !w.autoDuplicate });
                     avisar(w.autoDuplicate ? `Duplicação automática desligada em "${w.name}".` : `"${w.name}" vai ser duplicado sozinho quando chegar a 1.000 membros.`);
                   } },
-                  { label: "✎ Editar descrição", onClick: () => setEditDesc({ id: w.id, texto: w.description || "" }) },
+                  { label: "✎ Editar descrição", hint: "A descrição do grupo no WhatsApp", onClick: () => setEditDesc(w) },
                   podeDm && {
                     label: "✉ Mensagem no privado aos membros", disabled: !on || dmIndo,
                     hint: !on ? "O número deste grupo está desconectado" : dmIndo ? "Já tem uma mensagem no privado indo para este grupo" : "Manda uma mensagem no privado para cada membro deste grupo",
@@ -642,16 +642,8 @@ export default function GroupsTab({
                   { label: "Remover da campanha", danger: true, onClick: () => setConfirmar({ tipo: "destino", alvo: w }) },
                 ]} />}
               >
-                {editando ? (
-                  <div style={{ marginTop: 8 }}>
-                    <textarea autoFocus aria-label="Descrição do grupo" rows={2} value={editDesc.texto} onChange={e => setEditDesc(d => ({ ...d, texto: e.target.value }))} placeholder="Notas internas sobre este grupo (visível só no Nimbus)" style={{ ...campo, resize: "vertical", fontFamily: "inherit" }} />
-                    <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-                      <button onClick={() => { onUpdateWhatsappGroup?.(w.id, { description: editDesc.texto }); setEditDesc(null); }} style={{ ...btnPri(false), padding: "5px 12px", fontSize: 12 }}>Salvar</button>
-                      <button onClick={() => setEditDesc(null)} style={{ ...btnSec, padding: "5px 12px", fontSize: 12 }}>Cancelar</button>
-                    </div>
-                  </div>
-                ) : w.description ? (
-                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 5, fontStyle: "italic", whiteSpace: "pre-wrap" }}>{w.description}</div>
+                {w.description ? (
+                  <div title={w.description} style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 5, fontStyle: "italic", whiteSpace: "pre-wrap", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{w.description}</div>
                 ) : null}
                 {dmParte && (
                   <DmProgresso
@@ -711,6 +703,24 @@ export default function GroupsTab({
             recarregarDm();
           }}
           onClose={() => setDm(null)}
+        />
+      )}
+
+      {editDesc && (
+        <GroupDescriptionModal
+          grupo={{ ...editDesc, connected: conectado(editDesc) }}
+          grupos={linkedWGs.map(w => ({ ...w, connected: conectado(w) }))}
+          onSaved={(results, texto) => {
+            const ok = results.filter(r => r.ok);
+            for (const r of ok) onUpdateWhatsappGroup?.(r.id, { description: texto });
+            if (!ok.length) return;
+            avisar(results.length === 1
+              ? `Descrição de "${ok[0].name}" salva no WhatsApp.`
+              : ok.length === results.length
+                ? `Descrição salva nos ${ok.length} grupos.`
+                : `Descrição salva em ${ok.length} de ${results.length} grupos.`, 4000);
+          }}
+          onClose={() => setEditDesc(null)}
         />
       )}
 
