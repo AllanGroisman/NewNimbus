@@ -414,6 +414,19 @@ export async function getShopeeDesempenho(from, to, { refresh = false } = {}) {
   return http("GET", `/api/affiliate/shopee/desempenho?${qs}`, undefined, { timeoutMs: SLOW_TIMEOUT_MS });
 }
 
+// ─── Aba Grupos ─────────────────────────────────────────────────────────
+// Estatísticas dos grupos que recebem campanha: membros, entradas e saídas,
+// envios e lotação. Datas AAAA-MM-DD inclusivas, no dia de Brasília.
+export async function getGruposEstatisticas({ from, to, campanha } = {}) {
+  const qs = new URLSearchParams({ from, to, ...(campanha ? { campanha } : {}) });
+  return http("GET", `/api/grupos/estatisticas?${qs}`);
+}
+
+export async function getGrupoEstatisticas(jid, { from, to } = {}) {
+  const qs = new URLSearchParams({ from, to });
+  return http("GET", `/api/grupos/estatisticas/${encodeURIComponent(jid)}?${qs}`);
+}
+
 // ─── Afiliados Amazon ──────────────────────────────────────────────────
 export async function saveAmazonAffiliate(tag)  { return http("PUT",    "/api/affiliate/amazon", { tag }); }
 export async function clearAmazonAffiliate()    { return http("DELETE", "/api/affiliate/amazon"); }

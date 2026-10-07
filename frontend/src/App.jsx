@@ -32,6 +32,7 @@ import PageSettings from "./pages/Settings";
 import PageSubscription from "./pages/Subscription";
 import PageAffiliateML from "./pages/AffiliateML";
 import PageDesempenho from "./pages/Desempenho";
+import PageGrupos from "./pages/Grupos";
 import PageAffiliateAmazon from "./pages/AffiliateAmazon";
 import PageAffiliateShopee from "./pages/AffiliateShopee";
 import PageAdminScraper from "./pages/AdminScraper";
@@ -1145,6 +1146,12 @@ export default function App() {
         onGoToShopee={() => requestNavigation(() => setPage("shopee"))}
       />
     ),
+    // Estatísticas dos grupos que recebem campanha. O nome de campanha no detalhe
+    // de um grupo abre a campanha.
+    grupos: <PageGrupos onOpenCampanha={(id) => {
+      const g = groups.find(x => String(x.id) === String(id));
+      if (g) handleSelectGroup(g);
+    }} />,
     "admin-cupons":   user?.role === "admin" ? <PageAdminCupons /> : fallbackPage,
     "admin-scraper":  user?.role === "admin" ? <PageAdminScraper /> : fallbackPage,
     "admin-scrap-tester": user?.role === "admin" ? <PageAdminScrapTester /> : fallbackPage,

@@ -13,6 +13,7 @@ const storeLocks = require("./scraping/store-locks");
 const auth = require("./auth");
 const userNotifier = require("./notifications/user-notifier");
 const captureLog = require("./repasse/capture-log");
+const groupStatsEnvios = require("./group-stats/envios");
 const originalMessage = require("./repasse/original-message");
 const { KIND, STAGE } = require("./repasse/error-kinds");
 
@@ -823,6 +824,8 @@ async function deliverItem(userId, group, linked, item, itemForSend, text, { men
 
   let sentCount = 0;
   const errors = [];
+  // Os grupos que receberam, com a hora de cada um — vão pra aba Grupos.
+  const enviados = [];
   for (const [numberId, ws] of byNumber.entries()) {
     for (const w of ws) {
       try {
@@ -834,6 +837,7 @@ async function deliverItem(userId, group, linked, item, itemForSend, text, { men
           await wa.sendText(userId, numberId, w.jid, text, ...extra);
         }
         sentCount++;
+        enviados.push({ jid: w.jid, numberId, at: new Date() });
         log.info({ item: item.name?.slice(0, 60), waGroup: w.name, jid: w.jid, userId, numberId }, "envio ok");
         await new Promise(r => setTimeout(r, SEND_GAP_MS));
       } catch (err) {
@@ -842,6 +846,8 @@ async function deliverItem(userId, group, linked, item, itemForSend, text, { men
       }
     }
   }
+
+  groupStatsEnvios.registrar(userId, group.id, enviados, item.name);
 
   if (sentCount === 0) {
     throw new Error(errors.length ? `Nenhum envio teve sucesso. ${errors[0]}` : "Nenhum envio teve sucesso.");

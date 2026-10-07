@@ -17,6 +17,6 @@ Rodar o Claude na VPS e desligar o computador (via tmux):
 
 3. [] Ao clicar em editar descrição dos grupos do whats, aparece escreita a descrição atual? Queria uma forma fácil de poder copiar tb a mesma descrição para todos os grupos de uma campanha, pode ser no proprio popup de editar a descricao, inclusive quando apertar pra salvar apareça para salvar apenas para esse ou aplicar em todos os grupos da campanha.
 
-4. [] Quantas pessoas entraram/sairam do grupo. Estatisticas dos grupos. Automaticamente os utilizados entram la.
+4. [x] Quantas pessoas entraram/sairam do grupo, filtrar por campanhas, quantidade de membros, quantidade de cliques é possivel? o que mais?. Estatisticas dos grupos. Automaticamente os utilizados nas campanhas entram la. Quero que me ajude a pensar nisso. Quero que seja uma aba Grupos. 
 
-5. [] Quero que na aba do ML seja necessario apenas colocar o cookie. A tag de afiliado manual tu tira fora completamente. Com o cookie pronto quero que ao testa-lo, vá em busca das etiquetas da conta. As etiquetas vão aparecer individualmente nas campanhas onde é possivel escolher a etiqueta a ser utilizada em cada uma delas.
+5. [x] Quero que na aba do ML seja necessario apenas colocar o cookie. A tag de afiliado manual tu tira fora completamente. Com o cookie pronto quero que ao testa-lo, vá em busca das etiquetas da conta. As etiquetas vão aparecer individualmente nas campanhas onde é possivel escolher a etiqueta a ser utilizada em cada uma delas.

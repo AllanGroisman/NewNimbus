@@ -15,6 +15,24 @@ function norm(jid) {
   try { return jid ? jidNormalizedUser(jid) : null; } catch { return null; }
 }
 
+function idsDe(p) {
+  return [p?.id, p?.phoneNumber, p?.lid].map(norm).filter(Boolean);
+}
+
+// O jid que identifica a pessoa, na ordem de preferência acima. Também é a
+// identidade do participante nas estatísticas da aba Grupos (group-stats/capture.js):
+// a entrada e a saída da mesma pessoa precisam cair no mesmo jid.
+async function canonico(p, pnForLid = async () => null) {
+  const ids = idsDe(p);
+  const pn = ids.find(i => isPnUser(i));
+  if (pn) return pn;
+  const lid = ids.find(i => isLidUser(i)) || null;
+  if (!lid) return null;
+  let mapeado = null;
+  try { mapeado = norm(await pnForLid(lid)); } catch { mapeado = null; }
+  return mapeado || lid;
+}
+
 // `selfIds`: os jids do próprio número (PN e LID) — quem manda não recebe.
 // `pnForLid(lid)`: devolve o PN de um LID, ou null.
 // Devolve [{ jid }] sem repetição, na ordem dos participantes.
@@ -23,20 +41,13 @@ async function memberJids(participants, { selfIds = [], pnForLid = async () => n
   const seen = new Set();
   const out = [];
   for (const p of participants || []) {
-    const ids = [p?.id, p?.phoneNumber, p?.lid].map(norm).filter(Boolean);
-    if (!ids.length || ids.some(i => self.has(i))) continue;
-    let alvo = ids.find(i => isPnUser(i)) || null;
-    const lid = ids.find(i => isLidUser(i)) || null;
-    if (!alvo && lid) {
-      try { alvo = norm(await pnForLid(lid)); } catch { alvo = null; }
-      if (alvo && self.has(alvo)) continue;
-    }
-    alvo = alvo || lid;
-    if (!alvo || seen.has(alvo)) continue;
+    if (idsDe(p).some(i => self.has(i))) continue;
+    const alvo = await canonico(p, pnForLid);
+    if (!alvo || self.has(alvo) || seen.has(alvo)) continue;
     seen.add(alvo);
     out.push({ jid: alvo });
   }
   return out;
 }
 
-module.exports = { memberJids };
+module.exports = { memberJids, canonico };

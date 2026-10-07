@@ -17,6 +17,7 @@ const affiliate = require("./scraping/affiliate");
 const mlEtiquetas = require("./scraping/ml-etiquetas");
 const mlDesempenho = require("./affiliate-reports/ml");
 const shopeeDesempenho = require("./affiliate-reports/shopee");
+const groupStats = require("./group-stats/stats");
 const catalog = require("./catalog");
 const adminScraper = require("./scraping/admin");
 const storeLocks = require("./scraping/store-locks");
@@ -1655,6 +1656,34 @@ app.get("/api/affiliate/shopee/desempenho", auth.requireAuth, requireStoreUnlock
   } catch (err) {
     if (err instanceof shopeeDesempenho.DesempenhoError) return res.status(err.status).json({ error: err.message, kind: err.kind });
     httpErrors.serverError(res, err, { req, ctx: "GET /api/affiliate/shopee/desempenho" });
+  }
+});
+
+// ─── Estatísticas dos grupos (aba Grupos) ─────────────────────────────────
+// Membros, entradas e saídas, envios e lotação dos grupos que recebem campanha
+// (group-stats/). Tudo lido do banco — nada vai ao WhatsApp. Período em dias de
+// Brasília (`from`/`to`, AAAA-MM-DD); `campanha` filtra a visão geral.
+
+function gruposErro(res, err, req, ctx) {
+  if (err instanceof httpErrors.AppError) return res.status(err.status).json({ error: err.message });
+  httpErrors.serverError(res, err, { req, ctx });
+}
+
+app.get("/api/grupos/estatisticas", auth.requireAuth, async (req, res) => {
+  try {
+    const { from, to, campanha } = req.query;
+    res.json(await groupStats.overview(req.user.id, { from, to, campanha }));
+  } catch (err) {
+    gruposErro(res, err, req, "GET /api/grupos/estatisticas");
+  }
+});
+
+app.get("/api/grupos/estatisticas/:jid", auth.requireAuth, async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    res.json(await groupStats.detalhe(req.user.id, req.params.jid, { from, to }));
+  } catch (err) {
+    gruposErro(res, err, req, "GET /api/grupos/estatisticas/:jid");
   }
 });
 
@@ -4768,6 +4797,9 @@ async function boot() {
     // Grupo destino cheio vira o próximo da série (task 25). Mesmo processo do
     // scheduler: as operações de grupo passam pela fachada `whatsapp`.
     require("./whatsapp/auto-duplicate").start();
+    // Registro diário do tamanho dos grupos de destino (aba Grupos) e limpeza do
+    // histórico antigo das estatísticas.
+    require("./group-stats/snapshot").start();
     // Mensagem no privado para membros (tasks 4 e 6): retoma o que estava no meio.
     require("./dm-broadcast/runner").start();
     adminScraper.start();

@@ -67,6 +67,10 @@ model User {
   subscription    Subscription?
   affiliateConfig AffiliateConfig?
 
+  groupMemberEvents    GroupMemberEvent[]
+  groupSendEvents      GroupSendEvent[]
+  groupMemberSnapshots GroupMemberSnapshot[]
+
   @@map("users")
 }
 
@@ -307,6 +311,72 @@ model WhatsappGroup {
 
   @@index([userId])
   @@map("whatsapp_groups")
+}
+
+// ── Estatísticas da aba Grupos (group-stats/) ───────────────────────────────
+// As três tabelas são chaveadas por (userId, groupJid) e SEM relação com
+// WhatsappGroup nem com Group de propósito: whatsapp_groups é apagada e recriada
+// a cada PUT /api/state (storage/pg.js), e um cascade dali levaria o histórico
+// junto a cada save. Apagar a campanha também não apaga o histórico do grupo. A
+// única FK é pro usuário: a conta excluída leva tudo.
+
+// Entrada/saída de participante. Vem da mensagem-stub que o WhatsApp manda ao
+// grupo (group-stats/stubs.js); `at` é a hora do SERVIDOR do WhatsApp, inclusive
+// para o aviso entregue atrasado na reconexão. O unique é o dedupe: dois números
+// do usuário no mesmo grupo recebem o mesmo aviso, com a mesma hora.
+// kind: join_link | join_added | join_other | left | removed
+model GroupMemberEvent {
+  id          BigInt   @id @default(autoincrement())
+  userId      String
+  groupJid    String
+  // jid de quem entrou/saiu: o número (PN) quando se sabe, senão o @lid.
+  participant String
+  kind        String
+  at          DateTime
+  numberId    String?
+  // at × createdAt = atraso de entrega (o aviso que chegou na reconexão).
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, groupJid, participant, kind, at])
+  @@index([userId, groupJid, at])
+  @@index([at])
+  @@map("group_member_events")
+}
+
+// Um envio de campanha que chegou a um grupo (scheduler.deliverItem). Uma linha
+// por grupo, com a hora de cada um — os grupos saem com segundos de diferença.
+model GroupSendEvent {
+  id          BigInt   @id @default(autoincrement())
+  userId      String
+  groupJid    String
+  campaignId  BigInt
+  numberId    String?
+  productName String?
+  at          DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, groupJid, at])
+  @@index([at])
+  @@map("group_send_events")
+}
+
+// Tamanho do grupo, uma linha por dia de Brasília com o último valor visto
+// (group-stats/snapshot.js). É a verdade sobre o número de membros; os eventos
+// acima podem ter buraco (número desconectado por muito tempo).
+model GroupMemberSnapshot {
+  userId    String
+  groupJid  String
+  day       DateTime @db.Date
+  members   Int
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, groupJid, day])
+  @@map("group_member_snapshots")
 }
 
 // Números de WhatsApp do usuário (sessões Baileys).

@@ -17,6 +17,9 @@ import { reset as resetEmail } from "./email-mock.js";
 
 const require = createRequire(import.meta.url);
 const appConfig = require("../../backend/config");
+// Índice em memória dos grupos cadastrados (aba Grupos): com o banco limpo entre
+// testes, um índice velho mandaria gravar pra grupo que não existe mais.
+const groupStatsCapture = require("../../backend/group-stats/capture");
 
 // A integração roda com isolate: false — os arquivos de um worker dividem o
 // processo (ver vitest.integration.config.mjs). Então o que um arquivo deixa em
@@ -35,6 +38,7 @@ beforeEach(async () => {
     await truncateAll();
   }
   resetWa();
+  groupStatsCapture._resetIndex();
   resetStripe();
   // O mock do mailer NÃO é resetado aqui de propósito: testes de jornada com
   // truncate manual contam com os envios acumulados entre os passos.

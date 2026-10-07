@@ -287,6 +287,12 @@ export function isSameDayBR(d, now = new Date()) {
   return formatDateBR(date) === formatDateBR(now);
 }
 
+// Teto de membros de um grupo do WhatsApp, e a partir de quando a tela avisa
+// que ele está enchendo. A duplicação automática (backend/whatsapp/auto-duplicate.js)
+// age em 1.000. A aba Grupos usa os valores que vêm do backend quando vêm.
+export const WA_GROUP_MAX = 1024;
+export const WA_GROUP_ENCHENDO = 900;
+
 export const sidebarItems = [
   { id: "dashboard", icon: "▦", label: "Campanhas" },
   { id: "whatsapp", icon: "◎", label: "WhatsApp" },
@@ -294,6 +300,7 @@ export const sidebarItems = [
   { id: "amazon", icon: "◇", label: "Amazon" },
   { id: "shopee", icon: "◈", label: "Shopee" },
   { id: "desempenho", icon: "▲", label: "Desempenho" },
+  { id: "grupos", icon: "⊞", label: "Grupos" },
   { id: "tutorials", icon: "⊙", label: "Tutoriais" },
   { id: "settings", icon: "⚙", label: "Configurações" },
   { id: "subscription", icon: "★", label: "Assinatura" },
@@ -350,6 +357,7 @@ export const PAGE_TO_PATH = {
   amazon: "/amazon",
   shopee: "/shopee",
   desempenho: "/desempenho",
+  grupos: "/grupos",
   tutorials: "/tutoriais",
   settings: "/configuracoes",
   subscription: "/assinatura",

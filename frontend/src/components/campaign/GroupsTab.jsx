@@ -9,7 +9,7 @@
 // Adicionar, dos dois lados, é o mesmo popup: primeiro o WhatsApp, depois o grupo
 // daquele WhatsApp. No destino, o popup também cria um grupo novo.
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT } from "../../data/constants";
+import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, WA_GROUP_MAX, WA_GROUP_ENCHENDO } from "../../data/constants";
 import { getWAGroupPicture, getWAInvite, listDmBroadcasts, cancelDmBroadcast, errText } from "../../data/api";
 import Modal from "../ui/Modal";
 import { useMedia, isTouch, TOUCH } from "../../data/useMedia";
@@ -19,11 +19,10 @@ import { partesPorGrupo, parteAtiva, chaveDaParte, lerDispensados, gravarDispens
 import Badge from "../ui/Badge";
 import UsageBadge from "../ui/UsageBadge";
 
-// Membros a partir dos quais o cartão avisa que o grupo está enchendo. O teto do
-// WhatsApp é 1.024; a duplicação automática (backend/whatsapp/auto-duplicate.js)
-// age em 1.000.
-const GROUP_MAX = 1024;
-const ENCHENDO = 900;
+// Membros a partir dos quais o cartão avisa que o grupo está enchendo (ver
+// data/constants.js).
+const GROUP_MAX = WA_GROUP_MAX;
+const ENCHENDO = WA_GROUP_ENCHENDO;
 
 // ── Foto do grupo ────────────────────────────────────────────────────────────
 // Uma consulta por grupo por sessão da página: a URL é do CDN do WhatsApp e vale

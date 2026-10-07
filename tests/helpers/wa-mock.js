@@ -19,6 +19,7 @@ const calls = {
   listGroups: [],
   createGroup: [],
   groupMemberJids: [],
+  groupSizes: [],
 };
 
 // Gancho de falha: quando setado, sendText lança com esta mensagem. Serve pros
@@ -154,6 +155,13 @@ const mock = {
   async groupMemberJids(userId, numberId, jid) {
     calls.groupMemberJids.push({ userId, numberId, jid });
     return (groupMembers.get(jid) || []).map(m => (typeof m === "string" ? { jid: m } : m));
+  },
+  // Tamanho dos grupos (registro diário da aba Grupos): sai da mesma lista de
+  // membros do groupMemberJids; grupo sem lista definida fica de fora, como o
+  // real faz com o grupo que falhou.
+  async groupSizes(userId, numberId, jids) {
+    calls.groupSizes.push({ userId, numberId, jids });
+    return (jids || []).filter(j => groupMembers.has(j)).map(jid => ({ jid, members: groupMembers.get(jid).length }));
   },
   async restoreSessions() { return; },
   async status() { return { count: fakeSessions.size }; },

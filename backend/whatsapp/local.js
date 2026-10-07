@@ -809,6 +809,22 @@ async function _openSocket(userId, numberId, k, opts = {}) {
     } catch { /* ignore */ }
   });
 
+  // Estatísticas da aba Grupos: entrada/saída de participante chega como
+  // mensagem-stub num upsert "append" — inclusive as guardadas enquanto o número
+  // estava fora, com a hora ORIGINAL. Por isso um listener à parte, sem o filtro
+  // de "notify" do de cima; o group-participants.update lá embaixo não serve,
+  // vem sem hora. Fire-and-forget pelo mesmo motivo do repasse.
+  sock.ev.on("messages.upsert", (ev) => {
+    if (!isCurrentGen(session, gen)) return;
+    try {
+      const lidMapping = sock.signalRepository?.lidMapping;
+      require("../group-stats/capture").onUpsert(userId, numberId, ev?.messages, {
+        selfIds: [sock.user?.id, sock.user?.lid],
+        pnForLid: lidMapping ? (lid) => lidMapping.getPNForLID(lid) : undefined,
+      }).catch(() => {});
+    } catch { /* ignore */ }
+  });
+
   // Invalidação do cache de metadata: participante que entra/sai muda a lista de
   // destinatários da sender key. Servir lista velha é mandar a mensagem cifrada
   // pra quem não consegue abrir — o "Aguardando mensagem" do outro lado.
@@ -1250,6 +1266,23 @@ async function groupMemberJids(userId, numberId, jid) {
   });
 }
 
+// Tamanho de cada grupo, pro registro diário da aba Grupos (group-stats/snapshot.js).
+// Lê do cache de metadata do socket, o mesmo do envio: grupo ativo sai sem custo,
+// e o group-participants.update já invalida a entrada quando alguém entra ou sai.
+// NÃO usa listGroups: o groupFetchAllParticipating emite groups.update de todos os
+// grupos, e isso zeraria o cache que o envio usa. Grupo que falhou fica de fora.
+async function groupSizes(userId, numberId, jids) {
+  const s = ensureConnected(userId, numberId);
+  const out = [];
+  for (const jid of jids || []) {
+    try {
+      const meta = (s.groupMeta ? await s.groupMeta(jid) : undefined) || await s.sock.groupMetadata(jid);
+      if (Array.isArray(meta?.participants)) out.push({ jid, members: meta.participants.length });
+    } catch { /* fora do grupo, grupo apagado: some do registro do dia */ }
+  }
+  return out;
+}
+
 // A URL da miniatura da foto do grupo (task 24), ou null quando o grupo não tem
 // foto — o WhatsApp responde "item-not-found" e isso não é erro. A URL é do CDN
 // do WhatsApp e expira em alguns dias; quem guarda (server.js) guarda por horas.
@@ -1478,6 +1511,7 @@ module.exports = {
   leaveGroup,
   getGroupMetadata,
   groupMemberJids,
+  groupSizes,
   getGroupPicture,
   restoreSessions,
   closeAll,
@@ -1514,6 +1548,7 @@ function makeStub() {
     leaveGroup: fail,
     getGroupMetadata: fail,
     groupMemberJids: fail,
+    groupSizes: fail,
     getGroupPicture: fail,
     restoreSessions: () => {},
     closeAll: () => Promise.resolve(),

@@ -188,6 +188,14 @@ describe("sidebarItems — estrutura e ícones", () => {
     expect(PAGE_TO_PATH["admin-extensao"]).toBe("/admin/extensao");
   });
 
+  it("Grupos é uma aba de usuário com rota própria", () => {
+    const item = sidebarItems.find(i => i.id === "grupos");
+    expect(item).toBeTruthy();
+    expect(item.adminOnly).toBeFalsy();
+    expect(item.icon.length).toBe(1); // símbolo, não emoji
+    expect(PAGE_TO_PATH.grupos).toBe("/grupos");
+  });
+
   it("Desempenho é uma aba de usuário com rota própria", () => {
     const item = sidebarItems.find(i => i.id === "desempenho");
     expect(item).toBeTruthy();
