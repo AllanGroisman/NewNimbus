@@ -101,43 +101,82 @@ function formatVendas(p) {
   return "";
 }
 
-function renderTemplate(template, p) {
-  const fmt = v => v != null ? `R$ ${Number(v).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` : "—";
-  const cupom = (p.coupon || "").toString().trim();
-  let t = String(template || "");
-  // Sem cupom: apaga a linha inteira que contém {cupom} (nada de "🎟️ Cupom:" vazio).
-  // Com cupom: substitui normalmente logo abaixo.
-  if (!cupom) t = t.replace(/^[^\n]*\{cupom\}[^\n]*\n?/gm, "");
-  // Sem promoção (originalPrice e discount nulos): apaga as linhas inteiras de
-  // {preco_antigo} e {desconto} — mesmo comportamento do {cupom} acima.
-  const hasPromo = p.originalPrice != null || p.discount != null;
-  if (!hasPromo) {
-    t = t.replace(/^[^\n]*\{preco_antigo\}[^\n]*\n?/gm, "");
-    t = t.replace(/^[^\n]*\{desconto\}[^\n]*\n?/gm, "");
+// Monta a mensagem a partir do modelo. Regra única: variável SEM VALOR derruba a
+// linha inteira — nada de "De: —" ou "🏪 " sozinho. Por isso cada dado opcional
+// mora na sua própria linha no modelo. Linhas em branco que sobram quando um bloco
+// inteiro some viram uma só.
+//
+// ATENÇÃO: a prévia do editor roda uma cópia deste algoritmo
+// (frontend/src/data/messageTemplate.js). Mudou aqui, muda lá — o
+// tests/unit/template-parity.test.js compara as duas.
+const TEMPLATE_TOKEN_RE = /\{(\w+)\}/g;
+
+function templateValues(p) {
+  const num = v => (v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : null);
+  const pos = v => (num(v) > 0 ? num(v) : null);
+  const text = v => (v == null ? "" : String(v).trim()) || null;
+  const fmt = v => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  const price = pos(p.price);
+  // "De" só existe quando é maior que o "Por" — preço antigo nulo, igual ou menor
+  // é dado ruim do scraper, e a linha some.
+  const original = price != null && pos(p.originalPrice) > price ? pos(p.originalPrice) : null;
+  // Desconto 0 (a Shopee manda 0 quando não há promoção) é "sem desconto". Sem o
+  // número, sai do par de preços quando ele existe.
+  let discount = num(p.discount) >= 1 ? Math.round(num(p.discount)) : null;
+  if (discount == null && original != null) {
+    const fromPair = Math.round((1 - price / original) * 100);
+    discount = fromPair >= 1 ? fromPair : null;
   }
-  // O que o cupom TIRA — a regra ("15% OFF") e o quanto ela vale neste preço.
-  // Somem por linha inteira como o {cupom}, e não viram "—" como o {preco}: uma
-  // linha "🏷️ Desconto do cupom: —" é pior que linha nenhuma. Quem calcula é o
-  // sendItem; sem cupom válido os dois chegam nulos.
-  if (!p.couponLabel) t = t.replace(/^[^\n]*\{desconto_cupom\}[^\n]*\n?/gm, "");
-  if (p.couponSaving == null) t = t.replace(/^[^\n]*\{economia_cupom\}[^\n]*\n?/gm, "");
-  return t
-    .replace(/\{produto\}/g, p.name || "")
-    .replace(/\{preco\}/g, fmt(p.price))
-    // {preco_com_cupom} NÃO apaga linha nenhuma: quando o cupom não vale (ou nem
-    // existe), ele vira exatamente o {preco}. Quem calcula é o sendItem, que lê o
-    // cupom no banco na hora do envio; aqui só chega o número pronto (ou null).
-    .replace(/\{preco_com_cupom\}/g, fmt(p.priceWithCoupon != null ? p.priceWithCoupon : p.price))
-    .replace(/\{preco_antigo\}/g, fmt(p.originalPrice))
-    .replace(/\{desconto\}/g, p.discount ? `${p.discount}%` : "—")
-    .replace(/\{loja\}/g, p.store || "")
-    .replace(/\{vendas\}/g, formatVendas(p))
-    .replace(/\{cupom\}/g, cupom)
-    .replace(/\{desconto_cupom\}/g, p.couponLabel || "")
-    .replace(/\{economia_cupom\}/g, fmt(p.couponSaving))
-    .replace(/\{link\}/g, p.link || "")
+  const withCoupon = pos(p.priceWithCoupon);
+  const saving = pos(p.couponSaving);
+  const rating = pos(p.rating);
+
+  return {
+    produto: text(p.name),
+    preco: price != null ? fmt(price) : null,
+    // Com cupom valendo: o preço com o desconto dele (quem calcula é o sendItem,
+    // que lê o cupom no banco na hora do envio). Sem cupom vira o preço normal —
+    // e o renderTemplate tira a linha quando o {preco} já aparece em outra.
+    preco_com_cupom: withCoupon != null ? fmt(withCoupon) : (price != null ? fmt(price) : null),
+    preco_antigo: original != null ? fmt(original) : null,
+    desconto: discount != null ? `${discount}%` : null,
+    economia: original != null ? fmt(Math.round((original - price) * 100) / 100) : null,
+    loja: text(p.store),
+    vendas: formatVendas(p) || null,
+    avaliacao: rating != null ? rating.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : null,
+    frete: p.freeShipping === true ? "Frete grátis" : null,
+    cupom: text(p.coupon),
+    // O que o cupom TIRA — a regra ("15% OFF") e o quanto ela vale neste preço.
+    // Sem cupom válido os dois chegam nulos do sendItem.
+    desconto_cupom: text(p.couponLabel),
+    economia_cupom: saving != null ? fmt(saving) : null,
+    link: text(p.link),
     // Só o texto: quem marca de verdade é o `mentions` que o sendItem pede.
-    .replace(/\{todos\}/g, "@todos");
+    todos: "@todos",
+  };
+}
+
+function renderTemplate(template, p) {
+  const tpl = String(template || "");
+  const item = p || {};
+  const values = templateValues(item);
+  const known = k => Object.prototype.hasOwnProperty.call(values, k);
+  // Token desconhecido ({xyz}) fica como está e não derruba a linha.
+  const hasEmpty = line => [...line.matchAll(TEMPLATE_TOKEN_RE)].some(m => known(m[1]) && values[m[1]] == null);
+  let lines = tpl.split("\n").filter(line => !hasEmpty(line));
+  // Sem cupom valendo, o {preco_com_cupom} seria só o {preco} de novo: se o
+  // {preco} aparece em outra linha, a do {preco_com_cupom} some. Decidido depois
+  // do filtro acima — se a linha do {preco} caiu, é o {preco_com_cupom} quem
+  // mostra o preço.
+  if (!(Number(item.priceWithCoupon) > 0)) {
+    const isCouponLine = l => l.includes("{preco_com_cupom}");
+    if (lines.some(l => l.includes("{preco}") && !isCouponLine(l))) lines = lines.filter(l => !isCouponLine(l));
+  }
+  return lines.join("\n")
+    .replace(TEMPLATE_TOKEN_RE, (all, k) => (known(k) ? values[k] : all))
+    .replace(/\n\s*\n(\s*\n)+/g, "\n\n")
+    .trim();
 }
 
 function resolveSources(sources) {

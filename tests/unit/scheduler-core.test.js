@@ -285,9 +285,26 @@ describe("scheduler.renderTemplate — mensagem do envio", () => {
     expect(out).toBe("Mouse Pro / Mouse Pro");
   });
 
-  it("campos ausentes: preço vira — e strings viram vazio", () => {
-    const out = scheduler.renderTemplate("{produto}|{preco}|{loja}|{link}", {});
-    expect(out).toBe("|—||");
+  // Regra única: variável sem valor derruba a linha inteira — nada de "—" nem
+  // rótulo solto ("🏪 " sem loja).
+  it("variável sem valor derruba a linha inteira", () => {
+    expect(scheduler.renderTemplate("{produto}|{preco}|{loja}|{link}", {})).toBe("");
+    const tpl = "🔥 {produto}\n🏪 {loja}\n📦 {vendas}\n✅ {preco}\n🛒 {link}";
+    expect(scheduler.renderTemplate(tpl, { name: "X", price: 10, link: "L" }))
+      .toBe("🔥 X\n✅ R$ 10,00\n🛒 L");
+  });
+
+  it("linhas em branco que sobram quando um bloco some viram uma só (e as pontas são aparadas)", () => {
+    const tpl = "{produto}\n\n🎟️ {cupom}\n🏷️ {desconto_cupom}\n\n🛒 {link}\n";
+    expect(scheduler.renderTemplate(tpl, { name: "X", link: "L" })).toBe("X\n\n🛒 L");
+  });
+
+  it("token desconhecido fica como está e não derruba a linha", () => {
+    expect(scheduler.renderTemplate("{produto} {xyz}", { name: "X" })).toBe("X {xyz}");
+  });
+
+  it("nome do produto com chaves não vira outra variável", () => {
+    expect(scheduler.renderTemplate("{produto}", { name: "Kit {link}" })).toBe("Kit {link}");
   });
 
   // Item sem promoção não mostra "de" nem "desconto": a linha inteira sai.
@@ -297,11 +314,60 @@ describe("scheduler.renderTemplate — mensagem do envio", () => {
       .toBe("X|30%|L");
   });
 
-  it("{vendas} usa soldCount numérico compacto ou sold em texto; sem dado fica vazio", () => {
+  // A Shopee manda discount 0 (não null) quando não há promoção — antes isso
+  // virava "De: —" e "Desconto: -—".
+  it("Shopee sem promoção (discount 0): as linhas de {preco_antigo} e {desconto} somem", () => {
+    const tpl = "💰 De: {preco_antigo}\n✅ Por: {preco}\n🏷️ Desconto: -{desconto}";
+    expect(scheduler.renderTemplate(tpl, { price: 50, originalPrice: null, discount: 0, store: "Shopee" }))
+      .toBe("✅ Por: R$ 50,00");
+  });
+
+  // Card do ML com a pílula "42% OFF" mas sem o preço riscado.
+  it("desconto sem preço antigo: some só a linha do {preco_antigo}", () => {
+    const tpl = "De: {preco_antigo}\nPor: {preco}\n{desconto} OFF";
+    expect(scheduler.renderTemplate(tpl, { price: 58, originalPrice: null, discount: 42 }))
+      .toBe("Por: R$ 58,00\n42% OFF");
+  });
+
+  it("preço antigo sem desconto: o {desconto} sai do par de preços", () => {
+    expect(scheduler.renderTemplate("{desconto}", { price: 75, originalPrice: 100, discount: null })).toBe("25%");
+  });
+
+  it("preço antigo igual ou menor que o atual é dado ruim: a linha some", () => {
+    const tpl = "De: {preco_antigo}\nPor: {preco}\n{desconto}";
+    expect(scheduler.renderTemplate(tpl, { price: 100, originalPrice: 100, discount: null })).toBe("Por: R$ 100,00");
+  });
+
+  it("{economia} é preço antigo − preço; sem promoção a linha some", () => {
+    expect(scheduler.renderTemplate("Economize {economia}", produto)).toBe("Economize R$ 150,00");
+    expect(scheduler.renderTemplate("A\nEconomize {economia}", { price: 10 })).toBe("A");
+  });
+
+  it("{economia} não come o {economia_cupom} na substituição", () => {
+    expect(scheduler.renderTemplate("{economia_cupom}", { ...produto, couponSaving: 22.5 })).toBe("R$ 22,50");
+  });
+
+  it("{frete} só com frete grátis informado", () => {
+    expect(scheduler.renderTemplate("A\n🚚 {frete}", { freeShipping: true })).toBe("A\n🚚 Frete grátis");
+    expect(scheduler.renderTemplate("A\n🚚 {frete}", { freeShipping: false })).toBe("A");
+  });
+
+  it("{avaliacao} com uma casa decimal; sem nota a linha some", () => {
+    expect(scheduler.renderTemplate("⭐ {avaliacao}", { rating: 4.75 })).toBe("⭐ 4,8");
+    expect(scheduler.renderTemplate("⭐ {avaliacao}", { rating: 5 })).toBe("⭐ 5,0");
+    expect(scheduler.renderTemplate("A\n⭐ {avaliacao}", { rating: null })).toBe("A");
+  });
+
+  it("preço nunca sai com mais de 2 casas", () => {
+    expect(scheduler.renderTemplate("{preco}", { price: 19.999 })).toBe("R$ 20,00");
+    expect(scheduler.renderTemplate("{preco}", { price: 1899 })).toBe("R$ 1.899,00");
+  });
+
+  it("{vendas} usa soldCount numérico compacto ou sold em texto; sem dado a linha some", () => {
     expect(scheduler.renderTemplate("{vendas}", { soldCount: 1500 })).toBe("1,5 mil vendidos");
     expect(scheduler.renderTemplate("{vendas}", { sold: "500+ vendidos" })).toBe("500+ vendidos");
     expect(scheduler.renderTemplate("{vendas}", { sold: "500+" })).toBe("500+ vendidos");
-    expect(scheduler.renderTemplate("{vendas}", {})).toBe("");
+    expect(scheduler.renderTemplate("A\n📦 {vendas}", {})).toBe("A");
   });
 
   it("template null/undefined vira string vazia", () => {
@@ -321,14 +387,15 @@ describe("scheduler.renderTemplate — mensagem do envio", () => {
   });
 
   // {preco_com_cupom}: quem calcula é o sendItem (lê o cupom no banco na hora do
-  // envio) e passa o número pronto em priceWithCoupon. Sem número, o placeholder
-  // vira o {preco} — nunca "—", nunca linha apagada.
+  // envio) e passa o número pronto em priceWithCoupon. Sem número: se o modelo já
+  // mostra o {preco}, a linha some (não repete o mesmo preço); se é o único preço
+  // do modelo, vira o {preco}.
   it("{preco_com_cupom} mostra o preço com desconto quando ele foi calculado", () => {
     const out = scheduler.renderTemplate("{preco} → {preco_com_cupom}", { ...produto, priceWithCoupon: 134.91 });
     expect(out).toBe("R$ 149,90 → R$ 134,91");
   });
 
-  it("cupom que não vale: {preco_com_cupom} sai igual ao {preco} e a linha fica", () => {
+  it("cupom que não vale e modelo sem {preco}: {preco_com_cupom} sai igual ao preço e a linha fica", () => {
     const tpl = "🔥 {produto}\n💸 Com cupom: {preco_com_cupom}\n{link}";
     expect(scheduler.renderTemplate(tpl, produto))
       .toBe("🔥 Mouse Pro\n💸 Com cupom: R$ 149,90\nhttps://amzn.to/x");
@@ -337,8 +404,28 @@ describe("scheduler.renderTemplate — mensagem do envio", () => {
       .toBe("🔥 Mouse Pro\n💸 Com cupom: R$ 149,90\nhttps://amzn.to/x");
   });
 
-  it("sem preço nenhum, {preco_com_cupom} vira — como o {preco}", () => {
-    expect(scheduler.renderTemplate("{preco}|{preco_com_cupom}", {})).toBe("—|—");
+  it("cupom que não vale e modelo com {preco}: a linha do {preco_com_cupom} some", () => {
+    const tpl = "✅ Por: {preco}\n🎟️ Cupom: {cupom}\n💸 Com cupom: {preco_com_cupom}";
+    expect(scheduler.renderTemplate(tpl, produto)).toBe("✅ Por: R$ 149,90");
+    // Palavra sem regra (cupom da Amazon no repasse): o {cupom} fica, o preço não repete.
+    expect(scheduler.renderTemplate(tpl, { ...produto, coupon: "AMZ10" }))
+      .toBe("✅ Por: R$ 149,90\n🎟️ Cupom: AMZ10");
+    expect(scheduler.renderTemplate(tpl, { ...produto, coupon: "JBL20", priceWithCoupon: 134.91 }))
+      .toBe("✅ Por: R$ 149,90\n🎟️ Cupom: JBL20\n💸 Com cupom: R$ 134,91");
+  });
+
+  it("se a linha do {preco} caiu por outro motivo, o {preco_com_cupom} fica e mostra o preço", () => {
+    const tpl = "Por {preco} ({desconto} OFF)\nCom cupom {preco_com_cupom}";
+    expect(scheduler.renderTemplate(tpl, { price: 10 })).toBe("Com cupom R$ 10,00");
+  });
+
+  it("{preco} e {preco_com_cupom} na mesma linha: sem cupom a linha fica, com o preço normal", () => {
+    expect(scheduler.renderTemplate("{preco} / {preco_com_cupom}", { price: 10 })).toBe("R$ 10,00 / R$ 10,00");
+  });
+
+  it("sem preço nenhum, as linhas de {preco} e {preco_com_cupom} somem", () => {
+    expect(scheduler.renderTemplate("A\n{preco}\n{preco_com_cupom}", {})).toBe("A");
+    expect(scheduler.renderTemplate("A\n{preco_com_cupom}", {})).toBe("A");
   });
 
   // {desconto_cupom} e {economia_cupom}: quem calcula é o sendItem (detalheDoCupom
@@ -357,11 +444,11 @@ describe("scheduler.renderTemplate — mensagem do envio", () => {
       .toBe("🔥 Mouse Pro\nhttps://amzn.to/x");
   });
 
-  // Economia 0 não existe (precoComCupom recusa desconto que não muda o preço),
-  // mas o guard é por `== null` e não por falsy — se um dia chegar, a linha fica.
-  it("{economia_cupom} distingue nulo de zero", () => {
-    expect(scheduler.renderTemplate("E: {economia_cupom}", { ...produto, couponSaving: 0 }))
-      .toBe("E: R$ 0,00");
+  // Economia 0 não existe (precoComCupom recusa desconto que não muda o preço);
+  // se um dia chegar, "Economize R$ 0,00" seria pior que linha nenhuma.
+  it("{economia_cupom} zero derruba a linha", () => {
+    expect(scheduler.renderTemplate("A\nE: {economia_cupom}", { ...produto, couponSaving: 0 }))
+      .toBe("A");
   });
 
   it("{desconto} não come o {desconto_cupom} na substituição", () => {

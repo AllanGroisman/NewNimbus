@@ -438,10 +438,13 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null, text 
         originalPrice: scraped?.originalPrice ?? null,
         discount: scraped?.discount ?? null,
         sold: scraped?.sold ?? null,
+        // A Shopee manda a contagem exata em soldCount (o `sold` fica vazio) — sem
+        // ele o {vendas} do modelo sumia em todo repasse da Shopee.
+        soldCount: scraped?.soldCount ?? null,
         store,
-        rating: null,
+        rating: scraped?.rating ?? null,
         reviewsCount: null,
-        freeShipping: false,
+        freeShipping: scraped?.freeShipping === true,
         seller: null,
         coupon: coupon || null,
         manual: true,

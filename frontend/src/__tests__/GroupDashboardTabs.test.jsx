@@ -31,6 +31,7 @@ vi.mock("../data/api", () => ({
 
 import { saveGroupQueue, saveItemCoupon } from "../data/api";
 import GroupDashboard from "../components/GroupDashboard.jsx";
+import { DEFAULT_MESSAGE_TEMPLATE, CLASSIC_MESSAGE_TEMPLATE, LEGACY_DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
 
 function makeItem(overrides = {}) {
   return {
@@ -462,23 +463,47 @@ describe("GroupDashboard — aba Modelos Mensagens (prévia)", () => {
     expect(screen.queryByText(/Cupom fixo da campanha/)).toBeNull();
   });
 
-  // Task 101: {preco_com_cupom} nunca apaga a linha — sem cupom ele vira o preço
-  // normal, que é o mesmo fallback do renderTemplate do scheduler.
-  it("{preco_com_cupom} mostra o preço com desconto na campanha de repasse", () => {
+  // A prévia usa o mesmo algoritmo do envio (src/data/messageTemplate.js, conferido
+  // contra o scheduler.js em tests/unit/template-parity.test.js) — inclusive os
+  // centavos, que antes a prévia não mostrava.
+  it("{preco_com_cupom} mostra o preço com o desconto do cupom, com centavos", () => {
     const { container } = renderMessagesTab({
       group: { scraping: { kind: "repasse", sources: ["Mercado Livre"], filters: {} }, messageTemplate: "Com cupom: {preco_com_cupom}" },
     });
-    expect(container.querySelector(".wa-preview").textContent).toContain("Com cupom: R$ 1.709");
+    expect(container.querySelector(".wa-preview").textContent).toContain("Com cupom: R$ 1.709,10");
   });
 
-  it("sem cupom na prévia, {preco_com_cupom} vira o preço normal e a linha fica", () => {
-    const { container } = renderMessagesTab();
-    const textarea = container.querySelector("textarea");
-    fireEvent.change(textarea, { target: { value: "Cupom: {cupom}\nCom cupom: {preco_com_cupom}" } });
-    const preview = container.querySelector(".wa-preview");
-    // A linha do {cupom} some (não há cupom); a do {preco_com_cupom} fica, com o {preco}.
-    expect(preview.textContent).not.toContain("Cupom:");
-    expect(preview.textContent).toContain("Com cupom: R$ 1.899");
+  // Campanha de busca também herda cupom do catálogo do ML no envio — a prévia
+  // não pode mais esconder o cupom só por ser busca.
+  it("campanha de busca mostra o cupom na prévia (o cupom vem ligado)", () => {
+    const { container } = renderMessagesTab({ group: { messageTemplate: "Cupom: {cupom}" } });
+    expect(container.querySelector(".wa-preview").textContent).toContain("Cupom: GALAXY10");
+  });
+
+  it("desligar o Cupom: some a linha do {cupom}, e a do {preco_com_cupom} some se o {preco} já aparece", () => {
+    const { container } = renderMessagesTab({ group: { messageTemplate: "Por: {preco}\nCupom: {cupom}\nCom cupom: {preco_com_cupom}" } });
+    fireEvent.click(screen.getByRole("switch", { name: "Simular item com cupom na prévia" }));
+    const preview = container.querySelector(".wa-preview").textContent;
+    expect(preview).toContain("Por: R$ 1.899,00");
+    expect(preview).not.toContain("Cupom:");
+    expect(preview).not.toContain("Com cupom:");
+  });
+
+  it("desligar o Cupom com {preco_com_cupom} como único preço: ele vira o preço normal", () => {
+    const { container } = renderMessagesTab({ group: { messageTemplate: "Sai por: {preco_com_cupom}" } });
+    fireEvent.click(screen.getByRole("switch", { name: "Simular item com cupom na prévia" }));
+    expect(container.querySelector(".wa-preview").textContent).toContain("Sai por: R$ 1.899,00");
+  });
+
+  it("desligar a Promoção: somem as linhas de {preco_antigo}, {desconto} e {economia}", () => {
+    const { container } = renderMessagesTab({ group: { messageTemplate: "De {preco_antigo}\nPor {preco}\n{desconto} OFF\nEconomize {economia}" } });
+    expect(container.querySelector(".wa-preview").textContent).toContain("Economize R$ 600,00");
+    fireEvent.click(screen.getByRole("switch", { name: "Simular item com promoção na prévia" }));
+    const preview = container.querySelector(".wa-preview").textContent;
+    expect(preview).toContain("Por R$ 1.899,00");
+    expect(preview).not.toContain("De ");
+    expect(preview).not.toContain("OFF");
+    expect(preview).not.toContain("Economize");
   });
 
   it("{todos} aparece como @todos na prévia", () => {
@@ -569,6 +594,28 @@ describe("GroupDashboard — aba Modelos Mensagens (imagem do modelo)", () => {
     const { container } = renderMessagesTab({ group: { messageTemplate: "{produto} {link}", scraping: scrapingBase } });
     escolherModelo(container, "custom:tl");
     expect(screen.getByRole("button", { name: "Ativar este modelo" })).not.toBeDisabled();
+  });
+
+  // O padrão antigo virou o preset "Clássico". Campanhas criadas com ele (com ou
+  // sem a linha do cupom) abrem nele, em uso e sem "•" — o texto delas não muda.
+  it.each([
+    ["com a linha do cupom", CLASSIC_MESSAGE_TEMPLATE],
+    ["sem a linha do cupom (o que 'Nova campanha' gravava)", LEGACY_DEFAULT_MESSAGE_TEMPLATE],
+  ])("campanha no padrão antigo %s abre como Clássico em uso, sem alteração", (_, texto) => {
+    const { container } = renderMessagesTab({ group: { messageTemplate: texto, scraping: scrapingBase } });
+    const select = container.querySelector("select");
+    expect(select.value).toBe("preset:classic");
+    expect(select.selectedOptions[0].textContent).toBe("Clássico — em uso");
+    expect(screen.getByRole("button", { name: /Ativo na campanha/ })).toBeInTheDocument();
+    // O editor mostra o texto que a campanha realmente envia.
+    expect(container.querySelector("textarea").value).toBe(texto);
+  });
+
+  it("campanha nova (padrão do código) abre no Padrão em uso, sem alteração", () => {
+    const { container } = renderMessagesTab({ group: { messageTemplate: DEFAULT_MESSAGE_TEMPLATE, scraping: scrapingBase } });
+    const select = container.querySelector("select");
+    expect(select.value).toBe("preset:default");
+    expect(select.selectedOptions[0].textContent).toBe("Padrão — em uso");
   });
 
   it("campanha com prévia do link abre no modelo que casa texto e imagem", () => {

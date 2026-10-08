@@ -1,10 +1,12 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { initialGroups, initialNumbers, initialWhatsappGroups, makeEmptyGroup, DEFAULT_MESSAGE_TEMPLATE } from "./data/mockData";
+import { initialGroups, initialNumbers, initialWhatsappGroups, makeEmptyGroup } from "./data/mockData";
 import { allSources, storeLockMessage, unlockedSources, navToPath, pathToNav, publicPageFor, popQueryParam, DEFAULT_PALETTE, isValidPalette } from "./data/constants";
 import { DEFAULT_ONBOARDING, mergeOnboarding, TOURS } from "./data/onboarding";
 
+// Sem `messageTemplate` aqui de propósito: campanha nova sai com o
+// DEFAULT_MESSAGE_TEMPLATE do código (makeEmptyGroup). Uma cópia no settings ficava
+// gravada por usuário e congelava o padrão antigo pra sempre.
 const DEFAULT_SETTINGS = {
-  messageTemplate: DEFAULT_MESSAGE_TEMPLATE,
   customTemplates: [],
   notifications: { email: true, push: false, weeklyReport: true, pendingReview: true },
   sources: allSources,
@@ -846,7 +848,7 @@ export default function App() {
     // nasce com todas — a trava vale pra busca no catálogo, e o repasse recebe o
     // link pronto do grupo líder (`sources: undefined` cai no default do maker).
     const sources = type === "repasse" ? undefined : unlockedSources(storeLocks);
-    const newGroup = makeEmptyGroup({ id: Date.now(), name, categories, template: settings.messageTemplate, type, repasse, sources });
+    const newGroup = makeEmptyGroup({ id: Date.now(), name, categories, type, repasse, sources });
     setGroups(gs => [...gs, newGroup]);
     setSelectedGroup(newGroup);
     setPage("group");

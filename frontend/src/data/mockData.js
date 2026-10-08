@@ -4,9 +4,38 @@ export const initialWhatsappGroups = [];
 
 export const initialGroups = [];
 
-// Template padrão sugerido ao criar uma campanha nova.
-// Usuário pode editar livremente na aba Gerenciar.
-export const DEFAULT_MESSAGE_TEMPLATE = `🔥 OFERTA IMPERDÍVEL!
+// Template padrão de toda campanha nova (e o preset "Padrão" do editor).
+// O produto vem na 1ª linha porque é ela que aparece na notificação do WhatsApp.
+// Cada dado opcional mora na sua própria linha: variável sem valor derruba a
+// linha inteira (backend/scheduler.js → renderTemplate).
+export const DEFAULT_MESSAGE_TEMPLATE = `🔥 *{produto}*
+
+De ~{preco_antigo}~
+💰 Por *{preco}*
+📉 {desconto} OFF
+🎟️ Cupom: *{cupom}*
+✅ Com cupom: *{preco_com_cupom}*
+🚚 {frete}
+📦 {vendas}
+
+🛒 {link}`;
+
+// O padrão de antes (preset "Clássico"). Campanhas antigas continuam com ele.
+export const CLASSIC_MESSAGE_TEMPLATE = `🔥 OFERTA IMPERDÍVEL!
+
+📦 {produto}
+🏪 {loja}
+
+💰 De: {preco_antigo}
+✅ Por: {preco}
+🏷️ Desconto: -{desconto}
+🎟️ Cupom: {cupom}
+
+🛒 Compre aqui: {link}`;
+
+// O que "Nova campanha" gravava antes — o Clássico sem a linha do cupom. Fica
+// só pra essas campanhas abrirem como "Clássico — em uso" no editor.
+export const LEGACY_DEFAULT_MESSAGE_TEMPLATE = `🔥 OFERTA IMPERDÍVEL!
 
 📦 {produto}
 🏪 {loja}

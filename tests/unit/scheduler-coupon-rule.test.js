@@ -83,8 +83,10 @@ describe("couponRuleForItem — sem palavra não há desconto a anunciar", () =>
 
     await scheduler.sendItem("u1", GRUPO, WA, item());
 
-    // O {preco_com_cupom} vira o {preco} — não apaga a linha, é o contrato dele.
-    expect(enviadas[0]).toContain("Com cupom: R$ 200,00");
+    // Preço normal, e a linha do {preco_com_cupom} some: o modelo já mostra o
+    // {preco}, então ela só repetiria o mesmo valor.
+    expect(enviadas[0]).toContain("Por: R$ 200,00");
+    expect(enviadas[0]).not.toContain("Com cupom:");
     // As outras três somem inteiras: não há palavra, então não há o que anunciar.
     expect(enviadas[0]).not.toContain("Cupom:");
     expect(enviadas[0]).not.toContain("Desconto do cupom:");
@@ -123,7 +125,10 @@ describe("couponRuleForItem — sem palavra não há desconto a anunciar", () =>
     await scheduler.sendItem("u1", GRUPO, WA, item({ store: "Amazon", coupon: "GALAXY10" }));
 
     expect(porChave).not.toHaveBeenCalled();
-    expect(enviadas[0]).toContain("Com cupom: R$ 200,00");
+    // A palavra continua (é o cupom da Amazon que o líder anunciou), mas nenhum
+    // preço com desconto é inventado.
+    expect(enviadas[0]).toContain("Cupom: GALAXY10");
+    expect(enviadas[0]).not.toContain("Com cupom:");
     expect(enviadas[0]).not.toContain("Desconto do cupom:");
   });
 
@@ -132,7 +137,16 @@ describe("couponRuleForItem — sem palavra não há desconto a anunciar", () =>
 
     await scheduler.sendItem("u1", GRUPO, WA, item());
 
-    expect(enviadas[0]).toContain("Com cupom: R$ 200,00");
+    expect(enviadas[0]).toContain("Por: R$ 200,00");
+    expect(enviadas[0]).not.toContain("Com cupom:");
     expect(enviadas[0]).not.toContain("Desconto do cupom:");
+  });
+
+  it("modelo com {preco_com_cupom} como único preço: sem cupom ele vira o preço normal", async () => {
+    vi.spyOn(coupons, "couponsListForKeys").mockResolvedValue(new Map());
+
+    await scheduler.sendItem("u1", { ...GRUPO, messageTemplate: "{produto}\nSai por: {preco_com_cupom}" }, WA, item());
+
+    expect(enviadas[0]).toBe("Fone Bluetooth\nSai por: R$ 200,00");
   });
 });

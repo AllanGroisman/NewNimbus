@@ -652,23 +652,30 @@ banco: recebe o preço e a linha de `ml_coupons` (`kind`, `value`, `minPurchase`
 
 O `null` é o coração da coisa. Ele aparece quando o cupom venceu, quando ainda não
 começou, quando o produto está **abaixo da compra mínima** ou quando o `kind` veio
-`unknown`/`desconhecido` — e nesses casos o `{preco_com_cupom}` sai **igual ao
-`{preco}`**, sem apagar linha e sem "—". Anunciar um desconto que o ML não daria é
-o cliente clicando e pagando mais caro; preço normal em silêncio é a resposta
-certa. O teto (`maxDiscount`) entra como `Math.min` no desconto, não no preço.
+`unknown`/`desconhecido`. Anunciar um desconto que o ML não daria é o cliente
+clicando e pagando mais caro; preço normal em silêncio é a resposta certa. O teto
+(`maxDiscount`) entra como `Math.min` no desconto, não no preço.
+
+Sem preço com cupom, o `renderTemplate` decide pela linha: se o `{preco}` aparece
+em **outra** linha da mensagem, a do `{preco_com_cupom}` some (seria o mesmo preço
+repetido); se não aparece (o `{preco_com_cupom}` é o único preço do modelo, ou a
+linha do `{preco}` caiu), ele vira o `{preco}`. Nunca "—". A regra geral do
+`renderTemplate` é a mesma pra todas as variáveis: **sem valor, a linha inteira
+some**.
 
 Quem chama é o `sendItem` (`scheduler.js`), no **envio**, não no refill: o item
 fica dias em `group.queue` e o cupom vence nesse meio-tempo, então guardar
 valor/validade no payload da fila seria promessa velha. `couponRuleForItem` lê o
 cupom na hora, nesta ordem — a **palavra** do item (`findCouponByCode`, que é o
-caso do repasse e do cupom digitado à mão na fila), depois `couponCampaignId`,
-depois `couponsForKeys` pela chave do produto — e nada disso roda fora do Mercado
-Livre, porque cupom do ML não desconta produto da Amazon nem da Shopee (uma palavra
-igual nas duas lojas anunciaria um preço que não existe). O terceiro passo não é
-redundância:
-o refill grava o `couponCampaignId` que valia na hora, e o item fica dias na fila
-— item antigo, ou de repasse (que não passa pelo refill), chega ao envio sem
-campanha nenhuma mesmo tendo cupom no catálogo hoje.
+caso do repasse e do cupom digitado à mão na fila), depois `couponsListForKeys`
+pela chave do produto, de onde o `melhorCupom` escolhe o que tem palavra e dá o
+menor preço — e nada disso roda fora do Mercado Livre, porque cupom do ML não
+desconta produto da Amazon nem da Shopee (uma palavra igual nas duas lojas
+anunciaria um preço que não existe). O segundo passo não é redundância: item
+antigo, ou de repasse (que não passa pelo refill), chega ao envio sem palavra
+nenhuma mesmo tendo cupom no catálogo hoje — e aí a palavra do catálogo é
+**herdada** pelo `{cupom}`, pra o preço com desconto nunca sair sem dizer qual
+cupom dá esse preço.
 
 ### As sondas
 

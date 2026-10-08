@@ -2,7 +2,8 @@ import { useState, useRef, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, storeLockMessage, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, soldText, getGroupCategories, getGroupStats, computeQueueETA, formatETA, formatTimeBR, formatDateBR, isSameDayBR, WHATSNIMBUS_EVENTS } from "../data/constants";
 import { createWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupQueue, saveGroupQueue, saveItemCoupon, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue, errText } from "../data/api";
 import { refillResultMsg, queueMax } from "../data/refill";
-import { DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
+import { DEFAULT_MESSAGE_TEMPLATE, CLASSIC_MESSAGE_TEMPLATE, LEGACY_DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
+import { renderMessageTemplate, previewItem, PREVIEW_ITEM } from "../data/messageTemplate";
 import { leadersOf, withLeaders } from "../data/repasseLeaders";
 import { useUnsavedGuard, useRequestNavigation } from "../data/navGuard";
 import { useTextHistory } from "../data/textHistory";
@@ -37,62 +38,25 @@ export function writeSavedTab(groupId, tabId) {
   } catch { /* ignora (modo privado/quota) */ }
 }
 
+// Toda variável sem valor derruba a linha inteira no envio (backend/scheduler.js →
+// renderTemplate) — por isso as descrições dizem só o que cada uma mostra.
 const TEMPLATE_VARS = [
   { token: "{produto}", desc: "Nome do produto" },
-  { token: "{preco}", desc: "Preço com desconto" },
-  { token: "{preco_com_cupom}", desc: "Preço já com o desconto do cupom (vira o preço normal quando o cupom não valer)" },
-  { token: "{preco_antigo}", desc: "Preço original (a linha some quando não houver promoção)" },
-  { token: "{desconto}", desc: "% de desconto (a linha some quando não houver promoção)" },
+  { token: "{preco}", desc: "Preço atual (já com a promoção)" },
+  { token: "{preco_antigo}", desc: "Preço antes da promoção (só quando houver promoção)" },
+  { token: "{desconto}", desc: "% de desconto da promoção, ex.: \"24%\"" },
+  { token: "{economia}", desc: "Quanto a promoção economiza em reais (preço antigo − preço)" },
+  { token: "{cupom}", desc: "A palavra do cupom, pra o cliente digitar no checkout" },
+  { token: "{preco_com_cupom}", desc: "Preço já com o desconto do cupom. Sem cupom valendo, some se o modelo já mostra o {preco}; senão vira o preço normal" },
+  { token: "{desconto_cupom}", desc: "O que o cupom tira: \"15% OFF\" ou \"R$ 30,00 OFF\"" },
+  { token: "{economia_cupom}", desc: "Quanto o cupom economiza neste produto, em reais" },
+  { token: "{frete}", desc: "\"Frete grátis\" quando a loja informa (Shopee não informa)" },
+  { token: "{vendas}", desc: "Nº de vendas, ex.: \"1,2 mil vendidos\"" },
+  { token: "{avaliacao}", desc: "Nota do produto, ex.: \"4,8\"" },
   { token: "{loja}", desc: "Nome da loja" },
-  { token: "{vendas}", desc: "Nº de vendas (quando houver)" },
-  { token: "{cupom}", desc: "A palavra do cupom, pra o cliente digitar no checkout (a linha some quando não houver)" },
-  { token: "{desconto_cupom}", desc: "O que o cupom tira: \"15% OFF\" ou \"R$ 30,00 OFF\" (a linha some quando não houver)" },
-  { token: "{economia_cupom}", desc: "Quanto o cupom economiza neste produto, em reais (a linha some quando não houver)" },
   { token: "{link}", desc: "Link de compra" },
   { token: "{todos}", desc: "Marca todos os membros do grupo (aparece como @todos e notifica todo mundo)" },
 ];
-
-const TEMPLATE_PREVIEW_DATA = {
-  produto: "Smartphone Samsung Galaxy A55 256GB",
-  preco: "R$ 1.899",
-  preco_com_cupom: "R$ 1.709",   // o exemplo é o GALAXY10 abaixo: 10% sobre o {preco}
-  preco_antigo: "R$ 2.499",
-  desconto: "24%",
-  loja: "Mercado Livre",
-  vendas: "1,2 mil vendidos",
-  cupom: "GALAXY10",
-  desconto_cupom: "10% OFF",
-  economia_cupom: "R$ 190,00",
-  link: "https://merc.li/abc123",
-  todos: "@todos",
-};
-
-// Espelha o renderTemplate do backend (scheduler.js): sem cupom, a linha inteira que
-// contém {cupom} some — pra o preview bater com a mensagem realmente enviada.
-const renderTemplate = (tpl, { cupom, promo = true } = {}) => {
-  if (!tpl) return "";
-  // Sempre uma cópia: o fallback do {preco_com_cupom} logo abaixo escreve no
-  // objeto, e TEMPLATE_PREVIEW_DATA é compartilhado entre todas as prévias.
-  const data = cupom != null ? { ...TEMPLATE_PREVIEW_DATA, cupom } : { ...TEMPLATE_PREVIEW_DATA };
-  let t = tpl;
-  if (!data.cupom) t = t.replace(/^[^\n]*\{cupom\}[^\n]*\n?/gm, "");
-  // Sem cupom o {preco_com_cupom} vira o preço normal — a linha NÃO some. Espelha
-  // o fallback do scheduler.js, pra prévia não prometer desconto que não sai.
-  if (!data.cupom) data.preco_com_cupom = data.preco;
-  // Já o desconto e a economia do cupom SOMEM por linha inteira, como o {cupom} —
-  // e é sempre a palavra que decide: sem ela o envio não desconta nada
-  // (scheduler.js:couponRuleForItem), então a prévia também não pode mostrar valor.
-  if (!data.cupom) {
-    t = t.replace(/^[^\n]*\{desconto_cupom\}[^\n]*\n?/gm, "");
-    t = t.replace(/^[^\n]*\{economia_cupom\}[^\n]*\n?/gm, "");
-  }
-  // Sem promoção: apaga as linhas de {preco_antigo} e {desconto} — espelha o scheduler.js.
-  if (!promo) {
-    t = t.replace(/^[^\n]*\{preco_antigo\}[^\n]*\n?/gm, "");
-    t = t.replace(/^[^\n]*\{desconto\}[^\n]*\n?/gm, "");
-  }
-  return t.replace(/\{(\w+)\}/g, (_, k) => data[k] ?? `{${k}}`);
-};
 
 // Renderiza a formatação que o WhatsApp aplica (*negrito*, _itálico_, ~riscado~, `mono`)
 // como elementos React. Processa linha por linha pra preservar quebras.
@@ -141,34 +105,37 @@ function PreviewImage({ linkCard }) {
     <div data-testid="preview-link-card" style={{ borderRadius: 6, overflow: "hidden", marginBottom: 8, border: "0.5px solid var(--color-border-tertiary)", whiteSpace: "normal" }}>
       {photo(96)}
       <div style={{ padding: "6px 8px" }}>
-        <div style={{ fontWeight: 500, fontSize: 12 }}>{TEMPLATE_PREVIEW_DATA.produto}</div>
-        <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{new URL(TEMPLATE_PREVIEW_DATA.link).hostname}</div>
+        <div style={{ fontWeight: 500, fontSize: 12 }}>{PREVIEW_ITEM.name}</div>
+        <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{new URL(PREVIEW_ITEM.link).hostname}</div>
       </div>
     </div>
   );
 }
 
-// Modelos pré-prontos pra o usuário começar de algum lugar. O "Padrão" é
-// inalterável — usuário pode editar o conteúdo no editor mas nunca sobrescreve
-// o preset; ao salvar, sempre se cria um novo modelo customizado.
+// Modelos pré-prontos pra o usuário começar de algum lugar. São inalteráveis —
+// usuário pode editar o conteúdo no editor mas nunca sobrescreve o preset; ao
+// salvar, sempre se cria um novo modelo customizado.
+// `aliases`: textos antigos que contam como este preset (ver matchesTemplate).
 const MESSAGE_PRESETS = [
   {
     id: "default",
     name: "Padrão",
-    desc: "Estrutura completa com emojis",
-    template: `🔥 OFERTA IMPERDÍVEL!
-
-📦 {produto}
-🏪 {loja}
-
-💰 De: {preco_antigo}
-✅ Por: {preco}
-🏷️ Desconto: -{desconto}
-🎟️ Cupom: {cupom}
-
-🛒 Compre aqui: {link}`,
+    desc: "Produto em destaque, preço antigo riscado, cupom quando houver",
+    template: DEFAULT_MESSAGE_TEMPLATE,
+  },
+  {
+    id: "classic",
+    name: "Clássico",
+    desc: "O padrão antigo, com rótulos De/Por/Desconto",
+    template: CLASSIC_MESSAGE_TEMPLATE,
+    aliases: [LEGACY_DEFAULT_MESSAGE_TEMPLATE],
   },
 ];
+
+// O texto "é" deste modelo? Além do texto exato, vale um dos `aliases` do preset —
+// assim campanhas criadas com o padrão antigo abrem como "Clássico — em uso", sem
+// ninguém ter a mensagem trocada.
+const matchesTemplate = (text, t) => !!t && (text === t.template || (t.aliases || []).includes(text));
 
 // Botões de formatação (estilo WhatsApp) — wraps a seleção do textarea com os marcadores.
 const FORMAT_BUTTONS = [
@@ -486,7 +453,9 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     messageImageMode: imageModeOf(group.scraping),
   });
   const [saved, setSaved] = useState(false);
-  const [previewPromo, setPreviewPromo] = useState(true); // preview: simula item com/sem promoção
+  // Prévia: simula o item com/sem promoção e com/sem cupom.
+  const [previewPromo, setPreviewPromo] = useState(true);
+  const [previewCupom, setPreviewCupom] = useState(true);
   const [showDelete, setShowDelete] = useState(false);
   // Os grupos do WhatsApp de cada número, carregados sob demanda pelo popup de
   // adicionar grupo da aba Grupos (components/campaign/GroupsTab.jsx).
@@ -521,7 +490,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const initialActiveTplKey = (() => {
     if (group.messageTemplate) {
       const mode = imageModeOf(group.scraping);
-      const sameText = (t) => t.template === group.messageTemplate;
+      const sameText = (t) => matchesTemplate(group.messageTemplate, t);
       const exact = (t) => sameText(t) && imageModeOf(t) === mode;
       const preset = MESSAGE_PRESETS.find(exact);
       if (preset) return `preset:${preset.id}`;
@@ -867,14 +836,14 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
   // Lista de abas de modelo (presets + customs). Cada aba é uma "página" estilo Chrome.
   const allTabs = [
-    ...MESSAGE_PRESETS.map(p => ({ key: `preset:${p.id}`, kind: "preset", id: p.id, name: p.name, template: p.template, imageMode: imageModeOf(p) })),
+    ...MESSAGE_PRESETS.map(p => ({ key: `preset:${p.id}`, kind: "preset", id: p.id, name: p.name, template: p.template, aliases: p.aliases, imageMode: imageModeOf(p) })),
     ...customTemplates.map(t => ({ key: `custom:${t.id}`, kind: "custom", id: t.id, name: t.name, template: t.template, imageMode: imageModeOf(t) })),
   ];
   const activeTab = allTabs.find(t => t.key === activeTplKey) || null;
   const isCustomTab = activeTab?.kind === "custom";
   // "Dirty" = editor diverge do template salvo da aba ativa (texto ou imagem), OU o nome custom foi renomeado.
   const isDirty = !!activeTab && (
-    groupInfo.messageTemplate !== activeTab.template ||
+    !matchesTemplate(groupInfo.messageTemplate, activeTab) ||
     groupInfo.messageImageMode !== activeTab.imageMode ||
     (isCustomTab && customNameDraft.trim().length > 0 && customNameDraft.trim() !== activeTab.name)
   );
@@ -888,7 +857,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const handleTabClick = (t) => {
     setActiveTplKey(t.key);
     tplHistory.reset();
-    setGroupInfo(g => ({ ...g, messageTemplate: t.template, messageImageMode: t.imageMode }));
+    setGroupInfo(g => ({ ...g, messageTemplate: tabText(t), messageImageMode: t.imageMode }));
   };
 
   // "+" cria um novo modelo custom usando o conteúdo atual do editor como semente
@@ -927,9 +896,12 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   // campanha usa. Como múltiplas abas podem ter o mesmo conteúdo, marcamos
   // todas que casarem (caso raro, mas o indicador fica consistente).
   const isTemplateActive = (t) => !!group.messageTemplate
-    && t.template === group.messageTemplate
+    && matchesTemplate(group.messageTemplate, t)
     && imageModeOf(t) === imageModeOf(group.scraping);
   const activeTabIsActive = activeTab && isTemplateActive(activeTab);
+  // Texto que o editor mostra ao abrir uma aba. Se a campanha usa este modelo por
+  // um texto antigo (`aliases`), mostra o texto que ela realmente envia.
+  const tabText = (t) => (isTemplateActive(t) ? group.messageTemplate : t.template);
 
   // Passa a campanha a usar este texto e esta imagem nos envios. A imagem mora no
   // `scraping` da campanha: parte do salvo (não leva de carona edição pendente de
@@ -1031,7 +1003,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       if (fallback) {
         setActiveTplKey(`preset:${fallback.id}`);
         tplHistory.reset();
-        setGroupInfo(g => ({ ...g, messageTemplate: fallback.template, messageImageMode: imageModeOf(fallback) }));
+        setGroupInfo(g => ({ ...g, messageTemplate: tabText(fallback), messageImageMode: imageModeOf(fallback) }));
       }
     }
   };
@@ -1548,7 +1520,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
       whatsappGroupIds: group.whatsappGroupIds || [],
       // Descartar no editor de modelos = voltar ao texto salvo do modelo aberto
       // (não ao da campanha, que pode ser outro modelo).
-      messageTemplate: activeTab ? activeTab.template : group.messageTemplate,
+      messageTemplate: activeTab ? tabText(activeTab) : group.messageTemplate,
       messageImageMode: activeTab ? activeTab.imageMode : imageModeOf(group.scraping),
     });
     setCustomNameDraft(activeTab?.kind === "custom" ? activeTab.name : "");
@@ -2202,10 +2174,10 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                   />
                 ) : (
                   <div
-                    title="O modelo padrão é inalterável — ao salvar suas edições você cria um novo modelo customizado"
+                    title="Modelo pronto é inalterável — ao salvar suas edições você cria um novo modelo customizado"
                     style={{ width: "100%", height: 36, padding: "0 10px", borderRadius: 8, border: "0.5px dashed var(--color-border-tertiary)", background: "transparent", color: "var(--color-text-secondary)", fontSize: 13, boxSizing: "border-box", display: "flex", alignItems: "center", fontStyle: "italic" }}
                   >
-                    {activeTab ? `${activeTab.name} · modelo padrão (inalterável)` : "—"}
+                    {activeTab ? `${activeTab.name} · modelo pronto (inalterável)` : "—"}
                   </div>
                 )}
               </div>
@@ -2251,7 +2223,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 disabled={!isDirty}
                 title={!isDirty
                   ? "Sem alterações pra salvar"
-                  : (isCustomTab ? "Salvar as alterações neste modelo" : "O modelo padrão é inalterável — as edições viram um modelo novo")}
+                  : (isCustomTab ? "Salvar as alterações neste modelo" : "Modelo pronto é inalterável — as edições viram um modelo novo")}
                 style={{
                   height: 36, padding: "0 18px", borderRadius: 8,
                   border: "none",
@@ -2319,6 +2291,9 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                 </button>
               ))}
             </div>
+            <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 10 }}>
+              Variável sem valor some com a linha inteira — deixe cada informação opcional na sua própria linha.
+            </div>
 
             {/* Editor + Preview lado a lado */}
             <div data-tour="ms-editor" className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -2336,16 +2311,18 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               <div>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
                   <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Prévia (como aparece no WhatsApp)</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{previewPromo ? "Com promoção" : "Sem promoção"}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Promoção</span>
                     <Toggle value={previewPromo} onChange={setPreviewPromo} label="Simular item com promoção na prévia" />
+                    <span style={{ fontSize: 11, color: "var(--color-text-secondary)", marginLeft: 6 }}>Cupom</span>
+                    <Toggle value={previewCupom} onChange={setPreviewCupom} label="Simular item com cupom na prévia" />
                   </div>
                 </div>
                 <div className="wa-preview" style={{ width: "100%", minHeight: 260, padding: 12, borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.5, fontFamily: "inherit", boxSizing: "border-box" }}>
                   {groupInfo.messageTemplate
                     ? <>
                         <PreviewImage linkCard={groupInfo.messageImageMode === "link" && templateHasLink(groupInfo.messageTemplate)} />
-                        {renderWhatsappFormatted(renderTemplate(groupInfo.messageTemplate, { cupom: isRepasse ? undefined : "", promo: previewPromo }))}
+                        {renderWhatsappFormatted(renderMessageTemplate(groupInfo.messageTemplate, previewItem({ promo: previewPromo, cupom: previewCupom })))}
                       </>
                     : <span style={{ opacity: 0.6, fontStyle: "italic" }}>Modelo vazio. Comece a digitar à esquerda.</span>}
                 </div>
@@ -2360,7 +2337,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             <Modal title="Salvar como novo modelo" onClose={closeSaveTplDialog} confirmOnClickOutside>
               <p style={{ fontSize: 13, marginBottom: 14, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
                 {saveTplDialog.mode === "preset"
-                  ? <>O modelo <strong style={{ color: "var(--color-text-primary)" }}>{activeTab?.name}</strong> é o padrão e não pode ser sobrescrito. Suas edições serão salvas como um <strong style={{ color: "var(--color-text-primary)" }}>novo modelo</strong>.</>
+                  ? <>O modelo <strong style={{ color: "var(--color-text-primary)" }}>{activeTab?.name}</strong> é um modelo pronto e não pode ser sobrescrito. Suas edições serão salvas como um <strong style={{ color: "var(--color-text-primary)" }}>novo modelo</strong>.</>
                   : <>O que está no editor será salvo como um <strong style={{ color: "var(--color-text-primary)" }}>novo modelo</strong>. O modelo <strong style={{ color: "var(--color-text-primary)" }}>{activeTab?.name}</strong> continua como está.</>}
               </p>
               <div style={{ marginBottom: 14 }}>
