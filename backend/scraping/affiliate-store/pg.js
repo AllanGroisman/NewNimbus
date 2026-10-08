@@ -48,16 +48,6 @@ function clear(userId) {
   track(userId, p);
 }
 
-function listShopeeConfigs() {
-  const out = [];
-  for (const [userId, raw] of _cache.entries()) {
-    if (!raw) continue;
-    const sh = raw.shopee;
-    if (sh && sh.appId && sh.appSecret) out.push({ userId, appId: sh.appId, appSecret: sh.appSecret });
-  }
-  return out;
-}
-
 // Espera as gravações em vôo deste processo (os testes precisam do banco em dia).
 async function flush() {
   await Promise.allSettled([..._pending.values()]);
@@ -112,4 +102,4 @@ function stopAutoRefresh() {
   if (_refreshTimer) { clearInterval(_refreshTimer); _refreshTimer = null; }
 }
 
-module.exports = { getRaw, setRaw, clear, listShopeeConfigs, warmup, flush, refresh, startAutoRefresh, stopAutoRefresh };
+module.exports = { getRaw, setRaw, clear, warmup, flush, refresh, startAutoRefresh, stopAutoRefresh };

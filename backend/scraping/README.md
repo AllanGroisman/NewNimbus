@@ -30,9 +30,20 @@ No frontend, `groupUsesML()` em `data/constants.js` ajuda a renderizar o banner 
 
 ## Override por env var (dev / admin-scraper)
 
-As envs `ML_AFFILIATE_TAG` + `ML_AFFILIATE_COOKIE`, `AMAZON_AFFILIATE_TAG`, `SHOPEE_AFFILIATE_APP_ID` + `SHOPEE_AFFILIATE_APP_SECRET` continuam funcionando como **override GLOBAL** (sobrescrevem qualquer config persistida). Quando setadas, o `affiliate.writeXxxConfig` rejeita escritas — pra mexer pela UI é preciso desligar as envs.
+As envs `ML_AFFILIATE_TAG` + `ML_AFFILIATE_COOKIE` e `AMAZON_AFFILIATE_TAG` continuam funcionando como **override GLOBAL** (sobrescrevem qualquer config persistida). Quando setadas, o `affiliate.writeXxxConfig` rejeita escritas — pra mexer pela UI é preciso desligar as envs.
 
-O admin-scraper (que roda fora de userId) usa env vars OU pega creds Shopee do primeiro usuário configurado via `affiliate.getScraperShopeeCreds()` → `affiliate-store.listShopeeConfigs()`.
+## Shopee: conta do sistema × conta do usuário
+
+**Duas contas de afiliado, papéis separados — não misture:**
+
+- **Conta do sistema** (`affiliate.getScraperShopeeCreds()`): env `SHOPEE_AFFILIATE_APP_ID` + `SHOPEE_AFFILIATE_APP_SECRET`, senão a credencial salva em Admin › Shopee (`app_config["scraper-shopee-admin"]`). Faz **toda busca** na API: catálogo (`fetchShopeeOffers`), link avulso / repasse / tester (`fetchShopeeItemByIds`) e o script de categorias. Nunca cai na conta de um usuário — sem ela, a busca Shopee para (com `warn` no log).
+- **Conta do usuário** (`affiliate.readShopeeConfig(userId)`, aba Shopee): só **gera os links** dele e lê o **Desempenho** dele. As envs acima não a sobrescrevem. O **App ID é o próprio ID de afiliado** (o `an_<id>` dos links) e basta sozinho; a **Senha é opcional**. Em `gerarLinkAfiliadoShopee`:
+  - **Com Senha → tenta a API** (`generateShortLink`, link curto assinado — o caminho comprovado). Só esse modo tem Desempenho (`conversionReport` exige a Senha).
+  - **Sem Senha, ou se a API não der link** (Senha recusada, limite, rede) → **`an_redir`** (`buildShopeeRedirLink`): `s.shopee.com.br/an_redir?origin_link=…&affiliate_id=<App ID>&sub_id=g<grupo>`. A Shopee põe o ID no destino (`mmp_pid`/`utm_source=an_<id>`), mas **não confere o ID nem assina o link**, e o crédito da comissão por esse caminho **ainda não foi comprovado por uma compra**. O motivo da falha da API fica em `status().shopee.apiFalha`, e o reserva usado por falha **não entra no cache** (o próximo envio tenta a API de novo).
+  - A origem do `an_redir` passa por `origemLimpaShopee` (vira `/product/<loja>/<item>`; link curto é aberto antes) pra nunca embrulhar o rastreio de outro afiliado.
+  - O usuário descobre o próprio App ID colando um link de afiliado dele em `POST /api/affiliate/shopee/descobrir-id`.
+
+Por isso o catálogo guarda o `productLink` (permalink limpo) e não o `offerLink` da busca: aquele é o link curto de afiliado da conta do sistema, e reafiliar em cima dele arrisca a comissão do usuário cair nela.
 
 ## Sessão ML da conta do sistema (Hub de Afiliados)
 

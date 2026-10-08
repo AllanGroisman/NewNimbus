@@ -116,7 +116,7 @@ describe("scrapeShopee (fluxo, fetch mockado)", () => {
     expect(p.category).toBe("gamer");
     expect(p.price).toBe(99.9);
     expect(p.discount).toBe(40);
-    expect(p.link).toBe("https://s.shopee.com.br/abc"); // prefere offerLink
+    expect(p.link).toBe("https://shopee.com.br/produto-i.2.1"); // productLink, não o offerLink do sistema
     expect(p.reviewsCount).toBe(42);                    // veio do mock de fetch
     expect(p).not.toHaveProperty("_shopeeItemId");
     expect(p).not.toHaveProperty("_shopeeShopId");

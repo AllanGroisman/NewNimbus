@@ -22,7 +22,7 @@ test.describe("Dashboard e navegação", () => {
     await expect(page.getByText(/Conta|Aparência|Tema|Segurança/i).first()).toBeVisible();
 
     await gotoPage(page, "Shopee");
-    await expect(page.getByText(/App ID/i).first()).toBeVisible();
+    await expect(page.getByText(/ID de afiliado/i).first()).toBeVisible();
   });
 
   test("persiste a página atual ao dar F5 (nimbus:nav)", async ({ page }) => {

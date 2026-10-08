@@ -1724,7 +1724,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
           <div style={{ background: "var(--warn-bg)", border: "0.5px solid var(--warn-border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <span style={{ fontSize: 16 }}>⚠️</span>
             <span style={{ fontSize: 13, color: "var(--warn-text)", flex: 1, minWidth: 200 }}>
-              Esta campanha está <strong>pausada</strong> — o afiliado da <strong>Shopee</strong> não está configurado. Sem App ID e senha, os links sairiam sem comissão.
+              Esta campanha está <strong>pausada</strong> — o afiliado da <strong>Shopee</strong> não está configurado. Sem o App ID, os links sairiam sem comissão.
             </span>
             {(onGoToAffiliate || onGoToSettings) && (
               <button onClick={() => (onGoToAffiliate ? onGoToAffiliate("shopee") : onGoToSettings())} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--warn-text)", color: "var(--color-background-primary)", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>

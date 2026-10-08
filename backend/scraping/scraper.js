@@ -1102,7 +1102,10 @@ function shopeeNodeToProduct(node, category) {
 
   return {
     name: String(node.productName || "").trim(),
-    link: String(node.offerLink || node.productLink || ""),
+    // O permalink limpo, não o `offerLink`: aquele é o link curto de afiliado da
+    // conta do SISTEMA (quem fez a busca), e reafiliar em cima dele arrisca a
+    // comissão do usuário cair nessa conta. O link dele é gerado no envio.
+    link: String(node.productLink || node.offerLink || ""),
     // A API de afiliados devolve a miniatura (`_tn`) — sobe pra original.
     img: upgradeShopeeImageUrl(node.imageUrl) || null,
     store: "Shopee",
@@ -1746,10 +1749,9 @@ async function resolveShopeeUrl(url) {
 // vez de keyword/categoria. Descartado o plano original de bater na API
 // pública `v4/item/get` — ela devolve 403 (anti-bot, error 90309999) mesmo
 // vindo de dentro do próprio Puppeteer (testado ao vivo), então não dá pra
-// confiar nela. A API de afiliados exige as credenciais (appId/appSecret) DO
-// PRÓPRIO USUÁRIO — ok porque a captura já garantiu que ele tem afiliado
-// Shopee configurado antes de chegar aqui.
-async function scrapeShopeeSingleViaApi(cleanUrl, userId) {
+// confiar nela. A busca usa a conta Shopee DO SISTEMA (Admin › Shopee) — a do
+// usuário só entra no envio, pra gerar o link de afiliado dele.
+async function scrapeShopeeSingleViaApi(cleanUrl) {
   const affiliate = require("./affiliate");
   let ids = extractShopeeIds(cleanUrl);
   let finalUrl = cleanUrl;
@@ -1758,7 +1760,7 @@ async function scrapeShopeeSingleViaApi(cleanUrl, userId) {
     ids = extractShopeeIds(finalUrl);
   }
   if (!ids) return null;
-  const node = await affiliate.fetchShopeeItemByIds(userId, ids.itemId, ids.shopId).catch(() => null);
+  const node = await affiliate.fetchShopeeItemByIds(ids.itemId, ids.shopId).catch(() => null);
   if (!node) return null;
   const mapped = shopeeNodeToProduct(node, null);
   if (!mapped.name) return null;
@@ -1875,7 +1877,7 @@ async function scrapeSingleProduct(url, { userId } = {}) {
   const { url: cleanUrl, store } = await urlGuard.assertStoreUrl(url);
 
   if (store === "Shopee") {
-    const viaApi = await scrapeShopeeSingleViaApi(cleanUrl, userId).catch(() => null);
+    const viaApi = await scrapeShopeeSingleViaApi(cleanUrl).catch(() => null);
     if (viaApi) return viaApi;
     // API falhou (IDs não encontrados, endpoint fora) — cai no fallback abaixo.
   }

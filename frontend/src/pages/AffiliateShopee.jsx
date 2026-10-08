@@ -1,12 +1,14 @@
 import { useState, useEffect } from "react";
 import { PRIMARY, TEST_URLS } from "../data/constants";
 import Badge from "../components/ui/Badge";
-import { getAffiliateStatus, saveShopeeAffiliate, clearShopeeAffiliate, testShopeeAffiliate, errText } from "../data/api";
+import { getAffiliateStatus, saveShopeeAffiliate, clearShopeeAffiliate, testShopeeAffiliate, descobrirShopeeAffiliateId, errText } from "../data/api";
 import AlertBanner from "../components/ui/AlertBanner";
 import { TUTORIAL_IDS } from "./Tutoriais";
 
 export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial }) {
   const [affStatus, setAffStatus] = useState(null);
+  const [descobrirUrl, setDescobrirUrl] = useState("");
+  const [descobrindo, setDescobrindo] = useState(false);
   const [appId, setAppId] = useState("");
   const [appSecret, setAppSecret] = useState("");
   const [showSecret, setShowSecret] = useState(false);
@@ -60,7 +62,8 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
         return;
       }
       const r = await testShopeeAffiliate(url);
-      setMsg({ type: "ok", text: "Funcionou! Link gerado:", link: r.shortUrl });
+      // `aviso` = a Senha falhou e o link saiu pelo reserva.
+      setMsg({ type: r.aviso ? "warn" : "ok", text: r.aviso ? `${r.aviso} Link:` : "Funcionou! Link gerado:", link: r.shortUrl });
       const s = await getAffiliateStatus();
       setAffStatus(s);
       if (onAffiliateChange) onAffiliateChange(s);
@@ -68,6 +71,20 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
       setMsg({ type: "err", text: errText(err, "Não foi possível concluir. Tente novamente.") });
     } finally {
       setTesting(false);
+    }
+  }
+
+  async function handleDescobrir() {
+    setDescobrindo(true);
+    setMsg(null);
+    try {
+      const r = await descobrirShopeeAffiliateId(descobrirUrl.trim());
+      setAppId(r.affiliateId);
+      setMsg({ type: "ok", text: `Seu App ID é ${r.affiliateId}. Clique em Salvar.` });
+    } catch (err) {
+      setMsg({ type: "err", text: errText(err, "Não foi possível ler o link. Tente novamente.") });
+    } finally {
+      setDescobrindo(false);
     }
   }
 
@@ -88,6 +105,10 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
     }
   }
 
+  // O App ID sozinho basta; a Senha é opcional.
+  const canSave = !!appId.trim();
+  const senhaRecusada = affStatus?.shopee?.modo === "api" && !!affStatus.shopee.apiFalha;
+
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
@@ -103,7 +124,7 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
         )}
       </div>
       <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 20 }}>
-        Configure o programa de afiliados para gerar links curtos com sua tag nos envios.
+        Informe seu App ID da Shopee para os links saírem com a sua comissão.
       </div>
 
       {loadError && <AlertBanner tone="error" message={loadError} onRetry={load} />}
@@ -112,30 +133,56 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, gap: 8, flexWrap: "wrap" }}>
           <div style={{ fontWeight: 500 }}>Configuração de afiliado</div>
           {affStatus?.shopee && (
-            <Badge color={affStatus.shopee.configured ? "green" : "gray"}>
-              {affStatus.shopee.configured ? "Configurado" : "Não configurado"}
+            <Badge color={!affStatus.shopee.configured ? "gray" : senhaRecusada ? "amber" : "green"}>
+              {!affStatus.shopee.configured ? "Não configurado"
+                : senhaRecusada ? "Senha recusada · usando o reserva"
+                : affStatus.shopee.modo === "api" ? "Configurado · API oficial" : "Configurado · link de redirecionamento"}
             </Badge>
           )}
         </div>
         <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14, lineHeight: 1.5 }}>
-          Quando configurado, todo link da Shopee enviado vira um link curto via a API oficial de afiliados (formato
-          {" "}<code style={{ background: "var(--color-background-secondary)", padding: "1px 4px", borderRadius: 4 }}>s.shopee.com.br/...</code>).
-          A Shopee usa <strong>App ID</strong> + <strong>Senha</strong> — sem cookie, sem expirar.
+          Basta o <strong>App ID</strong>: todo link da Shopee enviado sai com ele. Sem cookie, sem expirar.
         </div>
 
-        <div style={{ marginBottom: 10 }}>
+        <div style={{ marginBottom: 14 }}>
           <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>App ID</label>
           <input
             value={appId}
             onChange={e => setAppId(e.target.value)}
-            placeholder="ex: 12345678"
+            placeholder="ex: 18300430084"
+            inputMode="numeric"
             style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", fontFamily: "monospace" }}
           />
+          <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4 }}>
+            É o mesmo número do seu ID de afiliado (o que vem depois de <code>an_</code> nos seus links).
+          </div>
+          <details style={{ marginTop: 6, fontSize: 11, color: "var(--color-text-secondary)" }}>
+            <summary style={{ cursor: "pointer" }}>Não sabe seu App ID?</summary>
+            <div style={{ marginTop: 6, lineHeight: 1.5 }}>
+              Gere um link de afiliado de qualquer produto no app ou no site da Shopee e cole aqui.
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+              <input
+                value={descobrirUrl}
+                onChange={e => setDescobrirUrl(e.target.value)}
+                placeholder="https://s.shopee.com.br/..."
+                style={{ flex: "1 1 220px", minWidth: 0, padding: "7px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 12, boxSizing: "border-box", fontFamily: "monospace" }}
+              />
+              <button
+                type="button"
+                onClick={handleDescobrir}
+                disabled={descobrindo || !descobrirUrl.trim()}
+                style={{ padding: "6px 14px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 12, cursor: "pointer", opacity: (descobrindo || !descobrirUrl.trim()) ? 0.5 : 1 }}
+              >
+                {descobrindo ? "Lendo..." : "Descobrir"}
+              </button>
+            </div>
+          </details>
         </div>
 
         <div>
           <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
-            Senha
+            Senha <span style={{ fontStyle: "italic" }}>(opcional)</span>
             {affStatus?.shopee?.appSecretPreview && (
               <span style={{ marginLeft: 8, color: "var(--color-text-secondary)" }}>
                 (atual: <code>{affStatus.shopee.appSecretPreview}</code>)
@@ -147,7 +194,7 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
               type={showSecret ? "text" : "password"}
               value={appSecret}
               onChange={e => setAppSecret(e.target.value)}
-              placeholder={affStatus?.shopee?.configured ? "Deixe vazio pra manter o atual" : "cole a senha"}
+              placeholder={affStatus?.shopee?.apiConfigured ? "Deixe vazio pra manter o atual" : "cole a senha"}
               style={{ width: "100%", padding: "8px 38px 8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", fontFamily: "monospace" }}
             />
             <button
@@ -159,8 +206,9 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
               {showSecret ? "ocultar" : "mostrar"}
             </button>
           </div>
-          <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4 }}>
-            Pega o App ID e a senha em <a href="https://affiliate.shopee.com.br/openapi" target="_blank" rel="noreferrer" style={{ color: PRIMARY }}>affiliate.shopee.com.br/openapi</a>.
+          <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4, lineHeight: 1.5 }}>
+            Com ela, os links saem curtos pela API oficial e a aba Desempenho funciona. Sem ela (ou se a Shopee recusar), os links saem pelo redirecionamento da Shopee.
+            {" "}A senha fica em <a href="https://affiliate.shopee.com.br/openapi" target="_blank" rel="noreferrer" style={{ color: PRIMARY }}>affiliate.shopee.com.br/openapi</a>.
           </div>
         </div>
 
@@ -176,14 +224,14 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
               style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 12, boxSizing: "border-box", fontFamily: "monospace" }}
             />
             <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4 }}>
-              Cole o link de um produto da Shopee. O sistema chama a API oficial pra gerar o link curto com sua tag.
+              Cole o link de um produto da Shopee para ver o link que vai nos envios.
             </div>
           </div>
         )}
 
         {msg && (
           <AlertBanner
-            tone={msg.type === "ok" ? "success" : "error"}
+            tone={msg.type === "ok" ? "success" : msg.type === "warn" ? "warn" : "error"}
             onDismiss={() => setMsg(null)}
             style={{ marginTop: 10, marginBottom: 0 }}
           >
@@ -207,15 +255,15 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
         <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
           <button
             onClick={handleSave}
-            disabled={saving || !appId.trim() || (!affStatus?.shopee?.configured && !appSecret.trim())}
-            style={{ padding: "7px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: (saving || !appId.trim() || (!affStatus?.shopee?.configured && !appSecret.trim())) ? 0.6 : 1 }}
+            disabled={saving || !canSave}
+            style={{ padding: "7px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: (saving || !canSave) ? 0.6 : 1 }}
           >
             {saving ? "Salvando..." : "Salvar"}
           </button>
           <button
             onClick={handleTest}
             disabled={testing || !affStatus?.shopee?.configured || !testUrl.trim()}
-            title={!affStatus?.shopee?.configured ? "Salve App ID e senha primeiro" : !testUrl.trim() ? "Cole uma URL de produto pra testar" : "Gera um link de teste"}
+            title={!affStatus?.shopee?.configured ? "Salve seu App ID primeiro" : !testUrl.trim() ? "Cole uma URL de produto pra testar" : "Gera um link de teste"}
             style={{ padding: "7px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: (!affStatus?.shopee?.configured || !testUrl.trim()) ? "not-allowed" : "pointer", opacity: (!affStatus?.shopee?.configured || !testUrl.trim() || testing) ? 0.5 : 1 }}
           >
             {testing ? "Testando..." : "Testar transformação"}

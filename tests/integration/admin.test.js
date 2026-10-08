@@ -2,8 +2,14 @@
 // catalog admin, DLQ. Cobre tanto gating (403 pra user comum) quanto comportamento.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { request, app, createTestUser, auth as authMod, billing as billingMod, catalog, setStripeMock, waConnect } from "../helpers/app.js";
+import path from "path";
+import { fileURLToPath } from "url";
+import { createRequire } from "module";
+import { request, app, createTestUser, auth as authMod, billing as billingMod, catalog, setStripeMock, waConnect, storage, affiliate } from "../helpers/app.js";
 import { mlProduct, amazonProduct, shopeeProduct } from "../helpers/fixtures.js";
+
+const require = createRequire(import.meta.url);
+const { prisma } = require(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "backend", "db.js"));
 
 async function makeAdmin(opts = {}) {
   const u = await createTestUser(opts);
@@ -30,6 +36,7 @@ describe("Admin — gating", () => {
       ["put", "/api/admin/scraper/amazon/filters"],
       ["get", "/api/admin/scraper/shopee/filters"],
       ["put", "/api/admin/scraper/shopee/filters"],
+      ["post", "/api/admin/scraper/shopee/identify"],
       ["post", "/api/admin/users/qualquer-id/manual-trial"],
       ["delete", "/api/admin/users/qualquer-id/manual-trial"],
       ["get", "/api/admin/system/disk"],
@@ -560,6 +567,68 @@ describe("Admin — scraper filters Amazon", () => {
     const r = await admin.auth("put", "/api/admin/scraper/amazon/filters").send({ minReviews: -5 });
     expect(r.status).toBe(200);
     expect(r.body.filters.minReviews).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("Admin — identificar link de afiliado Shopee", () => {
+  const GID = 1712345678901;
+  const PRODUTO = "https://shopee.com.br/product/1082747237/22697179178";
+  const ID = "18399999999";
+
+  it("link já aberto: lê o dono e as marcas sem ir à rede, e acha o grupo do Nimbus", async () => {
+    const admin = await makeAdmin();
+    const dono = await createTestUser();
+    await storage.saveState(dono.user.id, {
+      groups: [{
+        id: GID, name: "Ofertas Tech #1", paused: false,
+        categories: [], whatsappGroupIds: [], messageTemplate: "{link}",
+        scraping: { auto: false, sources: ["Shopee"], filters: {} },
+        schedule: { windows: [], cooldownValue: 24, cooldownUnit: "horas" },
+        queue: [], pending: [], history: [],
+        sentToday: 0, sentWeek: 0, weekData: [0, 0, 0, 0, 0, 0, 0], lastSend: "—",
+      }],
+    });
+
+    const url = `${PRODUTO}?mmp_pid=an_${ID}&utm_content=g${GID}----&utm_medium=affiliates&utm_source=an_${ID}`;
+    const r = await admin.auth("post", "/api/admin/scraper/shopee/identify").send({ url });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({
+      finalUrl: url,
+      affiliateId: ID,
+      subIds: [`g${GID}`, "", "", "", ""],
+      product: { shopId: "1082747237", itemId: "22697179178" },
+      grupo: { id: String(GID), name: "Ofertas Tech #1", ownerEmail: dono.user.email },
+      contas: [],
+    });
+  });
+
+  it("aponta a conta quando o número é o App ID do sistema ou de um usuário", async () => {
+    const admin = await makeAdmin();
+    const dono = await createTestUser();
+    await prisma().affiliateConfig.upsert({
+      where: { userId: dono.user.id },
+      create: { userId: dono.user.id, data: { shopee: { appId: ID, appSecret: "segredo-qualquer-1234" } } },
+      update: { data: { shopee: { appId: ID, appSecret: "segredo-qualquer-1234" } } },
+    });
+    affiliate.writeScraperShopeeAdminCreds({ appId: ID, appSecret: "segredo-do-sistema-1234" });
+    try {
+      const r = await admin.auth("post", "/api/admin/scraper/shopee/identify")
+        .send({ url: `${PRODUTO}?utm_source=an_${ID}&utm_content=gurubot----` });
+      expect(r.status).toBe(200);
+      expect(r.body.grupo).toBeNull();
+      expect(r.body.contas).toEqual([{ tipo: "sistema" }, { tipo: "usuario", email: dono.user.email }]);
+    } finally {
+      affiliate.clearScraperShopeeAdminCreds();
+    }
+  });
+
+  it("recusa link que não é da Shopee e URL vazia", async () => {
+    const admin = await makeAdmin();
+    const fora = await admin.auth("post", "/api/admin/scraper/shopee/identify")
+      .send({ url: "https://www.amazon.com.br/dp/B0000000?utm_source=an_123" });
+    expect(fora.status).toBe(400);
+    const vazio = await admin.auth("post", "/api/admin/scraper/shopee/identify").send({ url: "" });
+    expect(vazio.status).toBe(400);
   });
 });
 

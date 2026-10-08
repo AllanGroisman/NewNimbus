@@ -29,8 +29,9 @@ describe("shopeeNodeToProduct", () => {
     };
     const p = scraper.shopeeNodeToProduct(node, "eletronicos");
     expect(p.name).toBe("Smartphone Galaxy");
-    // Prefere offerLink (link de afiliado) sobre productLink
-    expect(p.link).toBe("https://s.shopee.com.br/abc");
+    // Prefere o productLink: o offerLink é o link de afiliado da conta do
+    // SISTEMA, e o link do usuário é gerado em cima do que fica no catálogo
+    expect(p.link).toBe("https://shopee.com.br/smartphone-i.123456.7890123");
     expect(p.img).toBe("https://cf.shopee.com.br/file/xyz");
     expect(p.store).toBe("Shopee");
     expect(p.category).toBe("eletronicos");
@@ -85,11 +86,11 @@ describe("shopeeNodeToProduct", () => {
     expect(p.price).toBe(49.9);
   });
 
-  it("usa productLink quando offerLink não veio", () => {
+  it("usa offerLink quando productLink não veio", () => {
     const p = scraper.shopeeNodeToProduct({
-      productName: "x", productLink: "https://shopee.com.br/x-i.1.2",
+      productName: "x", offerLink: "https://s.shopee.com.br/abc",
     });
-    expect(p.link).toBe("https://shopee.com.br/x-i.1.2");
+    expect(p.link).toBe("https://s.shopee.com.br/abc");
   });
 });
 

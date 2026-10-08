@@ -1,9 +1,11 @@
 const crypto = require("crypto");
 const store = require("./affiliate-store");
 const appConfig = require("../config");
+const urlGuard = require("./urlGuard");
 
-// Chave em appConfig pro override admin do scraper Shopee.
-// Sobrescreve "primeiro usuário com config" como fallback do admin-scraper.
+// Conta Shopee DO SISTEMA (colada no Admin › Shopee): faz toda busca na API.
+// Independente da conta que cada cliente cola na aba dele (affiliate_config.shopee,
+// que só gera o link daquele cliente) — nunca use a de um usuário pra buscar.
 const SCRAPER_SHOPEE_ADMIN_KEY = "scraper-shopee-admin";
 
 // Sessão do Mercado Livre DO SISTEMA (conta própria, colada no Admin › Mercado Livre).
@@ -32,9 +34,10 @@ const SHOPEE_FILTERS_DEFAULTS = {
 //   { ml: { tag, cookie, tags, tagsFetchedAt, updatedAt },
 //     amazon: { tag, updatedAt },
 //     shopee: { appId, appSecret, updatedAt } }
-// Env vars (ML_AFFILIATE_TAG, AMAZON_AFFILIATE_TAG, SHOPEE_AFFILIATE_APP_ID, …)
-// continuam funcionando como override GLOBAL — útil em dev ou pra fallback do
-// admin-scraper (que roda fora de qualquer userId).
+// Env vars (ML_AFFILIATE_TAG, AMAZON_AFFILIATE_TAG) continuam funcionando como
+// override GLOBAL — útil em dev. As da Shopee (SHOPEE_AFFILIATE_APP_ID/SECRET)
+// são outra coisa: a conta Shopee DO SISTEMA, que faz as buscas na API (ver
+// getScraperShopeeCreds) — nunca substituem a conta de um usuário.
 
 const ML_ENDPOINT = "https://www.mercadolivre.com.br/affiliate-program/api/v2/affiliates/createLink";
 const SHOPEE_ENDPOINT = "https://open-api.affiliate.shopee.com.br/graphql";
@@ -57,7 +60,8 @@ function ensureStats(userId) {
     s = {
       ml:     { lastSuccessAt: null, lastFailureAt: null, lastFailureReason: null },
       amazon: { lastSuccessAt: null, lastFailureAt: null, lastFailureReason: null },
-      shopee: { lastSuccessAt: null, lastFailureAt: null, lastFailureReason: null },
+      // apiFalha: por que a última chamada à API da Shopee não deu link (null = deu).
+      shopee: { lastSuccessAt: null, lastFailureAt: null, lastFailureReason: null, apiFalha: null },
     };
     stats.set(userId, s);
   }
@@ -110,16 +114,14 @@ function readAmazonConfig(userId) {
   return { tag: null, source: null, updatedAt: null };
 }
 
+// A conta Shopee DO USUÁRIO — só gera os links dele e lê o Desempenho dele.
+// Buscar produto na API é com a conta do sistema (getScraperShopeeCreds).
+// O App ID é o próprio ID de afiliado (o "an_<id>" dos links): sozinho já gera
+// link, pelo an_redir. A Senha é opcional — com ela o link sai pela API oficial
+// e o Desempenho funciona.
 function readShopeeConfig(userId) {
-  if (process.env.SHOPEE_AFFILIATE_APP_ID && process.env.SHOPEE_AFFILIATE_APP_SECRET) {
-    return {
-      appId: process.env.SHOPEE_AFFILIATE_APP_ID.trim(),
-      appSecret: process.env.SHOPEE_AFFILIATE_APP_SECRET,
-      source: "env",
-      updatedAt: null,
-    };
-  }
-  if (!userId) return { appId: null, appSecret: null, source: null, updatedAt: null };
+  const vazio = { appId: null, appSecret: null, source: null, updatedAt: null };
+  if (!userId) return vazio;
   const raw = store.getRaw(userId);
   if (raw.shopee && (raw.shopee.appId || raw.shopee.appSecret)) {
     return {
@@ -129,7 +131,7 @@ function readShopeeConfig(userId) {
       updatedAt: raw.shopee.updatedAt || null,
     };
   }
-  return { appId: null, appSecret: null, source: null, updatedAt: null };
+  return vazio;
 }
 
 // `undefined` = "não mexi nisso", em todos os campos.
@@ -201,13 +203,12 @@ function clearAmazonConfig(userId) {
 
 function writeShopeeConfig(userId, { appId, appSecret }) {
   if (!userId) throw new Error("writeShopeeConfig exige userId");
-  if (process.env.SHOPEE_AFFILIATE_APP_ID || process.env.SHOPEE_AFFILIATE_APP_SECRET) {
-    throw new Error("Configuração Shopee vem de variável de ambiente — desligue SHOPEE_AFFILIATE_APP_ID/SHOPEE_AFFILIATE_APP_SECRET pra usar config dinâmica.");
-  }
-  const cleanId = String(appId || "").trim();
+  // Aceita como aparece no link ("an_18300430084") ou só os números — o App ID
+  // vira o affiliate_id do an_redir, então tem que ser o número.
+  const cleanId = String(appId || "").trim().replace(/^an_/i, "");
   const cleanSecret = String(appSecret || "").trim();
-  if (cleanId && !/^[a-zA-Z0-9_-]{4,64}$/.test(cleanId)) {
-    throw new Error("App ID inválido — use letras, números, hífen ou sublinhado.");
+  if (cleanId && !/^\d{4,20}$/.test(cleanId)) {
+    throw new Error("App ID inválido — só números (ex: 18300430084).");
   }
   if (cleanSecret && cleanSecret.length < 16) {
     throw new Error("Senha muito curta — confira o valor copiado do painel.");
@@ -224,6 +225,7 @@ function writeShopeeConfig(userId, { appId, appSecret }) {
   const s = ensureStats(userId).shopee;
   s.lastFailureAt = null;
   s.lastFailureReason = null;
+  s.apiFalha = null;
   return raw.shopee;
 }
 
@@ -237,6 +239,7 @@ function clearShopeeConfig(userId) {
   const s = ensureStats(userId).shopee;
   s.lastFailureAt = null;
   s.lastFailureReason = null;
+  s.apiFalha = null;
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -252,6 +255,8 @@ function status(userId) {
     amazon: { lastSuccessAt: null, lastFailureAt: null, lastFailureReason: null },
     shopee: { lastSuccessAt: null, lastFailureAt: null, lastFailureReason: null },
   };
+  const shopeeApi = !!(shopee.appId && shopee.appSecret);
+  const shopeeConfigured = !!shopee.appId;
   const mlHealthy = !!(ml.tag && ml.cookie) && (!s.ml.lastFailureAt || (s.ml.lastSuccessAt && new Date(s.ml.lastSuccessAt) > new Date(s.ml.lastFailureAt)));
   return {
     // Compat com UI antiga: campos top-level são do ML
@@ -292,7 +297,13 @@ function status(userId) {
       lastFailureReason: s.amazon.lastFailureReason,
     },
     shopee: {
-      configured: !!(shopee.appId && shopee.appSecret),
+      configured: shopeeConfigured,
+      // "api" = link curto oficial (comprovado); "redir" = an_redir só com o App
+      // ID (reserva, crédito da comissão ainda não comprovado).
+      modo: shopeeApi ? "api" : shopeeConfigured ? "redir" : null,
+      apiConfigured: shopeeApi,
+      // Com Senha, a última chamada à API falhou e o link saiu pelo reserva.
+      apiFalha: shopeeApi ? (s.shopee.apiFalha || null) : null,
       appId: shopee.appId || null,
       appSecretLength: shopee.appSecret ? shopee.appSecret.length : 0,
       appSecretPreview: shopee.appSecret ? shopee.appSecret.slice(0, 6) + "…" : null,
@@ -301,7 +312,7 @@ function status(userId) {
       lastSuccessAt: s.shopee.lastSuccessAt,
       lastFailureAt: s.shopee.lastFailureAt,
       lastFailureReason: s.shopee.lastFailureReason,
-      healthy: !!(shopee.appId && shopee.appSecret) && (!s.shopee.lastFailureAt || (s.shopee.lastSuccessAt && new Date(s.shopee.lastSuccessAt) > new Date(s.shopee.lastFailureAt))),
+      healthy: shopeeConfigured && (!s.shopee.lastFailureAt || (s.shopee.lastSuccessAt && new Date(s.shopee.lastSuccessAt) > new Date(s.shopee.lastFailureAt))),
     },
   };
 }
@@ -533,13 +544,16 @@ function buildShopeeItemLookupPayload(itemId, shopId) {
   return JSON.stringify({ query });
 }
 
-// Busca um item específico da Shopee usando o afiliado DO USUÁRIO (não o
-// admin/scraper) — é o que o repasse precisa, já que a captura já garantiu
-// que esse usuário tem afiliado Shopee configurado. Retorna o node cru (ou
-// null) — o chamador mapeia os campos (mesmo formato de shopeeNodeToProduct).
-async function fetchShopeeItemByIds(userId, itemId, shopId) {
-  const { appId, appSecret } = readShopeeConfig(userId);
-  if (!appId || !appSecret) return null;
+// Busca um item específico da Shopee com a conta DO SISTEMA — buscar produto
+// é papel dela; a do usuário só gera o link dele no envio. Retorna o node cru
+// (ou null) — o chamador mapeia os campos (mesmo formato de shopeeNodeToProduct).
+async function fetchShopeeItemByIds(itemId, shopId) {
+  const c = getScraperShopeeCreds();
+  if (!c) {
+    console.warn("[afiliados Shopee] fetchShopeeItemByIds: conta Shopee do sistema não configurada (Admin › Shopee) — pulando");
+    return null;
+  }
+  const { appId, appSecret } = c;
   const timestamp = Math.floor(Date.now() / 1000);
   const payload = buildShopeeItemLookupPayload(itemId, shopId);
   const authHeader = signShopeeRequest({ appId, appSecret, timestamp, payload });
@@ -584,6 +598,79 @@ function subIdDoGrupo(groupId) {
   return /^\d+$/.test(id) ? `g${id}` : "";
 }
 
+// Lê o rastreio de afiliado da URL FINAL de um link Shopee (a que o link curto
+// abre): o dono vem em `mmp_pid`/`utm_source` ("an_<id>") e as marcas em
+// `utm_content` (os 5 sub_ids unidos por "-"). Pura, sem rede — quem tem link
+// curto resolve antes. URL que não dá pra ler → null.
+function lerRastreioShopee(url) {
+  let params;
+  try { params = new URL(String(url)).searchParams; } catch { return null; }
+  const dono = [params.get("mmp_pid"), params.get("utm_source")]
+    .map(v => /^an_(\d+)$/.exec(String(v || "").trim()))
+    .find(Boolean);
+  const partes = String(params.get("utm_content") || "").split("-");
+  const subIds = Array.from({ length: SUBIDS_POR_LINK }, (_, i) => partes[i] || "");
+  const grupo = SUBID_GRUPO_RE.exec(subIds[0]);
+  return {
+    affiliateId: dono ? dono[1] : null,
+    subIds,
+    grupoId: grupo ? grupo[1] : null,
+  };
+}
+
+// Link de afiliado SEM a API: o redirecionador da própria Shopee põe o
+// `affiliate_id` no destino (mmp_pid/utm_source "an_<id>") e o `sub_id` no
+// utm_content. É o reserva de quem não tem Senha da API (ou quando a API falha) —
+// a Shopee não confere o ID nem assina esse link, e o crédito da comissão ainda
+// não foi comprovado. O `affiliate_id` é o App ID do usuário (são o mesmo número).
+const SHOPEE_REDIR = "https://s.shopee.com.br/an_redir";
+
+function buildShopeeRedirLink(originUrl, affiliateId, subId = "") {
+  const params = new URLSearchParams({ origin_link: String(originUrl), affiliate_id: String(affiliateId) });
+  const marca = limpaSubId(subId);
+  if (marca) params.set("sub_id", marca);
+  return `${SHOPEE_REDIR}?${params}`;
+}
+
+// Abre um link da Shopee (curto ou não) e devolve a URL final. Pelo
+// safeFetchFollow, que confere cada salto. Lança com a mensagem do motivo.
+async function abrirLinkShopee(url, { timeoutMs = 10000 } = {}) {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const { res, finalUrl } = await urlGuard.safeFetchFollow(url, {
+      headers: { "User-Agent": UA },
+      signal: controller.signal,
+    });
+    try { await res.body?.cancel?.(); } catch { /* ignore */ }
+    return finalUrl;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// A origem do an_redir tem que ser o produto LIMPO: um link com o rastreio de
+// outro afiliado (query mmp_pid/utm_*, ou o link curto dele) embrulhado aqui
+// levaria a comissão pra ele. Produto → permalink /product/<loja>/<item>; link
+// curto → abre e faz o mesmo; outra página → sem a query. Não deu → null (o
+// envio falha, em vez de sair com a comissão de outra pessoa).
+async function origemLimpaShopee(link) {
+  const { extractShopeeIds } = require("./scraper");
+  const permalink = (url) => {
+    const ids = extractShopeeIds(url);
+    return ids ? `https://shopee.com.br/product/${ids.shopId}/${ids.itemId}` : null;
+  };
+  let u;
+  try { u = new URL(String(link)); } catch { return null; }
+  if (urlGuard.detectStore(u.href) !== "Shopee") return null;
+  const direto = permalink(u.href);
+  if (direto) return direto;
+  if (/^s\.shopee\./i.test(u.hostname)) {
+    try { return permalink(await abrirLinkShopee(u.href)); } catch { return null; }
+  }
+  return `${u.origin}${u.pathname}`;
+}
+
 function buildShopeeShortLinkPayload(originUrl, subIds = []) {
   const safe = String(originUrl).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   const marcas = Array.from({ length: SUBIDS_POR_LINK }, (_, i) => `"${limpaSubId(subIds[i])}"`).join(",");
@@ -608,10 +695,15 @@ function buildShopeeProductOfferPayload({ keyword, productCatId, page = 1, limit
 // `subId` marca o link com o grupo que vai mandá-lo (ver subIdDoGrupo). O mesmo
 // produto em dois grupos são dois links curtos diferentes — daí a marca na chave
 // do cache.
+//
+// Com Senha, tenta a API oficial (o caminho comprovado). Sem Senha — ou se a API
+// não der link (Senha recusada, limite, rede) — sai o an_redir com o App ID.
+// O reserva usado por FALHA não entra no cache: o próximo envio tenta a API de
+// novo, em vez de ficar 7 dias preso no reserva por um soluço de rede.
 async function gerarLinkAfiliadoShopee(userId, linkOriginal, { subId = "" } = {}) {
   if (!linkOriginal || typeof linkOriginal !== "string") return null;
   const { appId, appSecret } = readShopeeConfig(userId);
-  if (!appId || !appSecret) return null;
+  if (!appId) return null;
 
   const marca = limpaSubId(subId);
   const chave = `${marca}|${linkOriginal}`;
@@ -620,6 +712,35 @@ async function gerarLinkAfiliadoShopee(userId, linkOriginal, { subId = "" } = {}
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.shortUrl;
 
   const s = ensureStats(userId).shopee;
+  let link = null;
+  let guardar = true;
+  if (appSecret) {
+    link = await gerarLinkShopeeViaApi({ appId, appSecret }, linkOriginal, marca, s);
+    s.apiFalha = link ? null : (s.lastFailureReason || "falha na API");
+    guardar = !!link;
+  }
+  if (!link) link = await gerarLinkShopeeRedir(appId, linkOriginal, marca, s);
+  if (!link) return null;
+  if (guardar) cache.set(chave, { shortUrl: link, ts: Date.now() });
+  s.lastSuccessAt = new Date().toISOString();
+  s.lastFailureReason = null;
+  return link;
+}
+
+async function gerarLinkShopeeRedir(affiliateId, linkOriginal, marca, s) {
+  const origem = await origemLimpaShopee(linkOriginal);
+  if (!origem) {
+    s.lastFailureAt = new Date().toISOString();
+    s.lastFailureReason = "Não consegui ler o produto desse link da Shopee";
+    console.warn(`[afiliados Shopee] ${s.lastFailureReason}: ${String(linkOriginal).slice(0, 120)}`);
+    return null;
+  }
+  return buildShopeeRedirLink(origem, affiliateId, marca);
+}
+
+// Link curto oficial (generateShortLink). Devolve o link ou null, anotando o
+// motivo da falha em `s`.
+async function gerarLinkShopeeViaApi({ appId, appSecret }, linkOriginal, marca, s) {
   const timestamp = Math.floor(Date.now() / 1000);
   const payload = buildShopeeShortLinkPayload(linkOriginal, [marca]);
   const authHeader = signShopeeRequest({ appId, appSecret, timestamp, payload });
@@ -657,9 +778,6 @@ async function gerarLinkAfiliadoShopee(userId, linkOriginal, { subId = "" } = {}
       console.warn(`[afiliados Shopee] ${s.lastFailureReason}: ${JSON.stringify(data).slice(0, 200)}`);
       return null;
     }
-    cache.set(chave, { shortUrl: short, ts: Date.now() });
-    s.lastSuccessAt = new Date().toISOString();
-    s.lastFailureReason = null;
     return short;
   } catch (err) {
     s.lastFailureAt = new Date().toISOString();
@@ -670,7 +788,7 @@ async function gerarLinkAfiliadoShopee(userId, linkOriginal, { subId = "" } = {}
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// Admin Shopee creds (override global pro admin-scraper)
+// Conta Shopee do sistema (buscas na API: catálogo, link avulso, repasse)
 // ────────────────────────────────────────────────────────────────────────
 
 function readScraperShopeeAdminCreds() {
@@ -1074,9 +1192,10 @@ function passesAmazonFilters(product, filters = null) {
   return true;
 }
 
-// Resolve credenciais Shopee pro admin-scraper (que roda fora de qualquer userId).
-// Prioridade: env vars → admin override (appConfig) → primeiro user com config.
-// Retorna null se nada disponível.
+// Resolve a conta Shopee DO SISTEMA — a que faz toda busca na API (catálogo,
+// link avulso, repasse). Prioridade: env vars → credencial do admin (appConfig).
+// Nunca cai na conta de um usuário: essa é privada dele e só gera os links dele.
+// Retorna null se nada configurado.
 function getScraperShopeeCreds() {
   if (process.env.SHOPEE_AFFILIATE_APP_ID && process.env.SHOPEE_AFFILIATE_APP_SECRET) {
     return {
@@ -1089,8 +1208,6 @@ function getScraperShopeeCreds() {
   if (admin.appId && admin.appSecret) {
     return { appId: admin.appId, appSecret: admin.appSecret, source: "admin" };
   }
-  const list = store.listShopeeConfigs();
-  if (list.length) return { appId: list[0].appId, appSecret: list[0].appSecret, source: "user-fallback" };
   return null;
 }
 
@@ -1100,7 +1217,7 @@ async function fetchShopeeOffers({ keyword, productCatId, page = 1, limit = 50, 
   if (!keyword && !productCatId) return { nodes: [], pageInfo: null };
   const c = creds || getScraperShopeeCreds();
   if (!c || !c.appId || !c.appSecret) {
-    console.warn("[afiliados Shopee] fetchShopeeOffers: sem App ID/Secret (env ou usuário configurado) — pulando");
+    console.warn("[afiliados Shopee] fetchShopeeOffers: conta Shopee do sistema não configurada (Admin › Shopee) — pulando");
     return { nodes: [], pageInfo: null };
   }
 
@@ -1216,6 +1333,10 @@ module.exports = {
   SHOPEE_ENDPOINT,
   subIdDoGrupo,
   SUBID_GRUPO_RE,
+  lerRastreioShopee,
+  abrirLinkShopee,
+  origemLimpaShopee,
+  buildShopeeRedirLink,
   // Puros — testes
   parseSoldText,
   signShopeeRequest,

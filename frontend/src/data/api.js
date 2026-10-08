@@ -436,6 +436,7 @@ export async function testAmazonAffiliate(url)  { return http("POST",   "/api/af
 export async function saveShopeeAffiliate({ appId, appSecret }) { return http("PUT",    "/api/affiliate/shopee", { appId, appSecret }); }
 export async function clearShopeeAffiliate()                    { return http("DELETE", "/api/affiliate/shopee"); }
 export async function testShopeeAffiliate(url)                  { return http("POST",   "/api/affiliate/shopee/test", url ? { url } : {}, { timeoutMs: SLOW_TIMEOUT_MS }); }
+export async function descobrirShopeeAffiliateId(url)           { return http("POST",   "/api/affiliate/shopee/descobrir-id", { url }, { timeoutMs: SLOW_TIMEOUT_MS }); }
 
 // ─── Scraping ──────────────────────────────────────────────────────────
 export async function fetchOfertas({ category, minDiscount = 0, minPrice = 0, maxPrice, limit = 50, refresh = false, sources } = {}) {
@@ -623,6 +624,7 @@ export async function adminScraperShopee()           { return http("GET",    "/a
 export async function adminScraperShopeeSave(body)   { return http("PUT",    "/api/admin/scraper/shopee", body); }
 export async function adminScraperShopeeClear()      { return http("DELETE", "/api/admin/scraper/shopee"); }
 export async function adminScraperShopeeTest(url)    { return http("POST",   "/api/admin/scraper/shopee/test", { url }, { timeoutMs: SLOW_TIMEOUT_MS }); }
+export async function adminScraperShopeeIdentify(url) { return http("POST",  "/api/admin/scraper/shopee/identify", { url }, { timeoutMs: SLOW_TIMEOUT_MS }); }
 export async function adminScraperShopeeFilters()        { return http("GET", "/api/admin/scraper/shopee/filters"); }
 export async function adminScraperShopeeFiltersSave(f)   { return http("PUT", "/api/admin/scraper/shopee/filters", f); }
 // Sessão do ML da conta do sistema (Hub de Afiliados) — não é o cookie de nenhum usuário.

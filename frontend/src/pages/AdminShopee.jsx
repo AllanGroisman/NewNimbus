@@ -7,6 +7,7 @@ import {
   adminScraperShopeeSave,
   adminScraperShopeeClear,
   adminScraperShopeeTest,
+  adminScraperShopeeIdentify,
   adminScraperShopeeFilters,
   adminScraperShopeeFiltersSave,
   errText,
@@ -52,7 +53,7 @@ export default function PageAdminShopee() {
   }
 
   async function handleClear() {
-    if (!confirm("Apagar as credenciais Shopee do admin? O scraper volta a usar fallback do primeiro usuário.")) return;
+    if (!confirm("Apagar a conta Shopee do sistema? Sem ela (e sem a do .env), a busca de produtos Shopee para.")) return;
     setSaving(true);
     setMsg(null);
     try {
@@ -88,10 +89,8 @@ export default function PageAdminShopee() {
   const sourceLabel = {
     env: "Variável de ambiente (.env)",
     admin: "Credenciais do admin (esta tela)",
-    "user-fallback": "Fallback: 1º usuário configurado",
-  }[data.active?.source] || "Nenhuma";
-  const sourceColor = data.active?.source === "admin" || data.active?.source === "env" ? "green"
-    : data.active?.source === "user-fallback" ? "amber" : "gray";
+  }[data.active?.source] || "Não configurada — busca de produtos Shopee parada";
+  const sourceColor = data.active ? "green" : "red";
 
   return (
     <div>
@@ -107,9 +106,9 @@ export default function PageAdminShopee() {
       <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16, marginBottom: 18 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, gap: 8, flexWrap: "wrap" }}>
           <div>
-            <div style={{ fontWeight: 500 }}>Credenciais de afiliado</div>
+            <div style={{ fontWeight: 500 }}>Conta do sistema</div>
             <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 4 }}>
-              Sobrescreve o fallback de "primeiro usuário configurado" no scraper global.
+              Usada em todas as buscas na API da Shopee (catálogo, busca por link, repasse). Os links enviados usam a conta de cada usuário.
             </div>
           </div>
           <Badge color={sourceColor}>Fonte ativa: {sourceLabel}</Badge>
@@ -212,7 +211,125 @@ export default function PageAdminShopee() {
         )}
       </div>
 
+      <ShopeeLinkIdentifySection />
+
       <ShopeeFiltersSection />
+    </div>
+  );
+}
+
+// De quem é um link de afiliado: o dono vem no "an_<id>" da URL que o link abre.
+function ShopeeLinkIdentifySection() {
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const [err, setErr] = useState(null);
+
+  async function identify() {
+    setBusy(true);
+    setErr(null);
+    setResult(null);
+    try {
+      setResult(await adminScraperShopeeIdentify(url.trim()));
+    } catch (e) {
+      setErr(errText(e, "Não foi possível ler o link. Tente novamente."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const subIds = (result?.subIds || []).filter(Boolean);
+  const row = { display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", fontSize: 12, marginTop: 8 };
+  const label = { color: "var(--color-text-secondary)", minWidth: 110 };
+
+  return (
+    <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16, marginBottom: 18 }}>
+      <div style={{ fontWeight: 500, marginBottom: 4 }}>Identificar link de afiliado</div>
+      <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14 }}>
+        Cole um link da Shopee (curto ou já aberto) para ver de qual afiliado ele é.
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <input
+          value={url}
+          onChange={e => setUrl(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter" && url.trim() && !busy) identify(); }}
+          placeholder="https://s.shopee.com.br/..."
+          style={{ flex: "1 1 260px", minWidth: 0, padding: "8px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 12, boxSizing: "border-box", fontFamily: "monospace" }}
+        />
+        <button
+          onClick={identify}
+          disabled={busy || !url.trim()}
+          style={{ padding: "7px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: "pointer", fontWeight: 500, opacity: (busy || !url.trim()) ? 0.6 : 1 }}
+        >
+          {busy ? "Lendo..." : "Identificar"}
+        </button>
+      </div>
+
+      {err && (
+        <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: "var(--danger-bg)", color: "var(--danger-text)", wordBreak: "break-all" }}>
+          {err}
+        </div>
+      )}
+
+      {result && (
+        <div style={{ marginTop: 12, paddingTop: 10, borderTop: "0.5px solid var(--color-border-tertiary)" }}>
+          {result.affiliateId ? (
+            <div style={row}>
+              <span style={label}>ID do afiliado</span>
+              <code style={{ fontSize: 15, fontWeight: 600, userSelect: "all" }}>{result.affiliateId}</code>
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+              Esse link não tem rastreio de afiliado.
+            </div>
+          )}
+
+          {result.contas?.length > 0 && (
+            <div style={row}>
+              <span style={label}>Conta</span>
+              <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {result.contas.map((c, i) => (
+                  <Badge key={i} color={c.tipo === "sistema" ? "blue" : "green"}>
+                    {c.tipo === "sistema" ? "Conta do sistema" : `Usuário ${c.email || "?"}`}
+                  </Badge>
+                ))}
+              </span>
+            </div>
+          )}
+
+          {subIds.length > 0 && (
+            <div style={row}>
+              <span style={label}>Sub_ids</span>
+              <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {subIds.map((v, i) => <Badge key={i} color="gray">{v}</Badge>)}
+              </span>
+            </div>
+          )}
+
+          {result.grupo && (
+            <div style={row}>
+              <span style={label}>Gerado pelo Nimbus</span>
+              <span>
+                grupo <strong>{result.grupo.name}</strong>
+                {result.grupo.ownerEmail && <span style={{ color: "var(--color-text-secondary)" }}> ({result.grupo.ownerEmail})</span>}
+              </span>
+            </div>
+          )}
+
+          {result.product && (
+            <div style={row}>
+              <span style={label}>Produto</span>
+              <code>{result.product.shopId}/{result.product.itemId}</code>
+            </div>
+          )}
+
+          <details style={{ marginTop: 10, fontSize: 11, color: "var(--color-text-secondary)" }}>
+            <summary style={{ cursor: "pointer" }}>URL final</summary>
+            <div style={{ marginTop: 6, fontFamily: "monospace", wordBreak: "break-all" }}>{result.finalUrl}</div>
+          </details>
+        </div>
+      )}
     </div>
   );
 }

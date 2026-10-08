@@ -103,3 +103,71 @@ describe("POST /api/affiliate/amazon/test — gera link", () => {
     expect(res.body.error).toMatch(/ASIN|Amazon/i);
   });
 });
+
+describe("Shopee — App ID obrigatório, Senha opcional", () => {
+  const ID = "18300000001";
+  const PRODUTO = "https://shopee.com.br/product/1082747237/22697179178";
+  const redir = (link) => {
+    const u = new URL(link);
+    return { base: `${u.origin}${u.pathname}`, params: Object.fromEntries(u.searchParams) };
+  };
+
+  it("PUT só com o App ID (com ou sem o an_): configurado no modo redir", async () => {
+    const { auth } = await createTestUser();
+    const res = await auth("put", "/api/affiliate/shopee").send({ appId: `an_${ID}` });
+    expect(res.status).toBe(200);
+    expect(res.body.shopee).toMatchObject({ configured: true, modo: "redir", apiConfigured: false, appId: ID });
+  });
+
+  it("PUT recusa App ID com letras", async () => {
+    const { auth } = await createTestUser();
+    const res = await auth("put", "/api/affiliate/shopee").send({ appId: "meu-app" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/App ID inválido/);
+  });
+
+  it("Testar sem Senha devolve o an_redir com o App ID, sem aviso", async () => {
+    const { auth } = await createTestUser();
+    await auth("put", "/api/affiliate/shopee").send({ appId: ID });
+    const res = await auth("post", "/api/affiliate/shopee/test").send({ url: PRODUTO });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ modo: "redir", aviso: null });
+    expect(redir(res.body.shortUrl)).toEqual({ base: "https://s.shopee.com.br/an_redir", params: { origin_link: PRODUTO, affiliate_id: ID } });
+  });
+
+  it("Testar com Senha recusada pela Shopee cai pro an_redir e avisa", async () => {
+    const { auth } = await createTestUser();
+    await auth("put", "/api/affiliate/shopee").send({ appId: ID, appSecret: "senha-errada-1234567" });
+    // A Shopee de mentira (beforeEach do arquivo) responde 404 pra API.
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await auth("post", "/api/affiliate/shopee/test").send({ url: PRODUTO });
+    expect(res.status).toBe(200);
+    expect(res.body.modo).toBe("redir");
+    expect(res.body.aviso).toMatch(/A API da Shopee recusou \(HTTP 404/);
+    expect(redir(res.body.shortUrl).params.affiliate_id).toBe(ID);
+
+    const st = await auth("get", "/api/affiliate");
+    expect(st.body.shopee).toMatchObject({ modo: "api", apiFalha: expect.stringMatching(/HTTP 404/) });
+  });
+
+  it("descobrir-id lê o ID de um link já aberto", async () => {
+    const { auth } = await createTestUser();
+    const res = await auth("post", "/api/affiliate/shopee/descobrir-id")
+      .send({ url: `${PRODUTO}?mmp_pid=an_${ID}&utm_source=an_${ID}&utm_content=x----` });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ affiliateId: ID });
+  });
+
+  it("descobrir-id recusa link que não é da Shopee", async () => {
+    const { auth } = await createTestUser();
+    const res = await auth("post", "/api/affiliate/shopee/descobrir-id")
+      .send({ url: `https://www.amazon.com.br/dp/B000?utm_source=an_${ID}` });
+    expect(res.status).toBe(400);
+  });
+
+  it("descobrir-id: link sem an_ responde 400", async () => {
+    const { auth } = await createTestUser();
+    const res = await auth("post", "/api/affiliate/shopee/descobrir-id").send({ url: PRODUTO });
+    expect(res.status).toBe(400);
+  });
+});

@@ -119,7 +119,8 @@ Não vem no clone (gitignored) — o `install.sh` cria a partir do `.env.example
 | `STRIPE_*` | Pagamentos (opcional — sem isso o checkout fica desabilitado). Sem sufixo = modo teste; com `_LIVE` = produção. Qual dos dois vale se escolhe na aba **Stripe** do painel admin. |
 | `BACKUP_S3_*` / `BACKUP_RETAIN_REMOTE_HOURS` / `BACKUP_RETAIN_REMOTE_DAYS` | Backup remoto no Backblaze B2. |
 | `PUBLIC_BASE_URL` | URL pública (usada em links/e-mails). |
-| `ML_AFFILIATE_TAG` / `AMAZON_AFFILIATE_TAG` / `SHOPEE_AFFILIATE_APP_ID` / `SHOPEE_AFFILIATE_APP_SECRET` | Override **global** das credenciais de afiliado (opcional — normalmente ficam no banco por usuário/admin). |
+| `ML_AFFILIATE_TAG` / `AMAZON_AFFILIATE_TAG` | Override **global** das credenciais de afiliado (opcional — normalmente ficam no banco por usuário). |
+| `SHOPEE_AFFILIATE_APP_ID` / `SHOPEE_AFFILIATE_APP_SECRET` | Conta Shopee **do sistema**, usada nas buscas da API (opcional — normalmente vai em Admin › Shopee). Não substitui a conta de cada usuário, que gera os links dele. |
 | `ML_SCRAPER_COOKIE` | Sessão de uma conta do Mercado Livre **do sistema**, usada só para abrir o Hub de Afiliados (opcional — normalmente vai em Admin › Mercado Livre). Não confundir com `ML_AFFILIATE_COOKIE`, que é o cookie do afiliado. |
 
 ---

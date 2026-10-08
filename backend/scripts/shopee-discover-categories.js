@@ -13,8 +13,8 @@
 //   node scripts/shopee-discover-categories.js 100013         # inspeciona 1 catId (amostra)
 //   node scripts/shopee-discover-categories.js --kw "notebook" # distribuição de Level-1 de uma busca
 //
-// Pré: credenciais Shopee configuradas (env SHOPEE_AFFILIATE_APP_ID/SECRET, ou
-// admin/usuário no banco). Read-only — não escreve nada.
+// Pré: conta Shopee do sistema configurada (env SHOPEE_AFFILIATE_APP_ID/SECRET,
+// ou Admin › Shopee). Read-only — não escreve nada.
 
 require("../config/loadEnv");
 

@@ -8,7 +8,8 @@ const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const { rateLimit, ipKeyGenerator } = require("express-rate-limit");
-const { CATEGORIES, STORES, normalizeSource, scrapeSingleProduct } = require("./scraping/scraper");
+const { CATEGORIES, STORES, normalizeSource, scrapeSingleProduct, extractShopeeIds } = require("./scraping/scraper");
+const urlGuard = require("./scraping/urlGuard");
 const wa = require("./whatsapp");
 const auth = require("./auth");
 const storage = require("./storage");
@@ -1763,12 +1764,43 @@ app.post("/api/affiliate/shopee/test", auth.requireAuth, requireStoreUnlocked("s
     if (!short) {
       const s = affiliate.status(req.user.id);
       const reason = s.shopee.lastFailureReason
-        || (!s.shopee.configured ? "Configure App ID e senha da Shopee primeiro." : "Falha ao gerar link");
+        || (!s.shopee.configured ? "Informe seu App ID da Shopee primeiro." : "Falha ao gerar link");
       return res.status(400).json({ error: reason });
     }
-    res.json({ ok: true, shortUrl: short });
+    // an_redir = saiu pelo reserva: sem Senha, ou a API falhou (aí avisa o motivo).
+    const modo = short.startsWith("https://s.shopee.com.br/an_redir") ? "redir" : "api";
+    const { apiFalha } = affiliate.status(req.user.id).shopee;
+    const aviso = modo === "redir" && apiFalha
+      ? `A API da Shopee recusou (${apiFalha}) — link gerado pelo método reserva (sem a Senha).`
+      : null;
+    res.json({ ok: true, shortUrl: short, modo, aviso });
   } catch (err) {
     httpErrors.serverError(res, err, { req, ctx: "POST /api/affiliate/shopee/test", expose: true });
+  }
+});
+
+// O usuário cola um link de afiliado DELE e descobre o próprio App ID (o
+// "an_<id>" que o link abre — App ID e ID de afiliado são o mesmo número).
+app.post("/api/affiliate/shopee/descobrir-id", auth.requireAuth, requireStoreUnlocked("shopee"), async (req, res) => {
+  try {
+    const url = String(req.body?.url || "").trim();
+    let rastreio = affiliate.lerRastreioShopee(url);
+    if (!rastreio || urlGuard.detectStore(url) !== "Shopee") {
+      return res.status(400).json({ error: "Cole um link de afiliado da Shopee." });
+    }
+    if (!rastreio.affiliateId) {
+      try {
+        rastreio = affiliate.lerRastreioShopee(await affiliate.abrirLinkShopee(url));
+      } catch (err) {
+        return res.status(400).json({ error: `Não consegui abrir o link: ${err.message}` });
+      }
+    }
+    if (!rastreio?.affiliateId) {
+      return res.status(400).json({ error: "Esse link não tem ID de afiliado — cole um link gerado na sua conta de afiliado." });
+    }
+    res.json({ affiliateId: rastreio.affiliateId });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/affiliate/shopee/descobrir-id" });
   }
 });
 
@@ -3271,8 +3303,8 @@ app.post("/api/admin/ml-cupons/code", auth.requireAuth, auth.requireAdmin, async
   }
 });
 
-// Credenciais Shopee globais (usadas pelo admin-scraper).
-// Override per-user fica intacto; isso aqui sobrescreve só o fallback do scraper.
+// Conta Shopee do sistema: faz toda busca na API (catálogo, link avulso, repasse).
+// A conta de cada usuário fica intacta — só gera os links dele no envio.
 app.get("/api/admin/scraper/shopee", auth.requireAuth, auth.requireAdmin, (req, res) => {
   const admin = affiliate.readScraperShopeeAdminCreds();
   const active = affiliate.getScraperShopeeCreds();
@@ -3286,7 +3318,7 @@ app.get("/api/admin/scraper/shopee", auth.requireAuth, auth.requireAdmin, (req, 
     active: active ? {
       appId: active.appId,
       appSecretPreview: active.appSecret ? active.appSecret.slice(0, 6) + "…" : null,
-      source: active.source, // "env" | "admin" | "user-fallback"
+      source: active.source, // "env" | "admin"
     } : null,
   });
 });
@@ -3536,6 +3568,66 @@ app.post("/api/admin/scraper/shopee/test", auth.requireAuth, auth.requireAdmin, 
     res.json({ ok: true, shortUrl: short });
   } catch (err) {
     httpErrors.serverError(res, err, { req, ctx: "POST /api/admin/scraper/shopee/test", expose: true });
+  }
+});
+
+// De quem é um link de afiliado da Shopee. O dono só aparece na URL que o link
+// curto abre (mmp_pid/utm_source "an_<id>"), então link curto é resolvido aqui —
+// pelo safeFetchFollow, que confere cada salto. Link já aberto é lido sem rede.
+app.post("/api/admin/scraper/shopee/identify", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const url = String(req.body?.url || "").trim();
+    if (!url) return res.status(400).json({ error: "Cole um link da Shopee." });
+    let rastreio = affiliate.lerRastreioShopee(url);
+    if (!rastreio) return res.status(400).json({ error: "URL inválida." });
+    if (urlGuard.detectStore(url) !== "Shopee") {
+      return res.status(400).json({ error: "Esse link não é da Shopee." });
+    }
+
+    let finalUrl = url;
+    if (!rastreio.affiliateId) {
+      try {
+        finalUrl = await affiliate.abrirLinkShopee(url);
+      } catch (err) {
+        return res.status(400).json({ error: `Não consegui abrir o link: ${err.message}` });
+      }
+      rastreio = affiliate.lerRastreioShopee(finalUrl);
+    }
+
+    const { prisma } = require("./db");
+    let grupo = null;
+    if (rastreio.grupoId && rastreio.grupoId.length <= 18) {
+      const g = await prisma().group.findUnique({
+        where: { id: BigInt(rastreio.grupoId) },
+        select: { id: true, name: true, user: { select: { email: true } } },
+      });
+      if (g) grupo = { id: String(g.id), name: g.name, ownerEmail: g.user?.email || null };
+    }
+
+    // O número do "an_" é o App ID da conta: procura entre a do sistema e as
+    // dos usuários.
+    const contas = [];
+    if (rastreio.affiliateId) {
+      const id = rastreio.affiliateId;
+      if (affiliate.getScraperShopeeCreds()?.appId === id) contas.push({ tipo: "sistema" });
+      const rows = await prisma().affiliateConfig.findMany({
+        where: { data: { path: ["shopee", "appId"], equals: id } },
+        select: { user: { select: { email: true } } },
+      });
+      for (const r of rows) contas.push({ tipo: "usuario", email: r.user?.email || null });
+    }
+
+    const ids = extractShopeeIds(finalUrl);
+    res.json({
+      finalUrl,
+      affiliateId: rastreio.affiliateId,
+      subIds: rastreio.subIds,
+      product: ids ? { shopId: ids.shopId, itemId: ids.itemId } : null,
+      grupo,
+      contas,
+    });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/admin/scraper/shopee/identify" });
   }
 });
 
