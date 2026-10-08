@@ -413,6 +413,15 @@ export default function App() {
           retryable: false,
           showPlans: err.code === "plan_limit",
         });
+      } else if (err.code === "number_in_use") {
+        // Número já cadastrado em outra conta — o servidor nunca vai aceitar.
+        // Tira o número da tela (senão todo save seguinte falharia junto) e
+        // explica o motivo em vez de culpar a conexão.
+        const takenId = String(err.body?.numberId ?? "");
+        setNumbers(ns => ns.filter(n => String(n.id) !== takenId));
+        setWhatsappGroups(ws => ws.filter(w => String(w.numberId) !== takenId));
+        lastFailedSaveRef.current = null;
+        setSaveError({ message: errText(err, "Este número já está em outra conta."), retryable: false });
       } else {
         // Falha de rede/servidor: o usuário já viu "✓ Salvo!" na tela da campanha,
         // mas nada foi gravado. Guarda o payload e avisa, com opção de tentar de novo.

@@ -1146,6 +1146,11 @@ app.put("/api/state", auth.requireAuth, async (req, res) => {
     if (err.code === "STALE_STATE") {
       return res.status(409).json({ error: err.message, code: "STALE_STATE" });
     }
+    if (err.code === "NUMBER_IN_USE") {
+      return res.status(400).json({ error: err.message, code: "number_in_use", numberId: err.numberId });
+    }
+    // Sem este log a recusa não deixava rastro nenhum no servidor.
+    console.error(`[state] PUT /api/state recusado (user ${req.user.id}): ${err.message}`);
     res.status(400).json({ error: err.message });
   }
 });

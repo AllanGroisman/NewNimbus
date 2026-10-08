@@ -198,6 +198,25 @@ async function saveState(userId, incoming) {
     }
   }
 
+  // `whatsapp_numbers.id` é o telefone e é único no sistema inteiro: o mesmo
+  // número não pode estar em duas contas. Checa antes da transação pra devolver
+  // um erro que a tela consiga explicar — sem isso o create estourava a
+  // constraint lá embaixo e o usuário via "Verifique sua conexão".
+  const incomingNumIds = (Array.isArray(incoming.numbers) ? incoming.numbers : [])
+    .filter(n => n?.id).map(n => String(n.id));
+  if (incomingNumIds.length) {
+    const taken = await prisma().whatsappNumber.findFirst({
+      where: { id: { in: incomingNumIds }, userId: { not: userId } },
+      select: { id: true },
+    });
+    if (taken) {
+      const err = new Error("Este número de WhatsApp já está cadastrado em outra conta do Nimbus. Remova-o de lá antes de conectar aqui.");
+      err.code = "NUMBER_IN_USE";
+      err.numberId = taken.id;
+      throw err;
+    }
+  }
+
   const tx = [];
 
   // user_state (settings)
