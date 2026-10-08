@@ -438,7 +438,7 @@ describe("GroupDashboard — criar grupo com envio só para admins", () => {
     fireEvent.click(screen.getByRole("button", { name: /Adicionar primeiro grupo/ }));
     fireEvent.click(screen.getByRole("button", { name: /Número 1/ }));
     fireEvent.click(await screen.findByRole("button", { name: /Criar grupo novo neste WhatsApp/ }));
-    fireEvent.change(screen.getByPlaceholderText(/Regional/), { target: { value: "Grupo Novo" } });
+    fireEvent.change(screen.getByLabelText("Nome do grupo"), { target: { value: "Grupo Novo" } });
     return rendered;
   }
 
@@ -451,7 +451,7 @@ describe("GroupDashboard — criar grupo com envio só para admins", () => {
 
     await waitFor(() => expect(screen.getByText(/só para admins/i)).toBeInTheDocument());
     // Modal continua aberto pro usuário ler o aviso
-    expect(screen.getByPlaceholderText(/Regional/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Nome do grupo")).toBeInTheDocument();
   });
 
   it("adminOnly=true fecha o modal sem aviso e vincula o grupo", async () => {
@@ -461,7 +461,7 @@ describe("GroupDashboard — criar grupo com envio só para admins", () => {
     const { props } = await abrirCriacao();
     fireEvent.click(screen.getByRole("button", { name: /Criar e vincular/ }));
 
-    await waitFor(() => expect(screen.queryByPlaceholderText(/Regional/)).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByLabelText("Nome do grupo")).not.toBeInTheDocument());
     expect(screen.queryByText(/só para admins/i)).not.toBeInTheDocument();
     expect(createWAGroup).toHaveBeenCalledWith("num-1", "Grupo Novo #1", []);
     expect(props.onCreateWhatsappGroup).toHaveBeenCalledWith(expect.objectContaining({ id: "wg-novo@g.us", numberId: "num-1" }));
@@ -519,6 +519,51 @@ describe("GroupDashboard — número do grupo na criação", () => {
     fireEvent.blur(nome);
     expect(nome).toHaveValue("Ofertas Tech");
     expect(screen.getByLabelText("Número")).toHaveValue(3);
+  });
+});
+
+// Task 8: o nome da campanha fica de fundo no nome do grupo; TAB com o campo vazio aceita.
+describe("GroupDashboard — TAB usa o nome da campanha", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  async function abrirCriacao() {
+    createWAGroup.mockResolvedValue({ jid: "wg-novo@g.us", name: "x", inviteLink: null, adminOnly: true, participants: [] });
+    renderDashboard({
+      numbers: [{ id: "num-1", label: "Número 1", phone: "5511999999999", status: "connected" }],
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Grupos/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Adicionar primeiro grupo/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Número 1/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Criar grupo novo neste WhatsApp/ }));
+    return screen.getByLabelText("Nome do grupo");
+  }
+
+  it("o exemplo de fundo é só o nome da campanha", async () => {
+    const nome = await abrirCriacao();
+    expect(nome).toHaveAttribute("placeholder", "Campanha Teste");
+    expect(nome).toHaveValue("");
+  });
+
+  it("TAB com o campo vazio preenche e cria com o número", async () => {
+    const nome = await abrirCriacao();
+    fireEvent.keyDown(nome, { key: "Tab" });
+    expect(nome).toHaveValue("Campanha Teste");
+    expect(screen.getByText("Campanha Teste #1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Criar e vincular/ }));
+    await waitFor(() => expect(createWAGroup).toHaveBeenCalledWith("num-1", "Campanha Teste #1", []));
+  });
+
+  it("TAB com texto digitado não mexe no nome", async () => {
+    const nome = await abrirCriacao();
+    fireEvent.change(nome, { target: { value: "Outro" } });
+    fireEvent.keyDown(nome, { key: "Tab" });
+    expect(nome).toHaveValue("Outro");
+  });
+
+  it("Shift+TAB não preenche", async () => {
+    const nome = await abrirCriacao();
+    fireEvent.keyDown(nome, { key: "Tab", shiftKey: true });
+    expect(nome).toHaveValue("");
   });
 });
 

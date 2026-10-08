@@ -261,6 +261,13 @@ function AddGroupModal({ modo, numbers, loadGroups, statusOf, onPick, onCreate, 
   const [aviso, setAviso] = useState(null);
   const numero = numbers.find(n => n.id === numberId);
   const destino = modo === "destino";
+  // O nome da campanha fica de fundo no campo vazio; TAB aceita (como um autocomplete).
+  const sugestao = (campaignName || "").trim();
+  const aceitarSugestao = (e) => {
+    if (e.key !== "Tab" || e.shiftKey || form.name || !sugestao) return;
+    e.preventDefault();
+    setForm(f => ({ ...f, name: sugestao }));
+  };
   // O grupo sai "Nome #N" (a série: Ofertas #1, #2...). Número vazio: só o nome.
   const serie = form.numero.trim();
   const serieOk = !serie || /^[1-9]\d*$/.test(serie);
@@ -419,7 +426,7 @@ function AddGroupModal({ modo, numbers, loadGroups, statusOf, onPick, onCreate, 
             <div style={{ display: "flex", gap: 8 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <label htmlFor="novo-grupo-nome" style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Nome do grupo</label>
-                <input id="novo-grupo-nome" autoFocus value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} onBlur={separarNumero} placeholder={`Ex: ${campaignName || "Ofertas"} — Regional`} style={campo} />
+                <input id="novo-grupo-nome" autoFocus value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} onKeyDown={aceitarSugestao} onBlur={separarNumero} placeholder={sugestao || "Ex: Ofertas"} style={campo} />
               </div>
               <div style={{ width: 90, flexShrink: 0 }}>
                 <label htmlFor="novo-grupo-numero" style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Número</label>
