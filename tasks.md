@@ -30,3 +30,5 @@ Rodar o Claude na VPS e desligar o computador (via tmux):
 9. [] Excluo grupos no whats, mas nas campanhas eles ainda aparecem como conectados.Queria que tivesse uma verificação e que se eles não forem detectados seja sugerido a exclusão deles da campanhas com um botão de excluir em cada um.
 
 10. [x] Separa A conta de afiliado que busca coisas na API da shopee, esse é DE ADMIN e geral pro sistema. Pros usuarios, que tem na aba Shopee só precisa do App ID para fazer o link de afiliado, certo?
+
+11. [] Ao editar descrição do grupo, ter botão para adicionar onde esta editando o link de convite do grupo

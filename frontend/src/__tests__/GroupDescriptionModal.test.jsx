@@ -10,7 +10,7 @@ vi.mock("../data/api", () => ({
   setWAGroupDescription: vi.fn(),
 }));
 
-import GroupDescriptionModal, { DESC_MAX } from "../components/campaign/GroupDescriptionModal.jsx";
+import GroupDescriptionModal, { DESC_MAX, INVITE_TOKEN } from "../components/campaign/GroupDescriptionModal.jsx";
 import { getWAGroupDescription, setWAGroupDescription } from "../data/api";
 
 const G1 = { id: "g1@g.us", name: "Ofertas", numberId: "n1", description: "texto velho do Nimbus", connected: true };
@@ -73,7 +73,7 @@ describe("salvar", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(setWAGroupDescription).toHaveBeenCalledTimes(1);
     expect(setWAGroupDescription).toHaveBeenCalledWith("n1", "g1@g.us", "Nova descrição");
-    expect(onSaved).toHaveBeenCalledWith([{ id: "g1@g.us", name: "Ofertas", ok: true }], "Nova descrição");
+    expect(onSaved).toHaveBeenCalledWith([{ id: "g1@g.us", name: "Ofertas", ok: true, description: "Nova descrição" }], "Nova descrição");
   });
 
   it("'Aplicar em todos' pede confirmação, avisa quem está desconectado e grava um por um", async () => {
@@ -136,5 +136,54 @@ describe("salvar", () => {
     await waitFor(() => expect(campo()).toHaveValue("Regras: só ofertas"));
     expect(screen.queryByRole("button", { name: /Aplicar em todos/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Salvar" })).toBeEnabled();
+  });
+});
+
+// Task 11: o botão {link_convite} põe a variável onde está o cursor; o servidor a
+// troca pelo link de cada grupo e devolve o texto que cada um ganhou.
+describe("{link_convite}", () => {
+  const botao = () => screen.getByRole("button", { name: INVITE_TOKEN });
+
+  it("insere a variável onde está o cursor", async () => {
+    abrir();
+    await waitFor(() => expect(campo()).toHaveValue("Regras: só ofertas"));
+    campo().setSelectionRange(7, 7);
+    fireEvent.click(botao());
+    expect(campo()).toHaveValue(`Regras:${INVITE_TOKEN} só ofertas`);
+  });
+
+  it("no lugar da seleção, troca o texto selecionado", async () => {
+    abrir();
+    await waitFor(() => expect(campo()).toHaveValue("Regras: só ofertas"));
+    campo().setSelectionRange(8, 18);
+    fireEvent.click(botao());
+    expect(campo()).toHaveValue(`Regras: ${INVITE_TOKEN}`);
+  });
+
+  it("desligado enquanto lê a descrição atual", () => {
+    getWAGroupDescription.mockReturnValue(new Promise(() => {}));
+    abrir();
+    expect(botao()).toBeDisabled();
+  });
+
+  it("o contador conta a variável como o link que ela vira", async () => {
+    getWAGroupDescription.mockResolvedValue({ description: "" });
+    abrir();
+    await screen.findByText(/Descrição atual do grupo no WhatsApp/);
+    fireEvent.click(botao());
+    expect(screen.getByText(`48/${DESC_MAX}`)).toBeInTheDocument();
+  });
+
+  it("no 'todos', avisa que cada grupo recebe o seu link e repassa o texto de cada um", async () => {
+    setWAGroupDescription.mockImplementation(async (numberId, jid, texto) => ({ ok: true, description: texto.replace(INVITE_TOKEN, `link-${jid}`) }));
+    const { onSaved } = abrir({ grupos: [G1, G2] });
+    await waitFor(() => expect(campo()).toHaveValue("Regras: só ofertas"));
+    fireEvent.change(campo(), { target: { value: `Entre: ${INVITE_TOKEN}` } });
+    fireEvent.click(screen.getByRole("button", { name: "Aplicar em todos os 2 grupos" }));
+    expect(screen.getByText(/Cada grupo recebe o próprio link de convite/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Aplicar em 2 grupos" }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(setWAGroupDescription.mock.calls.map(c => c[2])).toEqual([`Entre: ${INVITE_TOKEN}`, `Entre: ${INVITE_TOKEN}`]);
+    expect(onSaved.mock.calls[0][0].map(r => r.description)).toEqual(["Entre: link-g1@g.us", "Entre: link-g2@g.us"]);
   });
 });

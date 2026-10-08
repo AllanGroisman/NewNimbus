@@ -41,6 +41,8 @@ let groupMembers = new Map();
 // a mensagem é a que o Baileys/ensureConnected lançaria.
 let groupDescs = new Map();
 let descErrors = new Map();
+// Falhas forçadas do link de convite por jid (task 11: {link_convite}).
+let inviteErrors = new Map();
 
 function reset() {
   for (const k of Object.keys(calls)) calls[k].length = 0;
@@ -50,6 +52,7 @@ function reset() {
   groupMembers = new Map();
   groupDescs = new Map();
   descErrors = new Map();
+  inviteErrors = new Map();
 }
 
 const fakeSessions = new Map();
@@ -141,6 +144,7 @@ const mock = {
   __setGroupMembers: (jid, members) => { groupMembers.set(jid, members); },
   __setGroupDesc: (jid, desc) => { groupDescs.set(jid, desc); },
   __failGroupDesc: (jid, msg) => { descErrors.set(jid, msg); },
+  __failInvite: (jid, msg) => { inviteErrors.set(jid, msg); },
   // Setter do resultado do msgStats — simula o aparelho pedindo (ou não) reenvio.
   __setMsgStats: (stats) => { msgStatsResult = { known: true, retries: 0, lastRetryAt: null, ...stats }; },
   // Espelha backend/whatsapp/local.js:232-233 — o módulo real exporta os dois.
@@ -159,7 +163,11 @@ const mock = {
     calls.createGroup.push({ userId, numberId, name, participants });
     return { id: "fake-group", name, jid: "fake@g.us", adminOnly: true };
   },
-  async getInviteLink() { return "https://chat.whatsapp.com/fakeinvite"; },
+  // Um link por grupo, como no real: o código sai do jid ("a@g.us" → CONVITEagus).
+  async getInviteLink(userId, numberId, jid) {
+    if (inviteErrors.has(jid)) throw new Error(inviteErrors.get(jid));
+    return `https://chat.whatsapp.com/CONVITE${String(jid).replace(/[^A-Za-z0-9]/g, "")}`;
+  },
   async revokeInvite() { return "https://chat.whatsapp.com/fakeinvite-revoked"; },
   async leaveGroup() { return { ok: true }; },
   // Só o que as rotas leem do groupMetadata real: a descrição.
@@ -206,3 +214,4 @@ export const setMsgStats = (stats) => mock.__setMsgStats(stats);
 export const setGroupMembers = (jid, members) => mock.__setGroupMembers(jid, members);
 export const setGroupDesc = (jid, desc) => mock.__setGroupDesc(jid, desc);
 export const failGroupDesc = (jid, msg) => mock.__failGroupDesc(jid, msg);
+export const failInvite = (jid, msg) => mock.__failInvite(jid, msg);

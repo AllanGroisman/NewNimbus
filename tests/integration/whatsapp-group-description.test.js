@@ -7,7 +7,7 @@
 // legível — é o que o popup mostra ao lado de cada grupo no "aplicar em todos".
 import { describe, it, expect, beforeEach } from "vitest";
 import { request, app, createTestUser, waCalls, resetWa } from "../helpers/app.js";
-import { setGroupDesc, failGroupDesc } from "../helpers/wa-mock.js";
+import { setGroupDesc, failGroupDesc, failInvite } from "../helpers/wa-mock.js";
 
 const rota = (jid, numberId = "num-1") => `/api/whatsapp/sessions/${numberId}/groups/${encodeURIComponent(jid)}/description`;
 
@@ -104,5 +104,65 @@ describe("PUT descrição", () => {
   it("sem login, 401", async () => {
     const r = await request(app).put(rota("a@g.us")).send({ description: "x" });
     expect(r.status).toBe(401);
+  });
+});
+
+// Task 11: {link_convite} vira o link de convite de CADA grupo ao gravar, e o link
+// do próprio grupo volta como {link_convite} ao ler — é o que deixa o "aplicar em
+// todos" dar o link certo a cada grupo, mesmo depois de reaberto o popup.
+describe("{link_convite}", () => {
+  const LINK_A = "https://chat.whatsapp.com/CONVITEagus";
+  const LINK_B = "https://chat.whatsapp.com/CONVITEbgus";
+
+  it("PUT troca a variável pelo link do próprio grupo — cada grupo o seu", async () => {
+    const { auth } = await createTestUser();
+    const texto = "Chame os amigos: {link_convite}\nRepito: {link_convite}";
+    const a = await auth("put", rota("a@g.us")).send({ description: texto });
+    const b = await auth("put", rota("b@g.us")).send({ description: texto });
+    expect(a.status).toBe(200);
+    expect(a.body.description).toBe(`Chame os amigos: ${LINK_A}\nRepito: ${LINK_A}`);
+    expect(b.body.description).toBe(`Chame os amigos: ${LINK_B}\nRepito: ${LINK_B}`);
+    expect(waCalls.setGroupDescription.map(c => c.description)).toEqual([a.body.description, b.body.description]);
+  });
+
+  it("sem conseguir o link, não grava e diz o motivo", async () => {
+    const { auth } = await createTestUser();
+    failInvite("a@g.us", "not-authorized");
+    const r = await auth("put", rota("a@g.us")).send({ description: "Entre: {link_convite}" });
+    expect(r.status).toBe(409);
+    expect(r.body.code).toBe("not_admin");
+    expect(waCalls.setGroupDescription).toHaveLength(0);
+  });
+
+  it("sem a variável, nem pede o link", async () => {
+    const { auth } = await createTestUser();
+    failInvite("a@g.us", "not-authorized");
+    const r = await auth("put", rota("a@g.us")).send({ description: "Só regras" });
+    expect(r.status).toBe(200);
+  });
+
+  it("só passa de 2048 depois de virar link: 400, sem chegar no WhatsApp", async () => {
+    const { auth } = await createTestUser();
+    const texto = "x".repeat(2048 - "{link_convite}".length) + "{link_convite}";
+    const r = await auth("put", rota("a@g.us")).send({ description: texto });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/link de convite/);
+    expect(waCalls.setGroupDescription).toHaveLength(0);
+  });
+
+  it("GET devolve o link do próprio grupo como variável; o de outro grupo fica", async () => {
+    const { auth } = await createTestUser();
+    setGroupDesc("a@g.us", `Este: ${LINK_A}\nO outro: ${LINK_B}`);
+    const r = await auth("get", rota("a@g.us"));
+    expect(r.body.description).toBe(`Este: {link_convite}\nO outro: ${LINK_B}`);
+  });
+
+  it("GET sem conseguir o link devolve o texto como está", async () => {
+    const { auth } = await createTestUser();
+    setGroupDesc("a@g.us", `Este: ${LINK_A}`);
+    failInvite("a@g.us", "not-authorized");
+    const r = await auth("get", rota("a@g.us"));
+    expect(r.status).toBe(200);
+    expect(r.body.description).toBe(`Este: ${LINK_A}`);
   });
 });

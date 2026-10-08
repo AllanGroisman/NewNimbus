@@ -11,6 +11,7 @@ const { rateLimit, ipKeyGenerator } = require("express-rate-limit");
 const { CATEGORIES, STORES, normalizeSource, scrapeSingleProduct, extractShopeeIds } = require("./scraping/scraper");
 const urlGuard = require("./scraping/urlGuard");
 const wa = require("./whatsapp");
+const { preencherConvite, marcarConvite } = require("./whatsapp/invite-token");
 const auth = require("./auth");
 const storage = require("./storage");
 const scheduler = require("./scheduler");
@@ -4665,7 +4666,9 @@ function groupDescError(res, err, req, ctx) {
 app.get("/api/whatsapp/sessions/:id/groups/:jid/description", auth.requireAuth, async (req, res) => {
   try {
     const md = await wa.getGroupMetadata(req.user.id, req.params.id, req.params.jid);
-    res.json({ description: md?.desc || "" });
+    // O link do próprio grupo volta como {link_convite} (task 11): reaberto o
+    // popup, um novo "aplicar em todos" segue dando o link de cada grupo.
+    res.json({ description: await marcarConvite(wa, req.user.id, req.params.id, req.params.jid, md?.desc || "") });
   } catch (err) {
     groupDescError(res, err, req, "GET /api/whatsapp/sessions/:id/groups/:jid/description");
   }
@@ -4678,8 +4681,13 @@ app.put("/api/whatsapp/sessions/:id/groups/:jid/description", auth.requireAuth, 
     return res.status(400).json({ error: `A descrição passa de ${GROUP_DESC_MAX} caracteres, o máximo do WhatsApp.` });
   }
   try {
-    await wa.setGroupDescription(req.user.id, req.params.id, req.params.jid, description);
-    res.json({ ok: true, description });
+    // {link_convite} vira o link de convite DESTE grupo (task 11).
+    const final = await preencherConvite(wa, req.user.id, req.params.id, req.params.jid, description);
+    if (final.length > GROUP_DESC_MAX) {
+      return res.status(400).json({ error: `Com o link de convite, a descrição passa de ${GROUP_DESC_MAX} caracteres, o máximo do WhatsApp.` });
+    }
+    await wa.setGroupDescription(req.user.id, req.params.id, req.params.jid, final);
+    res.json({ ok: true, description: final });
   } catch (err) {
     groupDescError(res, err, req, "PUT /api/whatsapp/sessions/:id/groups/:jid/description");
   }

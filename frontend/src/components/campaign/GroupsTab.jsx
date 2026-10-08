@@ -736,7 +736,7 @@ export default function GroupsTab({
           grupos={linkedWGs.map(w => ({ ...w, connected: conectado(w) }))}
           onSaved={(results, texto) => {
             const ok = results.filter(r => r.ok);
-            for (const r of ok) onUpdateWhatsappGroup?.(r.id, { description: texto });
+            for (const r of ok) onUpdateWhatsappGroup?.(r.id, { description: r.description ?? texto });
             if (!ok.length) return;
             avisar(results.length === 1
               ? `Descrição de "${ok[0].name}" salva no WhatsApp.`

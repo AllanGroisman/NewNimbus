@@ -27,6 +27,8 @@ function fakeWa({ members = 1000, status = "connected", fail = null, desc = unde
       descCalls.push({ numberId, jid, description });
       if (descFail) throw new Error(descFail);
     },
+    // "cheio@g.us" → .../CHEIO; "novo@g.us" → .../NOVO.
+    getInviteLink: async (userId, numberId, jid) => `https://chat.whatsapp.com/${jid.split("@")[0].toUpperCase()}`,
     createGroup: async (userId, numberId, name, parts) => {
       calls.push({ userId, numberId, name, parts });
       if (fail) throw new Error(fail);
@@ -116,6 +118,16 @@ describe("checkGroup", () => {
     expect(wa.descCalls).toEqual([{ numberId: "num-1", jid: "novo@g.us", description: "Regras do grupo" }]);
     const novo = (await storage.loadState(user.id)).whatsappGroups.find(w => w.id === "novo@g.us");
     expect(novo.description).toBe("Regras do grupo");
+  });
+
+  // Task 11: o grupo novo não pode divulgar o link do grupo lotado.
+  it("o link de convite do cheio na descrição vira o do grupo novo", async () => {
+    const wa = fakeWa({ members: 1003, desc: "Entre: https://chat.whatsapp.com/CHEIO\nVizinho: https://chat.whatsapp.com/OUTRO" });
+    await autoDup.checkGroup(await rowDe("cheio@g.us"), { wa });
+    const esperado = "Entre: https://chat.whatsapp.com/NOVO\nVizinho: https://chat.whatsapp.com/OUTRO";
+    expect(wa.descCalls).toEqual([{ numberId: "num-1", jid: "novo@g.us", description: esperado }]);
+    const novo = (await storage.loadState(user.id)).whatsappGroups.find(w => w.id === "novo@g.us");
+    expect(novo.description).toBe(esperado);
   });
 
   it("falhar ao copiar a descrição não desfaz a duplicação", async () => {

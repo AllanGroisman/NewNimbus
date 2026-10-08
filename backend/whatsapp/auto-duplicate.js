@@ -18,6 +18,7 @@
 // leva 409 e recarrega — sem isso ela apagaria o grupo novo (whatsapp_groups é
 // replace-all no saveState).
 const { prisma } = require("../db");
+const { preencherConvite, marcarConvite } = require("./invite-token");
 
 // O teto do WhatsApp é 1.024. A folga é para o grupo não lotar entre duas passadas.
 const FULL_AT = Number(process.env.AUTO_DUPLICATE_AT) || 1000;
@@ -95,8 +96,12 @@ async function checkGroup(row, { wa = getWa(), fullAt = FULL_AT } = {}) {
 
   // O grupo novo herda a descrição do cheio no WhatsApp — é ali que o dono deixa
   // as regras. Sem ela, o grupo continua valendo: não vale desfazer a duplicação.
+  // O link de convite do cheio vira o do novo (task 11): senão o grupo novo
+  // divulgaria o lotado.
   if (desc) {
     try {
+      const modelo = await marcarConvite(wa, row.userId, row.numberId, row.jid, desc);
+      desc = await preencherConvite(wa, row.userId, row.numberId, created.jid, modelo);
       await wa.setGroupDescription(row.userId, row.numberId, created.jid, desc);
     } catch (err) {
       console.warn(`[auto-duplicate] descrição não copiada para ${created.jid}: ${err.message}`);
