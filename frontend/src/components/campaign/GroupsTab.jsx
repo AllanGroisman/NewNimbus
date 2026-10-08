@@ -248,7 +248,7 @@ const btnPri = (off) => ({ padding: "8px 16px", borderRadius: 8, background: PRI
 const campo = { width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", color: "var(--color-text-primary)" };
 
 // ── Popup de adicionar: WhatsApp → grupo (→ criar, no destino) ────────────────
-// `inicio` pula direto para a criação (o "Duplicar grupo" do menu).
+// `inicio` ({ numberId, name, numero }) pula direto para a criação (o "Duplicar grupo" do menu).
 function AddGroupModal({ modo, numbers, loadGroups, statusOf, onPick, onCreate, onClose, inicio = null, campaignName }) {
   const [numberId, setNumberId] = useState(inicio?.numberId || null);
   const [passo, setPasso] = useState(inicio ? "criar" : "numero");
@@ -257,10 +257,20 @@ function AddGroupModal({ modo, numbers, loadGroups, statusOf, onPick, onCreate, 
   const [erro, setErro] = useState(null);
   const [busca, setBusca] = useState("");
   const [ocupado, setOcupado] = useState(null);
-  const [form, setForm] = useState({ name: inicio?.name || "", participants: "" });
+  const [form, setForm] = useState({ name: inicio?.name || "", numero: String(inicio?.numero ?? 1), participants: "" });
   const [aviso, setAviso] = useState(null);
   const numero = numbers.find(n => n.id === numberId);
   const destino = modo === "destino";
+  // O grupo sai "Nome #N" (a série: Ofertas #1, #2...). Número vazio: só o nome.
+  const serie = form.numero.trim();
+  const serieOk = !serie || /^[1-9]\d*$/.test(serie);
+  const nomeFinal = form.name.trim() && (serie ? `${form.name.trim()} #${serie}` : form.name.trim());
+  const podeCriar = !!nomeFinal && serieOk && ocupado !== "criar";
+  // Colou "Ofertas #3" no nome: o 3 vai pro campo Número (senão sairia "Ofertas #3 #1").
+  const separarNumero = () => {
+    const m = form.name.match(/^(.*?)\s*#(\d+)\s*$/);
+    if (m && m[1].trim()) setForm(f => ({ ...f, name: m[1].trim(), numero: String(Number(m[2])) }));
+  };
 
   const escolherNumero = async (id) => {
     setNumberId(id); setPasso("grupo"); setBusca(""); setErro(null); setLista(null); setCarregando(true);
@@ -287,11 +297,11 @@ function AddGroupModal({ modo, numbers, loadGroups, statusOf, onPick, onCreate, 
   };
 
   const criar = async () => {
-    if (!form.name.trim()) return;
+    if (!podeCriar) return;
     setOcupado("criar"); setErro(null); setAviso(null);
     try {
-      const r = await onCreate({ numberId, name: form.name.trim(), participants: form.participants });
-      if (r?.warning) { setAviso(r.warning); setForm({ name: "", participants: "" }); return; }
+      const r = await onCreate({ numberId, name: nomeFinal, participants: form.participants });
+      if (r?.warning) { setAviso(r.warning); setForm({ name: "", numero: "1", participants: "" }); return; }
       onClose();
     } catch (err) {
       setErro(errText(err, "Não foi possível criar o grupo."));
@@ -406,8 +416,22 @@ function AddGroupModal({ modo, numbers, loadGroups, statusOf, onPick, onCreate, 
             O grupo é criado <strong>de fato no WhatsApp</strong>, só com envio para admins, e já entra nesta campanha.
           </div>
           <div>
-            <label htmlFor="novo-grupo-nome" style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Nome do grupo</label>
-            <input id="novo-grupo-nome" autoFocus value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder={`Ex: ${campaignName || "Ofertas"} — Regional`} style={campo} />
+            <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <label htmlFor="novo-grupo-nome" style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Nome do grupo</label>
+                <input id="novo-grupo-nome" autoFocus value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} onBlur={separarNumero} placeholder={`Ex: ${campaignName || "Ofertas"} — Regional`} style={campo} />
+              </div>
+              <div style={{ width: 90, flexShrink: 0 }}>
+                <label htmlFor="novo-grupo-numero" style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Número</label>
+                <div style={{ position: "relative" }}>
+                  <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: "var(--color-text-secondary)", pointerEvents: "none" }}>#</span>
+                  <input id="novo-grupo-numero" type="number" min={1} step={1} inputMode="numeric" value={form.numero} onChange={e => setForm(f => ({ ...f, numero: e.target.value }))} style={{ ...campo, paddingLeft: 22, border: serieOk ? campo.border : "0.5px solid var(--danger-text)" }} />
+                </div>
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: serieOk ? "var(--color-text-secondary)" : "var(--danger-text)", marginTop: 4 }}>
+              {!serieOk ? "O número precisa ser inteiro, a partir de 1." : nomeFinal ? <>Fica: <strong>{nomeFinal}</strong></> : "Duplicar o grupo depois soma 1 no número."}
+            </div>
           </div>
           <div>
             <label htmlFor="novo-grupo-part" style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Participantes iniciais (opcional)</label>
@@ -422,7 +446,7 @@ function AddGroupModal({ modo, numbers, loadGroups, statusOf, onPick, onCreate, 
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
         <button onClick={onClose} disabled={ocupado === "criar"} style={btnSec}>{passo === "criar" ? "Cancelar" : "Fechar"}</button>
         {passo === "criar" && (
-          <button onClick={criar} disabled={!form.name.trim() || ocupado === "criar"} style={btnPri(!form.name.trim() || ocupado === "criar")}>
+          <button onClick={criar} disabled={!podeCriar} style={btnPri(!podeCriar)}>
             {ocupado === "criar" ? "⟳ Criando..." : "Criar e vincular"}
           </button>
         )}
@@ -628,7 +652,7 @@ export default function GroupsTab({
                 menu={<KebabMenu label={`Mais ações — ${w.name}`} items={[
                   { label: "🔗 Copiar link de convite", onClick: () => copiarConvite(w) },
                   { label: "↻ Gerar novo link de convite", onClick: () => onRevokeInvite(w), hint: "O link antigo para de funcionar" },
-                  { label: "⎘ Duplicar grupo", disabled: semNumero, onClick: () => setModal({ modo: "destino", inicio: { numberId: w.numberId, name: computeCloneName(w.name) } }) },
+                  { label: "⎘ Duplicar grupo", disabled: semNumero, onClick: () => setModal({ modo: "destino", inicio: { numberId: w.numberId, ...computeCloneName(w.name) } }) },
                   { label: "Duplicar automaticamente quando encher", checked: !!w.autoDuplicate, onClick: () => {
                     onUpdateWhatsappGroup?.(w.id, { autoDuplicate: !w.autoDuplicate });
                     avisar(w.autoDuplicate ? `Duplicação automática desligada em "${w.name}".` : `"${w.name}" vai ser duplicado sozinho quando chegar a 1.000 membros.`);

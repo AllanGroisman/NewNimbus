@@ -28,20 +28,20 @@ const RETRY_MS = 6 * 60 * 60 * 1000;
 function getWa() { return require("./index"); }
 function getNotifier() { return require("../notifications/user-notifier"); }
 
-// "Ofertas" → "Ofertas #2"; "Ofertas #2" → "Ofertas #3". Espelha o
+// "Ofertas" → "Ofertas #2"; "Ofertas #1" → "Ofertas #2". Espelha o
 // computeCloneName do GroupDashboard (o "⎘ Duplicar grupo" da tela): o número
-// sai do maior "#N" que o usuário já tem na série.
+// é o maior "#N" que o usuário já tem na série + 1 — o nome sem número conta
+// como #1, e o próprio grupo cheio sempre entra na conta.
 function nextCloneName(originalName, existingNames = []) {
   const base = String(originalName || "Grupo").replace(/\s*#\d+\s*$/, "").trim() || "Grupo";
   const re = new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+#(\\d+)$`);
   let maxN = 1;
-  let baseExists = false;
-  for (const n of existingNames) {
-    if (n === base) baseExists = true;
-    const m = n && String(n).match(re);
+  for (const n of [originalName, ...existingNames]) {
+    if (!n) continue;
+    const m = String(n).match(re);
     if (m) maxN = Math.max(maxN, Number(m[1]));
   }
-  return `${base} #${baseExists ? maxN + 1 : maxN}`;
+  return `${base} #${maxN + 1}`;
 }
 
 function recentlyFailed(meta, now = Date.now()) {

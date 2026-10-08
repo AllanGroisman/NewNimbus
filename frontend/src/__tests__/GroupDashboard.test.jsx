@@ -319,11 +319,21 @@ describe("GroupDashboard — remover grupo destino (aba Grupos)", () => {
     expect(screen.queryByLabelText("Descrição do grupo")).not.toBeInTheDocument();
   });
 
-  it("'Duplicar grupo' abre a criação com o próximo nome da série", () => {
+  it("'Duplicar grupo' abre a criação com o nome base e o próximo número da série", () => {
     renderWithLinkedGroup();
     abrirMenu("Grupo Vinculado");
     fireEvent.click(itemDoMenu("⎘ Duplicar grupo"));
-    expect(screen.getByLabelText("Nome do grupo")).toHaveValue("Grupo Vinculado #2");
+    expect(screen.getByLabelText("Nome do grupo")).toHaveValue("Grupo Vinculado");
+    expect(screen.getByLabelText("Número")).toHaveValue(2);
+    expect(screen.getByText("Grupo Vinculado #2")).toBeInTheDocument();
+  });
+
+  it("'Duplicar grupo' de um '#1' soma 1 (não repete o nome)", () => {
+    renderWithLinkedGroup({ name: "Ofertas Tech #1" });
+    abrirMenu("Ofertas Tech #1");
+    fireEvent.click(itemDoMenu("⎘ Duplicar grupo"));
+    expect(screen.getByLabelText("Nome do grupo")).toHaveValue("Ofertas Tech");
+    expect(screen.getByLabelText("Número")).toHaveValue(2);
   });
 });
 
@@ -453,8 +463,62 @@ describe("GroupDashboard — criar grupo com envio só para admins", () => {
 
     await waitFor(() => expect(screen.queryByPlaceholderText(/Regional/)).not.toBeInTheDocument());
     expect(screen.queryByText(/só para admins/i)).not.toBeInTheDocument();
-    expect(createWAGroup).toHaveBeenCalledWith("num-1", "Grupo Novo", []);
+    expect(createWAGroup).toHaveBeenCalledWith("num-1", "Grupo Novo #1", []);
     expect(props.onCreateWhatsappGroup).toHaveBeenCalledWith(expect.objectContaining({ id: "wg-novo@g.us", numberId: "num-1" }));
+  });
+});
+
+// Task 6: o nome sai "Nome #N" — o número começa em 1 e pode ser trocado.
+describe("GroupDashboard — número do grupo na criação", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  async function abrirCriacao() {
+    createWAGroup.mockResolvedValue({ jid: "wg-novo@g.us", name: "x", inviteLink: null, adminOnly: true, participants: [] });
+    renderDashboard({
+      numbers: [{ id: "num-1", label: "Número 1", phone: "5511999999999", status: "connected" }],
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Grupos/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Adicionar primeiro grupo/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Número 1/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Criar grupo novo neste WhatsApp/ }));
+    fireEvent.change(screen.getByLabelText("Nome do grupo"), { target: { value: "Ofertas Tech" } });
+  }
+  const criar = () => fireEvent.click(screen.getByRole("button", { name: /Criar e vincular/ }));
+
+  it("vem com 1 e mostra como o nome vai ficar", async () => {
+    await abrirCriacao();
+    expect(screen.getByLabelText("Número")).toHaveValue(1);
+    expect(screen.getByText("Ofertas Tech #1")).toBeInTheDocument();
+  });
+
+  it("número trocado vai no nome", async () => {
+    await abrirCriacao();
+    fireEvent.change(screen.getByLabelText("Número"), { target: { value: "7" } });
+    criar();
+    await waitFor(() => expect(createWAGroup).toHaveBeenCalledWith("num-1", "Ofertas Tech #7", []));
+  });
+
+  it("número vazio cria só com o nome", async () => {
+    await abrirCriacao();
+    fireEvent.change(screen.getByLabelText("Número"), { target: { value: "" } });
+    criar();
+    await waitFor(() => expect(createWAGroup).toHaveBeenCalledWith("num-1", "Ofertas Tech", []));
+  });
+
+  it("número inválido trava o botão", async () => {
+    await abrirCriacao();
+    fireEvent.change(screen.getByLabelText("Número"), { target: { value: "0" } });
+    expect(screen.getByRole("button", { name: /Criar e vincular/ })).toBeDisabled();
+    expect(screen.getByText(/inteiro, a partir de 1/)).toBeInTheDocument();
+  });
+
+  it("'#N' digitado no nome vai pro campo Número", async () => {
+    await abrirCriacao();
+    const nome = screen.getByLabelText("Nome do grupo");
+    fireEvent.change(nome, { target: { value: "Ofertas Tech #3" } });
+    fireEvent.blur(nome);
+    expect(nome).toHaveValue("Ofertas Tech");
+    expect(screen.getByLabelText("Número")).toHaveValue(3);
   });
 });
 

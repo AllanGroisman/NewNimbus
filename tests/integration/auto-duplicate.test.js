@@ -63,6 +63,13 @@ describe("nextCloneName", () => {
     expect(autoDup.nextCloneName("Ofertas #2", ["Ofertas", "Ofertas #2"])).toBe("Ofertas #3");
     expect(autoDup.nextCloneName("Promo (BR)", ["Promo (BR)"])).toBe("Promo (BR) #2");
   });
+
+  // Task 6: o grupo já nasce "#1" — a série não pode repetir o nome do cheio.
+  it("série sem o nome puro soma 1 ao maior #N", () => {
+    expect(autoDup.nextCloneName("Ofertas #1", ["Ofertas #1"])).toBe("Ofertas #2");
+    expect(autoDup.nextCloneName("Ofertas #2", ["Ofertas #2"])).toBe("Ofertas #3");
+    expect(autoDup.nextCloneName("Ofertas #1", [])).toBe("Ofertas #2");
+  });
 });
 
 describe("checkGroup", () => {

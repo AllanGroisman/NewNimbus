@@ -1036,20 +1036,20 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     }
   };
 
-  // Calcula o próximo "#N" pra clonar um grupo. Tira sufixo "#N" prévio do nome
-  // base (clonar X #2 vira X #3, não X #2 #1).
+  // Nome base e próximo "#N" pra clonar um grupo — vão separados pros campos
+  // "Nome" e "Número" da criação. Tira o "#N" do nome base (clonar X #2 vira
+  // X #3, não X #2 #1) e soma 1 ao maior número da série; o nome sem número
+  // conta como #1, e o próprio grupo clonado sempre entra na conta.
   const computeCloneName = (originalName) => {
     const base = String(originalName || "Grupo").replace(/\s*#\d+\s*$/, "").trim() || "Grupo";
     const re = new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+#(\\d+)$`);
     let maxN = 1;
-    let baseExists = false;
-    for (const w of whatsappGroups) {
-      if (w.name === base) baseExists = true;
-      const m = w.name && w.name.match(re);
+    for (const nome of [originalName, ...whatsappGroups.map(w => w.name)]) {
+      if (!nome) continue;
+      const m = String(nome).match(re);
       if (m) maxN = Math.max(maxN, Number(m[1]));
     }
-    const n = baseExists ? maxN + 1 : maxN;
-    return `${base} #${n}`;
+    return { name: base, numero: maxN + 1 };
   };
 
   const primaryCat = groupInfo.categories[0] || getGroupCategories(group)[0];
