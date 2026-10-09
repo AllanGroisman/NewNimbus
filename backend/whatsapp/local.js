@@ -1290,6 +1290,28 @@ async function groupSizes(userId, numberId, jids) {
   return out;
 }
 
+// Se o número ainda está em cada grupo (task 9): grupo apagado ou que o número
+// saiu/foi removido continua "Conectado" na campanha, porque esse status é só o
+// do número. O WhatsApp nega a metadata a quem não é membro — "forbidden" (403)
+// ou "not-authorized" (401) — e "item-not-found" (404) quando o grupo não existe.
+// Qualquer outra falha (timeout, queda) é "unknown" e a tela não acusa nada.
+// Vai direto no IQ, sem o cache do envio: grupo apagado há pouco ainda estaria
+// lá. Nem listGroups, que zeraria esse cache (ver groupSizes). Volta valor em vez
+// de lançar porque o RPC do proxy só carrega a `message` do erro.
+const GROUP_GONE_RE = /forbidden|not-authorized|item-not-found/i;
+async function checkGroups(userId, numberId, jids) {
+  const s = ensureConnected(userId, numberId);
+  return Promise.all((jids || []).map(async (jid) => {
+    try {
+      await s.sock.groupMetadata(jid);
+      return { jid, status: "ok" };
+    } catch (err) {
+      const gone = [401, 403, 404].includes(Number(err?.data)) || GROUP_GONE_RE.test(String(err?.message || ""));
+      return { jid, status: gone ? "gone" : "unknown" };
+    }
+  }));
+}
+
 // A URL da miniatura da foto do grupo (task 24), ou null quando o grupo não tem
 // foto — o WhatsApp responde "item-not-found" e isso não é erro. A URL é do CDN
 // do WhatsApp e expira em alguns dias; quem guarda (server.js) guarda por horas.
@@ -1520,6 +1542,7 @@ module.exports = {
   setGroupDescription,
   groupMemberJids,
   groupSizes,
+  checkGroups,
   getGroupPicture,
   restoreSessions,
   closeAll,
@@ -1558,6 +1581,7 @@ function makeStub() {
     setGroupDescription: fail,
     groupMemberJids: fail,
     groupSizes: fail,
+    checkGroups: fail,
     getGroupPicture: fail,
     restoreSessions: () => {},
     closeAll: () => Promise.resolve(),

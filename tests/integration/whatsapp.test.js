@@ -2,7 +2,8 @@
 // registra chamadas pra inspeção. Plan-gating de número novo testado aqui.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { request, app, createTestUser, waCalls, resetWa, waFailSend, waSetMsgStats, auth as authMod, billing } from "../helpers/app.js";
+import { request, app, createTestUser, waCalls, resetWa, waConnect, waFailSend, waSetMsgStats, auth as authMod, billing } from "../helpers/app.js";
+import { goneGroup } from "../helpers/wa-mock.js";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
@@ -239,6 +240,44 @@ describe("WhatsApp — grupos", () => {
     expect(r.body.code).toBe("plan_limit");
     expect(r.body.limit).toBe(3);
     expect(waCalls.createGroup).toHaveLength(0);
+  });
+});
+
+// A verificação da aba Grupos da campanha (task 9): grupo apagado ou que o número
+// deixou volta "gone", e a tela sugere tirar da campanha. Número caído é 409 —
+// a tela não acusa nada nesse caso, porque não deu para perguntar.
+describe("WhatsApp — POST /groups/check", () => {
+  const rota = (numberId = "num-1") => `/api/whatsapp/sessions/${numberId}/groups/check`;
+  beforeEach(() => resetWa());
+
+  it("diz quais grupos o número ainda está", async () => {
+    const { user, auth } = await createTestUser();
+    waConnect(user.id, "num-1");
+    goneGroup("b@g.us");
+    const r = await auth("post", rota()).send({ jids: ["a@g.us", "b@g.us", "a@g.us"] });
+    expect(r.status).toBe(200);
+    expect(r.body.groups).toEqual([{ jid: "a@g.us", status: "ok" }, { jid: "b@g.us", status: "gone" }]);
+    expect(waCalls.checkGroups).toHaveLength(1);
+    expect(waCalls.checkGroups[0]).toMatchObject({ userId: user.id, numberId: "num-1", jids: ["a@g.us", "b@g.us"] });
+  });
+
+  it("número desconectado volta 409 not_connected", async () => {
+    const { auth } = await createTestUser();
+    await auth("post", "/api/whatsapp/sessions/num-1");   // fica "open", não conectado
+    const r = await auth("post", rota()).send({ jids: ["a@g.us"] });
+    expect(r.status).toBe(409);
+    expect(r.body.code).toBe("not_connected");
+  });
+
+  it("rejeita corpo inválido sem chamar o WhatsApp", async () => {
+    const { user, auth } = await createTestUser();
+    waConnect(user.id, "num-1");
+    for (const body of [{}, { jids: [] }, { jids: "a@g.us" }, { jids: ["5511999@s.whatsapp.net"] }, { jids: [1] },
+      { jids: Array.from({ length: 51 }, (_, i) => `${i}@g.us`) }]) {
+      const r = await auth("post", rota()).send(body);
+      expect(r.status, JSON.stringify(body).slice(0, 60)).toBe(400);
+    }
+    expect(waCalls.checkGroups).toHaveLength(0);
   });
 });
 

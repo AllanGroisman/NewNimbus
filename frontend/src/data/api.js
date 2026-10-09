@@ -552,6 +552,11 @@ export async function setWAGroupDescription(id, jid, description) {
 export async function leaveWAGroup(id, jid) {
   return http("DELETE", `/api/whatsapp/sessions/${id}/groups/${encodeURIComponent(jid)}`);
 }
+// Se o número ainda está em cada grupo (task 9): { groups: [{ jid, status }] },
+// status "ok" | "gone" (apagado/saiu) | "unknown". 409 quando o número caiu.
+export async function checkWAGroups(id, jids) {
+  return http("POST", `/api/whatsapp/sessions/${id}/groups/check`, { jids });
+}
 
 // ─── WhatsApp / envio ──────────────────────────────────────────────────
 export async function sendWAText(id, jid, text, imageUrl) {

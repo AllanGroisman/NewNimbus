@@ -4557,6 +4557,28 @@ app.get("/api/whatsapp/sessions/:id/groups", auth.requireAuth, async (req, res) 
   }
 });
 
+// Quais grupos o número ainda está (task 9): a aba Grupos da campanha pergunta
+// ao abrir, e marca "Não encontrado no WhatsApp" o grupo apagado ou que o número
+// deixou — o "Conectado" da tela é só o status do número. Um IQ por grupo, por
+// isso o teto: uma campanha não chega perto disso.
+const GROUP_CHECK_MAX = 50;
+app.post("/api/whatsapp/sessions/:id/groups/check", auth.requireAuth, async (req, res) => {
+  const jids = req.body?.jids;
+  if (!Array.isArray(jids) || !jids.length || jids.length > GROUP_CHECK_MAX
+      || !jids.every(j => typeof j === "string" && /^[^@\s]+@g\.us$/.test(j))) {
+    return res.status(400).json({ error: `jids obrigatório: de 1 a ${GROUP_CHECK_MAX} grupos (…@g.us)` });
+  }
+  try {
+    const groups = await wa.checkGroups(req.user.id, req.params.id, [...new Set(jids)]);
+    res.json({ groups });
+  } catch (err) {
+    if (/não está conectada|não encontrada/i.test(String(err?.message || ""))) {
+      return res.status(409).json({ error: "O número destes grupos está desconectado.", code: "not_connected" });
+    }
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/whatsapp/sessions/:id/groups/check" });
+  }
+});
+
 app.post("/api/whatsapp/sessions/:id/groups", auth.requireAuth, async (req, res) => {
   try {
     const { name, participants = [] } = req.body || {};

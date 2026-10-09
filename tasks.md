@@ -27,7 +27,7 @@ Rodar o Claude na VPS e desligar o computador (via tmux):
 
 8. [x] Quero que ao criar um grupo de whatApp, o exemplo padrão para nome do grupo seja o proprio nome da campanha e só. Gostei de como ele está hoje que fica só de fundo e consigo escrever por cima, porém quero que se eu apertar TAB ele preencha a escrita com o exemplo. Assim acelara o processo.O que tu acha?
 
-9. [] Excluo grupos no whats, mas nas campanhas eles ainda aparecem como conectados.Queria que tivesse uma verificação e que se eles não forem detectados seja sugerido a exclusão deles da campanhas com um botão de excluir em cada um.
+9. [x] Excluo grupos no whats, mas nas campanhas eles ainda aparecem como conectados.Queria que tivesse uma verificação e que se eles não forem detectados seja sugerido a exclusão deles da campanhas com um botão de excluir em cada um.
 
 10. [x] Separa A conta de afiliado que busca coisas na API da shopee, esse é DE ADMIN e geral pro sistema. Pros usuarios, que tem na aba Shopee só precisa do App ID para fazer o link de afiliado, certo?
 

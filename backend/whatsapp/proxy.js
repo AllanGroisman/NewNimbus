@@ -125,6 +125,10 @@ async function groupSizes(userId, numberId, jids) {
   return queue.callControl("groupSizes", [String(userId), String(numberId), jids], { timeoutMs: 60000 });
 }
 
+async function checkGroups(userId, numberId, jids) {
+  return queue.callControl("checkGroups", [String(userId), String(numberId), jids], { timeoutMs: 60000 });
+}
+
 async function getGroupPicture(userId, numberId, jid) {
   return queue.callControl("getGroupPicture", [String(userId), String(numberId), jid], { timeoutMs: 15000 });
 }
@@ -149,7 +153,7 @@ async function status() {
 module.exports = {
   startSession, requestPairingCode, getSession, listSessions, listAllSessions, deleteSession,
   sendText, sendImage, msgStats,
-  createGroup, getInviteLink, revokeInvite, listGroups, leaveGroup, getGroupMetadata, setGroupDescription, groupMemberJids, groupSizes, getGroupPicture,
+  createGroup, getInviteLink, revokeInvite, listGroups, leaveGroup, getGroupMetadata, setGroupDescription, groupMemberJids, groupSizes, checkGroups, getGroupPicture,
   restoreSessions, closeAll, status,
   jidFromPhone, normalizePhone,
 };

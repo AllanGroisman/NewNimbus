@@ -12,6 +12,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, WA_GROUP_MAX, WA_GROUP_ENCHENDO } from "../../data/constants";
 import { getWAGroupPicture, getWAInvite, listDmBroadcasts, cancelDmBroadcast, errText } from "../../data/api";
 import Modal from "../ui/Modal";
+import AlertBanner from "../ui/AlertBanner";
 import { useMedia, isTouch, TOUCH } from "../../data/useMedia";
 import DmMembersModal from "./DmMembersModal";
 import GroupDescriptionModal from "./GroupDescriptionModal";
@@ -175,24 +176,28 @@ export function KebabMenu({ label, items }) {
 }
 
 // ── O cartão de um grupo (origem ou destino) ─────────────────────────────────
-function GroupCard({ name, jid, number, numberMissing, connected, members, extra, badges = [], warning, menu, children }) {
+// `missing`: o número está conectado mas não está mais no grupo — apagado, ou o
+// número saiu ou foi removido (task 9). Vem da verificação da aba.
+function GroupCard({ name, jid, number, numberMissing, connected, missing = false, members, extra, badges = [], warning, menu, children }) {
+  const vivo = connected && !missing;
+  const estado = missing ? "Não encontrado no WhatsApp" : connected ? "Conectado" : "Desconectado";
   return (
     <div style={{
       display: "flex", gap: 12, alignItems: "flex-start", padding: 12, borderRadius: 12, minWidth: 0,
       background: "var(--color-background-primary)",
-      border: `0.5px solid ${connected ? "var(--color-border-tertiary)" : "var(--danger-border)"}`,
+      border: `0.5px solid ${vivo ? "var(--color-border-tertiary)" : "var(--danger-border)"}`,
     }}>
       <div style={{ position: "relative" }}>
-        <GroupAvatar numberId={number?.id} jid={jid} name={name} canFetch={connected} />
+        <GroupAvatar numberId={number?.id} jid={jid} name={name} canFetch={vivo} />
         <span
-          title={connected ? "Conectado" : "Desconectado"}
-          style={{ position: "absolute", right: -1, bottom: -1, width: 11, height: 11, borderRadius: "50%", border: "2px solid var(--color-background-primary)", background: connected ? "#22C55E" : "#E24B4A" }}
+          title={estado}
+          style={{ position: "absolute", right: -1, bottom: -1, width: 11, height: 11, borderRadius: "50%", border: "2px solid var(--color-background-primary)", background: vivo ? "#22C55E" : "#E24B4A" }}
         />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
           <span title={name} style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>{name}</span>
-          <Badge color={connected ? "green" : "red"}>{connected ? "Conectado" : "Desconectado"}</Badge>
+          <Badge color={vivo ? "green" : "red"}>{estado}</Badge>
           {badges}
         </div>
         <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 3, display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -208,7 +213,7 @@ function GroupCard({ name, jid, number, numberMissing, connected, members, extra
           )}
           {extra}
         </div>
-        {warning && <div style={{ fontSize: 11, color: "var(--warn-text)", marginTop: 4, lineHeight: 1.4 }}>{warning}</div>}
+        {warning && <div style={{ fontSize: 11, color: missing ? "var(--danger-text)" : "var(--warn-text)", marginTop: 4, lineHeight: 1.4 }}>{warning}</div>}
         {children}
       </div>
       {menu}
@@ -245,6 +250,7 @@ function SectionHeader({ title, count, limit, limitLabel, sub, addLabel, onAdd, 
 const vazioStyle = { textAlign: "center", padding: "22px 14px", color: "var(--color-text-secondary)", fontSize: 12, background: "var(--color-background-secondary)", borderRadius: 12, lineHeight: 1.5 };
 const btnSec = { padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", fontSize: 13, cursor: "pointer", color: "var(--color-text-primary)" };
 const btnPri = (off) => ({ padding: "8px 16px", borderRadius: 8, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, cursor: off ? "not-allowed" : "pointer", fontWeight: 500, opacity: off ? 0.5 : 1 });
+const btnRemover = { marginTop: 8, padding: "5px 12px", borderRadius: 8, fontSize: 12, fontWeight: 500, cursor: "pointer", border: "0.5px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)" };
 const campo = { width: "100%", padding: "9px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", fontSize: 13, boxSizing: "border-box", color: "var(--color-text-primary)" };
 
 // ── Popup de adicionar: WhatsApp → grupo (→ criar, no destino) ────────────────
@@ -469,6 +475,7 @@ export default function GroupsTab({
   onAddLeader, onRemoveLeader, onLinkExisting, onImportAndLink, onUnlink, onCreateGroup,
   onUpdateWhatsappGroup, onRevokeInvite, computeCloneName, onError,
   isAdmin = false, campaignId = null,
+  groupCheck = {}, checkingGroups = false, onRecheckGroups,
 }) {
   const [modal, setModal] = useState(null);       // { modo, inicio }
   const [confirmar, setConfirmar] = useState(null); // { tipo, alvo, dm }
@@ -517,7 +524,14 @@ export default function GroupsTab({
   };
 
   const numberOf = (id) => numbers.find(n => n.id === id) || null;
-  const conectado = (w) => w.status !== "disconnected" && numberOf(w.numberId)?.status === "connected";
+  // A verificação da aba (task 9, feita no GroupDashboard): o número está
+  // conectado mas não está mais no grupo.
+  const sumiu = (numberId, jid) => groupCheck[`${numberId}::${jid}`] === "gone";
+  const conectado = (w) => w.status !== "disconnected" && numberOf(w.numberId)?.status === "connected" && !sumiu(w.numberId, w.jid || w.id);
+  const destSumidos = linkedWGs.filter(w => sumiu(w.numberId, w.jid || w.id));
+  const origemSumidos = leaders.filter(l => sumiu(l.numberId, l.jid));
+  // O grupo que é origem e destino conta uma vez só.
+  const nSumidos = new Set([...destSumidos.map(w => `${w.numberId}::${w.jid || w.id}`), ...origemSumidos.map(l => `${l.numberId}::${l.jid}`)]).size;
   const abrirDm = (grupos, todos = false) => setDm({ grupos: grupos.map(w => ({ ...w, connected: conectado(w), ocupado: dmOcupado(w) })), todos });
   const dmLivres = linkedWGs.filter(w => conectado(w) && !dmOcupado(w));
   const leaderKeys = new Set(leaders.map(l => `${l.numberId}::${l.jid}`));
@@ -587,16 +601,21 @@ export default function GroupsTab({
             const on = n?.status === "connected";
             const cad = byId.get(l.jid);
             const members = cad?.members ?? knownGroups[l.numberId]?.find(g => g.jid === l.jid)?.members;
+            const some = sumiu(l.numberId, l.jid);
             return (
               <GroupCard
                 key={`${l.numberId}::${l.jid}`}
-                name={l.name || l.jid} jid={l.jid} number={n} numberMissing={!n} connected={on} members={members ?? null}
+                name={l.name || l.jid} jid={l.jid} number={n} numberMissing={!n} connected={on} missing={some} members={members ?? null}
                 badges={destKeys.has(`${l.numberId}::${l.jid}`) ? [<Badge key="d" color="blue">Também é destino</Badge>] : []}
-                warning={!on ? (n ? "Enquanto este número estiver desconectado, nada é capturado neste grupo." : "O número que escutava este grupo não existe mais — nada é capturado até escolher outro grupo.") : null}
+                warning={some
+                  ? "O número não está mais neste grupo — ele foi apagado, ou o número saiu ou foi removido. Nada é capturado dele."
+                  : !on ? (n ? "Enquanto este número estiver desconectado, nada é capturado neste grupo." : "O número que escutava este grupo não existe mais — nada é capturado até escolher outro grupo.") : null}
                 menu={<KebabMenu label={`Mais ações — ${l.name || l.jid}`} items={[
                   { label: "Remover da origem", danger: true, onClick: () => setConfirmar({ tipo: "origem", alvo: l }) },
                 ]} />}
-              />
+              >
+                {some && <button onClick={() => setConfirmar({ tipo: "origem", alvo: l, sumiu: true })} style={btnRemover}>Remover da origem</button>}
+              </GroupCard>
             );
           })}
         </div>
@@ -639,19 +658,22 @@ export default function GroupsTab({
           {linkedWGs.map(w => {
             const n = numberOf(w.numberId);
             const on = w.status !== "disconnected" && n?.status === "connected";
+            const some = sumiu(w.numberId, w.jid || w.id);
             const cheio = w.duplicatedTo ? byId.get(w.duplicatedTo) : null;
             const dmParte = podeDm ? dmPorGrupo.get(w.id) : null;
             const dmIndo = parteAtiva(dmParte?.parte);
             return (
               <GroupCard
                 key={w.id}
-                name={w.name} jid={w.id} number={n} numberMissing={!n} connected={on} members={w.members ?? null}
+                name={w.name} jid={w.id} number={n} numberMissing={!n} connected={on} missing={some} members={w.members ?? null}
                 extra={<span>📤 {w.sentToday ?? 0} hoje{w.lastSend && w.lastSend !== "—" ? ` · último ${w.lastSend}` : ""}</span>}
                 badges={[
                   leaderKeys.has(`${w.numberId}::${w.id}`) && <Badge key="o" color="amber">Também é origem</Badge>,
                   w.autoDuplicate && !w.duplicatedTo && <Badge key="a" color="purple">⧉ Duplica ao encher</Badge>,
                 ].filter(Boolean)}
-                warning={w.duplicatedTo
+                warning={some
+                  ? "O número não está mais neste grupo — ele foi apagado, ou o número saiu ou foi removido. Nada é enviado para ele."
+                  : w.duplicatedTo
                   ? `Encheu e foi duplicado${cheio ? ` para "${cheio.name}"` : ""} — divulgue o link do grupo novo.`
                   : (w.members ?? 0) >= ENCHENDO && !w.autoDuplicate
                     ? `Quase cheio (o WhatsApp aceita até ${GROUP_MAX}). Ligue a duplicação automática no ⋯ para não perder gente.`
@@ -673,6 +695,7 @@ export default function GroupsTab({
                   { label: "Remover da campanha", danger: true, onClick: () => setConfirmar({ tipo: "destino", alvo: w }) },
                 ]} />}
               >
+                {some && <button onClick={() => setConfirmar({ tipo: "destino", alvo: w, sumiu: true })} style={btnRemover}>Remover da campanha</button>}
                 {w.description ? (
                   <div title={w.description} style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 5, fontStyle: "italic", whiteSpace: "pre-wrap", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{w.description}</div>
                 ) : null}
@@ -694,6 +717,19 @@ export default function GroupsTab({
 
   return (
     <div>
+      {nSumidos > 0 && (
+        <AlertBanner
+          tone="warn"
+          style={{ marginBottom: 10 }}
+          message={nSumidos === 1
+            ? "1 grupo não foi encontrado no WhatsApp — foi apagado, ou o número saiu ou foi removido dele."
+            : `${nSumidos} grupos não foram encontrados no WhatsApp — foram apagados, ou o número saiu ou foi removido deles.`}
+          actions={[
+            nSumidos > 1 && { label: "Remover todos", onClick: () => setConfirmar({ tipo: "sumidos" }) },
+            { label: checkingGroups ? "Verificando…" : "Verificar de novo", onClick: () => { if (!checkingGroups) onRecheckGroups?.(); } },
+          ].filter(Boolean)}
+        />
+      )}
       {aviso && (
         <div role="status" style={{ fontSize: 12, padding: "8px 12px", borderRadius: 8, background: PRIMARY_LIGHT, color: PRIMARY_DARK, marginBottom: 10, overflowWrap: "anywhere" }}>{aviso}</div>
       )}
@@ -771,10 +807,35 @@ export default function GroupsTab({
         </Modal>
       )}
 
-      {confirmar && confirmar.tipo !== "dm" && (
+      {confirmar?.tipo === "sumidos" && (
+        <Modal title="Remover os grupos não encontrados?" onClose={() => setConfirmar(null)}>
+          <p style={{ fontSize: 13, marginBottom: 8, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+            Estes grupos não foram encontrados no WhatsApp e saem desta campanha. As outras campanhas não mudam.
+          </p>
+          <ul style={{ fontSize: 13, margin: "0 0 16px", paddingLeft: 18, lineHeight: 1.6 }}>
+            {destSumidos.map(w => <li key={`d:${w.id}`}>{w.name}{isRepasse && <span style={{ color: "var(--color-text-secondary)" }}> · destino</span>}</li>)}
+            {origemSumidos.map(l => <li key={`o:${l.numberId}::${l.jid}`}>{l.name || l.jid}<span style={{ color: "var(--color-text-secondary)" }}> · origem</span></li>)}
+          </ul>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button onClick={() => setConfirmar(null)} style={btnSec}>Cancelar</button>
+            <button
+              onClick={() => {
+                if (destSumidos.length) onUnlink(destSumidos.map(w => w.id));
+                if (origemSumidos.length) onRemoveLeader(origemSumidos);
+                setConfirmar(null);
+              }}
+              style={btnPri(false)}
+            >Remover todos</button>
+          </div>
+        </Modal>
+      )}
+
+      {(confirmar?.tipo === "origem" || confirmar?.tipo === "destino") && (
         <Modal title={confirmar.tipo === "origem" ? "Remover grupo de origem?" : "Remover grupo da campanha?"} onClose={() => setConfirmar(null)}>
           <p style={{ fontSize: 13, marginBottom: 16, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
-            {confirmar.tipo === "origem"
+            {confirmar.sumiu
+              ? <><strong style={{ color: "var(--color-text-primary)" }}>{confirmar.alvo.name || confirmar.alvo.jid}</strong> não foi encontrado no WhatsApp — foi apagado, ou o número saiu ou foi removido dele. {confirmar.tipo === "origem" ? "Ele sai da origem desta campanha." : "Ele sai desta campanha; as outras campanhas não mudam."}</>
+              : confirmar.tipo === "origem"
               ? <><strong style={{ color: "var(--color-text-primary)" }}>{confirmar.alvo.name || confirmar.alvo.jid}</strong> deixa de ser escutado: os links postados nele não entram mais na fila. O grupo continua no seu WhatsApp.</>
               : <><strong style={{ color: "var(--color-text-primary)" }}>{confirmar.alvo.name}</strong> deixa de receber os envios desta campanha. O grupo em si não é excluído — continua disponível para vincular de novo ou usar em outras campanhas.</>}
           </p>

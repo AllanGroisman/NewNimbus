@@ -20,6 +20,7 @@ const calls = {
   createGroup: [],
   groupMemberJids: [],
   groupSizes: [],
+  checkGroups: [],
   setGroupDescription: [],
 };
 
@@ -43,6 +44,8 @@ let groupDescs = new Map();
 let descErrors = new Map();
 // Falhas forçadas do link de convite por jid (task 11: {link_convite}).
 let inviteErrors = new Map();
+// Grupos que o número não está mais (task 9): o checkGroups devolve "gone".
+let goneGroups = new Set();
 
 function reset() {
   for (const k of Object.keys(calls)) calls[k].length = 0;
@@ -53,6 +56,7 @@ function reset() {
   groupDescs = new Map();
   descErrors = new Map();
   inviteErrors = new Map();
+  goneGroups = new Set();
 }
 
 const fakeSessions = new Map();
@@ -145,6 +149,7 @@ const mock = {
   __setGroupDesc: (jid, desc) => { groupDescs.set(jid, desc); },
   __failGroupDesc: (jid, msg) => { descErrors.set(jid, msg); },
   __failInvite: (jid, msg) => { inviteErrors.set(jid, msg); },
+  __goneGroup: (jid) => { goneGroups.add(jid); },
   // Setter do resultado do msgStats — simula o aparelho pedindo (ou não) reenvio.
   __setMsgStats: (stats) => { msgStatsResult = { known: true, retries: 0, lastRetryAt: null, ...stats }; },
   // Espelha backend/whatsapp/local.js:232-233 — o módulo real exporta os dois.
@@ -191,6 +196,14 @@ const mock = {
     calls.groupSizes.push({ userId, numberId, jids });
     return (jids || []).filter(j => groupMembers.has(j)).map(jid => ({ jid, members: groupMembers.get(jid).length }));
   },
+  // Espelha local.js:checkGroups — o ensureConnected lança antes de perguntar.
+  async checkGroups(userId, numberId, jids) {
+    calls.checkGroups.push({ userId, numberId, jids });
+    const s = fakeSessions.get(`${userId}::${numberId}`);
+    if (!s) throw new Error("Sessão não encontrada. Inicie a sessão primeiro.");
+    if (s.status !== "connected") throw new Error(`Sessão não está conectada (status: ${s.status})`);
+    return (jids || []).map(jid => ({ jid, status: goneGroups.has(jid) ? "gone" : "ok" }));
+  },
   async restoreSessions() { return; },
   async status() { return { count: fakeSessions.size }; },
 };
@@ -215,3 +228,4 @@ export const setGroupMembers = (jid, members) => mock.__setGroupMembers(jid, mem
 export const setGroupDesc = (jid, desc) => mock.__setGroupDesc(jid, desc);
 export const failGroupDesc = (jid, msg) => mock.__failGroupDesc(jid, msg);
 export const failInvite = (jid, msg) => mock.__failInvite(jid, msg);
+export const goneGroup = (jid) => mock.__goneGroup(jid);

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, storeLockMessage, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, soldText, getGroupCategories, getGroupStats, computeQueueETA, formatETA, formatTimeBR, formatDateBR, isSameDayBR, WHATSNIMBUS_EVENTS } from "../data/constants";
-import { createWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, refillQueueNow, clearGroupQueue, saveGroupQueue, saveItemCoupon, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue, errText } from "../data/api";
+import { createWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, checkWAGroups, refillQueueNow, clearGroupQueue, saveGroupQueue, saveItemCoupon, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue, errText } from "../data/api";
 import { refillResultMsg, queueMax } from "../data/refill";
 import { DEFAULT_MESSAGE_TEMPLATE, CLASSIC_MESSAGE_TEMPLATE, LEGACY_DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
 import { renderMessageTemplate, previewItem, PREVIEW_ITEM } from "../data/messageTemplate";
@@ -21,6 +21,8 @@ const TAB_STORAGE_KEY = "nimbus:campaignTab";
 // (mostrada só na primeira vez; depois fica só o botãozinho de ajuda).
 const REPASSE_INTRO_SEEN_KEY = "nimbus:repasseIntroSeen";
 const VALID_TABS = ["overview", "manage", "products", "queue", "whatsapp", "messages", "schedule", "history"];
+// Teto de grupos por chamada da verificação da aba Grupos (backend: GROUP_CHECK_MAX).
+const GROUP_CHECK_MAX = 50;
 function readSavedTab(groupId, isRepasse = false) {
   try {
     const tabId = JSON.parse(localStorage.getItem(TAB_STORAGE_KEY) || "{}")[groupId];
@@ -460,6 +462,14 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   // Os grupos do WhatsApp de cada número, carregados sob demanda pelo popup de
   // adicionar grupo da aba Grupos (components/campaign/GroupsTab.jsx).
   const [waGroupsByNumber, setWaGroupsByNumber] = useState({}); // numberId -> [{jid, name, members}]
+  // Se o número ainda está em cada grupo da aba Grupos (task 9): "numberId::jid"
+  // → "ok" | "gone" | "unknown". Fica aqui, e não na aba, para valer enquanto a
+  // campanha está aberta — a aba desmonta a cada troca. O "Verificar de novo"
+  // passa o resultado atual para `checkAnterior`, que segue na tela até a
+  // resposta nova chegar (sem isso o aviso sumiria e voltaria).
+  const [groupCheck, setGroupCheck] = useState({});
+  const [checkAnterior, setCheckAnterior] = useState({});
+  const checkEmVoo = useRef(new Set());
   const [sendingNow, setSendingNow] = useState(false);
   const [sendNowMsg, setSendNowMsg] = useState(null);
   const [refilling, setRefilling] = useState(false);
@@ -1032,6 +1042,52 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   // O id de um whatsappGroup É o jid do grupo (ver importAndLink), então
   // `numberId::id` de um grupo de envio bate com `numberId::jid` de um líder.
   const campaignLeaders = scraping?.kind === "repasse" ? leadersOf(scraping) : [];
+
+  // A verificação da aba Grupos (task 9): o "Conectado" é só o status do número,
+  // e grupo apagado no celular seguia aparecendo como vivo. Com a aba aberta,
+  // pergunta ao WhatsApp se o número ainda está em cada grupo origem e destino —
+  // uma chamada por número, só para os de número conectado ainda sem resposta.
+  // Número que reconecta e grupo recém-adicionado entram na rodada seguinte.
+  // Falha (número caiu no meio, rede) vira "unknown", que não acusa nada.
+  const checkPendente = tab !== "whatsapp" ? "" : [...new Set([
+    ...linkedWGs.map(w => [w.numberId, w.jid || w.id]),
+    ...campaignLeaders.map(l => [l.numberId, l.jid]),
+  ].filter(([numberId, jid]) => /@g\.us$/.test(String(jid))
+    && numbers.find(n => n.id === numberId)?.status === "connected")
+    .map(([numberId, jid]) => `${numberId}::${jid}`)
+    .filter(k => !groupCheck[k]))].sort().join("\n");
+  useEffect(() => {
+    if (!checkPendente) return;
+    const porNumero = new Map();
+    for (const k of checkPendente.split("\n")) {
+      if (checkEmVoo.current.has(k)) continue;   // a resposta da rodada anterior ainda vem
+      checkEmVoo.current.add(k);
+      const i = k.indexOf("::");
+      const numberId = k.slice(0, i);
+      if (!porNumero.has(numberId)) porNumero.set(numberId, []);
+      porNumero.get(numberId).push(k.slice(i + 2));
+    }
+    for (const [numberId, jids] of porNumero) {
+      for (let i = 0; i < jids.length; i += GROUP_CHECK_MAX) {
+        const lote = jids.slice(i, i + GROUP_CHECK_MAX);
+        checkWAGroups(numberId, lote)
+          .then(r => new Map((r?.groups || []).map(g => [g.jid, g.status])))
+          .catch(() => new Map())
+          .then(por => {
+            for (const jid of lote) checkEmVoo.current.delete(`${numberId}::${jid}`);
+            setGroupCheck(m => {
+              const next = { ...m };
+              for (const jid of lote) next[`${numberId}::${jid}`] = por.get(jid) || "unknown";
+              return next;
+            });
+          });
+      }
+    }
+  }, [checkPendente]);
+  const recheckGroups = () => {
+    setCheckAnterior(a => ({ ...a, ...groupCheck }));
+    setGroupCheck({});
+  };
   // Passa objeto quando disponível (ml + shopee gating), senão fallback boolean (compat).
   // O `schedule` vem do grupo salvo (e não do `sched` em edição): a campanha só
   // deixa de estar pausada por falta de janela depois que a janela é salva.
@@ -1110,8 +1166,12 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     setGroupInfo(g => ({ ...g, whatsappGroupIds: next }));
     onUpdate(group.id, { whatsappGroupIds: next });
   };
-  const unlinkWG = (wgId) => {
-    const next = (groupInfo.whatsappGroupIds || []).filter(id => id !== wgId);
+  // Aceita um id ou uma lista: o "Remover todos" da aba Grupos (task 9) tira
+  // vários de uma vez, e chamadas seguidas leriam o mesmo `groupInfo` velho — a
+  // segunda desfaria a primeira.
+  const unlinkWG = (wgIds) => {
+    const fora = new Set([].concat(wgIds));
+    const next = (groupInfo.whatsappGroupIds || []).filter(id => !fora.has(id));
     setGroupInfo(g => ({ ...g, whatsappGroupIds: next }));
     onUpdate(group.id, { whatsappGroupIds: next });
   };
@@ -1188,8 +1248,10 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     if (cur.some(l => l.jid === wg.jid && l.numberId === numberId)) return;
     saveLeaders([...cur, { numberId, jid: wg.jid, name: wg.name }]);
   };
-  const removeLeader = (l) => {
-    saveLeaders(leadersOf(group.scraping).filter(x => !(x.jid === l.jid && x.numberId === l.numberId)));
+  // Um líder ou uma lista — mesmo motivo do unlinkWG (`group.scraping` velho).
+  const removeLeader = (ls) => {
+    const fora = [].concat(ls);
+    saveLeaders(leadersOf(group.scraping).filter(x => !fora.some(l => l.jid === x.jid && l.numberId === x.numberId)));
   };
 
   // Refresca o link de convite (revoga o atual e atualiza no estado)
@@ -2437,6 +2499,9 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
             onUpdateWhatsappGroup={onUpdateWhatsappGroup}
             onRevokeInvite={refreshInvite}
             computeCloneName={computeCloneName}
+            groupCheck={{ ...checkAnterior, ...groupCheck }}
+            checkingGroups={!!checkPendente}
+            onRecheckGroups={recheckGroups}
 onError={setActionError}
             isAdmin={isAdmin}
             campaignId={group.id}

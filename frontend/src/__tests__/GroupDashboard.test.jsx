@@ -15,6 +15,7 @@ vi.mock("../data/api", () => ({
   sendNextNow: vi.fn(),
   loadAppOps: vi.fn().mockResolvedValue({ groups: [] }),
   listWAGroups: vi.fn().mockResolvedValue([]),
+  checkWAGroups: vi.fn().mockResolvedValue({ groups: [] }),
   refillQueueNow: vi.fn(),
   clearGroupHistory: vi.fn(),
   approvePendingItem: vi.fn(),
@@ -35,7 +36,7 @@ vi.mock("../data/api", () => ({
 }));
 
 import GroupDashboard from "../components/GroupDashboard.jsx";
-import { createWAGroup, fetchUrlMetadata, listWAGroups, getWAInvite, getWAGroupPicture, getWAGroupDescription, setWAGroupDescription, listDmBroadcasts, startDmBroadcast, cancelDmBroadcast } from "../data/api";
+import { createWAGroup, fetchUrlMetadata, listWAGroups, checkWAGroups, getWAInvite, getWAGroupPicture, getWAGroupDescription, setWAGroupDescription, listDmBroadcasts, startDmBroadcast, cancelDmBroadcast } from "../data/api";
 
 function makeGroup(overrides = {}) {
   return {
@@ -776,5 +777,116 @@ describe("GroupDashboard — Adicionar link manualmente", () => {
     fetchUrlMetadata.mockRejectedValueOnce(new Error("timeout"));
     await abrirEBuscar();
     expect(await screen.findByText(/Falha ao buscar dados: timeout/i)).toBeInTheDocument();
+  });
+});
+
+// Task 9: grupo apagado no WhatsApp (ou que o número deixou) seguia "Conectado",
+// porque esse status é só o do número. A aba Grupos pergunta ao abrir e sugere
+// tirar da campanha o que não foi encontrado.
+describe("GroupDashboard — grupos não encontrados no WhatsApp", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();   // a aba salva de outro teste abriria direto em Grupos
+  });
+
+  const numeros = [
+    { id: "num-1", label: "Número 1", status: "connected" },
+    { id: "num-2", label: "Número 2", status: "disconnected" },
+  ];
+  const grupos = [
+    { id: "a@g.us", jid: "a@g.us", name: "Ofertas A", numberId: "num-1", members: 5 },
+    { id: "b@g.us", jid: "b@g.us", name: "Ofertas B", numberId: "num-1", members: 5 },
+    { id: "c@g.us", jid: "c@g.us", name: "Ofertas C", numberId: "num-2", members: 5 },
+  ];
+  const respondeSumidos = (gone) => checkWAGroups.mockImplementation(async (numberId, jids) => ({
+    groups: jids.map(jid => ({ jid, status: gone.includes(jid) ? "gone" : "ok" })),
+  }));
+  const abrirAba = () => fireEvent.click(screen.getByRole("button", { name: /^Grupos/ }));
+  function renderCampanha({ gone = [], group = {}, ...rest } = {}) {
+    respondeSumidos(gone);
+    return renderDashboard({
+      group: { id: 9, whatsappGroupIds: ["a@g.us", "b@g.us", "c@g.us"], ...group },
+      numbers: numeros, whatsappGroups: grupos, ...rest,
+    });
+  }
+
+  it("só pergunta com a aba Grupos aberta, uma vez por número conectado", async () => {
+    renderCampanha();
+    await Promise.resolve();
+    expect(checkWAGroups).not.toHaveBeenCalled();
+    abrirAba();
+    await waitFor(() => expect(checkWAGroups).toHaveBeenCalledTimes(1));
+    // O num-2 está desconectado: não dá para perguntar, e o grupo dele não é acusado.
+    expect(checkWAGroups).toHaveBeenCalledWith("num-1", ["a@g.us", "b@g.us"]);
+  });
+
+  it("o grupo que sumiu ganha selo, aviso e o botão de remover da campanha", async () => {
+    const { props } = renderCampanha({ gone: ["b@g.us"] });
+    abrirAba();
+    const destino = within(screen.getByRole("region", { name: "Grupos Destino" }));
+    expect(await destino.findByText("Não encontrado no WhatsApp")).toBeInTheDocument();
+    expect(destino.getByText(/O número não está mais neste grupo/)).toBeInTheDocument();
+    expect(destino.getAllByText("Conectado")).toHaveLength(1);          // só o Ofertas A
+    expect(screen.getByText(/1 grupo não foi encontrado no WhatsApp/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remover todos" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remover da campanha" }));
+    const modal = within(screen.getByRole("dialog"));
+    expect(modal.getByText(/não foi encontrado no WhatsApp/)).toBeInTheDocument();
+    fireEvent.click(modal.getByRole("button", { name: /^Remover$/ }));
+    expect(props.onUpdate).toHaveBeenCalledWith(9, { whatsappGroupIds: ["a@g.us", "c@g.us"] });
+    expect(screen.queryByText("Ofertas B")).not.toBeInTheDocument();
+  });
+
+  it("'Remover todos' tira destinos e origens numa tacada só", async () => {
+    const leaders = [
+      { numberId: "num-1", jid: "x@g.us", name: "Origem X" },
+      { numberId: "num-1", jid: "y@g.us", name: "Origem Y" },
+    ];
+    const { props } = renderCampanha({
+      gone: ["a@g.us", "b@g.us", "x@g.us"],
+      group: { scraping: { kind: "repasse", sources: [], filters: {}, repasse: { leaders } } },
+      limits: { leadersPerCampaign: 3 },
+    });
+    abrirAba();
+    expect(await screen.findByText(/3 grupos não foram encontrados no WhatsApp/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remover da origem" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remover todos" }));
+    const modal = within(screen.getByRole("dialog"));
+    for (const nome of ["Ofertas A", "Ofertas B", "Origem X"]) expect(modal.getByText(nome)).toBeInTheDocument();
+    fireEvent.click(modal.getByRole("button", { name: "Remover todos" }));
+
+    // Duas chamadas seguidas do unlink/removeLeader antigos leriam o estado velho
+    // e a segunda desfaria a primeira: sai tudo numa atualização de cada lado.
+    expect(props.onUpdate).toHaveBeenCalledWith(9, { whatsappGroupIds: ["c@g.us"] });
+    const scraping = props.onUpdate.mock.calls.findLast(([, p]) => p.scraping)[1].scraping;
+    expect(scraping.repasse.leaders).toEqual([leaders[1]]);
+    expect(screen.queryByText(/não foram encontrados no WhatsApp/)).not.toBeInTheDocument();
+  });
+
+  it("voltar para a aba não pergunta de novo; 'Verificar de novo' pergunta", async () => {
+    renderCampanha({ gone: ["b@g.us"] });
+    abrirAba();
+    expect(await screen.findByText(/1 grupo não foi encontrado/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Gerenciar/ }));
+    abrirAba();
+    expect(await screen.findByText(/1 grupo não foi encontrado/)).toBeInTheDocument();
+    expect(checkWAGroups).toHaveBeenCalledTimes(1);
+
+    respondeSumidos([]);   // o usuário tirou o número do grupo por engano e voltou
+    fireEvent.click(screen.getByRole("button", { name: "Verificar de novo" }));
+    await waitFor(() => expect(checkWAGroups).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText(/não foi encontrado/)).not.toBeInTheDocument());
+  });
+
+  it("falha na verificação não acusa nada", async () => {
+    renderCampanha();
+    checkWAGroups.mockRejectedValue(new Error("O número destes grupos está desconectado."));
+    abrirAba();
+    await waitFor(() => expect(checkWAGroups).toHaveBeenCalledTimes(1));
+    await new Promise(r => setTimeout(r, 0));   // deixa a rejeição chegar no estado
+    expect(screen.queryByText("Não encontrado no WhatsApp")).not.toBeInTheDocument();
+    expect(screen.queryByText(/não foi encontrado/)).not.toBeInTheDocument();
   });
 });
