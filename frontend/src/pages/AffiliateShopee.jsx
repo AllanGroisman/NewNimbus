@@ -108,6 +108,9 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
   // O App ID sozinho basta; a Senha é opcional.
   const canSave = !!appId.trim();
   const senhaRecusada = affStatus?.shopee?.modo === "api" && !!affStatus.shopee.apiFalha;
+  // O admin desligou o link só com App ID: sem a Senha, nada sai.
+  const precisaSenha = !!affStatus?.shopee?.precisaSenha;
+  const senhaObrigatoria = affStatus?.shopee?.redirPermitido === false;
 
   return (
     <div>
@@ -133,15 +136,18 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, gap: 8, flexWrap: "wrap" }}>
           <div style={{ fontWeight: 500 }}>Configuração de afiliado</div>
           {affStatus?.shopee && (
-            <Badge color={!affStatus.shopee.configured ? "gray" : senhaRecusada ? "amber" : "green"}>
-              {!affStatus.shopee.configured ? "Não configurado"
+            <Badge color={precisaSenha ? "amber" : !affStatus.shopee.configured ? "gray" : senhaRecusada ? "amber" : "green"}>
+              {precisaSenha ? "Senha obrigatória"
+                : !affStatus.shopee.configured ? "Não configurado"
                 : senhaRecusada ? "Senha recusada · usando o reserva"
                 : affStatus.shopee.modo === "api" ? "Configurado · API oficial" : "Configurado · link de redirecionamento"}
             </Badge>
           )}
         </div>
         <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14, lineHeight: 1.5 }}>
-          Basta o <strong>App ID</strong>: todo link da Shopee enviado sai com ele. Sem cookie, sem expirar.
+          {senhaObrigatoria
+            ? <>O admin exige a <strong>Senha da API</strong> para gerar os links: informe o <strong>App ID</strong> e a <strong>Senha</strong>.</>
+            : <>Basta o <strong>App ID</strong>: todo link da Shopee enviado sai com ele. Sem cookie, sem expirar.</>}
         </div>
 
         <div style={{ marginBottom: 14 }}>
@@ -182,7 +188,7 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
 
         <div>
           <label style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
-            Senha <span style={{ fontStyle: "italic" }}>(opcional)</span>
+            Senha {!senhaObrigatoria && <span style={{ fontStyle: "italic" }}>(opcional)</span>}
             {affStatus?.shopee?.appSecretPreview && (
               <span style={{ marginLeft: 8, color: "var(--color-text-secondary)" }}>
                 (atual: <code>{affStatus.shopee.appSecretPreview}</code>)
@@ -207,7 +213,9 @@ export default function PageAffiliateShopee({ onAffiliateChange, onOpenTutorial 
             </button>
           </div>
           <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4, lineHeight: 1.5 }}>
-            Com ela, os links saem curtos pela API oficial e a aba Desempenho funciona. Sem ela (ou se a Shopee recusar), os links saem pelo redirecionamento da Shopee.
+            {senhaObrigatoria
+              ? "Os links saem curtos pela API oficial e a aba Desempenho funciona. Sem ela, nenhum link da Shopee é enviado."
+              : "Com ela, os links saem curtos pela API oficial e a aba Desempenho funciona. Sem ela (ou se a Shopee recusar), os links saem pelo redirecionamento da Shopee."}
             {" "}A senha fica em <a href="https://affiliate.shopee.com.br/openapi" target="_blank" rel="noreferrer" style={{ color: PRIMARY }}>affiliate.shopee.com.br/openapi</a>.
           </div>
         </div>

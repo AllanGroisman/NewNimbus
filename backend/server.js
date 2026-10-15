@@ -1765,7 +1765,8 @@ app.post("/api/affiliate/shopee/test", auth.requireAuth, requireStoreUnlocked("s
     if (!short) {
       const s = affiliate.status(req.user.id);
       const reason = s.shopee.lastFailureReason
-        || (!s.shopee.configured ? "Informe seu App ID da Shopee primeiro." : "Falha ao gerar link");
+        || (s.shopee.precisaSenha ? "Cadastre a Senha da API da Shopee — o link só com App ID foi desativado."
+          : !s.shopee.configured ? "Informe seu App ID da Shopee primeiro." : "Falha ao gerar link");
       return res.status(400).json({ error: reason });
     }
     // an_redir = saiu pelo reserva: sem Senha, ou a API falhou (aí avisa o motivo).
@@ -3321,7 +3322,19 @@ app.get("/api/admin/scraper/shopee", auth.requireAuth, auth.requireAdmin, (req, 
       appSecretPreview: active.appSecret ? active.appSecret.slice(0, 6) + "…" : null,
       source: active.source, // "env" | "admin"
     } : null,
+    redirPermitido: affiliate.readShopeeRedirPermitido(),
   });
+});
+
+// Liga/desliga o link só com App ID (an_redir) pra todos os usuários.
+app.put("/api/admin/scraper/shopee/redir", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const saved = affiliate.writeShopeeRedirPermitido(req.body?.permitido);
+    if (!await confirmConfigSaved(res)) return;
+    res.json({ ok: true, redirPermitido: saved });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.put("/api/admin/scraper/shopee", auth.requireAuth, auth.requireAdmin, async (req, res) => {

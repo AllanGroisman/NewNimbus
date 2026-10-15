@@ -32,3 +32,7 @@ Rodar o Claude na VPS e desligar o computador (via tmux):
 10. [x] Separa A conta de afiliado que busca coisas na API da shopee, esse é DE ADMIN e geral pro sistema. Pros usuarios, que tem na aba Shopee só precisa do App ID para fazer o link de afiliado, certo?
 
 11. [x] Ao editar descrição do grupo, ter botão para adicionar onde esta editando o link de convite do grupo
+
+12. [x] Preciso que tu deixe um botão de ativar/desativar na pagina de shopee de ADMIN, para ativar a opção dos usuarios mandarem link de afiliado da shopee sem a senha de afiliado da api configurado e só com o app ID.
+
+13. [] Quero que na aba whatsApp, quero que para cada numero tenha uma opção para escolher grupos e apagar suas mensagens e midias de x em x tempo. Pode ser um popup que abre em cada numero, não sei como fica melhor, analise e de opções. Os grupos estão com muitas mensagens e tornando o whats pesado.

@@ -1,7 +1,7 @@
 // Endpoints administrativos — users (list/role/password/delete), scraper config,
 // catalog admin, DLQ. Cobre tanto gating (403 pra user comum) quanto comportamento.
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
@@ -37,6 +37,7 @@ describe("Admin — gating", () => {
       ["get", "/api/admin/scraper/shopee/filters"],
       ["put", "/api/admin/scraper/shopee/filters"],
       ["post", "/api/admin/scraper/shopee/identify"],
+      ["put", "/api/admin/scraper/shopee/redir"],
       ["post", "/api/admin/users/qualquer-id/manual-trial"],
       ["delete", "/api/admin/users/qualquer-id/manual-trial"],
       ["get", "/api/admin/system/disk"],
@@ -629,6 +630,29 @@ describe("Admin — identificar link de afiliado Shopee", () => {
     expect(fora.status).toBe(400);
     const vazio = await admin.auth("post", "/api/admin/scraper/shopee/identify").send({ url: "" });
     expect(vazio.status).toBe(400);
+  });
+});
+
+describe("Admin — link Shopee só com App ID (task 12)", () => {
+  afterEach(() => affiliate.writeShopeeRedirPermitido(true));
+
+  it("vem ligado por padrão, desliga e religa", async () => {
+    const admin = await makeAdmin();
+    expect((await admin.auth("get", "/api/admin/scraper/shopee")).body.redirPermitido).toBe(true);
+
+    const off = await admin.auth("put", "/api/admin/scraper/shopee/redir").send({ permitido: false });
+    expect(off.status).toBe(200);
+    expect(off.body).toEqual({ ok: true, redirPermitido: false });
+    expect((await admin.auth("get", "/api/admin/scraper/shopee")).body.redirPermitido).toBe(false);
+
+    await admin.auth("put", "/api/admin/scraper/shopee/redir").send({ permitido: true });
+    expect((await admin.auth("get", "/api/admin/scraper/shopee")).body.redirPermitido).toBe(true);
+  });
+
+  it("valor que não é booleano → 400", async () => {
+    const admin = await makeAdmin();
+    const r = await admin.auth("put", "/api/admin/scraper/shopee/redir").send({ permitido: "não" });
+    expect(r.status).toBe(400);
   });
 });
 

@@ -302,6 +302,43 @@ describe("an_redir — só com o App ID, ou quando a API falha", () => {
     expect(affiliate.status(TEST_USER_ID).shopee.apiFalha).toMatch(/Invalid Signature/);
   });
 
+  describe("admin desligou o link só com App ID", () => {
+    beforeEach(() => affiliate.writeShopeeRedirPermitido(false));
+    afterEach(() => affiliate.writeShopeeRedirPermitido(true));
+
+    it("só App ID: não gera link, não chama nada e o status pede a Senha", async () => {
+      affiliate.writeShopeeConfig(TEST_USER_ID, { appId: ID });
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      expect(await affiliate.gerarLinkAfiliadoShopee(TEST_USER_ID, PRODUTO, { subId: "g5" })).toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(affiliate.status(TEST_USER_ID).shopee).toMatchObject({
+        configured: false, modo: null, precisaSenha: true, redirPermitido: false,
+        lastFailureReason: expect.stringMatching(/Senha da API/),
+      });
+    });
+
+    it("com Senha e a API falhando: sem reserva an_redir", async () => {
+      affiliate.writeShopeeConfig(TEST_USER_ID, { appId: ID, appSecret: SENHA });
+      vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 401 })));
+      vi.spyOn(console, "error").mockImplementation(() => {});
+
+      expect(await affiliate.gerarLinkAfiliadoShopee(TEST_USER_ID, PRODUTO, { subId: "g5" })).toBeNull();
+      expect(affiliate.status(TEST_USER_ID).shopee).toMatchObject({ configured: true, modo: "api", precisaSenha: false });
+    });
+
+    it("com Senha e a API dando certo: link oficial normal", async () => {
+      affiliate.writeShopeeConfig(TEST_USER_ID, { appId: ID, appSecret: SENHA });
+      vi.stubGlobal("fetch", apiOk("https://s.shopee.com.br/oficial"));
+      expect(await affiliate.gerarLinkAfiliadoShopee(TEST_USER_ID, PRODUTO)).toBe("https://s.shopee.com.br/oficial");
+    });
+  });
+
+  it("chave sem valor salvo = ligada", () => {
+    expect(affiliate.readShopeeRedirPermitido()).toBe(true);
+  });
+
   it("o reserva usado por falha não fica no cache: o próximo pedido tenta a API de novo", async () => {
     affiliate.writeShopeeConfig(TEST_USER_ID, { appId: ID, appSecret: SENHA });
     vi.spyOn(console, "error").mockImplementation(() => {});

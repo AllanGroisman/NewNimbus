@@ -150,6 +150,21 @@ describe("Shopee — App ID obrigatório, Senha opcional", () => {
     expect(st.body.shopee).toMatchObject({ modo: "api", apiFalha: expect.stringMatching(/HTTP 404/) });
   });
 
+  it("admin desligou o link só com App ID: Testar sem Senha responde 400 pedindo a Senha", async () => {
+    const { auth } = await createTestUser();
+    await auth("put", "/api/affiliate/shopee").send({ appId: ID });
+    affiliate.writeShopeeRedirPermitido(false);
+    try {
+      const res = await auth("post", "/api/affiliate/shopee/test").send({ url: PRODUTO });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/Senha da API/);
+      const st = await auth("get", "/api/affiliate");
+      expect(st.body.shopee).toMatchObject({ configured: false, precisaSenha: true, redirPermitido: false, modo: null });
+    } finally {
+      affiliate.writeShopeeRedirPermitido(true);
+    }
+  });
+
   it("descobrir-id lê o ID de um link já aberto", async () => {
     const { auth } = await createTestUser();
     const res = await auth("post", "/api/affiliate/shopee/descobrir-id")

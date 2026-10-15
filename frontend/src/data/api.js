@@ -629,6 +629,7 @@ export async function adminScraperShopee()           { return http("GET",    "/a
 export async function adminScraperShopeeSave(body)   { return http("PUT",    "/api/admin/scraper/shopee", body); }
 export async function adminScraperShopeeClear()      { return http("DELETE", "/api/admin/scraper/shopee"); }
 export async function adminScraperShopeeTest(url)    { return http("POST",   "/api/admin/scraper/shopee/test", { url }, { timeoutMs: SLOW_TIMEOUT_MS }); }
+export async function adminScraperShopeeRedir(permitido) { return http("PUT", "/api/admin/scraper/shopee/redir", { permitido }); }
 export async function adminScraperShopeeIdentify(url) { return http("POST",  "/api/admin/scraper/shopee/identify", { url }, { timeoutMs: SLOW_TIMEOUT_MS }); }
 export async function adminScraperShopeeFilters()        { return http("GET", "/api/admin/scraper/shopee/filters"); }
 export async function adminScraperShopeeFiltersSave(f)   { return http("PUT", "/api/admin/scraper/shopee/filters", f); }

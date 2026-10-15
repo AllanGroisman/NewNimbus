@@ -2,12 +2,14 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, TEST_URLS } from "../data/constants";
 import Badge from "../components/ui/Badge";
 import StoreLockCard from "../components/ui/StoreLockCard";
+import Toggle from "../components/ui/Toggle";
 import {
   adminScraperShopee,
   adminScraperShopeeSave,
   adminScraperShopeeClear,
   adminScraperShopeeTest,
   adminScraperShopeeIdentify,
+  adminScraperShopeeRedir,
   adminScraperShopeeFilters,
   adminScraperShopeeFiltersSave,
   errText,
@@ -102,6 +104,8 @@ export default function PageAdminShopee() {
       </div>
 
       <StoreLockCard store="shopee" storeLabel="Shopee" />
+
+      <ShopeeRedirCard permitido={data.redirPermitido !== false} onSaved={refresh} />
 
       <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16, marginBottom: 18 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, gap: 8, flexWrap: "wrap" }}>
@@ -219,6 +223,47 @@ export default function PageAdminShopee() {
 }
 
 // De quem é um link de afiliado: o dono vem no "an_<id>" da URL que o link abre.
+// Liga/desliga, pra todos os usuários, o link só com App ID (an_redir, sem a
+// Senha da API). Salva na hora, como a trava da loja.
+function ShopeeRedirCard({ permitido, onSaved }) {
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  async function persist(v) {
+    setSaving(true);
+    setMsg(null);
+    try {
+      await adminScraperShopeeRedir(v);
+      setMsg({ type: "ok", text: v ? "Ligado: link só com App ID liberado." : "Desligado: só sai link de quem tem a Senha da API." });
+      onSaved();
+    } catch (err) {
+      setMsg({ type: "err", text: errText(err, "Não foi possível salvar. Tente novamente.") });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16, marginBottom: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <div>
+          <div style={{ fontWeight: 500 }}>Link só com App ID</div>
+          <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 4, lineHeight: 1.5 }}>
+            Ligado: usuários sem a Senha da API enviam pelo link de redirecionamento da Shopee (comissão ainda não comprovada).
+            {" "}Desligado: só sai link pela API oficial — sem reserva se a API falhar — e as campanhas Shopee de quem não tem Senha ficam pausadas.
+          </div>
+        </div>
+        <Toggle value={permitido} onChange={persist} disabled={saving} label="Permitir link só com App ID" />
+      </div>
+      {msg && (
+        <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: msg.type === "ok" ? PRIMARY_LIGHT : "var(--danger-bg)", color: msg.type === "ok" ? PRIMARY_DARK : "var(--danger-text)" }}>
+          {msg.text}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ShopeeLinkIdentifySection() {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);

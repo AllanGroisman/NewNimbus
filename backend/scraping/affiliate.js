@@ -8,6 +8,11 @@ const urlGuard = require("./urlGuard");
 // que só gera o link daquele cliente) — nunca use a de um usuário pra buscar.
 const SCRAPER_SHOPEE_ADMIN_KEY = "scraper-shopee-admin";
 
+// Chave do Admin › Shopee: o usuário pode mandar link só com o App ID (an_redir,
+// sem a Senha da API)? Ligada por padrão. Desligada, só sai link pela API oficial
+// — nem como reserva quando a API falha.
+const SHOPEE_REDIR_KEY = "shopee-redir-permitido";
+
 // Sessão do Mercado Livre DO SISTEMA (conta própria, colada no Admin › Mercado Livre).
 // Serve pra abrir páginas que só existem logado — hoje o Hub de Afiliados.
 // NÃO tem relação com o cookie que cada cliente cola na aba dele (affiliate_config.ml.cookie,
@@ -256,7 +261,8 @@ function status(userId) {
     shopee: { lastSuccessAt: null, lastFailureAt: null, lastFailureReason: null },
   };
   const shopeeApi = !!(shopee.appId && shopee.appSecret);
-  const shopeeConfigured = !!shopee.appId;
+  const redirOk = readShopeeRedirPermitido();
+  const shopeeConfigured = shopeeApi || (!!shopee.appId && redirOk);
   const mlHealthy = !!(ml.tag && ml.cookie) && (!s.ml.lastFailureAt || (s.ml.lastSuccessAt && new Date(s.ml.lastSuccessAt) > new Date(s.ml.lastFailureAt)));
   return {
     // Compat com UI antiga: campos top-level são do ML
@@ -302,6 +308,9 @@ function status(userId) {
       // ID (reserva, crédito da comissão ainda não comprovado).
       modo: shopeeApi ? "api" : shopeeConfigured ? "redir" : null,
       apiConfigured: shopeeApi,
+      redirPermitido: redirOk,
+      // Tem só o App ID, mas o admin desligou o link sem a Senha.
+      precisaSenha: !!shopee.appId && !shopeeApi && !redirOk,
       // Com Senha, a última chamada à API falhou e o link saiu pelo reserva.
       apiFalha: shopeeApi ? (s.shopee.apiFalha || null) : null,
       appId: shopee.appId || null,
@@ -704,6 +713,13 @@ async function gerarLinkAfiliadoShopee(userId, linkOriginal, { subId = "" } = {}
   if (!linkOriginal || typeof linkOriginal !== "string") return null;
   const { appId, appSecret } = readShopeeConfig(userId);
   if (!appId) return null;
+  const redirOk = readShopeeRedirPermitido();
+  if (!appSecret && !redirOk) {
+    const s = ensureStats(userId).shopee;
+    s.lastFailureAt = new Date().toISOString();
+    s.lastFailureReason = SHOPEE_SENHA_OBRIGATORIA;
+    return null;
+  }
 
   const marca = limpaSubId(subId);
   const chave = `${marca}|${linkOriginal}`;
@@ -719,7 +735,7 @@ async function gerarLinkAfiliadoShopee(userId, linkOriginal, { subId = "" } = {}
     s.apiFalha = link ? null : (s.lastFailureReason || "falha na API");
     guardar = !!link;
   }
-  if (!link) link = await gerarLinkShopeeRedir(appId, linkOriginal, marca, s);
+  if (!link && redirOk) link = await gerarLinkShopeeRedir(appId, linkOriginal, marca, s);
   if (!link) return null;
   if (guardar) cache.set(chave, { shortUrl: link, ts: Date.now() });
   s.lastSuccessAt = new Date().toISOString();
@@ -822,6 +838,20 @@ function writeScraperShopeeAdminCreds({ appId, appSecret }) {
 
 function clearScraperShopeeAdminCreds() {
   appConfig.del(SCRAPER_SHOPEE_ADMIN_KEY);
+}
+
+const SHOPEE_SENHA_OBRIGATORIA = "O admin exige a Senha da API da Shopee — cadastre-a na aba Shopee.";
+
+// Sem a chave salva = ligada (o comportamento de antes da chave existir).
+function readShopeeRedirPermitido() {
+  const raw = appConfig.get(SHOPEE_REDIR_KEY);
+  return !(raw && raw.permitido === false);
+}
+
+function writeShopeeRedirPermitido(permitido) {
+  if (typeof permitido !== "boolean") throw new Error("Valor inválido — use ligado ou desligado.");
+  appConfig.set(SHOPEE_REDIR_KEY, { permitido, updatedAt: new Date().toISOString() });
+  return permitido;
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -1318,6 +1348,8 @@ module.exports = {
   readScraperShopeeAdminCreds,
   writeScraperShopeeAdminCreds,
   clearScraperShopeeAdminCreds,
+  readShopeeRedirPermitido,
+  writeShopeeRedirPermitido,
   readMLScraperFilters,
   writeMLScraperFilters,
   passesMLFilters,

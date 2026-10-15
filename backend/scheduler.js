@@ -300,6 +300,9 @@ function affiliateGate(userId, group) {
   if (sources.includes("ml") && !s.ml.configured) {
     return { paused: true, reason: "configure o afiliado do Mercado Livre (tag + cookie) em Configurações" };
   }
+  if (sources.includes("shopee") && s.shopee.precisaSenha) {
+    return { paused: true, reason: "cadastre a Senha da API da Shopee em Configurações (o link só com App ID foi desativado)" };
+  }
   if (sources.includes("shopee") && !s.shopee.configured) {
     return { paused: true, reason: "configure seu App ID da Shopee em Configurações" };
   }
