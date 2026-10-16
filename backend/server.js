@@ -4737,6 +4737,42 @@ app.delete("/api/whatsapp/sessions/:id/groups/:jid", auth.requireAuth, async (re
   }
 });
 
+// Limpeza automática das conversas de grupo, por número (task 13). A configuração
+// fica no server; a limpeza em si é o "Limpar conversa" do WhatsApp, mandado pelo
+// worker (whatsapp/chat-cleanup.js + local.js clearGroupChats).
+const chatCleanup = require("./whatsapp/chat-cleanup");
+
+app.get("/api/whatsapp/cleanup", auth.requireAuth, async (req, res) => {
+  try {
+    res.json(await chatCleanup.list(req.user.id));
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/whatsapp/cleanup" });
+  }
+});
+
+app.put("/api/whatsapp/sessions/:id/cleanup", auth.requireAuth, async (req, res) => {
+  const { error, config } = chatCleanup.validate(req.body);
+  if (error) return res.status(400).json({ error });
+  try {
+    res.json(await chatCleanup.save(req.user.id, req.params.id, config));
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "PUT /api/whatsapp/sessions/:id/cleanup" });
+  }
+});
+
+app.post("/api/whatsapp/sessions/:id/cleanup/run", auth.requireAuth, async (req, res) => {
+  try {
+    const r = await chatCleanup.run(req.user.id, req.params.id);
+    if (!r.ran) return res.status(400).json({ error: "Nenhum grupo marcado para limpar.", code: "no_groups" });
+    res.json(r);
+  } catch (err) {
+    if (/não está conectada|não encontrada/i.test(String(err?.message || ""))) {
+      return res.status(409).json({ error: "O número está desconectado.", code: "not_connected" });
+    }
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/whatsapp/sessions/:id/cleanup/run" });
+  }
+});
+
 // Teste de conexão do número (botão "Testar" no card). Duas pernas, porque cada
 // uma prova uma coisa diferente:
 //   1. auto-DM pelo PRÓPRIO número — único jeito de provar que aquela sessão
@@ -4977,6 +5013,8 @@ async function boot() {
     // Grupo destino cheio vira o próximo da série (task 25). Mesmo processo do
     // scheduler: as operações de grupo passam pela fachada `whatsapp`.
     require("./whatsapp/auto-duplicate").start();
+    // Limpeza automática das conversas de grupo marcadas em cada número (task 13).
+    chatCleanup.start();
     // Registro diário do tamanho dos grupos de destino (aba Grupos) e limpeza do
     // histórico antigo das estatísticas.
     require("./group-stats/snapshot").start();

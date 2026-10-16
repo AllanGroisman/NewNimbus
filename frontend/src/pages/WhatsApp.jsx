@@ -5,7 +5,9 @@ import UsageBadge from "../components/ui/UsageBadge";
 import Modal from "../components/ui/Modal";
 import Spinner from "../components/ui/Spinner";
 import WhatsappQR from "../components/WhatsappQR";
-import { deleteWASession, deleteWASessionKeepalive, testWASession, errText} from "../data/api";
+import ChatCleanupModal from "../components/whatsapp/ChatCleanupModal";
+import { intervalLabel } from "../components/whatsapp/cleanupIntervals";
+import { deleteWASession, deleteWASessionKeepalive, testWASession, getWACleanups, errText} from "../data/api";
 
 // Mapeia o status cru da sessão (Baileys) pra rótulo + cor amigáveis.
 const STATUS_UI = {
@@ -124,6 +126,15 @@ export default function PageWhatsApp({
   // pontual, resposta de um clique.
   const [testing, setTesting] = useState(null);
   const [testResult, setTestResult] = useState({});
+  // Limpeza automática das conversas de grupo (task 13): a configuração de cada
+  // número (numberId -> config) e o número com o popup aberto.
+  const [cleanups, setCleanups] = useState({});
+  const [cleanupFor, setCleanupFor] = useState(null);
+  useEffect(() => {
+    getWACleanups()
+      .then(list => setCleanups(Object.fromEntries((list || []).map(c => [String(c.numberId), c]))))
+      .catch(() => {});
+  }, []);
 
   // Status efetivo de um número: prioriza o status ao vivo do servidor. Depois
   // que o poll carregou, número AUSENTE da lista significa que não existe sessão
@@ -386,6 +397,13 @@ export default function PageWhatsApp({
                     {planPausedNumber && <Badge color="amber">Pausado pelo plano</Badge>}
                     {wgCount > 0 && <Badge color="gray">Em uso por {wgCount} grupo{wgCount !== 1 ? "s" : ""}</Badge>}
                     {n.lastActivity && <Badge color="gray">Atividade: {n.lastActivity}</Badge>}
+                    {(() => {
+                      const c = cleanups[String(n.id)];
+                      const qtd = c?.jids?.length || 0;
+                      return c?.enabled && qtd > 0
+                        ? <Badge color="gray">🧹 Limpeza: {qtd} grupo{qtd !== 1 ? "s" : ""} · {intervalLabel(c.intervalHours)}</Badge>
+                        : null;
+                    })()}
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
@@ -407,6 +425,13 @@ export default function PageWhatsApp({
                         style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 8, border: `0.5px solid ${PRIMARY}`, background: "transparent", color: PRIMARY, fontSize: 12, cursor: testing === n.id ? "default" : "pointer", fontWeight: 500, opacity: testing === n.id ? 0.7 : 1 }}
                       >
                         {testing === n.id ? <><Spinner size={12} /> Testando...</> : "Testar"}
+                      </button>
+                      <button
+                        onClick={() => setCleanupFor(n.id)}
+                        title="Apaga de tempos em tempos as mensagens e mídias dos grupos escolhidos"
+                        style={{ padding: "6px 14px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 12, cursor: "pointer" }}
+                      >
+                        Limpeza automática
                       </button>
                       <button onClick={() => setConfirmDisconnect(n.id)} style={{ padding: "6px 14px", borderRadius: 8, border: "0.5px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", fontSize: 12, cursor: "pointer" }}>Desconectar</button>
                     </>
@@ -460,6 +485,20 @@ export default function PageWhatsApp({
           />
         </Modal>
       )}
+
+      {/* Limpeza automática das conversas de grupo (task 13) */}
+      {cleanupFor && (() => {
+        const n = numbers.find(x => x.id === cleanupFor);
+        if (!n) return null;
+        return (
+          <ChatCleanupModal
+            number={n}
+            config={cleanups[String(n.id)] || null}
+            onSaved={(c) => c?.numberId && setCleanups(cs => ({ ...cs, [String(c.numberId)]: c }))}
+            onClose={() => setCleanupFor(null)}
+          />
+        );
+      })()}
 
       {/* Modal desconectar número */}
       {confirmDisconnect && (

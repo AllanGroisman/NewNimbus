@@ -825,6 +825,13 @@ async function _openSocket(userId, numberId, k, opts = {}) {
     } catch { /* ignore */ }
   });
 
+  // Limpeza automática (task 13): o "Limpar conversa" precisa da key da última
+  // mensagem de cada grupo. Guarda só key + timestamp, sem conteúdo — ver last-msg.
+  sock.ev.on("messages.upsert", (ev) => {
+    if (!isCurrentGen(session, gen)) return;
+    try { require("./last-msg").onUpsert(numberId, ev?.messages); } catch { /* ignore */ }
+  });
+
   // Invalidação do cache de metadata: participante que entra/sai muda a lista de
   // destinatários da sender key. Servir lista velha é mandar a mensagem cifrada
   // pra quem não consegue abrir — o "Aguardando mensagem" do outro lado.
@@ -870,6 +877,22 @@ async function _openSocket(userId, numberId, k, opts = {}) {
       session.lastConflictAt = null;
       session.conflictRetries = 0;
       publishStatus(session);
+
+      // Chave de app state faltando (ver app-state-key.js): pede ao celular já na
+      // conexão, em vez de só descobrir na próxima limpeza. Espera um pouco porque
+      // logo depois de parear o celular manda a chave sozinho.
+      setTimeout(async () => {
+        if (session.sock !== sock || !session.socketAlive || session.migrating) return;
+        const appKey = require("./app-state-key");
+        try {
+          if (!sock.authState?.creds?.myAppStateKeyId || await appKey.hasAppStateKey(sock)) return;
+          if (await appKey.requestAppStateKey(session)) {
+            console.warn(`[whatsapp] chave de app state ausente em ${userId}/${numberId} — pedida ao celular`);
+          }
+        } catch (e) {
+          console.warn(`[whatsapp] pedido da chave de app state falhou ${userId}/${numberId}: ${e.message}`);
+        }
+      }, 30 * 1000).unref?.();
 
       // O numberId definitivo é o telefone. O id usado pra abrir o QR é provisório
       // (o frontend gera antes de saber o telefone). Se divergir, migramos a auth
@@ -1260,6 +1283,56 @@ async function setGroupDescription(userId, numberId, jid, description) {
   await s.sock.groupUpdateDescription(jid, description || undefined);
 }
 
+// Limpeza automática (task 13): o mesmo "Limpar conversa" do WhatsApp Web, que o
+// celular aplica via app state. Um grupo por vez, com pausa — é patch de app state
+// pra cada um, e uma rajada de dezenas não ajuda ninguém. Sem mensagem registrada
+// (nada chegou desde que o número conectou) ou sem nada novo desde a última
+// limpeza, o grupo é pulado. Nunca lança por grupo: devolve o resultado de cada um.
+const CLEAR_PAUSE_MS = Number(process.env.WA_CLEAR_PAUSE_MS) || 1000;
+async function clearGroupChats(userId, numberId, jids) {
+  ensureConnected(userId, numberId);
+  const lastMsg = require("./last-msg");
+  const appKey = require("./app-state-key");
+  const out = [];
+  const list = [...new Set((jids || []).filter(j => typeof j === "string" && j.endsWith("@g.us")))];
+  // Sem a chave de app state nenhum grupo passa: depois que o pedido ao celular
+  // não trouxe a chave, o resto da lista sai com o mesmo erro sem tentar.
+  let keyGone = false;
+  for (let i = 0; i < list.length; i++) {
+    const jid = list[i];
+    if (keyGone) { out.push({ jid, status: "error", error: appKey.MISSING_KEY_MSG }); continue; }
+    try {
+      // Re-checa a cada grupo: a sessão pode cair no meio de uma lista grande.
+      const s = ensureConnected(userId, numberId);
+      const last = await lastMsg.get(numberId, jid);
+      if (!last) { out.push({ jid, status: "skipped", reason: "sem_mensagem" }); continue; }
+      if (last.clearedTs && last.messageTimestamp <= last.clearedTs) {
+        out.push({ jid, status: "skipped", reason: "nada_novo" });
+        continue;
+      }
+      const clear = () => s.sock.chatModify({
+        clear: true,
+        lastMessages: [{ key: last.key, messageTimestamp: last.messageTimestamp }],
+      }, jid);
+      try {
+        await clear();
+      } catch (err) {
+        if (!appKey.isMissingKeyError(err)) throw err;
+        // Chave sumiu do store: pede de novo ao celular e tenta este grupo mais uma vez.
+        if (!(await appKey.recoverAppStateKey(s))) { keyGone = true; throw err; }
+        await clear();
+      }
+      lastMsg.markCleared(numberId, jid, last.messageTimestamp);
+      out.push({ jid, status: "cleared" });
+    } catch (err) {
+      const error = appKey.isMissingKeyError(err) ? appKey.MISSING_KEY_MSG : String(err?.message || err).slice(0, 200);
+      out.push({ jid, status: "error", error });
+    }
+    if (i < list.length - 1 && !keyGone) await new Promise(r => setTimeout(r, CLEAR_PAUSE_MS));
+  }
+  return out;
+}
+
 // Os destinos no privado dos membros de um grupo (task 4): PN quando se sabe,
 // @lid quando não, sem o próprio número. A resolução mora aqui, no dono do
 // socket, porque é ele quem tem o mapeamento LID→PN e o `sock.user`.
@@ -1540,6 +1613,7 @@ module.exports = {
   leaveGroup,
   getGroupMetadata,
   setGroupDescription,
+  clearGroupChats,
   groupMemberJids,
   groupSizes,
   checkGroups,
@@ -1579,6 +1653,7 @@ function makeStub() {
     leaveGroup: fail,
     getGroupMetadata: fail,
     setGroupDescription: fail,
+    clearGroupChats: fail,
     groupMemberJids: fail,
     groupSizes: fail,
     checkGroups: fail,

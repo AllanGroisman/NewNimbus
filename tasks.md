@@ -35,4 +35,5 @@ Rodar o Claude na VPS e desligar o computador (via tmux):
 
 12. [x] Preciso que tu deixe um botão de ativar/desativar na pagina de shopee de ADMIN, para ativar a opção dos usuarios mandarem link de afiliado da shopee sem a senha de afiliado da api configurado e só com o app ID.
 
-13. [] Quero que na aba whatsApp, quero que para cada numero tenha uma opção para escolher grupos e apagar suas mensagens e midias de x em x tempo. Pode ser um popup que abre em cada numero, não sei como fica melhor, analise e de opções. Os grupos estão com muitas mensagens e tornando o whats pesado.
+13. [x] Quero que na aba whatsApp, quero que para cada numero tenha uma opção para escolher grupos e apagar suas mensagens e midias de x em x tempo. Pode ser um popup que abre em cada numero, não sei como fica melhor, analise e de opções. Os grupos estão com muitas mensagens e tornando o whats pesado.
+

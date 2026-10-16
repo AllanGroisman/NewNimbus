@@ -117,6 +117,12 @@ async function setGroupDescription(userId, numberId, jid, description) {
   return queue.callControl("setGroupDescription", [String(userId), String(numberId), jid, description], { timeoutMs: 15000 });
 }
 
+// 1s de pausa por grupo no worker + o patch de cada um: o timeout cresce com a lista.
+async function clearGroupChats(userId, numberId, jids) {
+  const n = Array.isArray(jids) ? jids.length : 0;
+  return queue.callControl("clearGroupChats", [String(userId), String(numberId), jids], { timeoutMs: 30000 + n * 5000 });
+}
+
 async function groupMemberJids(userId, numberId, jid) {
   return queue.callControl("groupMemberJids", [String(userId), String(numberId), jid], { timeoutMs: 30000 });
 }
@@ -153,7 +159,7 @@ async function status() {
 module.exports = {
   startSession, requestPairingCode, getSession, listSessions, listAllSessions, deleteSession,
   sendText, sendImage, msgStats,
-  createGroup, getInviteLink, revokeInvite, listGroups, leaveGroup, getGroupMetadata, setGroupDescription, groupMemberJids, groupSizes, checkGroups, getGroupPicture,
+  createGroup, getInviteLink, revokeInvite, listGroups, leaveGroup, getGroupMetadata, setGroupDescription, clearGroupChats, groupMemberJids, groupSizes, checkGroups, getGroupPicture,
   restoreSessions, closeAll, status,
   jidFromPhone, normalizePhone,
 };

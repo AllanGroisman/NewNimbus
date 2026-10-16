@@ -22,6 +22,7 @@ const calls = {
   groupSizes: [],
   checkGroups: [],
   setGroupDescription: [],
+  clearGroupChats: [],
 };
 
 // Gancho de falha: quando setado, sendText lança com esta mensagem. Serve pros
@@ -195,6 +196,15 @@ const mock = {
   async groupSizes(userId, numberId, jids) {
     calls.groupSizes.push({ userId, numberId, jids });
     return (jids || []).filter(j => groupMembers.has(j)).map(jid => ({ jid, members: groupMembers.get(jid).length }));
+  },
+  // Limpeza automática (task 13). Espelha local.js:clearGroupChats — o
+  // ensureConnected lança antes; cada grupo volta "cleared".
+  async clearGroupChats(userId, numberId, jids) {
+    calls.clearGroupChats.push({ userId, numberId, jids });
+    const s = fakeSessions.get(`${userId}::${numberId}`);
+    if (!s) throw new Error("Sessão não encontrada — adicione o número primeiro.");
+    if (s.status !== "connected") throw new Error(`Sessão não está conectada (status: ${s.status}).`);
+    return (jids || []).map(jid => ({ jid, status: "cleared" }));
   },
   // Espelha local.js:checkGroups — o ensureConnected lança antes de perguntar.
   async checkGroups(userId, numberId, jids) {

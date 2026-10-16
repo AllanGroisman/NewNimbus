@@ -528,6 +528,16 @@ export async function requestWAPairingCode(id, phone) {
 
 // ─── WhatsApp / grupos ─────────────────────────────────────────────────
 export async function listWAGroups(id)   { return http("GET",  `/api/whatsapp/sessions/${id}/groups`); }
+// Limpeza automática das conversas de grupo, por número (task 13).
+// [{ numberId, enabled, intervalHours, jids, lastRunAt, lastResult }]
+export async function getWACleanups()    { return http("GET", `/api/whatsapp/cleanup`); }
+export async function saveWACleanup(id, { enabled, intervalHours, jids }) {
+  return http("PUT", `/api/whatsapp/sessions/${id}/cleanup`, { enabled, intervalHours, jids });
+}
+// Um grupo por vez com pausa no worker: o timeout cresce com a lista.
+export async function runWACleanup(id, count = 1) {
+  return http("POST", `/api/whatsapp/sessions/${id}/cleanup/run`, undefined, { timeoutMs: 40_000 + count * 5_000 });
+}
 // A miniatura da foto do grupo — { url } ou { url: null } quando não tem foto.
 export async function getWAGroupPicture(id, jid) {
   return http("GET", `/api/whatsapp/sessions/${id}/groups/${encodeURIComponent(jid)}/picture`);
