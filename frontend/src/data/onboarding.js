@@ -66,7 +66,7 @@ export const TOURS = {
     description: "Entra em cada aba e mostra pra que serve cada parte dela.",
     steps: [
       // ── Visão geral
-      { tab: "overview", anchor: "tab-overview", title: "Visão geral", text: "O resumo da campanha, pra bater o olho e ver se está rodando: envios de hoje e da semana, quantos produtos esperam na fila, a hora do último envio e os últimos produtos que foram pros grupos. Não se configura nada aqui." },
+      { tab: "overview", anchor: "tab-overview", title: "Visão geral", text: "O resumo da campanha, pra bater o olho e ver se está rodando: envios de hoje, quantos produtos esperam na fila e a hora do último envio. Embaixo, o desempenho dela no período que você escolher — ofertas enviadas, entradas e saídas dos grupos e as vendas — comparado com o período anterior. Não se configura nada aqui." },
 
       // ── Gerenciar
       { tab: "manage", anchor: "tab-manage", title: "Gerenciar", text: "O nome da campanha, as lojas que ela aceita, a espera pra repetir um produto já enviado e os avisos da campanha. No repasse, também a aprovação automática e o repasse da mensagem original. O que você mudar aqui só passa a valer depois de clicar em Salvar." },

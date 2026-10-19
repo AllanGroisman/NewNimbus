@@ -1,25 +1,24 @@
 // Contas puras da aba Grupos (pages/Grupos.jsx): períodos e textos. Moram fora
 // do componente pra serem testáveis sem renderizar nada.
-import { hojeBR, somaDias, formatInt } from "./desempenho";
+import { formatInt } from "./desempenho";
+import { resolvePeriodo } from "./periodos";
 
 // Diferente do Desempenho, aqui o dado é do próprio sistema e vale na hora: os
 // períodos terminam HOJE (o do Desempenho termina ontem, porque o ML só fecha o
 // dia seguinte).
-export const PERIODOS_GRUPOS = [
-  { id: "hoje", label: "Hoje" },
-  { id: "7d", label: "7 dias" },
-  { id: "30d", label: "30 dias" },
-  { id: "90d", label: "90 dias" },
-];
+export const PRESETS_GRUPOS = ["hoje", "7d", "30d", "90d"];
 
-export const PERIODO_GRUPOS_PADRAO = "7d";
+export const PERIODO_GRUPOS_PADRAO = { id: "7d" };
 
-const DIAS = { "7d": 7, "30d": 30, "90d": 90 };
+// O mais antigo que o backend aceita (group-stats/stats.js MAX_DIAS).
+export const MAX_DIAS_GRUPOS = 180;
 
-export function periodoGrupos(id, now = new Date()) {
-  const hoje = hojeBR(now);
-  const n = DIAS[id];
-  return n ? { from: somaDias(hoje, -(n - 1)), to: hoje } : { from: hoje, to: hoje };
+// Período ({ id } ou { id: "custom", from, to }) → { from, to } terminando hoje.
+// Id desconhecido cai em hoje.
+export function periodoGrupos(p, now = new Date()) {
+  const periodo = typeof p === "string" ? { id: p } : p;
+  const r = resolvePeriodo(periodo, { terminaHoje: true, now }) || resolvePeriodo({ id: "hoje" }, { terminaHoje: true, now });
+  return { from: r.from, to: r.to };
 }
 
 // Linha 0 = segunda (é como o backend manda a grade de horários).

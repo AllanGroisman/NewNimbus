@@ -148,7 +148,7 @@ const FORMAT_BUTTONS = [
 ];
 import Badge from "./ui/Badge";
 import StatCard from "./ui/StatCard";
-import MiniBar from "./ui/MiniBar";
+import DesempenhoCampanha from "./campaign/DesempenhoCampanha";
 import Tabs from "./ui/Tabs";
 import Modal from "./ui/Modal";
 import Toggle from "./ui/Toggle";
@@ -419,7 +419,7 @@ const manageSubStyle = { marginTop: 16, paddingTop: 14, borderTop: "0.5px solid 
 const manageSubTitleStyle = { fontSize: 13, fontWeight: 600, marginBottom: 4 };
 const manageLabelStyle = { fontSize: 11, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 };
 
-export default function GroupDashboard({ group, numbers, whatsappGroups = [], affiliateConfigured = true, affiliateStatus = null, storeLocks = {}, onBack, onUpdate, onDelete, onCreateWhatsappGroup, onUpdateWhatsappGroup, onGoToSettings, notificationSettings = null, onGoToAffiliate, onGoToWhatsapp, customTemplates = [], onAddCustomTemplate, onDeleteCustomTemplate, onUpdateCustomTemplate, limits, tourActive = false, isAdmin = false }) {
+export default function GroupDashboard({ group, numbers, whatsappGroups = [], affiliateConfigured = true, affiliateStatus = null, storeLocks = {}, campanhas = [], onBack, onUpdate, onDelete, onCreateWhatsappGroup, onUpdateWhatsappGroup, onGoToSettings, notificationSettings = null, onGoToAffiliate, onGoToWhatsapp, customTemplates = [], onAddCustomTemplate, onDeleteCustomTemplate, onUpdateCustomTemplate, limits, tourActive = false, isAdmin = false }) {
   const [tab, setTab] = useState(() => readSavedTab(group.id, group?.scraping?.kind === "repasse"));
   const touch = useMedia(TOUCH);
   // Guarda a aba atual por campanha pra restaurar no F5.
@@ -1034,8 +1034,6 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     return { name: base, numero: maxN + 1 };
   };
 
-  const primaryCat = groupInfo.categories[0] || getGroupCategories(group)[0];
-  const barColor = primaryCat === "gamer" ? "#378ADD" : PRIMARY;
   const linkedWGs = whatsappGroups.filter(w => groupInfo.whatsappGroupIds.includes(w.id));
   // Líderes do repasse — usados nas duas seções da aba Grupos (o card de
   // líderes e o cruzamento com os grupos de envio), por isso ficam aqui fora.
@@ -1819,9 +1817,8 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
 
       {tab === "overview" && (
         <div>
-          <div data-tour="ov-stats" style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+          <div data-tour="ov-stats" style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
             <StatCard label="Envios hoje" value={group.sentToday} color={PRIMARY_DARK} />
-            <StatCard label="Envios semana" value={group.sentWeek} />
             <StatCard
               label="Na fila"
               value={`${queueTotal} de ${queueLimit}`}
@@ -1836,11 +1833,16 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
               return <StatCard label="Último envio" value={value} sub={sub} />;
             })()}
           </div>
-          <div className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-            <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>
-              <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 12, color: "var(--color-text-secondary)" }}>Envios esta semana</div>
-              <MiniBar data={group.weekData} color={barColor} />
-            </div>
+          {/* Task 14: o mini Desempenho da campanha — período, ofertas, membros
+              e vendas. Substituiu o "Envios semana", que somava pra sempre. */}
+          <DesempenhoCampanha
+            group={group}
+            storeLocks={storeLocks}
+            affiliateStatus={affiliateStatus || {}}
+            campanhas={campanhas}
+            onGoToAffiliate={onGoToAffiliate}
+          />
+          <div>
             {/* No repasse não há busca no catálogo: nem categoria nem filtro de
                 produto valem ali — o card mostra só as lojas que o repasse aceita. */}
             <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: 16 }}>

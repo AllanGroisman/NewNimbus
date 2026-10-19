@@ -190,6 +190,48 @@ describe("desempenhoDoUsuario", () => {
     expect(paginas()).toBe(8);
   });
 
+  it("sem antFrom/antTo não busca anterior (anterior: null)", async () => {
+    const r = await ml.desempenhoDoUsuario(USER, P);
+    expect(r.anterior).toBeNull();
+    const filtros = new Set(fetchMock.mock.calls.map(([u]) => new URL(u).searchParams.get("filter_time_range")));
+    expect(filtros.size).toBe(1);
+  });
+
+  it("com antFrom/antTo devolve o resumo e as etiquetas do período anterior, pelo mesmo cache", async () => {
+    const A = { antFrom: "2026-09-14", antTo: "2026-09-19" };
+    const r = await ml.desempenhoDoUsuario(USER, { ...P, ...A });
+    expect(r.summary.clicks).toBe(20);
+    expect(r.anterior).toMatchObject({ from: "2026-09-14", to: "2026-09-19" });
+    expect(r.anterior.summary.clicks).toBe(20);
+    expect(r.anterior.tags[0].tag).toBe("minha-tag");
+    const filtros = new Set(fetchMock.mock.calls.map(([u]) => new URL(u).searchParams.get("filter_time_range")));
+    expect(filtros).toContain("2026-09-14T00:00:00.000-03:00--2026-09-20T00:00:00.000-03:00");
+
+    // A seta ‹ da tela pede depois o anterior como período atual: já está no cache.
+    const chamadas = fetchMock.mock.calls.length;
+    const seta = await ml.desempenhoDoUsuario(USER, { from: A.antFrom, to: A.antTo });
+    expect(seta.cached).toBe(true);
+    expect(fetchMock.mock.calls.length).toBe(chamadas);
+  });
+
+  it("erro no período anterior vira anterior: null, sem derrubar o atual", async () => {
+    const certo = painelFake();
+    fetchMock = vi.fn(async (url) => {
+      const f = new URL(url).searchParams.get("filter_time_range");
+      if (f.startsWith("2026-09-14")) return new Response("", { status: 500 });
+      return certo(url);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const r = await ml.desempenhoDoUsuario(USER, { ...P, antFrom: "2026-09-14", antTo: "2026-09-19" });
+    expect(r.summary.clicks).toBe(20);
+    expect(r.anterior).toBeNull();
+  });
+
+  it("período anterior inválido é ignorado", async () => {
+    const r = await ml.desempenhoDoUsuario(USER, { ...P, antFrom: "ontem", antTo: "2026-09-19" });
+    expect(r.anterior).toBeNull();
+  });
+
   it("cache de 15 min; o Atualizar fura, mas no máximo uma vez por minuto", async () => {
     const t0 = 1_790_000_000_000;
     await ml.desempenhoDoUsuario(USER, { ...P, now: t0 });

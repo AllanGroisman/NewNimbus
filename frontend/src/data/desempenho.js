@@ -1,50 +1,15 @@
 // Contas puras da tela Desempenho (pages/Desempenho.jsx): períodos e formatos.
-// Moram fora do componente pra serem testáveis sem renderizar nada.
-import { TZ_BR } from "./constants";
+// Moram fora do componente pra serem testáveis sem renderizar nada. As contas
+// de período em si estão em ./periodos (são as mesmas da campanha e da aba Grupos).
+import { resolvePeriodo } from "./periodos";
 
-// "AAAA-MM-DD" do dia de hoje em Brasília — o mesmo relógio do painel do ML.
-export function hojeBR(now = new Date()) {
-  // en-CA formata como AAAA-MM-DD.
-  return now.toLocaleDateString("en-CA", { timeZone: TZ_BR });
-}
+export { hojeBR, somaDias } from "./periodos";
 
-export function somaDias(dia, n) {
-  const d = new Date(`${dia}T12:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
-}
-
-export const PERIODOS = [
-  { id: "7d", label: "7 dias" },
-  { id: "30d", label: "30 dias" },
-  { id: "90d", label: "90 dias" },
-  { id: "mes", label: "Este mês" },
-  { id: "mes-passado", label: "Mês passado" },
-];
-
-export const PERIODO_PADRAO = "30d";
-
-// Período → { from, to }, datas inclusivas. Os "últimos N dias" terminam ONTEM:
-// o painel do ML só fecha o dia seguinte, e é assim que ele mesmo conta (o
-// "últimos 7 dias" de 29/09 é 22/09 a 28/09).
+// Preset → { from, to }, datas inclusivas, terminando ONTEM (o painel do ML só
+// fecha o dia seguinte). Id desconhecido cai nos 30 dias.
 export function periodo(id, now = new Date()) {
-  const hoje = hojeBR(now);
-  const ontem = somaDias(hoje, -1);
-  const [ano, mes] = hoje.split("-").map(Number);
-  const inicioMes = `${hoje.slice(0, 8)}01`;
-  switch (id) {
-    case "7d": return { from: somaDias(hoje, -7), to: ontem };
-    case "90d": return { from: somaDias(hoje, -90), to: ontem };
-    // No dia 1º "ontem" é do mês passado: o período vira só o dia de hoje.
-    case "mes": return { from: inicioMes, to: ontem < inicioMes ? hoje : ontem };
-    case "mes-passado": {
-      const a = mes === 1 ? ano - 1 : ano;
-      const m = mes === 1 ? 12 : mes - 1;
-      return { from: `${a}-${String(m).padStart(2, "0")}-01`, to: somaDias(inicioMes, -1) };
-    }
-    case "30d":
-    default: return { from: somaDias(hoje, -30), to: ontem };
-  }
+  const r = resolvePeriodo({ id }, { now }) || resolvePeriodo({ id: "30d" }, { now });
+  return { from: r.from, to: r.to };
 }
 
 export function formatBRL(v) {
@@ -65,4 +30,14 @@ export function conversao(orders, clicks) {
 export function diaCurto(dia) {
   const [, m, d] = String(dia).split("-");
   return d && m ? `${d}/${m}` : String(dia);
+}
+
+// Com qual etiqueta do ML os links da campanha saem: a escolhida
+// (`scraping.mlTag`) se ela ainda é da conta, senão a padrão. Espelho do
+// affiliate.etiquetaMLEfetiva do backend — lista vazia é config antiga, sem
+// como conferir, e a escolhida passa.
+export function etiquetaEfetiva(scraping, { mlTags = [], mlDefaultTag = null } = {}) {
+  const t = typeof scraping?.mlTag === "string" ? scraping.mlTag.trim() : "";
+  if (t && (!mlTags.length || mlTags.some(x => x.tag === t))) return t;
+  return mlDefaultTag || null;
 }

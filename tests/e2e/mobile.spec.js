@@ -182,8 +182,17 @@ test.describe("Celular", () => {
     for (let i = 0; i < total; i++) {
       const nome = (await abas.nth(i).getAttribute("data-tour")).replace("tab-", "");
       await abas.nth(i).click();
+      // A visão geral busca o mini desempenho depois que a campanha nova é salva
+      // (ela tenta de novo sozinha enquanto o save não chega).
+      if (nome === "overview") await expect(page.getByText("Ofertas enviadas")).toBeVisible({ timeout: 15000 });
       await conferirTela(page, `campanha-${nome}`);
     }
+
+    // As datas livres do período da visão geral também cabem (e com fonte de 16px).
+    await page.locator('[data-tour="tab-overview"]').click();
+    await page.getByRole("button", { name: "Escolher datas" }).click();
+    await expect(page.locator('input[type="date"]').first()).toBeVisible();
+    await conferirTela(page, "campanha-overview-datas");
 
     // Modal com formulário: no toque ele não foca o campo (o teclado abriria
     // por cima), e a caixa cabe na tela.

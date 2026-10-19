@@ -125,6 +125,32 @@ async function enviosPorDia(userId, jids, desde, ate) {
   return rows.map(r => ({ dia: r.dia, jid: r.groupJid, envios: Number(r.envios) }));
 }
 
+// Ofertas e mensagens de UMA campanha por dia (a visão geral dela). Filtra pelo
+// campaignId, não pelos grupos: grupo que recebe de duas campanhas não mistura
+// as duas. Um envio vira uma linha por grupo, então ofertas = produtos distintos
+// do dia e mensagens = oferta × grupo.
+async function enviosDaCampanha(userId, campaignId, desde, ate) {
+  const rows = await prisma().$queryRaw`
+    SELECT to_char((("at" AT TIME ZONE 'UTC') AT TIME ZONE 'America/Sao_Paulo'), 'YYYY-MM-DD') AS dia,
+           COUNT(DISTINCT COALESCE("productName", ''))::int AS produtos,
+           COUNT(*)::int AS mensagens
+      FROM "group_send_events"
+     WHERE "userId" = ${userId} AND "campaignId" = ${campaignId}
+       AND "at" >= ${desde} AND "at" < ${ate}
+     GROUP BY 1`;
+  return rows.map(r => ({ dia: r.dia, produtos: Number(r.produtos), mensagens: Number(r.mensagens) }));
+}
+
+// Dia do primeiro envio registrado da campanha — antes dele "zero envio" pode ser
+// só falta de registro (a tabela é de 06/10/2026 e guarda 180 dias).
+async function enviosDesde(userId, campaignId) {
+  const [r] = await prisma().$queryRaw`
+    SELECT to_char(MIN((("at" AT TIME ZONE 'UTC') AT TIME ZONE 'America/Sao_Paulo')::date), 'YYYY-MM-DD') AS dia
+      FROM "group_send_events"
+     WHERE "userId" = ${userId} AND "campaignId" = ${campaignId}`;
+  return r?.dia || null;
+}
+
 // Registros diários de tamanho a partir de `desdeDia` (inclusive), em ordem.
 async function registros(userId, jids, desdeDia) {
   const rows = await prisma().$queryRaw`
@@ -366,4 +392,85 @@ async function detalhe(userId, jid, query = {}, { now = new Date() } = {}) {
   };
 }
 
-module.exports = { overview, detalhe, destinos, periodoValido, MAX_DIAS };
+// O período anterior pedido pela tela (variação), ou null se ele não serve. É
+// acessório: inválido não derruba a resposta, só some a variação.
+function anteriorValido({ antFrom, antTo } = {}, now) {
+  if (!antFrom || !antTo) return null;
+  try {
+    const { from, to } = periodoValido({ from: antFrom, to: antTo }, now);
+    return { from, to };
+  } catch {
+    return null;
+  }
+}
+
+const somaCampos = (linhas, campos) => {
+  const out = Object.fromEntries(campos.map(c => [c, 0]));
+  for (const l of linhas) for (const c of campos) out[c] += l[c] || 0;
+  return out;
+};
+
+// O mini desempenho da visão geral de uma campanha: ofertas enviadas e membros
+// dos grupos de destino no período, por dia, e os totais do período anterior.
+// As vendas (Shopee/ML) a tela pede às rotas de afiliado, que têm cache próprio.
+async function campanha(userId, campaignId, query = {}, { now = new Date() } = {}) {
+  const id = String(campaignId ?? "");
+  const naoAchou = () => new AppError("Campanha não encontrada.", { status: 404 });
+  if (!/^\d{1,18}$/.test(id)) throw naoAchou();
+  const { from, to } = periodoValido(query, now);
+  const existe = await prisma().group.findFirst({ where: { id: BigInt(id), userId }, select: { id: true } });
+  if (!existe) throw naoAchou();
+
+  const cid = BigInt(id);
+  const ant = anteriorValido(query, now);
+  const { desde, ate } = calc.limitesBR(from, to);
+  const limAnt = ant ? calc.limitesBR(ant.from, ant.to) : null;
+
+  const [visao, envs, envsAnt, primeiro] = await Promise.all([
+    overview(userId, { from, to, campanha: id }, { now }),
+    enviosDaCampanha(userId, cid, desde, ate),
+    limAnt ? enviosDaCampanha(userId, cid, limAnt.desde, limAnt.ate) : [],
+    enviosDesde(userId, cid),
+  ]);
+  const jids = visao.grupos.map(g => g.jid);
+
+  // Membros do anterior: só com coleta desde o começo dele (senão o "anterior"
+  // seria menor só por falta de dado). O mesmo vale pros envios.
+  const membrosAnt = ant && jids.length && visao.coletandoDesde && ant.from >= visao.coletandoDesde
+    ? somaCampos((await eventosPorDia(userId, jids, limAnt.desde, limAnt.ate))
+      .map(e => ({ entradas: e.link + e.adicionados + e.outras, saidas: e.saiu + e.removidos })), ["entradas", "saidas"])
+    : null;
+
+  const enviosPorData = new Map(envs.map(e => [e.dia, e]));
+  const porDia = visao.porDia.map(d => {
+    const e = enviosPorData.get(d.date);
+    const envio = { produtos: e ? e.produtos : 0, mensagens: e ? e.mensagens : 0 };
+    return d.semDados
+      ? { date: d.date, ...envio, semDados: true }
+      : { date: d.date, ...envio, entradas: d.entradas, saidas: d.saidas, saldo: d.saldo };
+  });
+
+  return {
+    from,
+    to,
+    coletandoDesde: visao.coletandoDesde,
+    enviosDesde: primeiro,
+    envios: somaCampos(envs, ["produtos", "mensagens"]),
+    membros: {
+      grupos: visao.totais.grupos,
+      membros: visao.totais.membros,
+      entradas: visao.totais.entradas,
+      saidas: visao.totais.saidas,
+      saldo: visao.totais.saldo,
+    },
+    porDia,
+    anterior: ant ? {
+      from: ant.from,
+      to: ant.to,
+      envios: primeiro && ant.from >= primeiro ? somaCampos(envsAnt, ["produtos", "mensagens"]) : null,
+      membros: membrosAnt ? { ...membrosAnt, saldo: membrosAnt.entradas - membrosAnt.saidas } : null,
+    } : null,
+  };
+}
+
+module.exports = { overview, detalhe, campanha, destinos, periodoValido, MAX_DIAS };

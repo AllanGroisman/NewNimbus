@@ -1,6 +1,8 @@
 import StatCard from "../ui/StatCard";
 import { Card, Linha, PorDia } from "./comum";
-import { formatBRL, formatInt, conversao } from "../../data/desempenho";
+import { formatBRL, formatInt, conversao, etiquetaEfetiva } from "../../data/desempenho";
+import { variacao } from "../../data/periodos";
+import { groupUsesML } from "../../data/constants";
 
 // Célula numérica das tabelas: vão à esquerda e sem quebrar — no celular o
 // "R$ 1.234,56" quebrava em duas linhas e as colunas encostavam umas nas outras.
@@ -8,7 +10,9 @@ import { formatBRL, formatInt, conversao } from "../../data/desempenho";
 const celulaNum = { paddingLeft: 12, whiteSpace: "nowrap" };
 
 // Números de afiliado do Mercado Livre (resposta de /api/affiliate/ml/desempenho).
-// A casca (pages/Desempenho.jsx) cuida de período, carregamento e erro.
+// A casca (pages/Desempenho.jsx) cuida de período, carregamento e erro. Cada
+// card compara com `dados.anterior` (o período anterior); sem ele, o card de
+// cliques ainda usa a variação que o próprio ML manda.
 
 const SERIES = [
   { id: "clicks", label: "Cliques", formata: formatInt },
@@ -16,31 +20,66 @@ const SERIES = [
   { id: "earnings", label: "Ganhos", formata: formatBRL },
 ];
 
-function variacaoTexto(v) {
+// A variação de cliques que o painel do ML manda (vs. o período anterior dele),
+// no formato de data/periodos.variacao.
+function variacaoDoML(v) {
   if (!v || !v.pct) return null;
-  const seta = v.direction === "decrease" ? "↓" : v.direction === "increase" ? "↑" : "";
-  return `${seta} ${formatInt(Math.abs(v.pct))}% vs. período anterior`.trim();
+  const direcao = v.direction === "decrease" ? "desce" : v.direction === "increase" ? "sobe" : null;
+  return direcao ? { pct: Math.abs(v.pct), direcao } : null;
 }
 
-export default function DesempenhoML({ dados }) {
+// Campanhas cujos links saem com a etiqueta (a escolhida nela, ou a padrão).
+function campanhasDaEtiqueta(tag, campanhas, opcoes) {
+  return campanhas.filter(c => groupUsesML(c) && etiquetaEfetiva(c.scraping, opcoes) === tag);
+}
+
+// "Campanhas: A, B" embaixo da etiqueta — o ML separa o ganho por etiqueta, e
+// é por ela que dá pra saber de qual campanha veio. Nome vira link pra campanha.
+function CampanhasDaEtiqueta({ lista, onOpenCampanha }) {
+  return (
+    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2, lineHeight: 1.5 }}>
+      {lista.length === 0 ? "Nenhuma campanha" : (
+        <>
+          {lista.length === 1 ? "Campanha: " : "Campanhas: "}
+          {lista.map((c, i) => (
+            <span key={c.id}>
+              {i > 0 && ", "}
+              {onOpenCampanha
+                ? <button type="button" onClick={() => onOpenCampanha(c.id)} style={linkCampanha}>{c.name}</button>
+                : c.name}
+            </span>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+const linkCampanha = { background: "transparent", border: "none", padding: 0, color: "inherit", textDecoration: "underline", fontSize: "inherit", fontFamily: "inherit", cursor: "pointer" };
+
+export default function DesempenhoML({ dados, onDia, campanhas = [], onOpenCampanha, mlTags = [], mlDefaultTag = null }) {
   const s = dados.summary;
+  const a = dados.anterior?.summary || null;
+  const v = (campo) => (a ? variacao(campo(s), campo(a)) : null);
   return (
     <>
       <Linha style={{ marginBottom: 8 }}>
-        <StatCard label="Cliques" value={formatInt(s.clicks)} sub={variacaoTexto(s.clicksVariation)} />
-        <StatCard label="Compradores" value={formatInt(s.buyers)} />
-        <StatCard label="Pedidos" value={formatInt(s.orders)} sub="estimados" />
-        <StatCard label="Produtos" value={formatInt(s.units)} sub="estimados" />
+        <StatCard label="Cliques" value={formatInt(s.clicks)} variacao={a ? v(x => x.clicks) : variacaoDoML(s.clicksVariation)} />
+        <StatCard label="Compradores" value={formatInt(s.buyers)} variacao={v(x => x.buyers)} />
+        <StatCard label="Pedidos" value={formatInt(s.orders)} sub="estimados" variacao={v(x => x.orders)} />
+        <StatCard label="Produtos" value={formatInt(s.units)} sub="estimados" variacao={v(x => x.units)} />
         <StatCard label="Conversão" value={conversao(s.orders, s.clicks)} sub="pedidos ÷ cliques" />
       </Linha>
       <Linha style={{ marginBottom: 12 }}>
-        <StatCard label="Ganho estimado" value={formatBRL(s.earnings.total)} color="var(--success-text)" />
-        <StatCard label="Vendas estimadas" value={formatBRL(s.estimatedSales)} />
-        <StatCard label="Vendas brutas" value={formatBRL(s.grossSales)} />
+        <StatCard label="Ganho estimado" value={formatBRL(s.earnings.total)} color="var(--success-text)" variacao={v(x => x.earnings.total)} />
+        <StatCard label="Vendas estimadas" value={formatBRL(s.estimatedSales)} variacao={v(x => x.estimatedSales)} />
+        <StatCard label="Vendas brutas" value={formatBRL(s.grossSales)} variacao={v(x => x.grossSales)} />
         <StatCard
           label="Não efetivadas"
           value={formatBRL(s.notEffectiveSales)}
           sub={`${formatInt(s.notEffectiveCount)} ${s.notEffectiveCount === 1 ? "venda" : "vendas"}`}
+          variacao={v(x => x.notEffectiveSales)}
+          menosEhMelhor
         />
       </Linha>
 
@@ -53,7 +92,7 @@ export default function DesempenhoML({ dados }) {
         </div>
       </Card>
 
-      <PorDia dias={dados.days} series={SERIES} />
+      <PorDia dias={dados.days} series={SERIES} onDia={onDia} />
 
       {dados.tags?.length > 0 && (
         <Card>
@@ -71,7 +110,12 @@ export default function DesempenhoML({ dados }) {
               <tbody>
                 {dados.tags.map(t => (
                   <tr key={t.tag} style={{ textAlign: "right", borderTop: "0.5px solid var(--color-border-tertiary)" }}>
-                    <td style={{ textAlign: "left", padding: "6px 0" }}>{t.tag}</td>
+                    <td style={{ textAlign: "left", padding: "6px 0" }}>
+                      {t.tag}
+                      {campanhas.length > 0 && (
+                        <CampanhasDaEtiqueta lista={campanhasDaEtiqueta(t.tag, campanhas, { mlTags, mlDefaultTag })} onOpenCampanha={onOpenCampanha} />
+                      )}
+                    </td>
                     <td style={celulaNum}>{formatInt(t.clicks)}</td>
                     <td style={celulaNum}>{formatInt(t.units)}</td>
                     <td style={celulaNum}>{formatBRL(t.earnings)}</td>

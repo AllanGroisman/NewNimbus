@@ -3,6 +3,7 @@ import StatCard from "../ui/StatCard";
 import Badge from "../ui/Badge";
 import { Card, Linha, PorDia } from "./comum";
 import { formatBRL, formatInt, diaCurto } from "../../data/desempenho";
+import { variacao } from "../../data/periodos";
 
 // Célula numérica das tabelas: vão à esquerda e sem quebrar — no celular o
 // "R$ 1.234,56" quebrava em duas linhas e as colunas encostavam umas nas outras.
@@ -12,8 +13,9 @@ const celulaNum = { paddingLeft: 12, whiteSpace: "nowrap" };
 // Números de afiliado da Shopee (resposta de /api/affiliate/shopee/desempenho).
 // A casca (pages/Desempenho.jsx) cuida de período, carregamento e erro.
 //
-// A API da Shopee não tem cliques — só as vendas, uma por item, com o grupo que
-// mandou o link (sub_id). Por isso aqui não há conversão, e há a lista de vendas.
+// A API da Shopee não tem cliques — só as vendas, uma por item, com a campanha
+// que mandou o link (sub_id). Por isso aqui não há conversão, e há a lista de
+// vendas. Os cards comparam com `dados.anterior` (o período anterior).
 
 const SERIES = [
   { id: "orders", label: "Pedidos", formata: formatInt },
@@ -30,7 +32,8 @@ const STATUS = {
 const POR_VEZ = 20;
 const secundario = { fontSize: 11, color: "var(--color-text-secondary)" };
 
-function ListaVendas({ vendas, total }) {
+// Também a lista da visão geral de uma campanha (campaign/DesempenhoCampanha).
+export function ListaVendas({ vendas, total }) {
   const [limite, setLimite] = useState(POR_VEZ);
   if (!vendas.length) return <div style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>Nenhuma venda no período.</div>;
   return (
@@ -75,16 +78,22 @@ function ListaVendas({ vendas, total }) {
   );
 }
 
-export default function DesempenhoShopee({ dados }) {
+const linkCampanha = { background: "transparent", border: "none", padding: 0, color: "inherit", textDecoration: "underline", fontSize: "inherit", fontFamily: "inherit", cursor: "pointer", textAlign: "left" };
+
+export default function DesempenhoShopee({ dados, onDia, campanhas = [], onOpenCampanha }) {
   const s = dados.summary;
+  const a = dados.anterior?.summary || null;
+  const v = (campo) => (a ? variacao(campo(s), campo(a)) : null);
   const grupos = dados.groups || [];
   const soSemGrupo = grupos.length > 0 && grupos.every(g => !g.groupId);
+  // Só campanha que ainda existe vira link (a apagada sai como "Campanha apagada").
+  const existe = new Set(campanhas.map(c => String(c.id)));
   return (
     <>
       <Linha style={{ marginBottom: 8 }}>
-        <StatCard label="Pedidos" value={formatInt(s.orders)} />
-        <StatCard label="Produtos" value={formatInt(s.units)} />
-        <StatCard label="Vendas" value={formatBRL(s.sales)} />
+        <StatCard label="Pedidos" value={formatInt(s.orders)} variacao={v(x => x.orders)} />
+        <StatCard label="Produtos" value={formatInt(s.units)} variacao={v(x => x.units)} />
+        <StatCard label="Vendas" value={formatBRL(s.sales)} variacao={v(x => x.sales)} />
       </Linha>
       <Linha style={{ marginBottom: 8 }}>
         <StatCard
@@ -92,11 +101,14 @@ export default function DesempenhoShopee({ dados }) {
           value={formatBRL(s.commission.total)}
           sub={`${formatBRL(s.commission.concluida)} concluída · ${formatBRL(s.commission.pendente)} pendente`}
           color="var(--success-text)"
+          variacao={v(x => x.commission.total)}
         />
         <StatCard
           label="Canceladas"
           value={formatInt(s.cancelled.orders)}
           sub={s.cancelled.commission > 0 ? `${formatBRL(s.cancelled.commission)} de comissão perdida` : s.cancelled.orders === 1 ? "pedido" : "pedidos"}
+          variacao={v(x => x.cancelled.orders)}
+          menosEhMelhor
         />
         {s.mcnFee > 0 && <StatCard label="Taxa da agência (MCN)" value={formatBRL(s.mcnFee)} sub="descontada da comissão" />}
       </Linha>
@@ -104,16 +116,16 @@ export default function DesempenhoShopee({ dados }) {
         A Shopee não informa cliques pela API — eles só aparecem no painel de afiliados dela.
       </div>
 
-      <PorDia dias={dados.days} series={SERIES} />
+      <PorDia dias={dados.days} series={SERIES} onDia={onDia} />
 
       {grupos.length > 0 && (
         <Card>
-          <div style={{ fontWeight: 500, marginBottom: 10 }}>Por grupo</div>
+          <div style={{ fontWeight: 500, marginBottom: 10 }}>Por campanha</div>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead>
                 <tr style={{ color: "var(--color-text-secondary)", fontSize: 11, textAlign: "right" }}>
-                  <th style={{ textAlign: "left", fontWeight: 400, paddingBottom: 6 }}>Grupo</th>
+                  <th style={{ textAlign: "left", fontWeight: 400, paddingBottom: 6 }}>Campanha</th>
                   <th style={{ ...celulaNum, fontWeight: 400 }}>Pedidos</th>
                   <th style={{ ...celulaNum, fontWeight: 400 }}>Vendas</th>
                   <th style={{ ...celulaNum, fontWeight: 400 }}>Comissão</th>
@@ -122,7 +134,11 @@ export default function DesempenhoShopee({ dados }) {
               <tbody>
                 {grupos.map(g => (
                   <tr key={g.groupId || "sem-grupo"} style={{ textAlign: "right", borderTop: "0.5px solid var(--color-border-tertiary)" }}>
-                    <td style={{ textAlign: "left", padding: "6px 0", color: g.groupId ? "inherit" : "var(--color-text-secondary)" }}>{g.name}</td>
+                    <td style={{ textAlign: "left", padding: "6px 0", color: g.groupId && existe.has(g.groupId) ? "inherit" : "var(--color-text-secondary)" }}>
+                      {g.groupId && existe.has(g.groupId) && onOpenCampanha
+                        ? <button type="button" onClick={() => onOpenCampanha(Number(g.groupId))} style={linkCampanha}>{g.name}</button>
+                        : g.name}
+                    </td>
                     <td style={celulaNum}>{formatInt(g.orders)}</td>
                     <td style={celulaNum}>{formatBRL(g.sales)}</td>
                     <td style={celulaNum}>{formatBRL(g.commission)}</td>
@@ -133,7 +149,7 @@ export default function DesempenhoShopee({ dados }) {
           </div>
           {soSemGrupo && (
             <div style={{ ...secundario, marginTop: 10, lineHeight: 1.6 }}>
-              Os links da Shopee agora saem marcados com o grupo que os envia. As vendas desses links novos aparecem aqui separadas por grupo; as de links antigos ficam em "Sem grupo".
+              Os links da Shopee agora saem marcados com a campanha que os envia. As vendas desses links novos aparecem aqui separadas por campanha; as de links antigos ficam em "Sem campanha".
             </div>
           )}
         </Card>

@@ -8,8 +8,9 @@ import { formatSaldo } from "../../data/grupos";
 // BarrasPorDia não serve aqui porque não desenha valor negativo.
 //
 // `dias` = [{ date, entradas, saidas, saldo } | { date, semDados: true }]. Dia sem
-// dado (antes de a coleta começar) fica só com o traço do eixo, apagado.
-export default function BarrasSaldo({ dias, altura = 110 }) {
+// dado (antes de a coleta começar) fica só com o traço do eixo, apagado. Com
+// `onDia`, o dia tocado ganha o "Ver só DD/MM" (como no BarrasPorDia).
+export default function BarrasSaldo({ dias, altura = 110, onDia }) {
   const [sel, setSel] = useState(null);
   const metade = altura / 2;
   const max = Math.max(1, ...dias.map(d => Math.max(d.entradas || 0, d.saidas || 0)));
@@ -19,18 +20,27 @@ export default function BarrasSaldo({ dias, altura = 110 }) {
   const alt = (v) => (v > 0 ? Math.max((v / max) * (metade - 2), 3) : 0);
 
   return (
-    <div>
-      <div aria-live="polite" style={{ fontSize: 11, color: "var(--color-text-secondary)", minHeight: 16, marginBottom: 4 }}>
+    <div onMouseLeave={() => setSel(null)}>
+      <div aria-live="polite" style={{ fontSize: 11, color: "var(--color-text-secondary)", minHeight: 16, marginBottom: 4, display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
         {escolhido && (
-          <>
+          <span>
             <strong style={{ color: "var(--color-text-primary)" }}>{diaCurto(escolhido.date)}</strong>:{" "}
             {escolhido.semDados
               ? "sem coleta nesse dia"
               : <>{formatInt(escolhido.entradas)} entrada(s) · {formatInt(escolhido.saidas)} saída(s) · saldo {formatSaldo(escolhido.saldo)}</>}
-          </>
+          </span>
+        )}
+        {escolhido && onDia && dias.length > 1 && (
+          <button
+            type="button"
+            onClick={() => onDia(escolhido.date)}
+            style={{ background: "transparent", border: "none", padding: 0, color: PRIMARY, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}
+          >
+            Ver só {diaCurto(escolhido.date)} →
+          </button>
         )}
       </div>
-      <div onMouseLeave={() => setSel(null)} style={{ display: "flex", gap, height: altura }}>
+      <div style={{ display: "flex", gap, height: altura }}>
         {dias.map((d, i) => (
           <div
             key={d.date}

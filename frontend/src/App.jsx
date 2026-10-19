@@ -862,6 +862,11 @@ export default function App() {
   // essa closure ainda apontaria pro valor de antes, sobrescrevendo o resultado do save.
   const handleSelectGroup = g => requestNavigation(() => { setSelectedGroup(groupsRef.current.find(x => x.id === g.id)); setPage("group"); maybeStartTour("campaign"); });
   const handleBack = () => requestNavigation(() => { setSelectedGroup(null); setPage("dashboard"); });
+  // Abre a campanha pelo id (Desempenho e aba Grupos linkam pra ela).
+  const abrirCampanha = (id) => {
+    const g = groups.find(x => String(x.id) === String(id));
+    if (g) handleSelectGroup(g);
+  };
   const handleUpdate = (gid, updates) => {
     setGroups(gs => gs.map(g => g.id === gid ? { ...g, ...updates } : g));
     setSelectedGroup(g => g ? { ...g, ...updates } : g);
@@ -1149,21 +1154,23 @@ export default function App() {
     "amazon": lockedStore("amazon") || <PageAffiliateAmazon onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
     "shopee": lockedStore("shopee") || <PageAffiliateShopee onAffiliateChange={applyAffiliateStatus} onOpenTutorial={openTutorial} />,
     // Uma aba por loja liberada (loja trancada não tem o que medir); abre na
-    // Shopee só quando é ela, e não o ML, que tem afiliado configurado.
+    // Shopee só quando é ela, e não o ML, que tem afiliado configurado. A linha
+    // de uma campanha (Shopee) e o nome dela sob a etiqueta (ML) abrem a campanha.
     desempenho: lockedStore("ml") && lockedStore("shopee") ? lockedStore("ml") : (
       <PageDesempenho
         lojas={["ml", "shopee"].filter(id => !lockedStore(id))}
         lojaInicial={!affiliateStatus.ml && affiliateStatus.shopee ? "shopee" : "ml"}
         onGoToML={() => requestNavigation(() => setPage("mercado-livre"))}
         onGoToShopee={() => requestNavigation(() => setPage("shopee"))}
+        campanhas={groups}
+        onOpenCampanha={abrirCampanha}
+        mlTags={affiliateStatus.mlTags}
+        mlDefaultTag={affiliateStatus.mlDefaultTag}
       />
     ),
     // Estatísticas dos grupos que recebem campanha. O nome de campanha no detalhe
     // de um grupo abre a campanha.
-    grupos: <PageGrupos onOpenCampanha={(id) => {
-      const g = groups.find(x => String(x.id) === String(id));
-      if (g) handleSelectGroup(g);
-    }} />,
+    grupos: <PageGrupos onOpenCampanha={abrirCampanha} />,
     "admin-cupons":   user?.role === "admin" ? <PageAdminCupons /> : fallbackPage,
     "admin-scraper":  user?.role === "admin" ? <PageAdminScraper /> : fallbackPage,
     "admin-scrap-tester": user?.role === "admin" ? <PageAdminScrapTester /> : fallbackPage,
@@ -1326,6 +1333,7 @@ export default function App() {
               affiliateConfigured={affiliateConfigured}
               affiliateStatus={affiliateStatus}
               storeLocks={storeLocks}
+              campanhas={groups}
               onBack={handleBack}
               onUpdate={handleUpdate}
               onDelete={handleDelete}

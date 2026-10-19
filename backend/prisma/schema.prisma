@@ -383,6 +383,8 @@ model GroupSendEvent {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, groupJid, at])
+  // A visão geral de uma campanha conta os envios dela (stats.enviosDaCampanha).
+  @@index([userId, campaignId, at])
   @@index([at])
   @@map("group_send_events")
 }

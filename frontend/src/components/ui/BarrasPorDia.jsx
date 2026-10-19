@@ -9,7 +9,8 @@ import { diaCurto } from "../../data/desempenho";
 // `dias` = [{ date: "AAAA-MM-DD", value }]; `formata` vira o texto do valor.
 // O valor de um dia aparece acima das barras ao passar o mouse ou tocar na
 // barra — no celular não existe tooltip, e sem isso o gráfico não tinha número.
-export default function BarrasPorDia({ dias, formata = String, color = PRIMARY, height = 90 }) {
+// Com `onDia`, ali mesmo aparece "Ver só DD/MM", que leva a tela pra aquele dia.
+export default function BarrasPorDia({ dias, formata = String, color = PRIMARY, height = 90, onDia }) {
   const [sel, setSel] = useState(null);
   const max = Math.max(...dias.map(d => d.value), 0);
   const passo = Math.max(1, Math.ceil(dias.length / 8));
@@ -17,12 +18,23 @@ export default function BarrasPorDia({ dias, formata = String, color = PRIMARY, 
   // pediam ~360px e estouravam o card no celular.
   const gap = dias.length > 90 ? 0 : dias.length > 60 ? 1 : 2;
   const escolhido = sel != null ? dias[sel] : null;
+  // O mouseLeave mora no card inteiro (e não só nas barras) pro "Ver só" não
+  // sumir no caminho do mouse até ele.
   return (
-    <div>
-      <div aria-live="polite" style={{ fontSize: 11, color: "var(--color-text-secondary)", minHeight: 16, marginBottom: 4 }}>
-        {escolhido && <><strong style={{ color: "var(--color-text-primary)" }}>{diaCurto(escolhido.date)}</strong>: {formata(escolhido.value)}</>}
+    <div onMouseLeave={() => setSel(null)}>
+      <div aria-live="polite" style={{ fontSize: 11, color: "var(--color-text-secondary)", minHeight: 16, marginBottom: 4, display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+        {escolhido && <span><strong style={{ color: "var(--color-text-primary)" }}>{diaCurto(escolhido.date)}</strong>: {formata(escolhido.value)}</span>}
+        {escolhido && onDia && dias.length > 1 && (
+          <button
+            type="button"
+            onClick={() => onDia(escolhido.date)}
+            style={{ background: "transparent", border: "none", padding: 0, color: PRIMARY, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}
+          >
+            Ver só {diaCurto(escolhido.date)} →
+          </button>
+        )}
       </div>
-      <div onMouseLeave={() => setSel(null)} style={{ display: "flex", gap, alignItems: "flex-end", height }}>
+      <div style={{ display: "flex", gap, alignItems: "flex-end", height }}>
         {dias.map((d, i) => (
           <div
             key={d.date}

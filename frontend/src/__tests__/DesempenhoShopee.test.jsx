@@ -1,7 +1,7 @@
 // Conteúdo da aba Shopee da tela Desempenho.
 //
 // O que estes testes protegem: a comissão aparece separada em concluída e
-// pendente, o cancelado fica à parte, as vendas por grupo aparecem (com a dica
+// pendente, o cancelado fica à parte, as vendas por campanha aparecem (com a dica
 // quando nada ainda está marcado), a lista de vendas pagina, e a taxa de MCN só
 // aparece pra quem tem.
 
@@ -34,7 +34,7 @@ function dados(extra = {}) {
     ],
     groups: [
       { groupId: "123", name: "Ofertas Tech", orders: 1, units: 1, sales: 386.18, commission: 11.59 },
-      { groupId: null, name: "Sem grupo", orders: 1, units: 3, sales: 60.52, commission: 1.82 },
+      { groupId: null, name: "Sem campanha", orders: 1, units: 3, sales: 60.52, commission: 1.82 },
     ],
     sales: [
       venda(1, { status: "concluida", name: "Relógio Masculino", qty: 1, amount: 386.18, commission: 11.59, groupId: "123", group: "Ofertas Tech" }),
@@ -62,16 +62,16 @@ describe("DesempenhoShopee", () => {
     expect(screen.getByText("Taxa da agência (MCN)")).toBeInTheDocument();
   });
 
-  it("por grupo: uma linha por grupo; a dica só aparece quando nada ainda veio marcado", () => {
+  it("por campanha: uma linha por campanha; a dica só aparece quando nada ainda veio marcado", () => {
     const { unmount } = render(<DesempenhoShopee dados={dados()} />);
     const tabela = screen.getByRole("table");
     expect(within(tabela).getByText("Ofertas Tech")).toBeInTheDocument();
-    expect(within(tabela).getByText("Sem grupo")).toBeInTheDocument();
-    expect(screen.queryByText(/agora saem marcados com o grupo/)).not.toBeInTheDocument();
+    expect(within(tabela).getByText("Sem campanha")).toBeInTheDocument();
+    expect(screen.queryByText(/agora saem marcados com a campanha/)).not.toBeInTheDocument();
     unmount();
 
-    render(<DesempenhoShopee dados={dados({ groups: [{ groupId: null, name: "Sem grupo", orders: 3, units: 14, sales: 730.75, commission: 21.93 }] })} />);
-    expect(screen.getByText(/agora saem marcados com o grupo/)).toBeInTheDocument();
+    render(<DesempenhoShopee dados={dados({ groups: [{ groupId: null, name: "Sem campanha", orders: 3, units: 14, sales: 730.75, commission: 21.93 }] })} />);
+    expect(screen.getByText(/agora saem marcados com a campanha/)).toBeInTheDocument();
   });
 
   it("vendas: status, quantidade e grupo de cada item", () => {

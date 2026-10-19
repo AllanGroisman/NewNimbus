@@ -115,7 +115,7 @@ export default function PageAdminShopee() {
               Usada em todas as buscas na API da Shopee (catálogo, busca por link, repasse). Os links enviados usam a conta de cada usuário.
             </div>
           </div>
-          <Badge color={sourceColor}>Fonte ativa: {sourceLabel}</Badge>
+          <Badge color={sourceColor} quebra>Fonte ativa: {sourceLabel}</Badge>
         </div>
 
         <div style={{ marginTop: 14, marginBottom: 10 }}>

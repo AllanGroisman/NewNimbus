@@ -17,6 +17,14 @@ vi.mock("../data/api", () => ({
 import PageDesempenho from "../pages/Desempenho.jsx";
 import { getMLDesempenho, getShopeeDesempenho } from "../data/api";
 import { periodo } from "../data/desempenho";
+import { periodoAnterior, hojeBR, somaDias } from "../data/periodos";
+
+// O que a tela manda pro backend num preset: o período e o anterior (variação).
+function pedido(id, { refresh = false } = {}) {
+  const p = periodo(id);
+  const ant = periodoAnterior({ id, ...p });
+  return [p.from, p.to, { refresh, antFrom: ant.from, antTo: ant.to }];
+}
 
 function resposta({ clicks = 20, earnings = 18.5, days } = {}) {
   return {
@@ -76,12 +84,12 @@ describe("PageDesempenho", () => {
     getMLDesempenho.mockResolvedValue(resposta());
     render(<PageDesempenho />);
 
-    const { from, to } = periodo("30d");
-    expect(getMLDesempenho).toHaveBeenCalledWith(from, to, { refresh: false });
+    expect(getMLDesempenho).toHaveBeenCalledWith(...pedido("30d"));
 
     expect(await screen.findByText("Compradores")).toBeInTheDocument();
     expect(screen.getAllByText("20")).toHaveLength(2);               // card de cliques + linha da etiqueta
-    expect(screen.getByText(/↑ 100% vs\. período anterior/)).toBeInTheDocument();
+    // Sem `anterior` na resposta, o card de cliques usa a variação do próprio ML.
+    expect(screen.getByText(/↑ 100%/)).toBeInTheDocument();
     expect(screen.getByText("20%")).toBeInTheDocument();          // 4 pedidos ÷ 20 cliques
     expect(screen.getAllByText(/R\$\s18,50/).length).toBeGreaterThan(0);
     expect(screen.getByText("Parceria do vendedor")).toBeInTheDocument();
@@ -94,8 +102,7 @@ describe("PageDesempenho", () => {
     await screen.findByText("Compradores");
 
     fireEvent.click(screen.getByRole("button", { name: "7 dias" }));
-    const { from, to } = periodo("7d");
-    await waitFor(() => expect(getMLDesempenho).toHaveBeenLastCalledWith(from, to, { refresh: false }));
+    await waitFor(() => expect(getMLDesempenho).toHaveBeenLastCalledWith(...pedido("7d")));
   });
 
   it("Atualizar pede ao backend pra furar o cache", async () => {
@@ -104,7 +111,7 @@ describe("PageDesempenho", () => {
     await screen.findByText("Compradores");
 
     fireEvent.click(screen.getByRole("button", { name: /Atualizar/ }));
-    await waitFor(() => expect(getMLDesempenho).toHaveBeenLastCalledWith(expect.any(String), expect.any(String), { refresh: true }));
+    await waitFor(() => expect(getMLDesempenho).toHaveBeenLastCalledWith(expect.any(String), expect.any(String), expect.objectContaining({ refresh: true })));
   });
 
   it("cookie vencido aponta pra aba Mercado Livre, sem 'tentar de novo'", async () => {
@@ -130,6 +137,81 @@ describe("PageDesempenho", () => {
     expect(screen.queryByText(/HTTP 500/)).not.toBeInTheDocument();
   });
 
+  it("com o período anterior na resposta, cada card mostra a variação", async () => {
+    const r = resposta();
+    getMLDesempenho.mockResolvedValue({
+      ...r,
+      anterior: { from: "2026-09-17", to: "2026-09-19", summary: { ...r.summary, clicks: 10, buyers: 3, earnings: { ...r.summary.earnings, total: 37 } }, tags: [] },
+    });
+    render(<PageDesempenho />);
+    expect(await screen.findByText(/Comparando com 17\/09 a 19\/09/)).toBeInTheDocument();
+    expect(screen.getByText(/↑ 100%/)).toBeInTheDocument();    // cliques 10 → 20
+    expect(screen.getByText(/↓ 50%/)).toBeInTheDocument();     // ganho 37 → 18,50
+    expect(screen.getAllByText("igual ao anterior").length).toBeGreaterThan(0);   // compradores 3 → 3
+  });
+
+  it("'Ontem' e o ‹ pedem o dia e o período vizinho", async () => {
+    getMLDesempenho.mockResolvedValue(resposta());
+    render(<PageDesempenho />);
+    await screen.findByText("Compradores");
+
+    fireEvent.click(screen.getByRole("button", { name: "Ontem" }));
+    const ontem = somaDias(hojeBR(), -1);
+    const anteontem = somaDias(ontem, -1);
+    await waitFor(() => expect(getMLDesempenho).toHaveBeenLastCalledWith(ontem, ontem, { refresh: false, antFrom: anteontem, antTo: anteontem }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Período anterior" }));
+    const antes = somaDias(anteontem, -1);
+    await waitFor(() => expect(getMLDesempenho).toHaveBeenLastCalledWith(anteontem, anteontem, { refresh: false, antFrom: antes, antTo: antes }));
+  });
+
+  it("'Escolher datas' busca o intervalo só no 'Ver', e recusa data depois de ontem no ML", async () => {
+    getMLDesempenho.mockResolvedValue(resposta());
+    const { container } = render(<PageDesempenho />);
+    await screen.findByText("Compradores");
+    const chamadas = getMLDesempenho.mock.calls.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Escolher datas" }));
+    const [de, ate] = container.querySelectorAll('input[type="date"]');
+    fireEvent.change(de, { target: { value: "2026-09-10" } });
+    fireEvent.change(ate, { target: { value: "2026-09-12" } });
+    expect(getMLDesempenho.mock.calls.length).toBe(chamadas);
+    fireEvent.click(screen.getByRole("button", { name: "Ver" }));
+    await waitFor(() => expect(getMLDesempenho).toHaveBeenLastCalledWith("2026-09-10", "2026-09-12", { refresh: false, antFrom: "2026-09-07", antTo: "2026-09-09" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Escolher datas" }));
+    const [de2, ate2] = container.querySelectorAll('input[type="date"]');
+    fireEvent.change(de2, { target: { value: hojeBR() } });
+    fireEvent.change(ate2, { target: { value: hojeBR() } });
+    fireEvent.click(screen.getByRole("button", { name: "Ver" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Escolha até/);
+  });
+
+  it("tocar numa barra oferece ver só aquele dia", async () => {
+    getMLDesempenho.mockResolvedValue(resposta());
+    render(<PageDesempenho />);
+    await screen.findByText("Compradores");
+
+    fireEvent.click(screen.getByTitle(/^22\/09:/));
+    fireEvent.click(screen.getByRole("button", { name: /Ver só 22\/09/ }));
+    await waitFor(() => expect(getMLDesempenho).toHaveBeenLastCalledWith("2026-09-22", "2026-09-22", { refresh: false, antFrom: "2026-09-21", antTo: "2026-09-21" }));
+  });
+
+  it("a etiqueta mostra as campanhas que a usam, com link", async () => {
+    getMLDesempenho.mockResolvedValue(resposta());
+    const onOpenCampanha = vi.fn();
+    const campanhas = [
+      { id: 1, name: "Ofertas Tech", scraping: { mlTag: "minha-tag" } },
+      { id: 2, name: "Casa", scraping: {} },                                        // padrão = outra
+      { id: 3, name: "Só Shopee", scraping: { mlTag: "minha-tag", sources: ["Shopee"] } },
+    ];
+    render(<PageDesempenho campanhas={campanhas} onOpenCampanha={onOpenCampanha} mlTags={[{ tag: "minha-tag" }, { tag: "padrao" }]} mlDefaultTag="padrao" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Ofertas Tech" }));
+    expect(onOpenCampanha).toHaveBeenCalledWith(1);
+    expect(screen.queryByRole("button", { name: "Casa" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Só Shopee" })).not.toBeInTheDocument();
+  });
+
   it("período sem movimento diz isso em vez de desenhar barras vazias", async () => {
     getMLDesempenho.mockResolvedValue(resposta({ clicks: 0, days: [{ date: "2026-09-20", clicks: 0, orders: 0, units: 0, earnings: 0, coupons: 0 }] }));
     render(<PageDesempenho />);
@@ -146,14 +228,44 @@ describe("PageDesempenho — lojas", () => {
     await screen.findByText("Compradores");
 
     fireEvent.click(screen.getByRole("button", { name: "Shopee" }));
-    const { from, to } = periodo("30d");
-    expect(getShopeeDesempenho).toHaveBeenCalledWith(from, to, { refresh: false });
+    expect(getShopeeDesempenho).toHaveBeenCalledWith(...pedido("30d"));
     expect(await screen.findByText("Buscando na Shopee…")).toBeInTheDocument();
     expect(screen.queryByText("Compradores")).not.toBeInTheDocument();
 
     entrega(respostaShopee());
     expect(await screen.findByText("Comissão estimada")).toBeInTheDocument();
     expect(screen.getByText("Ofertas Tech")).toBeInTheDocument();
+  });
+
+  it("'Hoje' da Shopee vira 'Ontem' ao trocar pro ML (o ML só fecha o dia seguinte)", async () => {
+    getShopeeDesempenho.mockResolvedValue(respostaShopee());
+    getMLDesempenho.mockResolvedValue(resposta());
+    render(<PageDesempenho lojaInicial="shopee" />);
+    await screen.findByText("Comissão estimada");
+
+    fireEvent.click(screen.getByRole("button", { name: "Hoje" }));
+    const hoje = hojeBR();
+    await waitFor(() => expect(getShopeeDesempenho).toHaveBeenLastCalledWith(hoje, hoje, expect.objectContaining({ refresh: false })));
+
+    fireEvent.click(screen.getByRole("button", { name: "Mercado Livre" }));
+    const ontem = somaDias(hoje, -1);
+    await waitFor(() => expect(getMLDesempenho).toHaveBeenLastCalledWith(ontem, ontem, expect.objectContaining({ refresh: false })));
+    expect(screen.queryByRole("button", { name: "Hoje" })).not.toBeInTheDocument();
+  });
+
+  it("a linha de uma campanha em 'Por campanha' abre a campanha; a apagada não é link", async () => {
+    getShopeeDesempenho.mockResolvedValue(respostaShopee({
+      groups: [
+        { groupId: "123", name: "Ofertas Tech", orders: 1, units: 1, sales: 386.18, commission: 11.59 },
+        { groupId: "999", name: "Campanha apagada", orders: 1, units: 1, sales: 10, commission: 1 },
+      ],
+    }));
+    const onOpenCampanha = vi.fn();
+    render(<PageDesempenho lojaInicial="shopee" campanhas={[{ id: 123, name: "Ofertas Tech", scraping: {} }]} onOpenCampanha={onOpenCampanha} />);
+    expect(await screen.findByText("Por campanha")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ofertas Tech" }));
+    expect(onOpenCampanha).toHaveBeenCalledWith(123);
+    expect(screen.queryByRole("button", { name: "Campanha apagada" })).not.toBeInTheDocument();
   });
 
   it("loja trancada não vira aba, e a que sobra é a aberta", async () => {

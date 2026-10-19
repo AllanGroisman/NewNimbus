@@ -63,13 +63,29 @@ describe("GET /api/affiliate/shopee/desempenho", () => {
     const res = await auth("get", `/api/affiliate/shopee/desempenho?${Q}`);
     expect(res.status).toBe(200);
     expect(res.body.summary).toMatchObject({ orders: 3, units: 14, sales: 730.75, commission: { total: 21.93 } });
-    expect(res.body.groups.map(g => g.name)).toEqual(["Ofertas Tech", "Grupo removido", "Sem grupo"]);
+    expect(res.body.groups.map(g => g.name)).toEqual(["Ofertas Tech", "Campanha apagada", "Sem campanha"]);
     expect(res.body.sales).toHaveLength(5);
     expect(res.body.days).toHaveLength(7);
     expect(res.body.requestedFrom).toBeNull();
     for (const [, opts] of fetchMock.mock.calls) {
       expect(opts.headers.Authorization).toMatch(/^SHA256 Credential=123456, /);
     }
+  });
+
+  it("campanha= recorta numa campanha; antFrom/antTo trazem o anterior", async () => {
+    const { user, auth } = await createTestUser({ plan: "pro" });
+    affiliate.writeShopeeConfig(user.id, CREDS);
+    await auth("put", "/api/state").send({ groups: [makeGroup({ id: 123, name: "Ofertas Tech" })] });
+
+    const res = await auth("get", `/api/affiliate/shopee/desempenho?${Q}&campanha=123&antFrom=${dia(-14)}&antTo=${dia(-8)}`);
+    expect(res.status).toBe(200);
+    expect(res.body.summary).toMatchObject({ orders: 1, commission: { total: 11.59 } });
+    expect(res.body.sales.every(s => s.groupId === "123")).toBe(true);
+    expect(res.body.groups).toBeUndefined();
+    expect(res.body._itens).toBeUndefined();
+    expect(res.body.anterior).toMatchObject({ from: dia(-14), to: dia(-8), summary: { orders: 1 } });
+
+    expect((await auth("get", `/api/affiliate/shopee/desempenho?${Q}&campanha=x1`)).status).toBe(400);
   });
 
   it("o nome do grupo de outro usuário nunca aparece, mesmo com a marca dele na venda", async () => {
@@ -82,7 +98,7 @@ describe("GET /api/affiliate/shopee/desempenho", () => {
 
     expect(res.status).toBe(200);
     expect(JSON.stringify(res.body)).not.toContain("Grupo do Outro");
-    expect(res.body.groups.find(g => g.groupId === "999").name).toBe("Grupo removido");
+    expect(res.body.groups.find(g => g.groupId === "999").name).toBe("Campanha apagada");
   });
 
   it("usuário sem credencial recebe o motivo, nunca os números de outro em cache", async () => {

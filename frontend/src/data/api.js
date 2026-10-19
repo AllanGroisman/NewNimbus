@@ -400,18 +400,35 @@ export async function clearAffiliate()          { return http("DELETE", "/api/af
 export async function testAffiliate(url)        { return http("POST",   "/api/affiliate/test", url ? { url } : {}, { timeoutMs: SLOW_TIMEOUT_MS }); }
 // Rebusca as etiquetas da conta ML com o cookie salvo; devolve o status novo.
 export async function atualizarMLEtiquetas()    { return http("POST",   "/api/affiliate/ml/etiquetas", {}, { timeoutMs: SLOW_TIMEOUT_MS }); }
-// Desempenho de afiliado no ML (cliques, pedidos, ganhos) do período, datas
-// AAAA-MM-DD inclusivas. `refresh` fura o cache curto do backend.
-export async function getMLDesempenho(from, to, { refresh = false } = {}) {
-  const qs = new URLSearchParams({ from, to, ...(refresh ? { refresh: "1" } : {}) });
-  return http("GET", `/api/affiliate/ml/desempenho?${qs}`, undefined, { timeoutMs: SLOW_TIMEOUT_MS });
+// Query string dos desempenhos: período, o anterior (variação), recorte por
+// campanha e o "Atualizar". Campo vazio fica de fora.
+function qsDesempenho(from, to, { refresh = false, antFrom, antTo, campanha } = {}) {
+  return new URLSearchParams({
+    from, to,
+    ...(antFrom && antTo ? { antFrom, antTo } : {}),
+    ...(campanha ? { campanha: String(campanha) } : {}),
+    ...(refresh ? { refresh: "1" } : {}),
+  });
 }
 
-// Desempenho de afiliado na Shopee (pedidos, vendas, comissão, vendas por grupo)
-// do período, datas AAAA-MM-DD inclusivas. `refresh` fura o cache curto do backend.
-export async function getShopeeDesempenho(from, to, { refresh = false } = {}) {
-  const qs = new URLSearchParams({ from, to, ...(refresh ? { refresh: "1" } : {}) });
-  return http("GET", `/api/affiliate/shopee/desempenho?${qs}`, undefined, { timeoutMs: SLOW_TIMEOUT_MS });
+// Desempenho de afiliado no ML (cliques, pedidos, ganhos) do período, datas
+// AAAA-MM-DD inclusivas. `refresh` fura o cache curto do backend; `antFrom`/
+// `antTo` trazem junto o período anterior (`anterior` na resposta).
+export async function getMLDesempenho(from, to, opcoes = {}) {
+  return http("GET", `/api/affiliate/ml/desempenho?${qsDesempenho(from, to, opcoes)}`, undefined, { timeoutMs: SLOW_TIMEOUT_MS });
+}
+
+// Desempenho de afiliado na Shopee (pedidos, vendas, comissão, vendas por
+// campanha) do período, datas AAAA-MM-DD inclusivas. Mesmas opções do ML, mais
+// `campanha` (id): só os números daquela campanha.
+export async function getShopeeDesempenho(from, to, opcoes = {}) {
+  return http("GET", `/api/affiliate/shopee/desempenho?${qsDesempenho(from, to, opcoes)}`, undefined, { timeoutMs: SLOW_TIMEOUT_MS });
+}
+
+// Visão geral de uma campanha: ofertas enviadas e membros dos grupos de destino
+// por dia, com o período anterior (`antFrom`/`antTo`) pra variação.
+export async function getCampanhaDesempenho(id, { from, to, antFrom, antTo } = {}) {
+  return http("GET", `/api/state/groups/${encodeURIComponent(id)}/desempenho?${qsDesempenho(from, to, { antFrom, antTo })}`);
 }
 
 // ─── Aba Grupos ─────────────────────────────────────────────────────────

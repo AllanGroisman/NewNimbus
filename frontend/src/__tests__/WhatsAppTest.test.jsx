@@ -14,6 +14,8 @@ vi.mock("../data/api", () => ({
   deleteWASession: vi.fn().mockResolvedValue({ ok: true }),
   deleteWASessionKeepalive: vi.fn(),
   testWASession: vi.fn(),
+  // Limpeza das conversas (task 13): a tela carrega a config de cada número.
+  getWACleanups: vi.fn().mockResolvedValue([]),
 }));
 
 import { testWASession } from "../data/api";

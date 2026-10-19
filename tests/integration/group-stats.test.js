@@ -240,6 +240,58 @@ describe("API", () => {
     expect(r.horarios.entradas[0][9]).toBe(3);
   });
 
+  it("campanha: ofertas pela campanha (não pelo grupo), membros dos destinos e o período anterior", async () => {
+    await semear();   // campanha 1: "Air fryer" no G1 em 05/10
+    // Campanha 2 manda uma oferta pros dois grupos, inclusive o G1 que a 1 também usa.
+    await envios.registrar(user.id, 2, [
+      { jid: G1, numberId: "num-1", at: new Date("2026-10-05T14:00:00Z") },
+      { jid: G2, numberId: "num-1", at: new Date("2026-10-05T14:00:05Z") },
+    ], "Fone");
+    // Campanha 1 antes: 28/09 (o primeiro registro) e 03/10 (no período anterior).
+    await envios.registrar(user.id, 1, [{ jid: G1, numberId: "num-1", at: new Date("2026-09-28T15:00:00Z") }], "Chaleira");
+    await envios.registrar(user.id, 1, [{ jid: G1, numberId: "num-1", at: new Date("2026-10-03T15:00:00Z") }], "Cafeteira");
+
+    const a = await stats.campanha(user.id, "1", { from: "2026-10-05", to: "2026-10-06", antFrom: "2026-10-03", antTo: "2026-10-04" }, { now: NOW });
+    expect(a.envios).toEqual({ produtos: 1, mensagens: 1 });   // o envio da campanha 2 no G1 não entra
+    expect(a.enviosDesde).toBe("2026-09-28");
+    expect(a.coletandoDesde).toBe("2026-10-04");
+    expect(a.membros).toEqual({ grupos: 1, membros: 503, entradas: 3, saidas: 3, saldo: 0 });
+    expect(a.porDia).toEqual([
+      { date: "2026-10-05", produtos: 1, mensagens: 1, entradas: 3, saidas: 2, saldo: 1 },
+      { date: "2026-10-06", produtos: 0, mensagens: 0, entradas: 0, saidas: 1, saldo: -1 },
+    ]);
+    // Anterior começa antes da coleta de membros (04/10): sem variação de membros.
+    expect(a.anterior).toEqual({ from: "2026-10-03", to: "2026-10-04", envios: { produtos: 1, mensagens: 1 }, membros: null });
+
+    const umDia = await stats.campanha(user.id, "1", { from: "2026-10-05", to: "2026-10-05", antFrom: "2026-10-04", antTo: "2026-10-04" }, { now: NOW });
+    expect(umDia.anterior.membros).toEqual({ entradas: 0, saidas: 0, saldo: 0 });
+    expect(umDia.porDia).toHaveLength(1);
+
+    // Mesma oferta em dois grupos: 1 oferta, 2 mensagens.
+    const b = await stats.campanha(user.id, "2", { from: "2026-10-05", to: "2026-10-06" }, { now: NOW });
+    expect(b.envios).toEqual({ produtos: 1, mensagens: 2 });
+    expect(b.membros.grupos).toBe(2);
+    expect(b.anterior).toBeNull();
+
+    // Anterior antes do primeiro envio registrado: sem variação de envios.
+    const cedo = await stats.campanha(user.id, "2", { from: "2026-10-05", to: "2026-10-06", antFrom: "2026-10-03", antTo: "2026-10-04" }, { now: NOW });
+    expect(cedo.anterior.envios).toBeNull();
+  });
+
+  it("rota da campanha: 200, período validado e 404 pra campanha de outro usuário", async () => {
+    const ok = await auth("get", "/api/state/groups/1/desempenho?from=2026-10-01&to=2026-10-02");
+    expect(ok.status).toBe(200);
+    expect(ok.body.porDia).toHaveLength(2);
+    expect(ok.body.anterior).toBeNull();
+
+    expect((await auth("get", "/api/state/groups/1/desempenho?from=ontem&to=hoje")).status).toBe(400);
+    expect((await auth("get", "/api/state/groups/999/desempenho?from=2026-10-01&to=2026-10-02")).status).toBe(404);
+    expect((await auth("get", "/api/state/groups/abc/desempenho?from=2026-10-01&to=2026-10-02")).status).toBe(404);
+
+    const outro = await createTestUser({ plan: "pro" });
+    expect((await outro.auth("get", "/api/state/groups/1/desempenho?from=2026-10-01&to=2026-10-02")).status).toBe(404);
+  });
+
   it("rotas: período validado, 404 pra grupo que não é destino", async () => {
     const ok = await auth("get", "/api/grupos/estatisticas?from=2026-10-01&to=2026-10-02");
     expect(ok.status).toBe(200);

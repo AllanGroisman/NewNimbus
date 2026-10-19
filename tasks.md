@@ -37,3 +37,4 @@ Rodar o Claude na VPS e desligar o computador (via tmux):
 
 13. [x] Quero que na aba whatsApp, quero que para cada numero tenha uma opção para escolher grupos e apagar suas mensagens e midias de x em x tempo. Pode ser um popup que abre em cada numero, não sei como fica melhor, analise e de opções. Os grupos estão com muitas mensagens e tornando o whats pesado.
 
+14. [x] Quero melhorar a parte de desempenho. Quero poder escolher os dias individuais, periodos, etc.. Quero que pense em como melhorar. Também quero que dentro de cada campanha, dentro da visão geral onde tem algumas metricas, seja melhorado como se fosse uma mini aba desempenho, mas só dessa campanha. Analise bem e crie um plano para fazer bem completinho, porém simples e de fácil utilização com as coisas mais essenciais.

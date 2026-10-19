@@ -7,6 +7,10 @@ import { render, screen, fireEvent } from "@testing-library/react";
 vi.mock("../data/api", () => ({
   // errText é helper puro (não faz rede) — usa a implementação de verdade.
   errText: (err, fallback) => err?.message || fallback,
+  // A visão geral busca o mini desempenho da campanha (task 14): fica pendente.
+  getCampanhaDesempenho: vi.fn(() => new Promise(() => {})),
+  getShopeeDesempenho: vi.fn(() => new Promise(() => {})),
+  getMLDesempenho: vi.fn(() => new Promise(() => {})),
   createWAGroup: vi.fn(),
   leaveWAGroup: vi.fn(),
   revokeWAInvite: vi.fn(),

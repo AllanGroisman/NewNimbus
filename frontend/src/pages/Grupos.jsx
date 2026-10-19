@@ -33,13 +33,13 @@ export default function PageGrupos({ onOpenCampanha }) {
   // Mesmo esquema do Desempenho: cada pedido é uma `consulta` numerada, e a
   // resposta guarda o número da que a gerou — resposta atrasada de um filtro
   // antigo nunca sobrescreve a nova.
-  const [consulta, setConsulta] = useState({ periodoId: PERIODO_GRUPOS_PADRAO, campanha: "", n: 0 });
+  const [consulta, setConsulta] = useState({ periodo: PERIODO_GRUPOS_PADRAO, campanha: "", n: 0 });
   const [resposta, setResposta] = useState(null); // { n, dados, erro }
   const [aberto, setAberto] = useState(null);     // jid do grupo no detalhe
 
   useEffect(() => {
     let viva = true;
-    const { from, to } = periodoGrupos(consulta.periodoId);
+    const { from, to } = periodoGrupos(consulta.periodo);
     getGruposEstatisticas({ from, to, campanha: consulta.campanha || undefined })
       .then(dados => { if (viva) setResposta({ n: consulta.n, dados, erro: null }); })
       .catch(err => { if (viva) setResposta({ n: consulta.n, dados: null, erro: errText(err, "Não foi possível carregar as estatísticas dos grupos.") }); });
@@ -48,13 +48,13 @@ export default function PageGrupos({ onOpenCampanha }) {
 
   const nova = (mudanca) => setConsulta(c => ({ ...c, ...mudanca, n: c.n + 1 }));
   // O detalhe muda o período da lista junto: voltar mostra o mesmo recorte.
-  const mudaPeriodo = (periodoId) => { if (periodoId !== consulta.periodoId) nova({ periodoId }); };
+  const mudaPeriodo = (periodo) => nova({ periodo });
 
   if (aberto) {
     return (
       <DetalheGrupo
         jid={aberto}
-        periodoId={consulta.periodoId}
+        periodo={consulta.periodo}
         onPeriodo={mudaPeriodo}
         onVoltar={() => setAberto(null)}
         onOpenCampanha={onOpenCampanha}
@@ -74,7 +74,7 @@ export default function PageGrupos({ onOpenCampanha }) {
         Quem entra e sai dos grupos que recebem suas campanhas, e quando eles vão lotar.
       </div>
 
-      <FiltroPeriodo periodoId={consulta.periodoId} onPeriodo={mudaPeriodo} onAtualizar={() => nova({})} carregando={carregando}>
+      <FiltroPeriodo periodo={consulta.periodo} onPeriodo={mudaPeriodo} onAtualizar={() => nova({})} carregando={carregando}>
         {dados?.campanhas?.length > 1 && (
           <div style={{ marginTop: 12 }}>
             <select
@@ -86,11 +86,6 @@ export default function PageGrupos({ onOpenCampanha }) {
               <option value="">Todas as campanhas</option>
               {dados.campanhas.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-          </div>
-        )}
-        {dados && (
-          <div style={{ ...secundario, marginTop: 10 }}>
-            {dataCurta(dados.from)}{dados.to !== dados.from && <> a {dataCurta(dados.to)}</>}
           </div>
         )}
       </FiltroPeriodo>

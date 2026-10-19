@@ -217,7 +217,11 @@ function avisaCookie(userId, ok, tag) {
 
 // O que a rota chama. `refresh` fura o cache, mas não mais que uma vez por
 // minuto por período — o botão da tela não vira martelo no ML.
-async function desempenhoDoUsuario(userId, { from, to, refresh = false, now = Date.now() } = {}) {
+//
+// `antFrom`/`antTo` = o período anterior, pra tela mostrar a variação. Ele vai
+// pelo MESMO cache (é o que a seta ‹ da tela abre depois) e é acessório: período
+// inválido ou erro ali vira `anterior: null`, sem derrubar o atual.
+async function desempenhoDoUsuario(userId, { from, to, antFrom, antTo, refresh = false, now = Date.now() } = {}) {
   const invalido = validaPeriodo(from, to);
   if (invalido) throw new DesempenhoError("periodo-invalido", invalido, 400);
 
@@ -227,7 +231,7 @@ async function desempenhoDoUsuario(userId, { from, to, refresh = false, now = Da
     throw new DesempenhoError(KIND.SEM_CONFIG, "Cole o cookie de afiliado na aba Mercado Livre pra ver o desempenho.", 409);
   }
 
-  return cacheado(`${userId}|${from}|${to}`, { refresh, now }, async () => {
+  const atual = cacheado(`${userId}|${from}|${to}`, { refresh, now }, async () => {
     let data;
     try {
       data = await buscaDesempenho({ cookie, from, to });
@@ -238,6 +242,13 @@ async function desempenhoDoUsuario(userId, { from, to, refresh = false, now = Da
     avisaCookie(userId, true, tag);
     return data;
   });
+  const temAnterior = antFrom && antTo && !validaPeriodo(antFrom, antTo);
+  const anterior = temAnterior
+    ? cacheado(`${userId}|${antFrom}|${antTo}`, { now }, () => buscaDesempenho({ cookie, from: antFrom, to: antTo })).catch(() => null)
+    : Promise.resolve(null);
+
+  const [data, ant] = await Promise.all([atual, anterior]);
+  return { ...data, anterior: ant ? { from: ant.from, to: ant.to, summary: ant.summary, tags: ant.tags } : null };
 }
 
 function _resetCache() { cacheado.reset(); }

@@ -271,6 +271,42 @@ describe("scheduler.sendNextNow — envia primeiro item da queue", () => {
     expect(g.sentWeek).toBe(1);
   });
 
+  // Regressão: o bumpMetrics recebia o histórico já com o envio novo, então o
+  // "Envios hoje" nunca voltava pra 1 num dia novo, e a semana nunca zerava.
+  it("primeiro envio de outro dia/semana recomeça os contadores", async () => {
+    const { user, auth } = await createUserWithMLAffiliate();
+    const numbers = [{ id: "num-c", phone: "5511..." }];
+    const waGroups = [makeWhatsAppGroup({ id: "wa-c", numberId: "num-c", jid: "fakec@g.us" })];
+    const group = makeGroup({ id: 305, whatsappGroupIds: ["wa-c"], sources: ["amazon"] });
+    await auth("put", "/api/state").send({ groups: [group], numbers, whatsappGroups: waGroups });
+    waConnect(user.id, "num-c");
+
+    const oitoDiasAtras = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+    await storage.updateGroupOps(user.id, 305, {
+      sentToday: 5,
+      sentWeek: 30,
+      weekData: [5, 5, 5, 5, 5, 5, 0],
+      lastSend: oitoDiasAtras,
+      history: [{ key: "velho", name: "Envio antigo", link: "https://www.amazon.com.br/dp/B0CVELHO12", sentAt: oitoDiasAtras, groupCount: 1 }],
+      queue: [{
+        id: "i5", key: "i5", name: "Produto Novo Dia", link: "https://www.amazon.com.br/dp/B0CNOVO1234",
+        img: "https://example.com/img.jpg", price: 100, originalPrice: 200, discount: 50, store: "Amazon", category: "gamer",
+      }],
+    });
+
+    // Antes do envio a leitura já mostra zerado (o contador era de outra semana).
+    const antes = (await storage.loadOps(user.id)).groups.find(g => g.id === 305);
+    expect(antes.sentToday).toBe(0);
+    expect(antes.sentWeek).toBe(0);
+
+    await scheduler.sendNextNow(user.id, 305);
+
+    const g = (await storage.loadState(user.id)).groups.find(g => g.id === 305);
+    expect(g.sentToday).toBe(1);
+    expect(g.sentWeek).toBe(1);
+    expect(g.weekData.reduce((a, b) => a + b, 0)).toBe(1);
+  });
+
   // Regressão: o upgrade de resolução era calculado mas o envio usava a URL
   // ORIGINAL (thumb), então a foto chegava borrada no grupo. A URL que vai pro
   // WhatsApp — e a que fica no histórico — tem que ser a de resolução alta.

@@ -64,6 +64,17 @@ describe("GET /api/affiliate/ml/desempenho", () => {
     for (const [, opts] of fetchMock.mock.calls) expect(opts.headers.Cookie).toBe("ssid=cookie-do-a");
   });
 
+  it("antFrom/antTo trazem o resumo e as etiquetas do período anterior", async () => {
+    const { user, auth } = await createTestUser();
+    affiliate.writeConfig(user.id, { tag: "minha-tag", cookie: "ssid=cookie-do-a" });
+
+    const res = await auth("get", `/api/affiliate/ml/desempenho?${Q}&antFrom=2026-09-14&antTo=2026-09-19`);
+    expect(res.status).toBe(200);
+    expect(res.body.anterior).toMatchObject({ from: "2026-09-14", to: "2026-09-19", summary: { clicks: 20 } });
+    expect(res.body.anterior.tags[0].tag).toBe("minha-tag");
+    expect((await auth("get", `/api/affiliate/ml/desempenho?${Q}`)).body.anterior).toBeNull();
+  });
+
   it("usuário sem cookie recebe o motivo, nunca os números de outro usuário em cache", async () => {
     const a = await createTestUser();
     affiliate.writeConfig(a.user.id, { tag: "tag-a", cookie: "ssid=cookie-do-a" });

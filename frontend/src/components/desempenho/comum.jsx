@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { PRIMARY } from "../../data/constants";
 import BarrasPorDia from "../ui/BarrasPorDia";
+import BarrasSaldo from "../grupos/BarrasSaldo";
 
 // Peças da tela Desempenho usadas pela casca (pages/Desempenho.jsx) e pelo
 // conteúdo de cada loja.
@@ -37,22 +38,34 @@ export function Chip({ ativo, onClick, children, disabled }) {
 }
 
 // Card "Por dia": chips pra escolher a série e as barras. Dia sem nada vira a
-// frase "Sem <série> no período." em vez de barras vazias.
-export function PorDia({ dias, series }) {
+// frase "Sem <série> no período." em vez de barras vazias. Série com
+// `tipo: "saldo"` desenha entradas e saídas (BarrasSaldo) a partir dos campos
+// `entradas`/`saidas` do dia; as outras leem `d[id]`. `onDia(date)` leva a tela
+// pro dia tocado.
+export function PorDia({ dias, series, onDia }) {
   const [serie, setSerie] = useState(series[0].id);
   const atual = series.find(x => x.id === serie) || series[0];
-  const pontos = (dias || []).map(d => ({ date: d.date, value: d[atual.id] || 0 }));
+  const lista = dias || [];
+  const ehSaldo = atual.tipo === "saldo";
+  const pontos = ehSaldo ? [] : lista.map(d => ({ date: d.date, value: d[atual.id] || 0 }));
+  const vazio = ehSaldo
+    ? lista.every(d => !d.entradas && !d.saidas)
+    : pontos.every(p => !p.value);
   return (
     <Card>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
         <div style={{ fontWeight: 500 }}>Por dia</div>
-        <Linha>
-          {series.map(x => <Chip key={x.id} ativo={x.id === atual.id} onClick={() => setSerie(x.id)}>{x.label}</Chip>)}
-        </Linha>
+        {series.length > 1 && (
+          <Linha>
+            {series.map(x => <Chip key={x.id} ativo={x.id === atual.id} onClick={() => setSerie(x.id)}>{x.label}</Chip>)}
+          </Linha>
+        )}
       </div>
-      {pontos.every(p => !p.value)
+      {vazio
         ? <div style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>Sem {atual.label.toLowerCase()} no período.</div>
-        : <BarrasPorDia dias={pontos} formata={atual.formata} />}
+        : ehSaldo
+          ? <BarrasSaldo dias={lista} onDia={onDia} />
+          : <BarrasPorDia dias={pontos} formata={atual.formata} onDia={onDia} />}
     </Card>
   );
 }

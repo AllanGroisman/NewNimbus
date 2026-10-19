@@ -14,6 +14,7 @@ const auth = require("./auth");
 const userNotifier = require("./notifications/user-notifier");
 const captureLog = require("./repasse/capture-log");
 const groupStatsEnvios = require("./group-stats/envios");
+const contadoresEnvio = require("./utils/contadores-envio");
 const originalMessage = require("./repasse/original-message");
 const { KIND, STAGE } = require("./repasse/error-kinds");
 
@@ -617,26 +618,16 @@ async function refillQueue(userId, group) {
   };
 }
 
-// Atualiza métricas após um envio
-function bumpMetrics(group, ok) {
+// Atualiza métricas após um envio. `group` é a campanha de ANTES do envio: o
+// history[0] dela é o envio anterior, que decide se o dia ou a semana virou (o
+// lastSend não serve — no modo redis o dispatchOne já gravou o deste envio).
+function bumpMetrics(group, ok, now = new Date()) {
   if (!ok) return {};
-  const now = new Date();
-  const dayIdx = (now.getDay() + 6) % 7;
-  const last = group.history && group.history[0];
-  const lastDay = last ? new Date(last.sentAt).toDateString() : null;
-  const today = now.toDateString();
-  const sentToday = lastDay === today ? (group.sentToday || 0) + 1 : 1;
-  const weekData = Array.isArray(group.weekData) && group.weekData.length === 7
-    ? [...group.weekData]
-    : [0, 0, 0, 0, 0, 0, 0];
-  weekData[dayIdx] = (weekData[dayIdx] || 0) + 1;
-  const sentWeek = weekData.reduce((a, b) => a + b, 0);
-  return {
-    sentToday,
-    sentWeek,
-    weekData,
-    lastSend: now.toISOString(),
-  };
+  return contadoresEnvio.contaEnvio({
+    sentToday: group.sentToday,
+    weekData: group.weekData,
+    ultimoEnvio: group.history?.[0]?.sentAt,
+  }, now);
 }
 
 // A regra do cupom que vale AGORA pra este item — o que o {preco_com_cupom} usa.
@@ -911,7 +902,7 @@ async function deliverItem(userId, group, linked, item, itemForSend, text, { men
     groupCount: sentCount,
   }, ...(group.history || [])].slice(0, 200);
 
-  const metrics = bumpMetrics({ ...group, history }, true);
+  const metrics = bumpMetrics(group, true);
   return { ...metrics, queue: newQueue, history, sentCount };
 }
 

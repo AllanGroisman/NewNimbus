@@ -20,6 +20,7 @@ const mlEtiquetas = require("./scraping/ml-etiquetas");
 const mlDesempenho = require("./affiliate-reports/ml");
 const shopeeDesempenho = require("./affiliate-reports/shopee");
 const groupStats = require("./group-stats/stats");
+const contadoresEnvio = require("./utils/contadores-envio");
 const catalog = require("./catalog");
 const adminScraper = require("./scraping/admin");
 const storeLocks = require("./scraping/store-locks");
@@ -1622,11 +1623,12 @@ app.post("/api/affiliate/test", auth.requireAuth, requireStoreUnlocked("ml"), as
 
 // Desempenho de afiliado no ML (cliques, pedidos, ganhos), lido da API do painel
 // de Métricas do ML com o cookie do próprio usuário — ver affiliate-reports/ml.js.
-// `refresh=1` fura o cache curto de lá (com freio de 1 min).
+// `refresh=1` fura o cache curto de lá (com freio de 1 min); `antFrom`/`antTo`
+// trazem junto o período anterior, pra variação.
 app.get("/api/affiliate/ml/desempenho", auth.requireAuth, requireStoreUnlocked("ml"), async (req, res) => {
   try {
-    const { from, to, refresh } = req.query;
-    res.json(await mlDesempenho.desempenhoDoUsuario(req.user.id, { from, to, refresh: refresh === "1" }));
+    const { from, to, antFrom, antTo, refresh } = req.query;
+    res.json(await mlDesempenho.desempenhoDoUsuario(req.user.id, { from, to, antFrom, antTo, refresh: refresh === "1" }));
   } catch (err) {
     if (err instanceof mlDesempenho.DesempenhoError) return res.status(err.status).json({ error: err.message, kind: err.kind });
     httpErrors.serverError(res, err, { req, ctx: "GET /api/affiliate/ml/desempenho" });
@@ -1655,11 +1657,12 @@ app.post("/api/affiliate/ml/etiquetas", auth.requireAuth, requireStoreUnlocked("
 
 // Desempenho de afiliado da Shopee — pela Affiliate Open API, com o App ID e a
 // senha DESTE usuário (affiliate-reports/shopee.js). Pedidos, vendas, comissão
-// e vendas por grupo (sub_id do link); a API não tem cliques.
+// e vendas por campanha (sub_id do link); a API não tem cliques. `campanha`
+// recorta numa campanha só (a visão geral dela); `antFrom`/`antTo` = anterior.
 app.get("/api/affiliate/shopee/desempenho", auth.requireAuth, requireStoreUnlocked("shopee"), async (req, res) => {
   try {
-    const { from, to, refresh } = req.query;
-    res.json(await shopeeDesempenho.desempenhoDoUsuario(req.user.id, { from, to, refresh: refresh === "1" }));
+    const { from, to, antFrom, antTo, campanha, refresh } = req.query;
+    res.json(await shopeeDesempenho.desempenhoDoUsuario(req.user.id, { from, to, antFrom, antTo, campanha, refresh: refresh === "1" }));
   } catch (err) {
     if (err instanceof shopeeDesempenho.DesempenhoError) return res.status(err.status).json({ error: err.message, kind: err.kind });
     httpErrors.serverError(res, err, { req, ctx: "GET /api/affiliate/shopee/desempenho" });
@@ -1691,6 +1694,18 @@ app.get("/api/grupos/estatisticas/:jid", auth.requireAuth, async (req, res) => {
     res.json(await groupStats.detalhe(req.user.id, req.params.jid, { from, to }));
   } catch (err) {
     gruposErro(res, err, req, "GET /api/grupos/estatisticas/:jid");
+  }
+});
+
+// Mini desempenho da visão geral de uma campanha: ofertas enviadas e membros dos
+// grupos de destino por dia, com o período anterior (`antFrom`/`antTo`) pra
+// variação. As vendas a tela pede às rotas de desempenho de afiliado.
+app.get("/api/state/groups/:gid/desempenho", auth.requireAuth, async (req, res) => {
+  try {
+    const { from, to, antFrom, antTo } = req.query;
+    res.json(await groupStats.campanha(req.user.id, req.params.gid, { from, to, antFrom, antTo }));
+  } catch (err) {
+    gruposErro(res, err, req, "GET /api/state/groups/:gid/desempenho");
   }
 });
 
@@ -2480,6 +2495,8 @@ app.get("/api/admin/users/:id/detail", auth.requireAuth, auth.requireAdmin, asyn
 
     const groups = groupRows.map(g => {
       const planPausedHere = billing.enforce.isGroupPlanPaused(planPaused, g.id);
+      // Contador de outro dia/semana sai zerado (utils/contadores-envio.js).
+      const contadores = contadoresEnvio.contadoresAtuais({ sentToday: g.sentToday, sentWeek: g.sentWeek }, g.lastSend);
       return {
         id: String(g.id),
         name: g.name,
@@ -2490,8 +2507,8 @@ app.get("/api/admin/users/:id/detail", auth.requireAuth, auth.requireAdmin, asyn
         whatsappGroups: Array.isArray(g.whatsappGroupIds) ? g.whatsappGroupIds.length : 0,
         categories: Array.isArray(g.categories) ? g.categories.length : 0,
         leaders: repasseLeaders.leadersOf(g.scraping).length,
-        sentToday: g.sentToday,
-        sentWeek: g.sentWeek,
+        sentToday: contadores.sentToday,
+        sentWeek: contadores.sentWeek,
         lastSend: g.lastSend,
         avgDiscount: g.avgDiscount,
         queue: g._count.queue,

@@ -26,6 +26,7 @@ const TIMEOUT_MS = 20000;
 const POR_PAGINA = 500;      // o máximo que a Shopee aceita
 const MAX_PAGINAS = 10;      // 5.000 conversões num período é folga de sobra
 const MAX_VENDAS = 500;      // linhas da lista de vendas devolvidas à tela
+const MAX_VENDAS_CAMPANHA = 100;   // as da visão geral de uma campanha
 const LIMITE_DIAS = 120;
 
 const cacheado = criaCache();
@@ -34,6 +35,7 @@ const KIND = {
   SEM_CONFIG: affiliate.ML_LINK_KIND.SEM_CONFIG,   // "afiliado-ausente", o mesmo do ML
   CREDENCIAL: "credencial-recusada",
   PERIODO: "periodo-invalido",
+  CAMPANHA: "campanha-invalida",
   LIMITE: "limite-shopee",
   ERRO: affiliate.ML_LINK_KIND.ERRO,
 };
@@ -199,9 +201,10 @@ function normalizaDias(itens, from, to) {
   return out;
 }
 
-// Vendas por grupo (sub_id). `nomes` = { [groupId]: nome } dos grupos DO
-// usuário: marca de grupo que não está ali (apagado, ou de outra pessoa com a
-// mesma conta Shopee) vira "Grupo removido", sem expor nome nenhum.
+// Vendas por campanha (sub_id `g<id>`, onde id é o da campanha — o model Group).
+// `nomes` = { [groupId]: nome } das campanhas DO usuário: marca que não está ali
+// (apagada, ou de outra pessoa com a mesma conta Shopee) vira "Campanha apagada",
+// sem expor nome nenhum.
 function normalizaGrupos(itens, nomes = {}) {
   const porGrupo = new Map();
   for (const i of itens) {
@@ -217,13 +220,29 @@ function normalizaGrupos(itens, nomes = {}) {
   return [...porGrupo.values()]
     .map(g => ({
       groupId: g.groupId,
-      name: g.groupId ? nomes[g.groupId] || "Grupo removido" : "Sem grupo",
+      name: g.groupId ? nomes[g.groupId] || CAMPANHA_APAGADA : "Sem campanha",
       orders: g.pedidos.size,
       units: g.units,
       sales: centavos(g.sales),
       commission: centavos(g.commission),
     }))
     .sort((a, b) => b.commission - a.commission || b.orders - a.orders);
+}
+
+const CAMPANHA_APAGADA = "Campanha apagada";
+
+// Os números de UMA campanha, tirados da lista completa de itens do período (a
+// guardada no cache — a lista de vendas da resposta é cortada em MAX_VENDAS).
+// Sem MCN: a taxa é da conversão, que pode misturar campanhas.
+function recorteDaCampanha(itens, groupId, from, to) {
+  const id = String(groupId);
+  const daCampanha = (itens || []).filter(i => i.groupId === id);
+  return {
+    summary: normalizaResumo(daCampanha),
+    days: normalizaDias(daCampanha, from, to),
+    sales: daCampanha.slice(0, MAX_VENDAS_CAMPANHA).map(i => ({ ...i, group: null })),
+    totalSales: daCampanha.length,
+  };
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -310,6 +329,10 @@ async function nomesDosGrupos(userId, ids) {
 }
 
 // Busca o período na Shopee, sem cache. Lança DesempenhoError.
+//
+// `_itens` é a lista completa normalizada: fica no cache pro recorte por
+// campanha (recorteDaCampanha) e nunca sai na resposta. Até MAX_PAGINAS ×
+// POR_PAGINA conversões por entrada de cache — folga de memória aceitável.
 async function buscaDesempenho({ userId, creds, from, to }) {
   const nodes = await buscaConversoes(janela(from, to), creds);
   const itens = normalizaItens(nodes);
@@ -320,26 +343,65 @@ async function buscaDesempenho({ userId, creds, from, to }) {
     summary: normalizaResumo(itens, nodes),
     days: normalizaDias(itens, from, to),
     groups: normalizaGrupos(itens, nomes),
-    sales: itens.slice(0, MAX_VENDAS).map(i => ({ ...i, group: i.groupId ? nomes[i.groupId] || "Grupo removido" : null })),
+    sales: itens.slice(0, MAX_VENDAS).map(i => ({ ...i, group: i.groupId ? nomes[i.groupId] || CAMPANHA_APAGADA : null })),
     totalSales: itens.length,
+    _itens: itens,
+  };
+}
+
+// A resposta da rota a partir do que veio do cache: a do usuário todo, ou só a
+// de uma campanha. `_itens` nunca sai.
+function resposta(data, campanha) {
+  const { _itens, ...resto } = data;
+  if (!campanha) return resto;
+  return {
+    from: resto.from,
+    to: resto.to,
+    fetchedAt: resto.fetchedAt,
+    cached: resto.cached,
+    ...recorteDaCampanha(_itens, campanha, resto.from, resto.to),
   };
 }
 
 // O que a rota chama. Mesmo cache e mesmo freio do "Atualizar" do ML.
-async function desempenhoDoUsuario(userId, { from, to, refresh = false, now = Date.now() } = {}) {
+//
+// `campanha` (id) recorta a resposta numa campanha só; a chave do cache não muda,
+// então o Desempenho e a visão geral de cada campanha dividem a mesma busca.
+// `antFrom`/`antTo` = o período anterior, pra variação. Ele roda DEPOIS do
+// atual (a Shopee tem limite de chamadas, código 10030) e é acessório: começo
+// antes do limite de 3 meses (a variação de um período cortado engana), período
+// inválido ou erro → `anterior: null`, e o atual sai normal.
+async function desempenhoDoUsuario(userId, { from, to, antFrom, antTo, campanha, refresh = false, now = Date.now() } = {}) {
   const hoje = hojeBR(now);
   const invalido = validaPeriodo(from, to, hoje);
   if (invalido) throw new DesempenhoError(KIND.PERIODO, invalido, 400);
+  if (campanha != null && campanha !== "" && !/^\d{1,18}$/.test(String(campanha))) {
+    throw new DesempenhoError(KIND.CAMPANHA, "Campanha inválida.", 400);
+  }
+  const daCampanha = campanha ? String(campanha) : null;
   const periodo = ajustaPeriodo(from, to, hoje);
 
   const { appId, appSecret } = affiliate.readShopeeConfig(userId);
   if (!appId || !appSecret) {
     throw new DesempenhoError(KIND.SEM_CONFIG, "Configure o App ID e a senha da API na aba Shopee pra ver o desempenho.", 409);
   }
+  const creds = { appId, appSecret };
+  const busca = (f, t, opcoes) => cacheado(`${userId}|${appId}|${f}|${t}`, opcoes, () =>
+    buscaDesempenho({ userId, creds, from: f, to: t }));
 
-  const data = await cacheado(`${userId}|${appId}|${periodo.from}|${to}`, { refresh, now }, () =>
-    buscaDesempenho({ userId, creds: { appId, appSecret }, from: periodo.from, to }));
-  return { ...data, requestedFrom: periodo.requestedFrom };
+  const data = await busca(periodo.from, to, { refresh, now });
+
+  let anterior = null;
+  if (antFrom && antTo && !validaFormato(antFrom, antTo) && antFrom >= inicioMinimo(hoje)) {
+    try {
+      const ant = resposta(await busca(antFrom, antTo, { now }), daCampanha);
+      anterior = { from: ant.from, to: ant.to, summary: ant.summary };
+    } catch {
+      anterior = null;
+    }
+  }
+
+  return { ...resposta(data, daCampanha), requestedFrom: periodo.requestedFrom, anterior };
 }
 
 function _resetCache() { cacheado.reset(); }
@@ -358,6 +420,7 @@ module.exports = {
   normalizaResumo,
   normalizaDias,
   normalizaGrupos,
+  recorteDaCampanha,
   queryConversoes,
   _resetCache,
 };

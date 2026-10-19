@@ -54,18 +54,19 @@ function PorDiaGrupo({ dias }) {
   );
 }
 
-export default function DetalheGrupo({ jid, periodoId, onPeriodo, onVoltar, onOpenCampanha }) {
+export default function DetalheGrupo({ jid, periodo, onPeriodo, onVoltar, onOpenCampanha }) {
   const [consulta, setConsulta] = useState({ n: 0 });
   const [resposta, setResposta] = useState(null); // { n, chave, dados, erro }
-  const chave = `${jid}|${periodoId}`;
+  const { from, to } = periodoGrupos(periodo);
+  const chave = `${jid}|${from}|${to}`;
 
   useEffect(() => {
     let viva = true;
-    getGrupoEstatisticas(jid, periodoGrupos(periodoId))
+    getGrupoEstatisticas(jid, { from, to })
       .then(dados => { if (viva) setResposta({ n: consulta.n, chave, dados, erro: null }); })
       .catch(err => { if (viva) setResposta({ n: consulta.n, chave, dados: null, erro: errText(err, "Não foi possível carregar o grupo.") }); });
     return () => { viva = false; };
-  }, [jid, periodoId, consulta, chave]);
+  }, [jid, from, to, consulta, chave]);
 
   const carregando = resposta?.n !== consulta.n || resposta?.chave !== chave;
   const d = resposta?.dados;
@@ -90,7 +91,7 @@ export default function DetalheGrupo({ jid, periodoId, onPeriodo, onVoltar, onOp
         </div>
       )}
 
-      <FiltroPeriodo periodoId={periodoId} onPeriodo={onPeriodo} onAtualizar={atualizar} carregando={carregando} />
+      <FiltroPeriodo periodo={periodo} onPeriodo={onPeriodo} onAtualizar={atualizar} carregando={carregando} />
 
       {erro && <AlertBanner tone="error" message={erro} onRetry={atualizar} />}
       {!d && carregando && <Card style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>Carregando…</Card>}

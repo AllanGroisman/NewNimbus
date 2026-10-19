@@ -5,6 +5,7 @@
 // mas mantemos a constante exportada pra compat com o frontend.
 const { prisma } = require("../db");
 const { normalizeRepasse } = require("../repasse/leaders");
+const { contadoresAtuais } = require("../utils/contadores-envio");
 
 const OPS_FIELDS = ["queue", "pending", "history", "sentToday", "sentWeek", "weekData", "lastSend", "avgDiscount"];
 
@@ -32,6 +33,18 @@ function parseAvgDiscount(v) {
   return Number.isFinite(n) ? n : s;
 }
 
+// sentToday/sentWeek/weekData só mudam quando há envio: na leitura, o que é de
+// outro dia ou de outra semana sai zerado. `history` vem do mais recente pro mais
+// antigo; o lastSend é o reserva (no modo redis ele é gravado antes do envio).
+function contadoresDe(row, history) {
+  const ultimoEnvio = history[0]?.sentAt || row.lastSend;
+  return contadoresAtuais({
+    sentToday: row.sentToday,
+    sentWeek: row.sentWeek,
+    weekData: row.weekData || [0, 0, 0, 0, 0, 0, 0],
+  }, ultimoEnvio);
+}
+
 // Group row + relações → shape que o frontend/scheduler esperam.
 // Inclui queue/pending/history "inline" como o JSON antigo.
 function groupRowToObject(row, queue = [], pending = [], history = []) {
@@ -44,9 +57,7 @@ function groupRowToObject(row, queue = [], pending = [], history = []) {
     whatsappGroupIds: row.whatsappGroupIds || [],
     schedule: row.schedule || {},
     scraping: row.scraping || {},
-    sentToday: row.sentToday,
-    sentWeek: row.sentWeek,
-    weekData: row.weekData || [0, 0, 0, 0, 0, 0, 0],
+    ...contadoresDe(row, history),
     lastSend: row.lastSend,
     avgDiscount: parseAvgDiscount(row.avgDiscount),
     queue: queue.map(q => q.payload),
@@ -498,28 +509,29 @@ async function loadOps(userId) {
   const pByG = idx(pendingRows);
   const hByG = idx(historyRows);
 
-  const groups = groupRows.map(g => ({
-    id: Number(g.id),
-    queue: (qByG.get(String(g.id)) || []).map(q => q.payload),
-    pending: (pByG.get(String(g.id)) || []).map(p => p.payload),
-    history: (hByG.get(String(g.id)) || []).slice(0, 200).map(h => ({
-      key: h.productKey,
-      name: h.name,
-      link: h.link,
-      img: h.img,
-      store: h.store,
-      price: h.price,
-      originalPrice: h.originalPrice,
-      discount: h.discount,
-      sentAt: h.sentAt.toISOString(),
-      groupCount: h.groupCount,
-    })),
-    sentToday: g.sentToday,
-    sentWeek: g.sentWeek,
-    weekData: g.weekData,
-    lastSend: g.lastSend,
-    avgDiscount: parseAvgDiscount(g.avgDiscount),
-  }));
+  const groups = groupRows.map(g => {
+    const historico = (hByG.get(String(g.id)) || []).slice(0, 200);
+    return {
+      id: Number(g.id),
+      queue: (qByG.get(String(g.id)) || []).map(q => q.payload),
+      pending: (pByG.get(String(g.id)) || []).map(p => p.payload),
+      history: historico.map(h => ({
+        key: h.productKey,
+        name: h.name,
+        link: h.link,
+        img: h.img,
+        store: h.store,
+        price: h.price,
+        originalPrice: h.originalPrice,
+        discount: h.discount,
+        sentAt: h.sentAt.toISOString(),
+        groupCount: h.groupCount,
+      })),
+      ...contadoresDe(g, historico),
+      lastSend: g.lastSend,
+      avgDiscount: parseAvgDiscount(g.avgDiscount),
+    };
+  });
 
   // updatedAt: pega max(updatedAt) entre groups e user_state
   const stateRow = await prisma().userState.findUnique({ where: { userId } });

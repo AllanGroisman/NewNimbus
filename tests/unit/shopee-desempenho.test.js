@@ -5,8 +5,9 @@
 //     tela cabe nele, qualquer que seja o dia;
 //   - as conversões (dinheiro em string, pedidos com vários itens) viram totais,
 //     dias, grupos e a lista de vendas — cancelado fica de fora dos totais;
-//   - a marca do grupo no link (sub_id "g<id>") vira o nome do grupo SÓ quando o
-//     grupo é do próprio usuário;
+//   - a marca da campanha no link (sub_id "g<id>") vira o nome da campanha SÓ
+//     quando ela é do próprio usuário, e recorta a resposta numa campanha só;
+//   - o período anterior (variação) é acessório: nunca derruba o atual;
 //   - a paginação por scrollId, os erros da API e o cache.
 import "../helpers/env.js";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -152,11 +153,11 @@ describe("normalização", () => {
     expect(dias[2]).toEqual({ date: "2026-09-22", orders: 1, units: 3, sales: 60.52, commission: 1.82 });
   });
 
-  it("grupos: nome só dos grupos do usuário; sem marca é 'Sem grupo'; o que mais rendeu primeiro", () => {
+  it("campanhas: nome só das campanhas do usuário; sem marca é 'Sem campanha'; o que mais rendeu primeiro", () => {
     expect(shopee.normalizaGrupos(itens(), { 123: "Ofertas Tech" })).toEqual([
       { groupId: "123", name: "Ofertas Tech", orders: 1, units: 1, sales: 386.18, commission: 11.59 },
-      { groupId: "999", name: "Grupo removido", orders: 1, units: 10, sales: 284.05, commission: 8.52 },
-      { groupId: null, name: "Sem grupo", orders: 1, units: 3, sales: 60.52, commission: 1.82 },
+      { groupId: "999", name: "Campanha apagada", orders: 1, units: 10, sales: 284.05, commission: 8.52 },
+      { groupId: null, name: "Sem campanha", orders: 1, units: 3, sales: 60.52, commission: 1.82 },
     ]);
   });
 });
@@ -202,10 +203,10 @@ describe("desempenhoDoUsuario", () => {
 
     expect(r.summary.orders).toBe(3);
     expect(r.days).toHaveLength(6);
-    expect(r.groups.map(g => g.name)).toEqual(["Ofertas Tech", "Grupo removido", "Sem grupo"]);
+    expect(r.groups.map(g => g.name)).toEqual(["Ofertas Tech", "Campanha apagada", "Sem campanha"]);
     expect(r.sales).toHaveLength(5);
     expect(r.sales[0].group).toBe("Ofertas Tech");
-    expect(r.sales.find(s => s.orderId === "PEDIDO-D").group).toBe("Grupo removido");
+    expect(r.sales.find(s => s.orderId === "PEDIDO-D").group).toBe("Campanha apagada");
     expect(r.sales.find(s => s.orderId === "PEDIDO-B").group).toBeNull();
     expect(r.totalSales).toBe(5);
     expect(r.cached).toBe(false);
@@ -223,7 +224,7 @@ describe("desempenhoDoUsuario", () => {
     fetchMock.mockImplementation(async () => json({ data: { conversionReport: { nodes: [NODES[1]], pageInfo: { hasNextPage: false } } } }));
     const r = await shopee.desempenhoDoUsuario(USER, P);
     expect(findMany).not.toHaveBeenCalled();
-    expect(r.groups).toEqual([expect.objectContaining({ name: "Sem grupo" })]);
+    expect(r.groups).toEqual([expect.objectContaining({ name: "Sem campanha" })]);
   });
 
   it("para no teto de páginas mesmo se a Shopee insistir em hasNextPage", async () => {
@@ -268,5 +269,76 @@ describe("desempenhoDoUsuario", () => {
 
     affiliate.readShopeeConfig.mockReturnValue({ appId: "outra-conta", appSecret: "outro-segredo-1234567" });
     expect((await shopee.desempenhoDoUsuario(USER, { ...P, now: t0 + 3 * 60 * 1000 })).cached).toBe(false);
+  });
+});
+
+describe("por campanha e período anterior", () => {
+  const ANT = { antFrom: "2026-09-14", antTo: "2026-09-19" };
+  const inicioDe = (from, to) => `purchaseTimeStart:${shopee.janela(from, to).inicio}`;
+
+  it("a lista completa (_itens) fica só no cache e nunca sai na resposta", async () => {
+    const r = await shopee.desempenhoDoUsuario(USER, P);
+    expect(r._itens).toBeUndefined();
+    expect(r.anterior).toBeNull();
+    expect((await shopee.desempenhoDoUsuario(USER, P))._itens).toBeUndefined();
+  });
+
+  it("campanha= recorta resumo, dias e vendas numa campanha só, pela mesma busca", async () => {
+    await shopee.desempenhoDoUsuario(USER, P);
+    const chamadas = fetchMock.mock.calls.length;
+
+    const r = await shopee.desempenhoDoUsuario(USER, { ...P, campanha: "123" });
+    expect(fetchMock.mock.calls.length).toBe(chamadas);
+    expect(r.cached).toBe(true);
+    expect(r.summary.orders).toBe(1);
+    expect(r.summary.commission.total).toBe(11.59);
+    expect(r.summary.mcnFee).toBe(0);
+    expect(r.days).toHaveLength(6);
+    expect(r.sales.length).toBeGreaterThan(0);
+    expect(r.sales.every(s => s.groupId === "123")).toBe(true);
+    expect(r.totalSales).toBe(r.sales.length);
+    expect(r.groups).toBeUndefined();
+    expect(r._itens).toBeUndefined();
+  });
+
+  it("campanha sem venda nenhuma: zeros, não erro", async () => {
+    const r = await shopee.desempenhoDoUsuario(USER, { ...P, campanha: "555" });
+    expect(r.summary.orders).toBe(0);
+    expect(r.sales).toEqual([]);
+    expect(r.days.every(d => d.orders === 0)).toBe(true);
+  });
+
+  it("campanha que não é id é 400 antes de qualquer chamada", async () => {
+    await expect(shopee.desempenhoDoUsuario(USER, { ...P, campanha: "abc" })).rejects.toMatchObject({ kind: "campanha-invalida", status: 400 });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("anterior roda depois do atual e volta só com o resumo — recortado quando há campanha", async () => {
+    const r = await shopee.desempenhoDoUsuario(USER, { ...P, ...ANT });
+    expect(r.anterior).toEqual({ from: ANT.antFrom, to: ANT.antTo, summary: expect.objectContaining({ orders: 3 }) });
+    const queries = fetchMock.mock.calls.map(([, o]) => queryDe(o));
+    expect(queries).toHaveLength(6);
+    expect(queries.slice(0, 3).every(q => q.includes(inicioDe(P.from, P.to)))).toBe(true);
+    expect(queries.slice(3).every(q => q.includes(inicioDe(ANT.antFrom, ANT.antTo)))).toBe(true);
+
+    const c = await shopee.desempenhoDoUsuario(USER, { ...P, ...ANT, campanha: "123" });
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(c.anterior.summary.orders).toBe(1);
+  });
+
+  it("anterior antes do limite de 3 meses não é buscado: anterior null", async () => {
+    const r = await shopee.desempenhoDoUsuario(USER, { ...P, antFrom: "2026-05-20", antTo: "2026-06-10" });
+    expect(r.anterior).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("erro no anterior (limite da Shopee) vira anterior null, e o atual sai normal", async () => {
+    const normal = shopeeFake();
+    fetchMock.mockImplementation(async (url, opts) => (queryDe(opts).includes(inicioDe(ANT.antFrom, ANT.antTo))
+      ? json({ errors: [{ message: "x", extensions: { code: 10030, message: "rate limit" } }] })
+      : normal(url, opts)));
+    const r = await shopee.desempenhoDoUsuario(USER, { ...P, ...ANT });
+    expect(r.summary.orders).toBe(3);
+    expect(r.anterior).toBeNull();
   });
 });
