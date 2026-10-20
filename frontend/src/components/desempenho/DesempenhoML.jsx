@@ -42,8 +42,8 @@ const TEXTOS = {
 };
 
 const SERIES = [
-  { id: "clicks", label: "Cliques", formata: formatInt },
   { id: "orders", label: "Pedidos", formata: formatInt },
+  { id: "clicks", label: "Cliques", formata: formatInt },
   { id: "earnings", label: "Ganhos", formata: formatBRL },
 ];
 

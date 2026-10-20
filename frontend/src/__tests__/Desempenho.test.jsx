@@ -259,7 +259,7 @@ describe("PageDesempenho", () => {
     getMLDesempenho.mockResolvedValue(resposta({ clicks: 0, days: [{ date: "2026-09-20", clicks: 0, orders: 0, units: 0, earnings: 0, coupons: 0 }] }));
     render(<PageDesempenho />);
     fireEvent.click(await screen.findByRole("button", { name: "Data" }));
-    expect(screen.getByText("Sem cliques no período.")).toBeInTheDocument();
+    expect(screen.getByText("Sem pedidos no período.")).toBeInTheDocument();
   });
 });
 
