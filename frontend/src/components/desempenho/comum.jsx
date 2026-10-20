@@ -37,12 +37,26 @@ export function Chip({ ativo, onClick, children, disabled }) {
   );
 }
 
+// Fileira de chips que rola de lado em vez de quebrar linha — pra muitas
+// opções no celular. `opcoes` = [{ id, label }].
+export function ChipsRolaveis({ opcoes, ativo, onChange, style }) {
+  return (
+    <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4, margin: "0 -2px", scrollbarWidth: "thin", ...style }}>
+      {opcoes.map(o => (
+        <span key={o.id} style={{ flexShrink: 0, padding: "0 2px" }}>
+          <Chip ativo={o.id === ativo} onClick={() => onChange(o.id)}>{o.label}</Chip>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 // Card "Por dia": chips pra escolher a série e as barras. Dia sem nada vira a
 // frase "Sem <série> no período." em vez de barras vazias. Série com
 // `tipo: "saldo"` desenha entradas e saídas (BarrasSaldo) a partir dos campos
 // `entradas`/`saidas` do dia; as outras leem `d[id]`. `onDia(date)` leva a tela
-// pro dia tocado.
-export function PorDia({ dias, series, onDia }) {
+// pro dia tocado. `semCard` devolve só o conteúdo, pra morar dentro de outro card.
+export function PorDia({ dias, series, onDia, semCard = false }) {
   const [serie, setSerie] = useState(series[0].id);
   const atual = series.find(x => x.id === serie) || series[0];
   const lista = dias || [];
@@ -51,8 +65,9 @@ export function PorDia({ dias, series, onDia }) {
   const vazio = ehSaldo
     ? lista.every(d => !d.entradas && !d.saidas)
     : pontos.every(p => !p.value);
+  const Casca = semCard ? "div" : Card;
   return (
-    <Card>
+    <Casca>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
         <div style={{ fontWeight: 500 }}>Por dia</div>
         {series.length > 1 && (
@@ -66,6 +81,6 @@ export function PorDia({ dias, series, onDia }) {
         : ehSaldo
           ? <BarrasSaldo dias={lista} onDia={onDia} />
           : <BarrasPorDia dias={pontos} formata={atual.formata} onDia={onDia} />}
-    </Card>
+    </Casca>
   );
 }

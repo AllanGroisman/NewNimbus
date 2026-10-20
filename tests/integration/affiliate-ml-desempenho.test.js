@@ -20,6 +20,7 @@ const ml = require(backend("affiliate-reports", "ml.js"));
 const storeLocks = require(backend("scraping", "store-locks.js"));
 const appConfig = require(backend("config"));
 const FX = JSON.parse(fs.readFileSync(path.resolve(__dirname, "..", "fixtures", "ml-desempenho.json"), "utf8"));
+const LISTAS = JSON.parse(fs.readFileSync(path.resolve(__dirname, "..", "fixtures", "ml-desempenho-listas.json"), "utf8"));
 
 const Q = "from=2026-09-20&to=2026-09-25";
 const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
@@ -36,6 +37,8 @@ beforeEach(() => {
     if (u.pathname.endsWith("/dashboard/detalle-diario/general")) {
       return json(u.searchParams.get("page") === "1" ? FX.detalheDiarioPagina1 : FX.detalheDiarioPagina2);
     }
+    if (u.pathname.endsWith("/dashboard/sales/general")) return json(LISTAS.vendas);
+    if (u.pathname.endsWith("/dashboard/audiences/general")) return json(LISTAS.audiencias);
     return new Response("", { status: 404 });
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -114,6 +117,56 @@ describe("GET /api/affiliate/ml/desempenho", () => {
     const res = await auth("get", `/api/affiliate/ml/desempenho?${Q}`);
     expect(res.status).toBe(403);
     expect(res.body.storeLocked).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// GET /api/affiliate/ml/desempenho/lista — uma página de uma aba de baixo
+// (vendas, produtos, categorias, nao-efetivadas, audiencias), pedida quando a
+// aba abre.
+describe("GET /api/affiliate/ml/desempenho/lista", () => {
+  it("exige login", async () => {
+    const res = await request(app).get(`/api/affiliate/ml/desempenho/lista?aba=vendas&${Q}`);
+    expect(res.status).toBe(401);
+  });
+
+  it("devolve a página pedida da aba, lida com o cookie do próprio usuário", async () => {
+    const { user, auth } = await createTestUser();
+    affiliate.writeConfig(user.id, { tag: "minha-tag", cookie: "ssid=cookie-do-a" });
+
+    const res = await auth("get", `/api/affiliate/ml/desempenho/lista?aba=vendas&${Q}&page=2`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ aba: "vendas", page: 2, total: 12 });
+    expect(res.body.items[0]).toMatchObject({ product: "Fone de Ouvido Bluetooth XYZ", store: "Loja ABC", status: "IN_REVIEW" });
+    const [[url, opts]] = fetchMock.mock.calls;
+    expect(new URL(url).searchParams.get("page")).toBe("2");
+    expect(opts.headers.Cookie).toBe("ssid=cookie-do-a");
+
+    const aud = await auth("get", `/api/affiliate/ml/desempenho/lista?aba=audiencias&${Q}`);
+    expect(aud.status).toBe(200);
+    expect(aud.body.gender.map(g => g.label)).toEqual(["Não especificado", "Feminino", "Masculino"]);
+  });
+
+  it("aba desconhecida é 400 e não chega no ML; sem cookie é 409", async () => {
+    const { user, auth } = await createTestUser();
+    affiliate.writeConfig(user.id, { tag: "minha-tag", cookie: "ssid=x" });
+    const res = await auth("get", `/api/affiliate/ml/desempenho/lista?aba=redes&${Q}`);
+    expect(res.status).toBe(400);
+    expect(res.body.kind).toBe("aba-invalida");
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const b = await createTestUser();
+    const semCookie = await b.auth("get", `/api/affiliate/ml/desempenho/lista?aba=vendas&${Q}`);
+    expect(semCookie.status).toBe(409);
+    expect(semCookie.body.kind).toBe("afiliado-ausente");
+  });
+
+  it("loja ML trancada fecha a rota", async () => {
+    const { user, auth } = await createTestUser();
+    affiliate.writeConfig(user.id, { tag: "minha-tag", cookie: "ssid=x" });
+    storeLocks.writeStoreLock("ml", { locked: true, message: "ML em manutenção" });
+    const res = await auth("get", `/api/affiliate/ml/desempenho/lista?aba=vendas&${Q}`);
+    expect(res.status).toBe(403);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

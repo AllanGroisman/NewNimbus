@@ -1635,6 +1635,18 @@ app.get("/api/affiliate/ml/desempenho", auth.requireAuth, requireStoreUnlocked("
   }
 });
 
+// Uma página de uma das abas de baixo do painel (vendas, produtos, categorias,
+// nao-efetivadas, audiencias) — a tela pede sob demanda, quando a aba abre.
+app.get("/api/affiliate/ml/desempenho/lista", auth.requireAuth, requireStoreUnlocked("ml"), async (req, res) => {
+  try {
+    const { aba, from, to, page, refresh } = req.query;
+    res.json(await mlDesempenho.listaDoUsuario(req.user.id, { aba, from, to, page, refresh: refresh === "1" }));
+  } catch (err) {
+    if (err instanceof mlDesempenho.DesempenhoError) return res.status(err.status).json({ error: err.message, kind: err.kind });
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/affiliate/ml/desempenho/lista" });
+  }
+});
+
 // Etiquetas de afiliado da conta ML do usuário (scraping/ml-etiquetas.js): o
 // "Testar conexão" da aba rebusca a lista com o cookie salvo e a grava — é dela
 // que cada campanha escolhe a sua. Erro esperado (cookie vencido, conta sem

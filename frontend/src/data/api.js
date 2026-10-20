@@ -418,6 +418,16 @@ export async function getMLDesempenho(from, to, opcoes = {}) {
   return http("GET", `/api/affiliate/ml/desempenho?${qsDesempenho(from, to, opcoes)}`, undefined, { timeoutMs: SLOW_TIMEOUT_MS });
 }
 
+// Uma página de uma aba de baixo do desempenho ML: "vendas", "produtos",
+// "categorias", "nao-efetivadas" ou "audiencias". As listas vêm de 10 em 10
+// (`page` começa em 1, `hasMore` diz se tem a próxima).
+export async function getMLDesempenhoLista(aba, from, to, { page = 1, refresh = false } = {}) {
+  const qs = qsDesempenho(from, to, { refresh });
+  qs.set("aba", aba);
+  qs.set("page", String(page));
+  return http("GET", `/api/affiliate/ml/desempenho/lista?${qs}`, undefined, { timeoutMs: SLOW_TIMEOUT_MS });
+}
+
 // Desempenho de afiliado na Shopee (pedidos, vendas, comissão, vendas por
 // campanha) do período, datas AAAA-MM-DD inclusivas. Mesmas opções do ML, mais
 // `campanha` (id): só os números daquela campanha.

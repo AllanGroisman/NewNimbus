@@ -66,7 +66,7 @@ export default function PageDesempenho({
       n: 0,
     };
   });
-  const [resposta, setResposta] = useState(null);   // { n, loja, dados, erro: { text, kind } }
+  const [resposta, setResposta] = useState(null);   // { n, loja, refresh, dados, erro: { text, kind } }
 
   useEffect(() => {
     const cfg = LOJAS[consulta.loja];
@@ -77,7 +77,7 @@ export default function PageDesempenho({
     // cache, então voltar um período depois já sai pronto.
     const ant = periodoAnterior({ ...consulta.periodo, ...intervalo });
     cfg.buscar(intervalo.from, intervalo.to, { refresh: consulta.refresh, antFrom: ant?.from, antTo: ant?.to })
-      .then(dados => { if (viva) setResposta({ n: consulta.n, loja: consulta.loja, dados, erro: null }); })
+      .then(dados => { if (viva) setResposta({ n: consulta.n, loja: consulta.loja, refresh: consulta.refresh, dados, erro: null }); })
       .catch(err => {
         if (viva) setResposta({ n: consulta.n, loja: consulta.loja, dados: null, erro: { text: errText(err, cfg.falhou), kind: err?.body?.kind || null } });
       });
@@ -165,6 +165,8 @@ export default function PageDesempenho({
             onOpenCampanha={onOpenCampanha}
             mlTags={mlTags}
             mlDefaultTag={mlDefaultTag}
+            versao={resposta.n}
+            atualizado={!!resposta.refresh}
           />
         </div>
       )}

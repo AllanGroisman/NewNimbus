@@ -3,11 +3,25 @@ import { useEffect, useRef, useState } from "react";
 // Bolinha "i" com uma explicação curta. Abre ao passar o mouse (desktop) ou ao
 // tocar (celular, onde não existe hover); fecha ao tocar fora ou com Esc.
 // `label` dá nome ao botão no leitor de tela; `children` é o texto do balão.
+const LARGURA = 260;
+const MARGEM = 16;
+
+// Quanto o balão anda pra esquerda pra caber na tela: abre pra direita quando
+// a bolinha está perto da margem esquerda, e recua quando ela está mais pro
+// meio (um card da coluna da direita no celular).
+function deslocamento(el) {
+  if (!el || typeof window === "undefined") return { left: -8, largura: LARGURA };
+  const x = el.getBoundingClientRect().left;
+  const largura = Math.min(LARGURA, window.innerWidth - 2 * MARGEM);
+  return { left: Math.max(MARGEM - x, Math.min(-8, window.innerWidth - MARGEM - x - largura)), largura };
+}
+
 export default function InfoTip({ label, children }) {
   const [hover, setHover] = useState(false);
   const [pinned, setPinned] = useState(false);
   const ref = useRef(null);
   const open = hover || pinned;
+  const pos = open ? deslocamento(ref.current) : null;
 
   useEffect(() => {
     if (!pinned) return;
@@ -46,10 +60,8 @@ export default function InfoTip({ label, children }) {
         <span
           role="tooltip"
           style={{
-            // Abre pra direita: pensado pra bolinha perto da margem esquerda (rótulo
-            // de uma linha), com largura que ainda cabe numa tela de 320px.
-            position: "absolute", top: "calc(100% + 6px)", left: -8, zIndex: 20,
-            width: "max-content", maxWidth: "min(260px, calc(100vw - 120px))",
+            position: "absolute", top: "calc(100% + 6px)", left: pos.left, zIndex: 20,
+            width: "max-content", maxWidth: pos.largura,
             padding: "8px 10px", borderRadius: 8,
             background: "var(--color-background-primary)", color: "var(--color-text-primary)",
             border: "0.5px solid var(--color-border-secondary)",

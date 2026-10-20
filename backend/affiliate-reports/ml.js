@@ -136,6 +136,107 @@ function normalizaEtiquetas(itens) {
     .sort((a, b) => b.earnings - a.earnings || b.clicks - a.clicks);
 }
 
+// ── Abas de baixo do painel (Vendas, Produtos vendidos, Categorias, Vendas não
+// efetivadas, Audiências) ──
+//
+// Os nomes dos campos saíram do código do próprio painel (o bundle JS que
+// desenha cada tabela, lido em 20/10/2026), não de uma resposta com venda: a
+// conta ainda não tinha nenhuma. As vendas vêm em camelCase e as outras listas
+// em snake_case — é assim que o painel lê. Campo que faltar vira null/0, e
+// `avisaFormato` avisa no log se o campo principal sumir.
+
+const txt = (v) => (typeof v === "string" && v.trim() ? v.trim() : null);
+const numOuNull = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+const dia = (v) => { const m = /^\d{4}-\d{2}-\d{2}/.exec(String(v || "")); return m ? m[0] : null; };
+// O `fee` de produtos e categorias vem em fração (0.12); a tela recebe em % (12),
+// igual ao `commissionPercentage` das vendas, que o ML já manda em %.
+const pctDeFracao = (v) => (numOuNull(v) == null ? null : Math.round(v * 10000) / 100);
+
+// Um item de `/dashboard/sales/general`. `status` é o código do ML (APPROVED,
+// IN_REVIEW, PAYMENT_COMPLETED…) e `saleType` é DIRECT/INDIRECT (venda do
+// produto do link ou de outro): a tela traduz.
+function normalizaVenda(it) {
+  return {
+    id: txt(String(it.id ?? "")) || txt(String(it.purchaseId ?? "")),
+    date: dia(it.date),
+    product: txt(it.productName),
+    image: txt(it.productImage),
+    link: txt(it.link),
+    category: txt(it.categoryName),
+    store: txt(it.storeName),
+    value: num(it.saleValue),
+    units: num(it.saleUnits),
+    commission: num(it.commissionValue),
+    commissionPct: numOuNull(it.commissionPercentage),
+    saleType: txt(it.saleType)?.toUpperCase() || null,
+    status: txt(it.status)?.toUpperCase() || null,
+    statusDetail: txt(it.statusDetail)?.toUpperCase() || null,
+    statusUntil: dia(it.statusUntilDate),
+  };
+}
+
+// Um item de `/dashboard/ordenes/general` (a aba "Produtos vendidos").
+function normalizaProduto(it) {
+  return {
+    product: txt(it.product),
+    image: txt(it.image_uri),
+    link: txt(it.link),
+    category: txt(it.category),
+    units: num(it.quantity),
+    sales: num(it.total_sales),
+    feePct: pctDeFracao(it.fee),
+    earnings: num(it.earnings),
+  };
+}
+
+// Um item de `/dashboard/categories-products` (a aba "Categorias").
+function normalizaCategoria(it) {
+  return {
+    category: txt(it.category) || txt(it.name),
+    units: num(it.quantity),
+    feePct: pctDeFracao(it.fee),
+    earnings: num(it.earnings),
+  };
+}
+
+// Um item de `/dashboard/orders-cancelled` (a aba "Vendas não efetivadas"):
+// canceladas pelo comprador, não aprovadas pelos termos (`quantity_tyc`) e o
+// ganho que deixou de entrar.
+function normalizaNaoEfetivada(it) {
+  return {
+    product: txt(it.product) || txt(it.category),
+    image: txt(it.image_uri),
+    link: txt(it.link),
+    category: txt(it.category),
+    canceled: num(it.quantity),
+    notApproved: num(it.quantity_tyc),
+    lostEarnings: num(it.earnings_cancelled),
+  };
+}
+
+const GENERO = { female: "Feminino", male: "Masculino" };
+
+// `/dashboard/audiences/general` → idade, gênero e localização, cada um uma
+// lista { label, value }. Idade e local vêm como { x, y }; gênero como
+// { id, label, value }. "Sin datos" é o balde de quem o ML não sabe.
+function normalizaAudiencias(json) {
+  const grupos = porId(json?.data);
+  const xy = (lista) => (Array.isArray(lista) ? lista : [])
+    .filter(p => p && (p.x != null || p.label != null))
+    .map(p => {
+      const label = String(p.x ?? p.label);
+      return { label: /^sin datos$/i.test(label) ? "Sem dados" : label, value: num(p.y ?? p.value) };
+    });
+  const genero = (Array.isArray(grupos.gender?.data) ? grupos.gender.data : [])
+    .filter(Boolean)
+    .map(g => ({ label: GENERO[String(g.id || "").toLowerCase()] || "Não especificado", value: num(g.value) }));
+  return {
+    age: xy(grupos.age?.data),
+    gender: genero,
+    location: xy(grupos.location?.data).sort((a, b) => b.value - a.value),
+  };
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // Chamadas ao ML
 // ────────────────────────────────────────────────────────────────────────
@@ -251,10 +352,85 @@ async function desempenhoDoUsuario(userId, { from, to, antFrom, antTo, refresh =
   return { ...data, anterior: ant ? { from: ant.from, to: ant.to, summary: ant.summary, tags: ant.tags } : null };
 }
 
-function _resetCache() { cacheado.reset(); }
+// ────────────────────────────────────────────────────────────────────────
+// Abas de baixo: uma lista por vez, sob demanda
+// ────────────────────────────────────────────────────────────────────────
+
+// O painel pede 10 por página; a tela mostra 10 e o "Ver mais" pede a próxima.
+const POR_PAGINA_LISTA = 10;
+const MAX_PAGINA_LISTA = 50;
+
+// Cada aba: o endpoint, a ordem fixa (a tela não ordena por coluna) e o campo
+// que todo item tem — se ele faltar, o formato mudou e o log avisa.
+const ABAS = {
+  vendas: { caminho: "sales/general", ordem: "ord_date_created", normaliza: normalizaVenda, campo: "productName" },
+  produtos: { caminho: "ordenes/general", ordem: "earnings", normaliza: normalizaProduto, campo: "product" },
+  categorias: { caminho: "categories-products", ordem: "earnings", normaliza: normalizaCategoria, campo: "category" },
+  "nao-efetivadas": { caminho: "orders-cancelled", ordem: "earnings_cancelled", normaliza: normalizaNaoEfetivada, campo: "product" },
+  audiencias: { caminho: "audiences/general" },
+};
+
+const cacheListas = criaCache();
+
+// Uma vez por aba por processo: se o primeiro item não tem o campo esperado,
+// registra só as CHAVES dele (nunca os valores) pra ajustar o normalizador.
+const formatoAvisado = new Set();
+function avisaFormato(aba, item) {
+  const { campo } = ABAS[aba];
+  if (!campo || !item || formatoAvisado.has(aba) || campo in item) return;
+  formatoAvisado.add(aba);
+  console.warn(`[desempenho ML] aba ${aba}: item sem "${campo}" — chaves: ${Object.keys(item).join(",")}`);
+}
+
+async function buscaLista({ cookie, aba, from, to, page }) {
+  const cfg = ABAS[aba];
+  const base = { metric_tab: "general", filter_time_range: filtroPeriodo(from, to), type: "GENERAL" };
+  if (!cfg.normaliza) {
+    return { aba, from, to, ...normalizaAudiencias(await getPainel(cfg.caminho, base, cookie)) };
+  }
+  const json = await getPainel(cfg.caminho, {
+    ...base, items_per_page: String(POR_PAGINA_LISTA), page: String(page), order_by: cfg.ordem, sort: "desc",
+  }, cookie);
+  const lista = (Array.isArray(json?.item_list) ? json.item_list : []).filter(it => it && typeof it === "object");
+  avisaFormato(aba, lista[0]);
+  const total = num(json?.total_results);
+  return {
+    aba, from, to, page, total,
+    hasMore: page * POR_PAGINA_LISTA < total && lista.length > 0,
+    items: lista.map(cfg.normaliza),
+  };
+}
+
+// O que a rota `/desempenho/lista` chama: uma página de uma aba. Mesmas regras
+// do resumo — cookie do usuário, cache curto, `refresh` com freio.
+async function listaDoUsuario(userId, { aba, from, to, page = 1, refresh = false, now = Date.now() } = {}) {
+  if (!Object.prototype.hasOwnProperty.call(ABAS, aba)) {
+    throw new DesempenhoError("aba-invalida", "Aba de desempenho desconhecida.", 400);
+  }
+  const invalido = validaPeriodo(from, to);
+  if (invalido) throw new DesempenhoError("periodo-invalido", invalido, 400);
+  const pagina = Math.min(MAX_PAGINA_LISTA, Math.max(1, Number.parseInt(page, 10) || 1));
+
+  const { tag, cookie } = affiliate.readMLConfig(userId);
+  if (!cookie) {
+    throw new DesempenhoError(KIND.SEM_CONFIG, "Cole o cookie de afiliado na aba Mercado Livre pra ver o desempenho.", 409);
+  }
+
+  return cacheListas(`${userId}|${aba}|${from}|${to}|${pagina}`, { refresh, now }, async () => {
+    try {
+      return await buscaLista({ cookie, aba, from, to, page: pagina });
+    } catch (err) {
+      if (err instanceof DesempenhoError && err.kind === KIND.COOKIE) avisaCookie(userId, false, tag);
+      throw err;
+    }
+  });
+}
+
+function _resetCache() { cacheado.reset(); cacheListas.reset(); formatoAvisado.clear(); }
 
 module.exports = {
   desempenhoDoUsuario,
+  listaDoUsuario,
   buscaDesempenho,
   DesempenhoError,
   // puras, exportadas pros testes
@@ -263,6 +439,12 @@ module.exports = {
   normalizaResumo,
   normalizaDias,
   normalizaEtiquetas,
+  normalizaVenda,
+  normalizaProduto,
+  normalizaCategoria,
+  normalizaNaoEfetivada,
+  normalizaAudiencias,
+  ABAS,
   MAX_DIAS,
   _resetCache,
 };

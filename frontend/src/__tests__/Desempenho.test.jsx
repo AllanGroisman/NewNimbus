@@ -11,11 +11,12 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 vi.mock("../data/api", () => ({
   errText: (err, fallback) => err?.message || fallback,
   getMLDesempenho: vi.fn(),
+  getMLDesempenhoLista: vi.fn(),
   getShopeeDesempenho: vi.fn(),
 }));
 
 import PageDesempenho from "../pages/Desempenho.jsx";
-import { getMLDesempenho, getShopeeDesempenho } from "../data/api";
+import { getMLDesempenho, getMLDesempenhoLista, getShopeeDesempenho } from "../data/api";
 import { periodo } from "../data/desempenho";
 import { periodoAnterior, hojeBR, somaDias } from "../data/periodos";
 
@@ -49,6 +50,23 @@ function resposta({ clicks = 20, earnings = 18.5, days } = {}) {
   };
 }
 
+// Uma venda no formato de /api/affiliate/ml/desempenho/lista?aba=vendas.
+function venda(extra = {}) {
+  return {
+    id: "1", date: "2026-09-22", product: "Fone XYZ", image: null, link: null, category: "Eletrônicos",
+    store: "Loja ABC", value: 89.9, units: 1, commission: 7.19, commissionPct: 8, saleType: "DIRECT",
+    status: "IN_REVIEW", statusDetail: null, statusUntil: "2026-11-21",
+    ...extra,
+  };
+}
+
+// Resposta das abas que buscam: Vendas com uma venda, o resto vazio.
+function listaPadrao(aba, from, to, { page = 1 } = {}) {
+  if (aba === "audiencias") return Promise.resolve({ aba, from, to, age: [], gender: [], location: [] });
+  const items = aba === "vendas" ? [venda()] : [];
+  return Promise.resolve({ aba, from, to, page, total: items.length, hasMore: false, items });
+}
+
 function erro(message, kind) {
   return Object.assign(new Error(message), { body: { error: message, kind } });
 }
@@ -76,24 +94,41 @@ function respostaShopee(extra = {}) {
 
 beforeEach(() => {
   getMLDesempenho.mockReset();
+  getMLDesempenhoLista.mockReset();
+  getMLDesempenhoLista.mockImplementation(listaPadrao);
   getShopeeDesempenho.mockReset();
 });
 
 describe("PageDesempenho", () => {
-  it("abre nos 30 dias e mostra os cards, a origem do ganho e as etiquetas", async () => {
+  it("abre nos 30 dias e mostra os cards e o detalhe dos ganhos, sem a nota do rodapé", async () => {
     getMLDesempenho.mockResolvedValue(resposta());
     render(<PageDesempenho />);
 
     expect(getMLDesempenho).toHaveBeenCalledWith(...pedido("30d"));
 
     expect(await screen.findByText("Compradores")).toBeInTheDocument();
-    expect(screen.getAllByText("20")).toHaveLength(2);               // card de cliques + linha da etiqueta
+    expect(screen.getByText("20")).toBeInTheDocument();
     // Sem `anterior` na resposta, o card de cliques usa a variação do próprio ML.
     expect(screen.getByText(/↑ 100%/)).toBeInTheDocument();
     expect(screen.getByText("20%")).toBeInTheDocument();          // 4 pedidos ÷ 20 cliques
     expect(screen.getAllByText(/R\$\s18,50/).length).toBeGreaterThan(0);
+    expect(screen.getByText("Detalhe dos ganhos")).toBeInTheDocument();
     expect(screen.getByText("Parceria do vendedor")).toBeInTheDocument();
-    expect(screen.getByText("minha-tag")).toBeInTheDocument();
+    expect(screen.getByText("Patrocinado por marca")).toBeInTheDocument();
+    expect(screen.queryByText(/atualiza estes números uma vez por dia/)).not.toBeInTheDocument();
+  });
+
+  it("o (i) de cada número mostra o texto do painel do ML", async () => {
+    getMLDesempenho.mockResolvedValue(resposta());
+    render(<PageDesempenho />);
+    await screen.findByText("Compradores");
+
+    fireEvent.click(screen.getByRole("button", { name: "O que é Pedidos" }));
+    expect(screen.getByRole("tooltip")).toHaveTextContent("É a quantidade de pedidos feitos pelos compradores. Pode variar após o processo de aprovação.");
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "O que é Parceria do vendedor" }));
+    expect(screen.getByRole("tooltip")).toHaveTextContent("São as porcentagens de parceria definidas pelo vendedor.");
   });
 
   it("trocar o período busca de novo com as datas dele", async () => {
@@ -187,11 +222,12 @@ describe("PageDesempenho", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/Escolha até/);
   });
 
-  it("tocar numa barra oferece ver só aquele dia", async () => {
+  it("tocar numa barra da aba Data oferece ver só aquele dia", async () => {
     getMLDesempenho.mockResolvedValue(resposta());
     render(<PageDesempenho />);
     await screen.findByText("Compradores");
 
+    fireEvent.click(screen.getByRole("button", { name: "Data" }));
     fireEvent.click(screen.getByTitle(/^22\/09:/));
     fireEvent.click(screen.getByRole("button", { name: /Ver só 22\/09/ }));
     await waitFor(() => expect(getMLDesempenho).toHaveBeenLastCalledWith("2026-09-22", "2026-09-22", { refresh: false, antFrom: "2026-09-21", antTo: "2026-09-21" }));
@@ -206,7 +242,9 @@ describe("PageDesempenho", () => {
       { id: 3, name: "Só Shopee", scraping: { mlTag: "minha-tag", sources: ["Shopee"] } },
     ];
     render(<PageDesempenho campanhas={campanhas} onOpenCampanha={onOpenCampanha} mlTags={[{ tag: "minha-tag" }, { tag: "padrao" }]} mlDefaultTag="padrao" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Ofertas Tech" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Etiquetas" }));
+    expect(screen.getByText("minha-tag")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ofertas Tech" }));
     expect(onOpenCampanha).toHaveBeenCalledWith(1);
     expect(screen.queryByRole("button", { name: "Casa" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Só Shopee" })).not.toBeInTheDocument();
@@ -215,7 +253,106 @@ describe("PageDesempenho", () => {
   it("período sem movimento diz isso em vez de desenhar barras vazias", async () => {
     getMLDesempenho.mockResolvedValue(resposta({ clicks: 0, days: [{ date: "2026-09-20", clicks: 0, orders: 0, units: 0, earnings: 0, coupons: 0 }] }));
     render(<PageDesempenho />);
-    expect(await screen.findByText("Sem cliques no período.")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Data" }));
+    expect(screen.getByText("Sem cliques no período.")).toBeInTheDocument();
+  });
+});
+
+describe("PageDesempenho — abas do ML", () => {
+  it("abre em Vendas: busca a lista do período e mostra status, loja e comissão", async () => {
+    getMLDesempenho.mockResolvedValue(resposta());
+    render(<PageDesempenho />);
+
+    expect(await screen.findByText("Fone XYZ")).toBeInTheDocument();
+    expect(getMLDesempenhoLista).toHaveBeenCalledWith("vendas", "2026-09-20", "2026-09-22", { page: 1, refresh: false });
+    expect(screen.getByText("Em revisão")).toBeInTheDocument();
+    expect(screen.getByText("até 21/11")).toBeInTheDocument();
+    expect(screen.getByText("22/09 · Loja ABC · direta 8%")).toBeInTheDocument();
+    expect(screen.getByText(/R\$\s7,19/)).toBeInTheDocument();
+    expect(screen.getByText(/de R\$\s89,90/)).toBeInTheDocument();
+  });
+
+  it("cada chip busca a sua aba uma vez só; voltar não busca de novo", async () => {
+    getMLDesempenho.mockResolvedValue(resposta());
+    render(<PageDesempenho />);
+    await screen.findByText("Fone XYZ");
+
+    fireEvent.click(screen.getByRole("button", { name: "Produtos vendidos" }));
+    await waitFor(() => expect(getMLDesempenhoLista).toHaveBeenCalledWith("produtos", "2026-09-20", "2026-09-22", { page: 1, refresh: false }));
+    expect(await screen.findByText("Nenhum dado registrado para este período.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Vendas" }));
+    expect(screen.getByText("Fone XYZ")).toBeVisible();
+    expect(getMLDesempenhoLista.mock.calls.filter(([aba]) => aba === "vendas")).toHaveLength(1);
+
+    // Data e Etiquetas saem do resumo: não pedem nada.
+    fireEvent.click(screen.getByRole("button", { name: "Data" }));
+    fireEvent.click(screen.getByRole("button", { name: "Etiquetas" }));
+    expect(getMLDesempenhoLista).toHaveBeenCalledTimes(2);
+  });
+
+  it("'Ver mais' pede a próxima página e acrescenta embaixo", async () => {
+    getMLDesempenho.mockResolvedValue(resposta());
+    getMLDesempenhoLista.mockImplementation(async (aba, from, to, { page }) => ({
+      aba, from, to, page, total: 11, hasMore: page === 1,
+      items: [venda({ id: String(page), product: page === 1 ? "Fone XYZ" : "Capa ABC" })],
+    }));
+    render(<PageDesempenho />);
+    await screen.findByText("Fone XYZ");
+
+    fireEvent.click(screen.getByRole("button", { name: "Ver mais" }));
+    expect(await screen.findByText("Capa ABC")).toBeInTheDocument();
+    expect(screen.getByText("Fone XYZ")).toBeInTheDocument();
+    expect(getMLDesempenhoLista).toHaveBeenLastCalledWith("vendas", "2026-09-20", "2026-09-22", { page: 2, refresh: false });
+    expect(screen.queryByRole("button", { name: "Ver mais" })).not.toBeInTheDocument();
+  });
+
+  it("Atualizar também renova a aba aberta", async () => {
+    getMLDesempenho.mockResolvedValue(resposta());
+    render(<PageDesempenho />);
+    await screen.findByText("Fone XYZ");
+
+    fireEvent.click(screen.getByRole("button", { name: /Atualizar/ }));
+    await waitFor(() => expect(getMLDesempenhoLista).toHaveBeenLastCalledWith("vendas", "2026-09-20", "2026-09-22", { page: 1, refresh: true }));
+  });
+
+  it("erro na lista oferece tentar de novo, sem derrubar os cards", async () => {
+    getMLDesempenho.mockResolvedValue(resposta());
+    getMLDesempenhoLista
+      .mockRejectedValueOnce(erro("O Mercado Livre respondeu HTTP 500 ao buscar as métricas.", "desconhecido"))
+      .mockImplementation(listaPadrao);
+    render(<PageDesempenho />);
+
+    fireEvent.click(await screen.findByText("Tentar de novo"));
+    expect(await screen.findByText("Fone XYZ")).toBeInTheDocument();
+    expect(screen.getByText("Compradores")).toBeInTheDocument();
+  });
+
+  it("Data mostra a tabela dos dias com movimento, do mais recente pro mais antigo", async () => {
+    getMLDesempenho.mockResolvedValue(resposta());
+    render(<PageDesempenho />);
+    await screen.findByText("Compradores");
+
+    fireEvent.click(screen.getByRole("button", { name: "Data" }));
+    const linhas = screen.getAllByRole("row").slice(1).map(r => r.textContent);
+    expect(linhas).toHaveLength(2);                       // 21/09 não teve nada
+    expect(linhas[0]).toMatch(/^22\/09/);
+    expect(linhas[1]).toMatch(/^20\/09/);
+  });
+
+  it("Audiências desenha idade, gênero e local em %", async () => {
+    getMLDesempenho.mockResolvedValue(resposta());
+    getMLDesempenhoLista.mockImplementation(async (aba, from, to) => (aba === "audiencias"
+      ? { aba, from, to, age: [{ label: "18-24", value: 1 }, { label: "25-34", value: 3 }], gender: [{ label: "Feminino", value: 1 }], location: [] }
+      : listaPadrao(aba, from, to)));
+    render(<PageDesempenho />);
+    await screen.findByText("Fone XYZ");
+
+    fireEvent.click(screen.getByRole("button", { name: "Audiências" }));
+    expect(await screen.findByText("25-34")).toBeInTheDocument();
+    expect(screen.getByText("75%")).toBeInTheDocument();
+    expect(screen.getByText("100%")).toBeInTheDocument();     // gênero: uma fatia só
+    expect(screen.getByText("Sem dados.")).toBeInTheDocument(); // local vazio
   });
 });
 

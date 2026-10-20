@@ -1,0 +1,98 @@
+{
+  "_origem": "Formato das abas de baixo do painel de Métricas do ML (/affiliate-program/api/dashboard/*). Os NOMES dos campos saíram do bundle JS que desenha cada tabela do painel (affiliates-site, lido em 20/10/2026), porque a conta ainda não tinha venda e as respostas reais vieram com item_list vazio. O envelope (item_list, total_results, page…) e a idade/gênero da audiência são de respostas reais; a localização veio vazia, e o { x, y } dela é dedução pelo formato da idade. Produtos, lojas e números foram inventados.",
+  "vendas": {
+    "item_list": [
+      {
+        "id": "2000012345",
+        "date": "2026-10-12T14:31:00.000-03:00",
+        "productImage": "https://http2.mlstatic.com/D_000000-MLA00000000000_000000-O.webp",
+        "productName": "Fone de Ouvido Bluetooth XYZ",
+        "categoryName": "Eletrônicos",
+        "storeName": "Loja ABC",
+        "link": "https://produto.mercadolivre.com.br/MLB-0000000000-fone",
+        "saleValue": 89.9,
+        "saleUnits": 1,
+        "commissionValue": 7.19,
+        "commissionPercentage": 8,
+        "saleType": "DIRECT",
+        "purchaseId": "2000012345",
+        "status": "IN_REVIEW",
+        "statusDetail": null,
+        "statusUntilDate": "2026-12-11T00:00:00.000-03:00"
+      },
+      {
+        "id": "2000012300",
+        "date": "2026-10-03T09:02:00.000-03:00",
+        "productImage": null,
+        "productName": "Capa de Celular",
+        "categoryName": "Acessórios",
+        "storeName": "Capas & Cia",
+        "link": "",
+        "saleValue": 29.9,
+        "saleUnits": 2,
+        "commissionValue": 3.59,
+        "commissionPercentage": 12,
+        "saleType": "INDIRECT",
+        "purchaseId": "2000012300",
+        "status": "REJECTED",
+        "statusDetail": "PERSONAL_PURCHASE",
+        "statusUntilDate": null
+      }
+    ],
+    "filter_time_range": "1790478000000--1790650800000",
+    "filter_type": "GENERAL",
+    "page": 1,
+    "items_per_page": 10,
+    "total_results": 12,
+    "order_by": "ORD_DATE_CREATED",
+    "sort": "DESC"
+  },
+  "produtos": {
+    "item_list": [
+      { "product": "Fone de Ouvido Bluetooth XYZ", "image_uri": "https://http2.mlstatic.com/D_000000-MLA00000000000_000000-O.webp", "link": "https://produto.mercadolivre.com.br/MLB-0000000000-fone", "category": "Eletrônicos", "quantity": 3, "total_sales": 269.7, "fee": 0.08, "earnings": 21.58, "entity_id": "MLB0000000000", "entity_type": "item" }
+    ],
+    "filter_time_range": "1790478000000--1790650800000",
+    "filter_type": "GENERAL",
+    "page": 1,
+    "items_per_page": 10,
+    "total_results": 1,
+    "order_by": "EARNINGS",
+    "sort": "DESC"
+  },
+  "categorias": {
+    "item_list": [
+      { "category": "Eletrônicos", "quantity": 3, "fee": 0.08, "earnings": 21.58 },
+      { "name": "Acessórios", "quantity": 2, "fee": 0.125, "earnings": 3.59 }
+    ],
+    "filter_time_range": "1790478000000--1790650800000",
+    "filter_type": "GENERAL",
+    "page": 1,
+    "items_per_page": 10,
+    "total_results": 2,
+    "order_by": "EARNINGS",
+    "sort": "DESC"
+  },
+  "naoEfetivadas": {
+    "item_list": [
+      { "product": "Capa de Celular", "image_uri": null, "link": "", "category": "Acessórios", "quantity": 1, "quantity_tyc": 1, "earnings_cancelled": 3.59 }
+    ],
+    "filter_time_range": "1790478000000--1790650800000",
+    "filter_type": "GENERAL",
+    "page": 1,
+    "items_per_page": 10,
+    "total_results": 1,
+    "order_by": "EARNINGS_CANCELLED",
+    "sort": "DESC"
+  },
+  "audiencias": {
+    "data": [
+      { "id": "age", "max_value": 55, "data": [{ "x": "0-17", "y": 0 }, { "x": "18-24", "y": 2 }, { "x": "25-34", "y": 5 }, { "x": "35-44", "y": 1 }, { "x": "+45", "y": 0 }, { "x": "Sin datos", "y": 2 }] },
+      { "id": "gender", "data": [{ "id": "No especificado", "label": "No especificado", "value": 1 }, { "id": "female", "label": "female", "value": 6 }, { "id": "male", "label": "male", "value": 3 }] },
+      { "id": "location", "max_value": 5, "data": [{ "x": "Rio de Janeiro", "y": 2 }, { "x": "São Paulo", "y": 5 }] }
+    ],
+    "filterTimeRange": "2026-07-01T00:00:00Z--2026-09-28T00:00:00Z",
+    "filterTag": "",
+    "filterType": "GENERAL",
+    "lastUpdate": "2026-09-29"
+  }
+}

@@ -22,6 +22,7 @@ const ml = require(backend("affiliate-reports", "ml.js"));
 const affiliate = require(backend("scraping", "affiliate.js"));
 const affiliateAlert = require(backend("notifications", "affiliate-alert.js"));
 const FX = JSON.parse(fs.readFileSync(path.resolve(__dirname, "..", "fixtures", "ml-desempenho.json"), "utf8"));
+const LISTAS = JSON.parse(fs.readFileSync(path.resolve(__dirname, "..", "fixtures", "ml-desempenho-listas.json"), "utf8"));
 
 const USER = "u-desempenho";
 const COOKIE = "ssid=cookie-de-teste";
@@ -252,5 +253,155 @@ describe("desempenhoDoUsuario", () => {
     // Outro período não usa o cache deste.
     await ml.desempenhoDoUsuario(USER, { from: "2026-09-01", to: "2026-09-25", now: t0 + 3 * 60 * 1000 });
     expect(fetchMock.mock.calls.length).toBeGreaterThan(chamadas * 2);
+  });
+});
+
+// As abas de baixo (Vendas, Produtos vendidos, Categorias, Não efetivadas,
+// Audiências): uma lista por vez, sob demanda, com as mesmas regras do resumo.
+describe("listas das abas", () => {
+  const P = { from: "2026-09-20", to: "2026-09-25" };
+  const CAMINHO = {
+    vendas: ["sales/general", LISTAS.vendas],
+    produtos: ["ordenes/general", LISTAS.produtos],
+    categorias: ["categories-products", LISTAS.categorias],
+    "nao-efetivadas": ["orders-cancelled", LISTAS.naoEfetivadas],
+    audiencias: ["audiences/general", LISTAS.audiencias],
+  };
+  const listasFake = () => vi.fn(async (url) => {
+    const u = new URL(url);
+    const achado = Object.values(CAMINHO).find(([c]) => u.pathname.endsWith(`/dashboard/${c}`));
+    return achado ? json(achado[1]) : new Response("not found", { status: 404 });
+  });
+
+  beforeEach(() => {
+    fetchMock = listasFake();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  it("venda: os campos que o painel lê viram produto, loja, valor, comissão e status", async () => {
+    const r = await ml.listaDoUsuario(USER, { aba: "vendas", ...P });
+    expect(r).toMatchObject({ aba: "vendas", page: 1, total: 12, hasMore: true });
+    expect(r.items[0]).toEqual({
+      id: "2000012345",
+      date: "2026-10-12",
+      product: "Fone de Ouvido Bluetooth XYZ",
+      image: "https://http2.mlstatic.com/D_000000-MLA00000000000_000000-O.webp",
+      link: "https://produto.mercadolivre.com.br/MLB-0000000000-fone",
+      category: "Eletrônicos",
+      store: "Loja ABC",
+      value: 89.9,
+      units: 1,
+      commission: 7.19,
+      commissionPct: 8,
+      saleType: "DIRECT",
+      status: "IN_REVIEW",
+      statusDetail: null,
+      statusUntil: "2026-12-11",
+    });
+    expect(r.items[1]).toMatchObject({ link: null, image: null, status: "REJECTED", statusDetail: "PERSONAL_PURCHASE", saleType: "INDIRECT" });
+  });
+
+  it("produtos e categorias: o `fee` do ML (fração) sai em %", async () => {
+    const prod = await ml.listaDoUsuario(USER, { aba: "produtos", ...P });
+    expect(prod.items[0]).toMatchObject({ product: "Fone de Ouvido Bluetooth XYZ", units: 3, sales: 269.7, feePct: 8, earnings: 21.58 });
+    expect(prod.hasMore).toBe(false);
+
+    const cat = await ml.listaDoUsuario(USER, { aba: "categorias", ...P });
+    expect(cat.items).toEqual([
+      { category: "Eletrônicos", units: 3, feePct: 8, earnings: 21.58 },
+      { category: "Acessórios", units: 2, feePct: 12.5, earnings: 3.59 },   // sem `category`, vale o `name`
+    ]);
+  });
+
+  it("não efetivadas: canceladas, não aprovadas e o ganho perdido", async () => {
+    const r = await ml.listaDoUsuario(USER, { aba: "nao-efetivadas", ...P });
+    expect(r.items[0]).toEqual({ product: "Capa de Celular", image: null, link: null, category: "Acessórios", canceled: 1, notApproved: 1, lostEarnings: 3.59 });
+  });
+
+  it("audiências: idade na ordem do ML, gênero traduzido, local do maior pro menor", async () => {
+    const r = await ml.listaDoUsuario(USER, { aba: "audiencias", ...P });
+    expect(r.age.map(x => x.label)).toEqual(["0-17", "18-24", "25-34", "35-44", "+45", "Sem dados"]);
+    expect(r.gender).toEqual([
+      { label: "Não especificado", value: 1 },
+      { label: "Feminino", value: 6 },
+      { label: "Masculino", value: 3 },
+    ]);
+    expect(r.location).toEqual([{ label: "São Paulo", value: 5 }, { label: "Rio de Janeiro", value: 2 }]);
+    expect(r.items).toBeUndefined();
+  });
+
+  it("cada aba pede o endpoint dela, de 10 em 10, na ordem fixa e com o cookie do usuário", async () => {
+    await ml.listaDoUsuario(USER, { aba: "vendas", ...P, page: 3 });
+    await ml.listaDoUsuario(USER, { aba: "produtos", ...P });
+    await ml.listaDoUsuario(USER, { aba: "nao-efetivadas", ...P });
+    const [vendas, produtos, canceladas] = fetchMock.mock.calls.map(([u]) => new URL(u));
+    expect(vendas.pathname).toMatch(/\/dashboard\/sales\/general$/);
+    expect(Object.fromEntries(vendas.searchParams)).toMatchObject({
+      page: "3", items_per_page: "10", order_by: "ord_date_created", sort: "desc", type: "GENERAL",
+      filter_time_range: "2026-09-20T00:00:00.000-03:00--2026-09-26T00:00:00.000-03:00",
+    });
+    expect(produtos.searchParams.get("order_by")).toBe("earnings");
+    expect(canceladas.searchParams.get("order_by")).toBe("earnings_cancelled");
+    for (const [, opts] of fetchMock.mock.calls) expect(opts.headers.Cookie).toBe(COOKIE);
+  });
+
+  it("lista vazia ou torta não quebra", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});   // o item torto dispara o aviso de formato
+    fetchMock.mockImplementation(async () => json({ item_list: [null, "x", { quantity: "muitos" }], total_results: "?" }));
+    const r = await ml.listaDoUsuario(USER, { aba: "produtos", ...P });
+    expect(r.items).toEqual([{ product: null, image: null, link: null, category: null, units: 0, sales: 0, feePct: null, earnings: 0 }]);
+    expect(r).toMatchObject({ total: 0, hasMore: false });
+
+    ml._resetCache();
+    fetchMock.mockImplementation(async () => json({}));
+    const aud = await ml.listaDoUsuario(USER, { aba: "audiencias", ...P });
+    expect(aud).toMatchObject({ age: [], gender: [], location: [] });
+  });
+
+  it("item sem o campo principal avisa as chaves no log, uma vez por aba", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    fetchMock.mockImplementation(async () => json({ item_list: [{ titulo: "Fone", preco: 10 }], total_results: 1 }));
+    await ml.listaDoUsuario(USER, { aba: "vendas", ...P });
+    await ml.listaDoUsuario(USER, { aba: "vendas", ...P, page: 2 });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain("titulo,preco");
+    expect(warn.mock.calls[0][0]).not.toContain("Fone");
+  });
+
+  it("aba desconhecida e período inválido são 400, sem chamar o ML; sem cookie é 409", async () => {
+    await expect(ml.listaDoUsuario(USER, { aba: "redes", ...P })).rejects.toMatchObject({ kind: "aba-invalida", status: 400 });
+    await expect(ml.listaDoUsuario(USER, { aba: "toString", ...P })).rejects.toMatchObject({ kind: "aba-invalida" });
+    await expect(ml.listaDoUsuario(USER, { aba: "vendas", from: "2026-09-25", to: "2026-09-20" })).rejects.toMatchObject({ kind: "periodo-invalido", status: 400 });
+    affiliate.readMLConfig.mockReturnValue({ tag: null, cookie: null });
+    await expect(ml.listaDoUsuario(USER, { aba: "vendas", ...P })).rejects.toMatchObject({ kind: "afiliado-ausente", status: 409 });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("cookie vencido é login-wall e aciona o aviso", async () => {
+    fetchMock.mockImplementation(async () => new Response("", { status: 403 }));
+    await expect(ml.listaDoUsuario(USER, { aba: "vendas", ...P })).rejects.toMatchObject({ kind: "login-wall", status: 409 });
+    expect(cookieState).toHaveBeenCalledWith(USER, false, "minha-tag");
+  });
+
+  it("cache por aba, período e página; o Atualizar fura com o mesmo freio", async () => {
+    const t0 = 1_790_000_000_000;
+    await ml.listaDoUsuario(USER, { aba: "vendas", ...P, now: t0 });
+    const deCache = await ml.listaDoUsuario(USER, { aba: "vendas", ...P, now: t0 + 60 * 1000 });
+    expect(deCache.cached).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await ml.listaDoUsuario(USER, { aba: "vendas", ...P, page: 2, now: t0 });
+    await ml.listaDoUsuario(USER, { aba: "produtos", ...P, now: t0 });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    const refresh = await ml.listaDoUsuario(USER, { aba: "vendas", ...P, refresh: true, now: t0 + 2 * 60 * 1000 });
+    expect(refresh.cached).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("página fora do normal vira 1 (ou o teto)", async () => {
+    await ml.listaDoUsuario(USER, { aba: "vendas", ...P, page: "abc" });
+    await ml.listaDoUsuario(USER, { aba: "vendas", ...P, page: 9999 });
+    expect(fetchMock.mock.calls.map(([u]) => new URL(u).searchParams.get("page"))).toEqual(["1", "50"]);
   });
 });

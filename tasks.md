@@ -13,28 +13,5 @@ Rodar o Claude na VPS e desligar o computador (via tmux):
 
 1. [] Quero acrescentar para poder repassar Canais e não somente grupos do WhatsApp.
 
-2. [x] Quero acrescentar a opção nos modelos de mensagens de utilizar imagem do produto ou apenas a imagem do proprio link que o whats puxa.
+2. [] Ao clicar em editar descrição dos grupos do whats, aparece escreita a descrição atual? Queria uma forma fácil de poder copiar tb a mesma descrição para todos os grupos de uma campanha, pode ser no proprio popup de editar a descricao, inclusive quando apertar pra salvar apareça para salvar apenas para esse ou aplicar em todos os grupos da campanha.
 
-3. [] Ao clicar em editar descrição dos grupos do whats, aparece escreita a descrição atual? Queria uma forma fácil de poder copiar tb a mesma descrição para todos os grupos de uma campanha, pode ser no proprio popup de editar a descricao, inclusive quando apertar pra salvar apareça para salvar apenas para esse ou aplicar em todos os grupos da campanha.
-
-4. [x] Quantas pessoas entraram/sairam do grupo, filtrar por campanhas, quantidade de membros, quantidade de cliques é possivel? o que mais?. Estatisticas dos grupos. Automaticamente os utilizados nas campanhas entram la. Quero que me ajude a pensar nisso. Quero que seja uma aba Grupos. 
-
-5. [x] Quero que na aba do ML seja necessario apenas colocar o cookie. A tag de afiliado manual tu tira fora completamente. Com o cookie pronto quero que ao testa-lo, vá em busca das etiquetas da conta. As etiquetas vão aparecer individualmente nas campanhas onde é possivel escolher a etiqueta a ser utilizada em cada uma delas.
-
-6. [x] Quero que na hora de criar e duplicar um grupo do whats, tenha um campo de numero. Quando a pessoa cria, ele vem como padrão 1, se ela quiser mudar pra qual;quer numero pode. Depois, se ele for duplicado, soma-se 1 ali. Assim Fica Ofertas Tech #1, #2, .... 
-
-7. [x] Olhando a lógica dos modelos de mensagem, o que da pra melhorar ali? Quais linhas não aparecem se não tem aquele parametro? Se o preço com cupom não tem aparece o preço normal? Revisa toda essa logica e faça sugestoes de como melhorar. Inclusive faça sugestão de como deve ser o modelo padrão que vem.
-
-8. [x] Quero que ao criar um grupo de whatApp, o exemplo padrão para nome do grupo seja o proprio nome da campanha e só. Gostei de como ele está hoje que fica só de fundo e consigo escrever por cima, porém quero que se eu apertar TAB ele preencha a escrita com o exemplo. Assim acelara o processo.O que tu acha?
-
-9. [x] Excluo grupos no whats, mas nas campanhas eles ainda aparecem como conectados.Queria que tivesse uma verificação e que se eles não forem detectados seja sugerido a exclusão deles da campanhas com um botão de excluir em cada um.
-
-10. [x] Separa A conta de afiliado que busca coisas na API da shopee, esse é DE ADMIN e geral pro sistema. Pros usuarios, que tem na aba Shopee só precisa do App ID para fazer o link de afiliado, certo?
-
-11. [x] Ao editar descrição do grupo, ter botão para adicionar onde esta editando o link de convite do grupo
-
-12. [x] Preciso que tu deixe um botão de ativar/desativar na pagina de shopee de ADMIN, para ativar a opção dos usuarios mandarem link de afiliado da shopee sem a senha de afiliado da api configurado e só com o app ID.
-
-13. [x] Quero que na aba whatsApp, quero que para cada numero tenha uma opção para escolher grupos e apagar suas mensagens e midias de x em x tempo. Pode ser um popup que abre em cada numero, não sei como fica melhor, analise e de opções. Os grupos estão com muitas mensagens e tornando o whats pesado.
-
-14. [x] Quero melhorar a parte de desempenho. Quero poder escolher os dias individuais, periodos, etc.. Quero que pense em como melhorar. Também quero que dentro de cada campanha, dentro da visão geral onde tem algumas metricas, seja melhorado como se fosse uma mini aba desempenho, mas só dessa campanha. Analise bem e crie um plano para fazer bem completinho, porém simples e de fácil utilização com as coisas mais essenciais.
