@@ -533,7 +533,7 @@ export default function PageSubscription({ user, setUser }) {
                   disabled={!!busy}
                   style={{ padding: "7px 14px", borderRadius: 8, background: "transparent", color: "var(--color-text-primary)", border: "0.5px solid var(--color-border-secondary)", fontSize: 12, cursor: busy ? "wait" : "pointer", fontWeight: 500 }}
                 >
-                  {busy === "card" ? "Abrindo…" : details.paymentMethod ? "Trocar cartão" : "Adicionar cartão"}
+                  {busy === "card" ? "Abrindo…" : details?.paymentMethod ? "Trocar cartão" : "Adicionar cartão"}
                 </button>
               )}
             </div>
