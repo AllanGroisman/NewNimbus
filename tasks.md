@@ -15,3 +15,5 @@ Rodar o Claude na VPS e desligar o computador (via tmux):
 
 2. [] Ao clicar em editar descrição dos grupos do whats, aparece escreita a descrição atual? Queria uma forma fácil de poder copiar tb a mesma descrição para todos os grupos de uma campanha, pode ser no proprio popup de editar a descricao, inclusive quando apertar pra salvar apareça para salvar apenas para esse ou aplicar em todos os grupos da campanha.
 
+3. [x] Quero que a aba desempenho da shopee se aproxime o maximo possivel da aba do ML.
+

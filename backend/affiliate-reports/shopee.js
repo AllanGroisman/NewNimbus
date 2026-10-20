@@ -12,6 +12,10 @@
 //     toda página; a última pode vir vazia);
 //   - início há mais de ~3 meses → erro 11001 "can only query data for the last
 //     3 months" (120 dias passou, 125 não). O início é cortado no limite antes.
+// Os campos das abas (fonte da comissão, categoria, tipo de comprador,
+// dispositivo, origem, loja do link) foram conferidos em 20/10/2026 pela sonda
+// scripts/shopee-desempenho-probe.js — o GraphQL recusa a query inteira se um
+// campo pedido não existe.
 //
 // Como no ML, nada vai pro banco: a tela pede um período, a gente pergunta à
 // Shopee e segura a resposta num cache curto. Os presets da tela cabem todos no
@@ -27,6 +31,7 @@ const POR_PAGINA = 500;      // o máximo que a Shopee aceita
 const MAX_PAGINAS = 10;      // 5.000 conversões num período é folga de sobra
 const MAX_VENDAS = 500;      // linhas da lista de vendas devolvidas à tela
 const MAX_VENDAS_CAMPANHA = 100;   // as da visão geral de uma campanha
+const MAX_LINHAS = 200;      // produtos e não efetivadas devolvidos à tela
 const LIMITE_DIAS = 120;
 
 const cacheado = criaCache();
@@ -106,14 +111,41 @@ const valor = (v) => {
   return Number.isFinite(n) ? n : 0;
 };
 const centavos = (n) => Math.round(n * 100) / 100;
+const txt = (v) => (typeof v === "string" && v.trim() ? v.trim() : null);
+const codigo = (v) => txt(v)?.toUpperCase() || null;
+
+// Comissão ÷ venda, em % com 2 casas (12,34). null sem venda.
+const taxa = (comissao, venda) => (venda > 0 ? Math.round((comissao / venda) * 10000) / 100 : null);
+
+// `attributionType`: comprou na loja do link (direta) ou em outra (indireta) —
+// o equivalente do DIRECT/INDIRECT das vendas do ML.
+const ATRIBUICAO = { ORDERED_IN_SAME_SHOP: "direta", ORDERED_IN_DIFFERENT_SHOP: "indireta" };
+
+// Rótulos da aba Audiências. Código que a Shopee mandar fora daqui (a origem é
+// texto livre) aparece como veio.
+const COMPRADOR = { NEW: "Novos", EXISTING: "Já compravam" };
+const DISPOSITIVO = { APP: "App", WEB: "Site" };
+const ORIGEM = { WEBSITES: "Sites", OTHERS: "Outros" };
+const ONDE_COMPROU = { direta: "Na loja do link", indireta: "Em outra loja" };
+
+// Página do produto na Shopee (sem afiliado — é só pra pessoa ver o anúncio).
+function linkDoProduto(shopId, itemId) {
+  const loja = String(shopId ?? "");
+  const item = String(itemId ?? "");
+  return /^\d+$/.test(loja) && /^\d+$/.test(item) ? `https://shopee.com.br/product/${loja}/${item}` : null;
+}
 
 // Status de um item, nos três baldes que a tela mostra. Fraude conta como
 // cancelada: a Shopee não paga a comissão.
 function statusDoItem(item) {
   const s = String(item?.displayItemStatus || "").toUpperCase();
-  if (s.includes("CANCEL") || String(item?.fraudStatus || "").toUpperCase() === "FRAUD") return "cancelada";
+  if (s.includes("CANCEL") || ehFraude(item)) return "cancelada";
   if (s === "COMPLETED") return "concluida";
   return "pendente";
+}
+
+function ehFraude(item) {
+  return String(item?.fraudStatus || "").toUpperCase() === "FRAUD";
 }
 
 // `utmContent` são os 5 sub_ids unidos por "-" ("g123----"). O primeiro é o
@@ -134,16 +166,32 @@ function normalizaItens(nodes) {
       (Array.isArray(o?.items) ? o.items : []).forEach((it, i) => {
         out.push({
           id: `${c.conversionId}-${o.orderId}-${it.itemId}-${i}`,
+          conversionId: String(c.conversionId ?? ""),
           orderId: String(o.orderId ?? ""),
+          itemId: it.itemId != null ? String(it.itemId) : null,
           purchaseTime: t ? new Date(t * 1000).toISOString() : null,
           date: t ? diaBR(t) : null,
           status: statusDoItem(it),
+          // Cancelada pela Shopee (fraude), e não pelo comprador: é a "não
+          // aprovada" da aba Não efetivadas.
+          notApproved: ehFraude(it) && !String(it.displayItemStatus || "").toUpperCase().includes("CANCEL"),
           name: String(it.itemName || ""),
           image: it.imageUrl || null,
+          link: linkDoProduto(it.shopId, it.itemId),
           shopName: it.shopName || null,
+          category: txt(it.globalCategoryLv1Name),
           qty: valor(it.qty),
           amount: centavos(valor(it.actualAmount)),
           commission: centavos(valor(it.itemTotalCommission)),
+          // De onde vem a comissão: a da Shopee (com teto), a extra do vendedor
+          // e a de marca. A tela mostra no "Detalhe dos ganhos".
+          commissionShopee: centavos(valor(it.itemShopeeCommissionCapped)),
+          commissionSeller: centavos(valor(it.itemSellerCommission)),
+          commissionBrand: centavos(valor(it.grossBrandCommission)),
+          attribution: ATRIBUICAO[codigo(it.attributionType)] || null,
+          buyerType: codigo(c.buyerType),
+          device: codigo(c.device),
+          referrer: txt(c.referrer),
           groupId,
         });
       });
@@ -153,19 +201,35 @@ function normalizaItens(nodes) {
 }
 
 // Totais do período. Cancelado não entra em pedido, venda nem comissão: aparece
-// à parte. A taxa de MCN (agência) é da conversão, não do item.
+// à parte (as "não efetivadas"). A taxa de MCN (agência) é da conversão, não do
+// item. `purchases` são as compras (conversões) com algum item válido, e
+// `newBuyers` as dessas que a Shopee marca como de comprador novo — ela não diz
+// quantas pessoas diferentes compraram.
 function normalizaResumo(itens, nodes = []) {
   const validos = itens.filter(i => i.status !== "cancelada");
   const cancelados = itens.filter(i => i.status === "cancelada");
   const pedidosValidos = new Set(validos.map(i => i.orderId));
-  const soma = (lista, campo) => centavos(lista.reduce((a, i) => a + i[campo], 0));
+  const soma = (lista, campo) => centavos(lista.reduce((a, i) => a + (i[campo] || 0), 0));
   const concluida = soma(validos.filter(i => i.status === "concluida"), "commission");
   const pendente = soma(validos.filter(i => i.status === "pendente"), "commission");
+  const compras = (lista) => new Set(lista.map(i => i.conversionId).filter(Boolean)).size;
   return {
     orders: pedidosValidos.size,
     units: validos.reduce((a, i) => a + i.qty, 0),
     sales: soma(validos, "amount"),
-    commission: { total: centavos(concluida + pendente), concluida, pendente },
+    grossSales: soma(itens, "amount"),
+    notEffectiveSales: soma(cancelados, "amount"),
+    notEffectiveCount: cancelados.length,
+    purchases: compras(validos),
+    newBuyers: compras(validos.filter(i => i.buyerType === "NEW")),
+    commission: {
+      total: centavos(concluida + pendente),
+      concluida,
+      pendente,
+      shopee: soma(validos, "commissionShopee"),
+      seller: soma(validos, "commissionSeller"),
+      brand: soma(validos, "commissionBrand"),
+    },
     cancelled: {
       // Pedido cancelado = nenhum item dele sobrou.
       orders: new Set(cancelados.map(i => i.orderId).filter(id => !pedidosValidos.has(id))).size,
@@ -231,6 +295,94 @@ function normalizaGrupos(itens, nomes = {}) {
 
 const CAMPANHA_APAGADA = "Campanha apagada";
 
+// ── Abas de baixo (no formato das do ML: affiliate-reports/ml.js) ──
+//
+// Saem da lista completa de itens do período, já baixada: nenhuma chamada a
+// mais à Shopee.
+
+// Itens agrupados por produto (o id do item; sem ele, o nome).
+function porProduto(itens, novo, junta) {
+  const mapa = new Map();
+  for (const i of itens) {
+    const chave = i.itemId || i.name;
+    if (!mapa.has(chave)) mapa.set(chave, novo(i));
+    junta(mapa.get(chave), i);
+  }
+  return [...mapa.values()];
+}
+
+const cabecaDoProduto = (i) => ({ product: i.name || null, image: i.image, link: i.link, category: i.category });
+
+// A aba "Produtos vendidos": os válidos por produto, o que mais rendeu primeiro.
+function normalizaProdutos(itens) {
+  return porProduto(
+    itens.filter(i => i.status !== "cancelada"),
+    i => ({ ...cabecaDoProduto(i), units: 0, sales: 0, earnings: 0 }),
+    (p, i) => { p.units += i.qty; p.sales += i.amount; p.earnings += i.commission; },
+  )
+    .map(p => ({ ...p, sales: centavos(p.sales), earnings: centavos(p.earnings), feePct: taxa(p.earnings, p.sales) }))
+    .sort((a, b) => b.earnings - a.earnings || b.units - a.units)
+    .slice(0, MAX_LINHAS);
+}
+
+// A aba "Categorias": os válidos pela categoria de nível 1 da Shopee.
+function normalizaCategorias(itens) {
+  const mapa = new Map();
+  for (const i of itens) {
+    if (i.status === "cancelada") continue;
+    const nome = i.category || "Sem categoria";
+    const c = mapa.get(nome) || { category: nome, units: 0, sales: 0, earnings: 0 };
+    c.units += i.qty;
+    c.sales += i.amount;
+    c.earnings += i.commission;
+    mapa.set(nome, c);
+  }
+  return [...mapa.values()]
+    .map(({ sales, ...c }) => ({ ...c, earnings: centavos(c.earnings), feePct: taxa(c.earnings, sales) }))
+    .sort((a, b) => b.earnings - a.earnings || b.units - a.units);
+}
+
+// A aba "Não efetivadas": as canceladas por produto — pelo comprador
+// (`canceled`) ou pela Shopee por fraude (`notApproved`) — e a comissão que
+// deixou de entrar.
+function normalizaNaoEfetivadas(itens) {
+  return porProduto(
+    itens.filter(i => i.status === "cancelada"),
+    i => ({ ...cabecaDoProduto(i), canceled: 0, notApproved: 0, lostEarnings: 0 }),
+    (p, i) => {
+      if (i.notApproved) p.notApproved += 1;
+      else p.canceled += 1;
+      p.lostEarnings += i.commission;
+    },
+  )
+    .map(p => ({ ...p, lostEarnings: centavos(p.lostEarnings) }))
+    .sort((a, b) => b.lostEarnings - a.lostEarnings || (b.canceled + b.notApproved) - (a.canceled + a.notApproved))
+    .slice(0, MAX_LINHAS);
+}
+
+// A aba "Audiências": o que a Shopee diz de cada compra, em pedidos válidos —
+// tipo de comprador, dispositivo, de onde veio o clique e se comprou na loja do
+// link. Cada grupo é uma lista { label, value }, a maior primeiro.
+function normalizaAudiencia(itens) {
+  const validos = itens.filter(i => i.status !== "cancelada");
+  const conta = (rotulo) => {
+    const mapa = new Map();
+    for (const i of validos) {
+      const label = rotulo(i);
+      if (!label) continue;
+      if (!mapa.has(label)) mapa.set(label, new Set());
+      mapa.get(label).add(i.orderId);
+    }
+    return [...mapa].map(([label, pedidos]) => ({ label, value: pedidos.size })).sort((a, b) => b.value - a.value);
+  };
+  return {
+    buyers: conta(i => COMPRADOR[i.buyerType]),
+    device: conta(i => DISPOSITIVO[i.device]),
+    referrer: conta(i => (i.referrer ? ORIGEM[i.referrer.toUpperCase()] || i.referrer : null)),
+    attribution: conta(i => ONDE_COMPROU[i.attribution]),
+  };
+}
+
 // Os números de UMA campanha, tirados da lista completa de itens do período (a
 // guardada no cache — a lista de vendas da resposta é cortada em MAX_VENDAS).
 // Sem MCN: a taxa é da conversão, que pode misturar campanhas.
@@ -249,7 +401,7 @@ function recorteDaCampanha(itens, groupId, from, to) {
 // Chamadas à Shopee
 // ────────────────────────────────────────────────────────────────────────
 
-const CAMPOS = "nodes{conversionId purchaseTime utmContent mcnManagementFee orders{orderId items{itemId itemName imageUrl shopName qty actualAmount itemTotalCommission displayItemStatus fraudStatus}}} pageInfo{hasNextPage scrollId}";
+const CAMPOS = "nodes{conversionId purchaseTime utmContent mcnManagementFee buyerType device referrer orders{orderId items{itemId shopId itemName imageUrl shopName globalCategoryLv1Name qty actualAmount itemTotalCommission itemShopeeCommissionCapped itemSellerCommission grossBrandCommission attributionType displayItemStatus fraudStatus}}} pageInfo{hasNextPage scrollId}";
 
 function queryConversoes({ inicio, fim }, scrollId = null) {
   const args = [`purchaseTimeStart:${inicio}`, `purchaseTimeEnd:${fim}`, `limit:${POR_PAGINA}`];
@@ -345,6 +497,10 @@ async function buscaDesempenho({ userId, creds, from, to }) {
     groups: normalizaGrupos(itens, nomes),
     sales: itens.slice(0, MAX_VENDAS).map(i => ({ ...i, group: i.groupId ? nomes[i.groupId] || CAMPANHA_APAGADA : null })),
     totalSales: itens.length,
+    products: normalizaProdutos(itens),
+    categories: normalizaCategorias(itens),
+    notEffective: normalizaNaoEfetivadas(itens),
+    audience: normalizaAudiencia(itens),
     _itens: itens,
   };
 }
@@ -420,6 +576,10 @@ module.exports = {
   normalizaResumo,
   normalizaDias,
   normalizaGrupos,
+  normalizaProdutos,
+  normalizaCategorias,
+  normalizaNaoEfetivadas,
+  normalizaAudiencia,
   recorteDaCampanha,
   queryConversoes,
   _resetCache,

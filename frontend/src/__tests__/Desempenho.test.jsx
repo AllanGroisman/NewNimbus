@@ -76,8 +76,9 @@ function respostaShopee(extra = {}) {
     from: "2026-09-20",
     to: "2026-09-22",
     summary: {
-      orders: 3, units: 14, sales: 730.75,
-      commission: { total: 21.93, concluida: 11.59, pendente: 10.34 },
+      orders: 3, units: 14, sales: 730.75, grossSales: 780.75,
+      notEffectiveSales: 50, notEffectiveCount: 1, purchases: 3, newBuyers: 1,
+      commission: { total: 21.93, concluida: 11.59, pendente: 10.34, shopee: 21.73, seller: 0.2, brand: 0 },
       cancelled: { orders: 1, commission: 1.5 },
       mcnFee: 0,
     },
@@ -85,6 +86,10 @@ function respostaShopee(extra = {}) {
     groups: [{ groupId: "123", name: "Ofertas Tech", orders: 1, units: 1, sales: 386.18, commission: 11.59 }],
     sales: [],
     totalSales: 0,
+    products: [],
+    categories: [],
+    notEffective: [],
+    audience: { buyers: [], device: [], referrer: [], attribution: [] },
     requestedFrom: null,
     fetchedAt: "2026-09-29T15:00:00Z",
     cached: false,
@@ -371,6 +376,7 @@ describe("PageDesempenho — lojas", () => {
 
     entrega(respostaShopee());
     expect(await screen.findByText("Comissão estimada")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Campanhas" }));
     expect(screen.getByText("Ofertas Tech")).toBeInTheDocument();
   });
 
@@ -390,7 +396,7 @@ describe("PageDesempenho — lojas", () => {
     expect(screen.queryByRole("button", { name: "Hoje" })).not.toBeInTheDocument();
   });
 
-  it("a linha de uma campanha em 'Por campanha' abre a campanha; a apagada não é link", async () => {
+  it("a linha de uma campanha na aba Campanhas abre a campanha; a apagada não é link", async () => {
     getShopeeDesempenho.mockResolvedValue(respostaShopee({
       groups: [
         { groupId: "123", name: "Ofertas Tech", orders: 1, units: 1, sales: 386.18, commission: 11.59 },
@@ -399,7 +405,7 @@ describe("PageDesempenho — lojas", () => {
     }));
     const onOpenCampanha = vi.fn();
     render(<PageDesempenho lojaInicial="shopee" campanhas={[{ id: 123, name: "Ofertas Tech", scraping: {} }]} onOpenCampanha={onOpenCampanha} />);
-    expect(await screen.findByText("Por campanha")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Campanhas" }));
     fireEvent.click(screen.getByRole("button", { name: "Ofertas Tech" }));
     expect(onOpenCampanha).toHaveBeenCalledWith(123);
     expect(screen.queryByRole("button", { name: "Campanha apagada" })).not.toBeInTheDocument();

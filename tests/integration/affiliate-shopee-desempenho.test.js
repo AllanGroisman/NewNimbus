@@ -62,9 +62,18 @@ describe("GET /api/affiliate/shopee/desempenho", () => {
 
     const res = await auth("get", `/api/affiliate/shopee/desempenho?${Q}`);
     expect(res.status).toBe(200);
-    expect(res.body.summary).toMatchObject({ orders: 3, units: 14, sales: 730.75, commission: { total: 21.93 } });
+    expect(res.body.summary).toMatchObject({
+      orders: 3, units: 14, sales: 730.75, grossSales: 780.75, notEffectiveSales: 50, newBuyers: 1,
+      commission: { total: 21.93, shopee: 21.73, seller: 0.2 },
+    });
     expect(res.body.groups.map(g => g.name)).toEqual(["Ofertas Tech", "Campanha apagada", "Sem campanha"]);
     expect(res.body.sales).toHaveLength(5);
+    // As abas no formato das do ML vêm na mesma resposta; a lista completa, não.
+    expect(res.body.products.map(p => p.product)).toEqual(["Relógio Masculino", "Cartas Colecionáveis", "Envelopes de Figurinhas", "Álbum de Figurinhas"]);
+    expect(res.body.categories.map(c => c.category)).toEqual(["Relógios", "Hobbies e Coleções"]);
+    expect(res.body.notEffective).toEqual([expect.objectContaining({ product: "Caneca Cancelada", canceled: 1, lostEarnings: 1.5 })]);
+    expect(res.body.audience.buyers).toEqual([{ label: "Já compravam", value: 2 }, { label: "Novos", value: 1 }]);
+    expect(res.body._itens).toBeUndefined();
     expect(res.body.days).toHaveLength(7);
     expect(res.body.requestedFrom).toBeNull();
     for (const [, opts] of fetchMock.mock.calls) {

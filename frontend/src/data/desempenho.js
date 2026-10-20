@@ -20,6 +20,11 @@ export function formatInt(v) {
   return (Number(v) || 0).toLocaleString("pt-BR");
 }
 
+// "12%" / "12,5%".
+export function pct(v) {
+  return `${Number(v).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`;
+}
+
 // Pedidos ÷ cliques, em %. "—" sem clique (não é 0%, é "não dá pra saber").
 export function conversao(orders, clicks) {
   if (!clicks) return "—";

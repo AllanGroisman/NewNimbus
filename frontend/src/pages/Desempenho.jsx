@@ -45,8 +45,8 @@ const LOJAS = {
 };
 
 // `lojas` = as que o usuário pode ver (o App tira as trancadas pelo admin).
-// `campanhas` (os grupos do App) dão nome e link às linhas "Por campanha" e às
-// etiquetas; `mlTags`/`mlDefaultTag` dizem qual etiqueta cada campanha usa.
+// `campanhas` (os grupos do App) dão nome e link às linhas da aba Campanhas da
+// Shopee e às etiquetas do ML; `mlTags`/`mlDefaultTag` dizem qual etiqueta cada campanha usa.
 export default function PageDesempenho({
   lojas = ["ml", "shopee"], lojaInicial, onGoToML, onGoToShopee,
   campanhas = [], onOpenCampanha, mlTags = [], mlDefaultTag = null,

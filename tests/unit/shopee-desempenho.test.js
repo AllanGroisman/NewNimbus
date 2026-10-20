@@ -5,6 +5,8 @@
 //     tela cabe nele, qualquer que seja o dia;
 //   - as conversões (dinheiro em string, pedidos com vários itens) viram totais,
 //     dias, grupos e a lista de vendas — cancelado fica de fora dos totais;
+//   - as abas no formato das do ML (produtos, categorias, não efetivadas,
+//     audiências) saem da mesma lista, sem chamada a mais;
 //   - a marca da campanha no link (sub_id "g<id>") vira o nome da campanha SÓ
 //     quando ela é do próprio usuário, e recorta a resposta numa campanha só;
 //   - o período anterior (variação) é acessório: nunca derruba o atual;
@@ -115,6 +117,16 @@ describe("normalização", () => {
     });
   });
 
+  it("cada item traz o link do anúncio, a categoria, as fontes da comissão e o que a Shopee diz da compra", () => {
+    const album = itens().find(i => i.name === "Álbum de Figurinhas");
+    expect(album).toMatchObject({
+      conversionId: "1002", itemId: "22", link: "https://shopee.com.br/product/2101/22",
+      category: "Hobbies e Coleções", commission: 0.6, commissionShopee: 0.4, commissionSeller: 0.2, commissionBrand: 0,
+      attribution: "indireta", buyerType: "NEW", device: "WEB", referrer: "Websites", notApproved: false,
+    });
+    expect(itens()[0]).toMatchObject({ attribution: "direta", buyerType: "EXISTING", device: "APP", referrer: "WhatsApp" });
+  });
+
   it("o dia é o de Brasília: 23h30 do dia 20 continua dia 20", () => {
     expect(itens().find(i => i.orderId === "PEDIDO-C").date).toBe("2026-09-20");
   });
@@ -132,15 +144,23 @@ describe("normalização", () => {
       null,
     ]);
     expect(r).toHaveLength(1);
-    expect(r[0]).toMatchObject({ groupId: null, qty: 0, amount: 0, commission: 0, status: "pendente", name: "" });
+    expect(r[0]).toMatchObject({
+      groupId: null, qty: 0, amount: 0, commission: 0, status: "pendente", name: "",
+      link: null, category: null, attribution: null, buyerType: null, device: null, referrer: null, commissionShopee: 0,
+    });
   });
 
-  it("resumo: cancelado fora dos totais e contado à parte; taxa de MCN somada", () => {
+  it("resumo: cancelado fora dos totais e contado à parte; fontes da comissão; taxa de MCN somada", () => {
     expect(shopee.normalizaResumo(itens(), NODES)).toEqual({
       orders: 3,
       units: 14,
       sales: 730.75,
-      commission: { total: 21.93, concluida: 11.59, pendente: 10.34 },
+      grossSales: 780.75,
+      notEffectiveSales: 50,
+      notEffectiveCount: 1,
+      purchases: 3,
+      newBuyers: 1,
+      commission: { total: 21.93, concluida: 11.59, pendente: 10.34, shopee: 21.73, seller: 0.2, brand: 0 },
       cancelled: { orders: 1, commission: 1.5 },
       mcnFee: 0.5,
     });
@@ -159,6 +179,63 @@ describe("normalização", () => {
       { groupId: "999", name: "Campanha apagada", orders: 1, units: 10, sales: 284.05, commission: 8.52 },
       { groupId: null, name: "Sem campanha", orders: 1, units: 3, sales: 60.52, commission: 1.82 },
     ]);
+  });
+});
+
+describe("abas", () => {
+  const itens = () => shopee.normalizaItens(NODES);
+
+  it("produtos vendidos: os válidos por produto, com a taxa efetiva; o que mais rendeu primeiro", () => {
+    const r = shopee.normalizaProdutos(itens());
+    expect(r.map(p => p.product)).toEqual(["Relógio Masculino", "Cartas Colecionáveis", "Envelopes de Figurinhas", "Álbum de Figurinhas"]);
+    expect(r[0]).toEqual({
+      product: "Relógio Masculino", image: "https://cf.shopee.com.br/file/relogio", link: "https://shopee.com.br/product/1101/11",
+      category: "Relógios", units: 1, sales: 386.18, earnings: 11.59, feePct: 3,
+    });
+    expect(r[2].feePct).toBe(3.01);
+  });
+
+  it("o mesmo produto em duas vendas vira uma linha só", () => {
+    const [a] = itens();
+    const r = shopee.normalizaProdutos([a, { ...a, id: "outra", orderId: "PEDIDO-Z", qty: 2, amount: 100, commission: 3 }]);
+    expect(r).toHaveLength(1);
+    expect(r[0]).toMatchObject({ units: 3, sales: 486.18, earnings: 14.59 });
+  });
+
+  it("categorias: pela categoria de nível 1; sem categoria tem balde próprio", () => {
+    expect(shopee.normalizaCategorias(itens())).toEqual([
+      { category: "Relógios", units: 1, earnings: 11.59, feePct: 3 },
+      { category: "Hobbies e Coleções", units: 13, earnings: 10.34, feePct: 3 },
+    ]);
+    const [a] = itens();
+    expect(shopee.normalizaCategorias([{ ...a, category: null }])[0].category).toBe("Sem categoria");
+  });
+
+  it("não efetivadas: canceladas por produto, separando a do comprador da recusada por fraude", () => {
+    expect(shopee.normalizaNaoEfetivadas(itens())).toEqual([{
+      product: "Caneca Cancelada", image: "https://cf.shopee.com.br/file/caneca", link: "https://shopee.com.br/product/3101/31",
+      category: "Casa e Decoração", canceled: 1, notApproved: 0, lostEarnings: 1.5,
+    }]);
+    const fraude = shopee.normalizaItens([{ ...NODES[0], orders: [{ orderId: "X", items: [{ ...NODES[0].orders[0].items[0], displayItemStatus: "COMPLETED", fraudStatus: "FRAUD" }] }] }]);
+    expect(shopee.normalizaNaoEfetivadas(fraude)[0]).toMatchObject({ canceled: 0, notApproved: 1, lostEarnings: 11.59 });
+  });
+
+  it("audiências: pedidos válidos por tipo de comprador, dispositivo, origem e loja; código desconhecido passa como veio", () => {
+    expect(shopee.normalizaAudiencia(itens())).toEqual({
+      buyers: [{ label: "Já compravam", value: 2 }, { label: "Novos", value: 1 }],
+      device: [{ label: "App", value: 2 }, { label: "Site", value: 1 }],
+      referrer: [{ label: "WhatsApp", value: 2 }, { label: "Sites", value: 1 }],
+      attribution: [{ label: "Na loja do link", value: 2 }, { label: "Em outra loja", value: 1 }],
+    });
+    const [a] = itens();
+    expect(shopee.normalizaAudiencia([{ ...a, referrer: "Telegram", buyerType: null }])).toMatchObject({ buyers: [], referrer: [{ label: "Telegram", value: 1 }] });
+  });
+
+  it("a query pede os campos das abas", () => {
+    const q = shopee.queryConversoes({ inicio: 1, fim: 2 });
+    for (const campo of ["buyerType", "device", "referrer", "shopId", "globalCategoryLv1Name", "itemShopeeCommissionCapped", "itemSellerCommission", "grossBrandCommission", "attributionType"]) {
+      expect(q).toContain(campo);
+    }
   });
 });
 
@@ -209,6 +286,10 @@ describe("desempenhoDoUsuario", () => {
     expect(r.sales.find(s => s.orderId === "PEDIDO-D").group).toBe("Campanha apagada");
     expect(r.sales.find(s => s.orderId === "PEDIDO-B").group).toBeNull();
     expect(r.totalSales).toBe(5);
+    expect(r.products).toHaveLength(4);
+    expect(r.categories).toHaveLength(2);
+    expect(r.notEffective).toHaveLength(1);
+    expect(r.audience.buyers).toHaveLength(2);
     expect(r.cached).toBe(false);
   });
 
@@ -298,6 +379,7 @@ describe("por campanha e período anterior", () => {
     expect(r.sales.every(s => s.groupId === "123")).toBe(true);
     expect(r.totalSales).toBe(r.sales.length);
     expect(r.groups).toBeUndefined();
+    expect(r.products).toBeUndefined();
     expect(r._itens).toBeUndefined();
   });
 
