@@ -64,13 +64,13 @@ describe("E-mails de cobrança — primeira assinatura", () => {
     expect(avisos).toHaveLength(1);
     expect(avisos[0].payload.to).toBe(user.email);
     expect(avisos[0].payload.planLabel).toBe("Pro");
-    expect(avisos[0].payload.amount).toBe(9990);
+    expect(avisos[0].payload.amount).toBe(4990);
 
     await postEvent(subEvent({ id: "evt_new_2", customer: "cus_new", subId: "sub_new", status: "active" }));
     expect(emailByKind("subscription_started")).toHaveLength(1);
   });
 
-  it("teste de R$ 1,00 avisa quanto e quando será a cobrança cheia", async () => {
+  it("teste grátis avisa que nada foi cobrado e quanto custa depois", async () => {
     const { user } = await createTestUser();
     await billing.update(user.id, { stripeCustomerId: "cus_tri", planId: "free", status: "inactive" });
 
@@ -81,8 +81,8 @@ describe("E-mails de cobrança — primeira assinatura", () => {
     const avisos = emailByKind("subscription_started");
     expect(avisos).toHaveLength(1);
     expect(avisos[0].payload.trial).toBe(true);
-    expect(avisos[0].payload.amount).toBe(100);
-    expect(avisos[0].payload.planAmount).toBe(6990);
+    expect(avisos[0].payload.amount).toBe(0);
+    expect(avisos[0].payload.planAmount).toBe(2990);
     expect(avisos[0].payload.periodEnd).toBeTruthy();
   });
 

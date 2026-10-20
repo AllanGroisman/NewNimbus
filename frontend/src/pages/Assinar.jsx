@@ -14,7 +14,7 @@ import { maskPhoneInput, toStoredPhone } from "../data/phone";
 // Os campos são pedidos ANTES do Stripe porque é a única forma de avisar quem
 // já assina; o Checkout só coletaria o e-mail depois de cobrar. O CPF é o que
 // garante uma conta por pessoa — sem ele, bastaria trocar de e-mail pra repetir
-// o teste de R$ 1,00. O telefone entra aqui pelo mesmo motivo: a conta nasce do
+// o teste grátis. O telefone entra aqui pelo mesmo motivo: a conta nasce do
 // pagamento aprovado, então não há "primeira entrada" antes de cobrar em que
 // pedir. Se a landing já souber o e-mail e mandar em ?email=, esta tela só
 // pré-preenche o campo; CPF e telefone são sempre digitados aqui.
@@ -100,12 +100,12 @@ export default function Assinar({ onGoToLogin }) {
             {wantsTrial ? "Você escolheu" : "Plano escolhido"}
           </div>
           <div style={{ fontSize: 18, fontWeight: 500, color: "var(--color-text-primary)" }}>
-            {wantsTrial ? `${planLabel} — 7 dias por R$ 1,00` : `Plano ${planLabel}`}
+            {wantsTrial ? `${planLabel} — 7 dias grátis` : `Plano ${planLabel}`}
           </div>
           {plan?.priceBRL != null && (
             <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>
               {wantsTrial
-                ? `Depois dos 7 dias, ${brl(plan.priceBRL)} por mês. Cancele quando quiser.`
+                ? `Depois dos 7 dias, ${brl(plan.priceBRL)} por mês se quiser continuar.`
                 : `${brl(plan.priceBRL)} por mês. Cancele quando quiser.`}
             </div>
           )}
@@ -234,10 +234,12 @@ export default function Assinar({ onGoToLogin }) {
               disabled={loading}
               style={{ width: "100%", padding: 11, borderRadius: 10, background: PRIMARY, color: "#fff", border: "none", fontSize: 13, fontWeight: 500, cursor: loading ? "default" : "pointer", opacity: loading ? 0.7 : 1 }}
             >
-              {loading ? "Abrindo pagamento…" : "Ir para o pagamento"}
+              {loading ? "Abrindo…" : wantsTrial ? "Começar teste grátis" : "Ir para o pagamento"}
             </button>
             <div style={{ textAlign: "center", fontSize: 11, color: "var(--color-text-secondary)" }}>
-              Pagamento processado pelo Stripe. Nós não guardamos seu cartão.
+              {wantsTrial
+                ? "Sem fidelidade."
+                : "Pagamento processado pelo Stripe. Nós não guardamos seu cartão."}
             </div>
             <button
               type="button"

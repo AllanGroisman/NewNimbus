@@ -229,7 +229,7 @@ describe("Subscription — portal", () => {
   });
 });
 
-describe("Subscription — trial de R$1", () => {
+describe("Subscription — teste grátis", () => {
   const eligibleMe = {
     planId: "free", effectivePlan: "free", status: "inactive",
     hasStripeCustomer: false, stripeEnabled: true, isAdmin: false,
@@ -237,19 +237,19 @@ describe("Subscription — trial de R$1", () => {
     limits: { numbers: 0, groups: 0 },
   };
 
-  it("trialEligible=true mostra CTA 'Testar por R$ 1,00' no Básico", async () => {
+  it("trialEligible=true mostra CTA 'Testar 7 dias grátis' no Básico", async () => {
     setBillingMe(eligibleMe);
     render(<PageSubscription />);
-    await waitFor(() => expect(screen.getByText(/7 DIAS POR R\$1/)).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: /Testar por R\$ 1,00/i })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/7 DIAS GRÁTIS/)).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /Testar 7 dias grátis/i })).toBeInTheDocument();
   });
 
   it("CTA de trial chama billingCheckout com { trial: true }", async () => {
     setBillingMe(eligibleMe);
     billingCheckout.mockResolvedValue({ url: "https://stripe.test/cs_trial" });
     render(<PageSubscription />);
-    await waitFor(() => screen.getByRole("button", { name: /Testar por R\$ 1,00/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Testar por R\$ 1,00/i }));
+    await waitFor(() => screen.getByRole("button", { name: /Testar 7 dias grátis/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Testar 7 dias grátis/i }));
     await waitFor(() => expect(billingCheckout).toHaveBeenCalledWith("basic", { trial: true }));
   });
 
@@ -257,7 +257,7 @@ describe("Subscription — trial de R$1", () => {
     setBillingMe({ ...eligibleMe, trialEligible: false });
     render(<PageSubscription />);
     await waitFor(() => screen.getAllByRole("button", { name: /^Assinar$/i }));
-    expect(screen.queryByText(/7 DIAS POR R\$1/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/7 DIAS GRÁTIS/)).not.toBeInTheDocument();
   });
 });
 
@@ -379,14 +379,14 @@ describe("Subscription — preços vindos do backend", () => {
       hasStripeCustomer: false, stripeEnabled: true, isAdmin: false,
       limits: { numbers: 0, groups: 0 },
       plans: [
-        { id: "basic", label: "Básico", priceBRL: 79.9, limits: {} },
+        { id: "basic", label: "Básico", priceBRL: 39.9, limits: {} },
         { id: "pro", label: "Pro", priceBRL: 99.9, limits: {} },
         { id: "business", label: "Business", priceBRL: 149.9, limits: {} },
       ],
     });
     render(<PageSubscription />);
-    // 79,90 vem do backend (PLAN_META hardcoda 69,90)
-    await waitFor(() => expect(screen.getAllByText(/R\$ 79,90/).length).toBeGreaterThan(0));
+    // 39,90 vem do backend (PLAN_META hardcoda 29,90)
+    await waitFor(() => expect(screen.getAllByText(/R\$ 39,90/).length).toBeGreaterThan(0));
   });
 
   it("usa o label de me.plans (nome do produto no Stripe) nos cards e no plano atual", async () => {
@@ -457,13 +457,13 @@ describe("Subscription — trial manual (cortesia)", () => {
     expect(screen.getAllByRole("button", { name: /Assinar|Fazer upgrade|Testar por/ }).length).toBe(3);
   });
 
-  it("não oferece o teste de R$1 durante a cortesia", async () => {
-    // Pagar R$1 por 7 dias de acesso que já se tem de graça não é oferta.
+  it("não oferece o teste grátis durante a cortesia", async () => {
+    // A pessoa já tem acesso de graça; o teste só gastaria a elegibilidade.
     setBillingMe({ ...CORTESIA, trialEligible: true });
     render(<PageSubscription />);
     await waitFor(() => expect(screen.getByText("EM CORTESIA")).toBeInTheDocument());
-    expect(screen.queryByText("7 DIAS POR R$1")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Testar por R\$ 1,00/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("7 DIAS GRÁTIS")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Testar 7 dias grátis/ })).not.toBeInTheDocument();
   });
 
   it("avisa que assinar agora não cobra hoje", async () => {

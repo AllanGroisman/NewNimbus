@@ -10,7 +10,7 @@ const PLAN_META = {
   basic: {
     name: "Básico",
     tagline: "Pra começar com 1 número",
-    price: 69.90,
+    price: 29.90,
     features: [
       "1 número de WhatsApp",
       "1 campanha",
@@ -22,7 +22,7 @@ const PLAN_META = {
   pro: {
     name: "Pro",
     tagline: "Para quem leva a sério",
-    price: 99.90,
+    price: 49.90,
     recommended: true,
     features: [
       "3 números de WhatsApp",
@@ -35,7 +35,7 @@ const PLAN_META = {
   business: {
     name: "Business",
     tagline: "Para operações grandes",
-    price: 149.90,
+    price: 79.90,
     features: [
       "5 números de WhatsApp",
       "Campanhas ilimitadas",
@@ -291,7 +291,7 @@ export default function PageSubscription({ user, setUser }) {
   const cortesia = me.manualTrial?.active && !me.manualTrial?.dormant ? me.manualTrial : null;
   // Assinou DURANTE a cortesia: a assinatura já existe, mas a primeira cobrança
   // só roda quando a cortesia acaba (trial_end no Stripe). O status é "trialing"
-  // igual ao teste de R$1 — o que separa os dois é a cortesia ainda vigente.
+  // igual ao teste grátis — o que separa os dois é a cortesia ainda vigente.
   const inicioAdiado = me.status === "trialing" && me.manualTrial?.active ? me.manualTrial : null;
   // O que a pessoa realmente ASSINA, que não é a mesma coisa que o plano em vigor:
   // `currentPlan` pode ser uma cortesia, e travar o card dela como "Plano atual"
@@ -430,7 +430,7 @@ export default function PageSubscription({ user, setUser }) {
                 <>Cortesia até <strong style={{ color: "var(--color-text-primary)" }}>{fmtDate(inicioAdiado.endsAt)}</strong>, quando o {nomeDoPlano(planoContratado)} entra e começa a cobrança. Nada foi cobrado até aqui.</>
               )}
               {!inicioAdiado && me.status === "trialing" && me.currentPeriodEnd && (
-                <>Trial acaba em <strong style={{ color: "var(--color-text-primary)" }}>{fmtDate(me.currentPeriodEnd)}</strong>. Adicione um cartão antes pra continuar sem interrupção.</>
+                <>Teste grátis acaba em <strong style={{ color: "var(--color-text-primary)" }}>{fmtDate(me.currentPeriodEnd)}</strong>. Cadastre um cartão antes pra continuar — sem cartão, o acesso é pausado nessa data.</>
               )}
               {me.status === "active" && me.currentPeriodEnd && !me.cancelAtPeriodEnd && (
                 <>Renovação automática em <strong style={{ color: "var(--color-text-primary)" }}>{fmtDate(me.currentPeriodEnd)}</strong>.</>
@@ -533,7 +533,7 @@ export default function PageSubscription({ user, setUser }) {
                   disabled={!!busy}
                   style={{ padding: "7px 14px", borderRadius: 8, background: "transparent", color: "var(--color-text-primary)", border: "0.5px solid var(--color-border-secondary)", fontSize: 12, cursor: busy ? "wait" : "pointer", fontWeight: 500 }}
                 >
-                  {busy === "card" ? "Abrindo…" : "Trocar cartão"}
+                  {busy === "card" ? "Abrindo…" : details.paymentMethod ? "Trocar cartão" : "Adicionar cartão"}
                 </button>
               )}
             </div>
@@ -563,10 +563,10 @@ export default function PageSubscription({ user, setUser }) {
           // Plano que a pessoa escolheu na landing — o card ganha destaque e um
           // selo, pra ela reconhecer onde confirmar.
           const wanted = wantedPlan === id && !current;
-          // Trial de R$1: só no Básico, só pra quem nunca assinou/trialou.
-          // Durante a cortesia o teste de R$1 não é oferecido: pagar R$1 por 7 dias
-          // de acesso que a pessoa já tem de graça não é oferta, é pegadinha. A
-          // elegibilidade continua guardada pra quando a cortesia acabar.
+          // Teste grátis: só no Básico, só pra quem nunca assinou/trialou.
+          // Durante a cortesia o teste não é oferecido: a pessoa já tem acesso de
+          // graça, e o teste só gastaria a elegibilidade dela. Ela continua
+          // guardada pra quando a cortesia acabar.
           const trialOffer = id === "basic" && !!me.trialEligible && me.stripeEnabled && !current && !cortesia;
           const recommended = p.recommended && !current;
           const currentIdx = PLAN_ORDER.indexOf(planoAssinado);
@@ -579,7 +579,7 @@ export default function PageSubscription({ user, setUser }) {
           const inlineUpgrade = isUpgrade && hasLiveSub;
           const ctaLabel = current ? "Plano atual"
             : busy === id ? (inlineUpgrade ? "Alterando…" : "Abrindo Stripe…")
-            : trialOffer ? "Testar por R$ 1,00"
+            : trialOffer ? "Testar 7 dias grátis"
             : inlineUpgrade ? "Fazer upgrade"
             : "Assinar";
           const ctaHint = current ? null
@@ -631,7 +631,7 @@ export default function PageSubscription({ user, setUser }) {
               )}
               {trialOffer && !wanted && (
                 <div style={{ position: "absolute", top: -10, left: "50%", transform: "translateX(-50%)", background: "#22C55E", color: "#fff", fontSize: 10, padding: "3px 10px", borderRadius: 6, fontWeight: 600, whiteSpace: "nowrap", letterSpacing: 0.3 }}>
-                  7 DIAS POR R$1
+                  7 DIAS GRÁTIS
                 </div>
               )}
               <div style={{ fontWeight: 500, fontSize: 15, marginBottom: 2 }}>{name}</div>
@@ -808,10 +808,10 @@ export default function PageSubscription({ user, setUser }) {
       {/* ─── FAQ ─── */}
       <h3 style={{ fontSize: 14, fontWeight: 500, marginBottom: 12 }}>Perguntas frequentes</h3>
       <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10, padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
-        <FAQ q="Como funciona o teste de 7 dias por R$1?">
-          Disponível no plano Básico, para quem nunca assinou. Você paga R$ 1,00 hoje e usa tudo por 7 dias.
-          No 16º dia começa a cobrança normal de {fmtPrice(me.plans?.find(p => p.id === "basic")?.priceBRL ?? PLAN_META.basic.price)}/mês —
-          cancele antes e não paga mais nada. Vale uma vez por conta.
+        <FAQ q="Como funciona o teste grátis de 7 dias?">
+          Disponível no plano Básico, para quem nunca assinou. Você usa tudo por 7 dias sem pagar nada.
+          Pra continuar depois, cadastre um cartão antes do fim do teste — a assinatura passa a {fmtPrice(me.plans?.find(p => p.id === "basic")?.priceBRL ?? PLAN_META.basic.price)}/mês.
+          Sem cartão, o acesso é pausado quando o teste acaba. Vale uma vez por conta.
         </FAQ>
         <FAQ q="O que acontece quando eu cancelo?">
           Você continua com acesso completo até o fim do período já pago — depois disso a conta vira plano Free

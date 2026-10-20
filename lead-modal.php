@@ -2,8 +2,8 @@
 <!--
 Modal identico ao usado no index.html: pede e-mail e CPF antes do
 Stripe, porque e a unica chance de barrar quem ja assina ou ja usou
-o teste de R$ 1,00 -- o Checkout so coletaria o e-mail depois de
-cobrar, e ai a saida seria estorno.
+o teste gratis -- o Checkout so coletaria o e-mail depois, e ai a
+conta duplicada ja teria nascido.
 
 Os botoes que abrem este modal continuam usando o atributo
 data-lead-plan (comecar, bronze, prata, ouro). O mapeamento para o
@@ -18,7 +18,7 @@ logo abaixo.
       </button>
 
       <h3 id="assinar-titulo" class="font-display text-2xl font-bold" style="color:var(--color-ink)">
-        <span x-text="trial ? 'Teste 7 dias por R$ 1,00' : 'Assinar ' + nomePlano()"></span>
+        <span x-text="trial ? 'Teste 7 dias grátis' : 'Assinar ' + nomePlano()"></span>
       </h3>
       <p class="mt-1 text-sm text-stone-500" x-text="resumo()"></p>
 
@@ -98,11 +98,11 @@ logo abaixo.
         </template>
 
         <button type="submit" :disabled="carregando" class="btn-primary flex w-full items-center justify-center gap-2 rounded-2xl py-3.5 text-base font-semibold disabled:opacity-70">
-          <span x-text="carregando ? 'Abrindo pagamento…' : 'Ir para o pagamento'"></span>
+          <span x-text="carregando ? (trial ? 'Abrindo…' : 'Abrindo pagamento…') : (trial ? 'Começar teste grátis' : 'Ir para o pagamento')"></span>
         </button>
-        <p class="text-center text-xs text-stone-500">
-          Pagamento processado pelo Stripe. Não guardamos seu cartão. Sem fidelidade.
-        </p>
+        <p class="text-center text-xs text-stone-500" x-text="trial
+          ? 'Sem fidelidade.'
+          : 'Pagamento processado pelo Stripe. Não guardamos seu cartão. Sem fidelidade.'"></p>
       </form>
 
       <!--
@@ -121,8 +121,8 @@ logo abaixo.
 // dos arquivos deu certo: abra o console do navegador (F12) e veja a linha
 // "[Nimbus LP]", ou digite NIMBUS_LP_VERSION. O mesmo valor aparece no rodape
 // da pagina (index.php). Ao mexer na landing, suba a data nos DOIS arquivos.
-window.NIMBUS_LP_VERSION = 'v2026-07-31.2';
-console.info('[Nimbus LP] versao', window.NIMBUS_LP_VERSION, '— popup com opcoes de plano maior');
+window.NIMBUS_LP_VERSION = 'v2026-10-20.1';
+console.info('[Nimbus LP] versao', window.NIMBUS_LP_VERSION, '— teste gratis e precos novos');
 
 // Endereco do sistema. Trocar aqui e o suficiente para apontar a
 // landing para outro ambiente (o backend precisa ter esta origem no CORS).
@@ -151,7 +151,7 @@ function assinar() {
     bloqueio: null,
     sistema: NIMBUS_SISTEMA,
     versao: window.NIMBUS_LP_VERSION,
-    precos: { basic: 'R$ 69,90', pro: 'R$ 99,90', business: 'R$ 149,90' },
+    precos: { basic: 'R$ 29,90', pro: 'R$ 49,90', business: 'R$ 79,90' },
     nomes: { basic: 'Bronze', pro: 'Prata', business: 'Ouro' },
     abrir(plano, trial) {
       this.plano = plano;
@@ -184,7 +184,7 @@ function assinar() {
     resumo() {
       const preco = this.precos[this.plano];
       return this.trial
-        ? `Plano ${this.nomePlano()} — R$ 1,00 hoje e ${preco} por mês depois dos 7 dias. Cancele quando quiser.`
+        ? `Plano ${this.nomePlano()} — 7 dias grátis. Depois, ${preco} por mês se quiser continuar.`
         : `Plano ${this.nomePlano()} — ${preco} por mês. Cancele quando quiser.`;
     },
     // Mascara progressiva do CPF, sem atrapalhar quem esta digitando.

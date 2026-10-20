@@ -134,7 +134,7 @@ const mock = {
     return next;
   },
   modeInfo() {
-    const complete = { hasSecret: true, hasWebhookSecret: true, missing: [], prices: { ...PRICE_IDS, trialFee: "price_test_trial" } };
+    const complete = { hasSecret: true, hasWebhookSecret: true, missing: [], prices: { ...PRICE_IDS } };
     return { mode: state.mode, defaultMode: "test", modes: { test: complete, live: { ...complete } } };
   },
 

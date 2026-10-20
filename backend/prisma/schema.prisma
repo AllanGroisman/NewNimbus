@@ -545,12 +545,12 @@ model Subscription {
   status               String    @default("inactive") // active | trialing | past_due | canceled | incomplete | unpaid | inactive
   currentPeriodEnd     DateTime?
   cancelAtPeriodEnd    Boolean   @default(false)
-  trialUsedAt          DateTime? // quando iniciou o trial de R$1 — nunca resetado (1 trial por conta)
+  trialUsedAt          DateTime? // quando iniciou o teste grátis — nunca resetado (1 trial por conta)
   pastDueSince         DateTime? // início do atraso (past_due/unpaid) — base da carência de 3 dias
   stripeMode           String?   // "test" | "live" — modo do Stripe em que esta assinatura nasceu; NULL = linha sem Stripe
 
   // Trial manual (cortesia dada pelo admin em Admin › Usuários). Não tem relação
-  // nenhuma com o trial de R$1: não consome `trialUsedAt`, não existe no Stripe e
+  // nenhuma com o teste grátis: não consome `trialUsedAt`, não existe no Stripe e
   // não cobra nada. Vale só quando NÃO há assinatura paga valendo — a ordem está
   // em limits.effectivePlanId. `manualTrialEndedAt` não é a data de fim: é o
   // carimbo de "esta concessão já foi encerrada/reconciliada", que faz a varredura

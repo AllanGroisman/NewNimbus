@@ -298,7 +298,7 @@ export async function billingMe(fresh) {
   return http("GET", "/api/billing/me" + (fresh ? "?fresh=1" : ""));
 }
 // Cria Checkout Session e devolve { url } — frontend chama window.location.assign(url)
-// opts.trial=true → checkout "7 dias por R$1" (só Básico, 1x por conta)
+// opts.trial=true → checkout "7 dias grátis" (só Básico, 1x por conta)
 // opts.keepManualTrial=false → quem está em cortesia pediu pra encerrá-la e já
 //   começar a pagar. Omitido = mantém a cortesia (default que nunca cobra por
 //   dias já concedidos).

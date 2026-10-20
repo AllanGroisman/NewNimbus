@@ -1,7 +1,7 @@
 // CPF — validação e formatação.
 //
 // Uma conta = um CPF. O documento é o único jeito de amarrar a pessoa: e-mail
-// é infinito e o teste de R$ 1,00 seria repetido à vontade só trocando de
+// é infinito e o teste grátis seria repetido à vontade só trocando de
 // endereço. Guardamos SÓ os 11 dígitos (sem ponto e sem traço), que é o que o
 // índice único do Postgres compara.
 //

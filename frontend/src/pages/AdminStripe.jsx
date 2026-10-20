@@ -202,7 +202,6 @@ export default function PageAdminStripe() {
                   Preço {plan} {info.prices[plan] ? shortId(info.prices[plan]) : ""}
                 </Check>
               ))}
-              <Check ok={!!info.prices.trialFee}>Taxa do trial de R$ 1</Check>
             </div>
           );
         })}

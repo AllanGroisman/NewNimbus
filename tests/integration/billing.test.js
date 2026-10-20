@@ -1039,7 +1039,7 @@ describe("Billing — preços e nomes vindos do Stripe", () => {
     const res = await auth("get", "/api/billing/me");
     expect(res.status).toBe(200);
     const basic = res.body.plans.find(p => p.id === "basic");
-    expect(basic.priceBRL).toBe(69.90);
+    expect(basic.priceBRL).toBe(29.90);
     expect(basic.label).toBe("Básico");
     expect(stripeCalls.fetchPlanPrices).toHaveLength(0);
   });
@@ -1050,7 +1050,7 @@ describe("Billing — preços e nomes vindos do Stripe", () => {
     const res = await auth("get", "/api/billing/me");
     expect(res.status).toBe(200);
     const basic = res.body.plans.find(p => p.id === "basic");
-    expect(basic.priceBRL).toBe(69.90);
+    expect(basic.priceBRL).toBe(29.90);
     expect(basic.label).toBe("Básico");
   });
 

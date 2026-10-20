@@ -95,7 +95,7 @@ const EMAILS = [
     example: { nome: "Ana", plano: "do plano *Pro*", link: "https://sistema.nimbuspromocoes.com/?reset=abc123" },
     default: {
       subject: "Sua assinatura está ativa — crie sua senha | Nimbus",
-      title: "Pagamento confirmado, {nome}!",
+      title: "Tudo pronto, {nome}!",
       greeting: "",
       tone: "normal",
       paragraphs: [
@@ -311,12 +311,12 @@ const EMAILS = [
     group: "billing",
     label: "Assinatura confirmada (primeira cobrança)",
     description:
-      "Enviado quando a assinatura paga começa — inclusive no teste de R$ 1,00. É o comprovante de que o pagamento entrou.",
+      "Enviado quando a assinatura começa — inclusive no teste grátis de 7 dias (sem cobrança). Fora do teste, é o comprovante de que o pagamento entrou.",
     canDisable: true,
     variables: [
       V_NOME,
       { name: "plano", desc: "Nome do plano assinado" },
-      { name: "valor", desc: 'Quanto foi pago agora (ex.: "R$ 1,00"; "R$ 0,00" quando a cobrança foi adiada)' },
+      { name: "valor", desc: 'Quanto foi pago agora (ex.: "R$ 29,90"; "R$ 0,00" no teste grátis ou quando a cobrança foi adiada)' },
       {
         name: "abertura",
         desc: "Primeira frase — confirma o pagamento, ou avisa que nada foi cobrado quando a assinatura começou durante uma cortesia",
@@ -329,16 +329,16 @@ const EMAILS = [
     example: {
       nome: "Ana",
       plano: "Básico",
-      valor: "R$ 1,00",
+      valor: "R$ 0,00",
       abertura:
-        "Recebemos seu pagamento de *R$ 1,00* e sua assinatura do plano *Básico* já está ativa.",
+        "Seu teste grátis do plano *Básico* começou — não cobramos nada.",
       cobranca:
-        "Seu teste vai até *22 de agosto de 2026*. A partir daí a assinatura passa a *R$ 69,90 por mês*, cobrada automaticamente no mesmo cartão.",
+        "Seu teste vai até *22 de agosto de 2026*. Pra continuar depois disso, cadastre um cartão na tela de Assinatura — o plano custa *R$ 29,90 por mês*. Sem cartão, o acesso é pausado quando o teste acaba.",
     },
     ctaUrl: billingUrl,
     default: {
       subject: "Assinatura confirmada — bem-vindo ao Nimbus",
-      title: "Pagamento confirmado!",
+      title: "Assinatura confirmada!",
       greeting: "{nome}",
       tone: "normal",
       paragraphs: [
@@ -361,7 +361,7 @@ const EMAILS = [
     variables: [
       V_NOME,
       { name: "plano", desc: "Nome do plano cobrado" },
-      { name: "valor", desc: 'Valor cobrado (ex.: "R$ 69,90")' },
+      { name: "valor", desc: 'Valor cobrado (ex.: "R$ 29,90")' },
       { name: "data_pagamento", desc: "Data da cobrança, por extenso" },
       {
         name: "proxima_cobranca",
@@ -373,7 +373,7 @@ const EMAILS = [
     example: {
       nome: "Ana",
       plano: "Básico",
-      valor: "R$ 69,90",
+      valor: "R$ 29,90",
       data_pagamento: "07 de agosto de 2026",
       proxima_cobranca: "em *07 de setembro de 2026*",
       link_fatura: "https://invoice.stripe.com/i/exemplo",
@@ -401,11 +401,11 @@ const EMAILS = [
     canDisable: true,
     variables: [
       V_NOME,
-      { name: "valor", desc: 'Valor devolvido (ex.: "R$ 69,90")' },
+      { name: "valor", desc: 'Valor devolvido (ex.: "R$ 29,90")' },
       { name: "tipo", desc: '"integral" ou "parcial"' },
       { name: "data_reembolso", desc: "Data do estorno, por extenso" },
     ],
-    example: { nome: "Ana", valor: "R$ 69,90", tipo: "integral", data_reembolso: "07 de agosto de 2026" },
+    example: { nome: "Ana", valor: "R$ 29,90", tipo: "integral", data_reembolso: "07 de agosto de 2026" },
     ctaUrl: billingUrl,
     default: {
       subject: "Seu reembolso do Nimbus foi processado",
@@ -602,8 +602,8 @@ const EMAILS = [
       tone: "normal",
       paragraphs: [
         "Seu período de teste termina {prazo_teste}.",
-        "Depois disso a cobrança do plano começa automaticamente, e é só continuar usando — não precisa fazer nada.",
-        "Se preferir não continuar, dá pra cancelar antes na tela de Assinatura.",
+        "Pra continuar usando, cadastre um cartão na tela de Assinatura antes dessa data. Se você já cadastrou, não precisa fazer nada — a cobrança do plano começa automaticamente.",
+        "Sem cartão cadastrado, nada é cobrado e o acesso é pausado quando o teste acaba.",
       ],
       ctaLabel: "Ver minha assinatura",
       footnote: "",

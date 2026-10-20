@@ -228,7 +228,7 @@ async function decideForSignup({ planId, email, cpf }) {
   const byCpf = await auth.findByCpf(digits);
 
   // Uma conta por CPF, mesmo que a conta antiga esteja cancelada: o documento
-  // é o que impede a mesma pessoa de repetir o teste de R$ 1,00 trocando de
+  // é o que impede a mesma pessoa de repetir o teste grátis trocando de
   // e-mail.
   if (byCpf && byCpf.id !== user?.id) {
     return {

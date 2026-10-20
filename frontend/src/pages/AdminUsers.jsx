@@ -930,7 +930,7 @@ export default function PageAdminUsers({ currentUser }) {
           <Modal title={`Adicionar trial — ${trialUser.name || trialUser.email}`} onClose={() => setTrialUser(null)}>
             <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 14, lineHeight: 1.5 }}>
               Libera o plano escolhido por tempo determinado, sem passar pelo Stripe e sem cobrar nada.
-              Não consome o teste de R$ 1,00 da conta.
+              Não consome o teste grátis da conta.
             </div>
 
             <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6 }}>Plano</div>

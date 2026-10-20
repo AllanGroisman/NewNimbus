@@ -1,10 +1,10 @@
 <?php
 // Metadados desta pagina. Todo o resto do <head><meta charset="utf-8"> vem de header.php
 $pageTitle       = 'Nimbus — Ofertas no automático nos seus grupos de WhatsApp';
-$pageDescription = 'A Nimbus seleciona as ofertas, monta a mensagem com a imagem e o seu link e publica nos seus grupos de WhatsApp nos horários que você definir. Teste 7 dias por R$ 1,00.';
+$pageDescription = 'A Nimbus seleciona as ofertas, monta a mensagem com a imagem e o seu link e publica nos seus grupos de WhatsApp nos horários que você definir. Teste 7 dias grátis.';
 $pageCanonical   = 'https://nimbuspromocoes.com/software/';
 $pageOgTitle       = 'Seus grupos entregando ofertas o dia inteiro. Sem você postar nada.';
-$pageOgDescription = 'A Nimbus seleciona as ofertas, monta a mensagem e publica nos seus grupos de WhatsApp. Teste 7 dias por R$ 1,00.';
+$pageOgDescription = 'A Nimbus seleciona as ofertas, monta a mensagem e publica nos seus grupos de WhatsApp. Teste 7 dias grátis.';
 include __DIR__ . '/header.php';
 ?>
 
@@ -327,7 +327,7 @@ include __DIR__ . '/header.php';
 <body>
 
     <!-- ============== BARRA DE OFERTA ============== -->
-    <a href="#teste" class="topbar">Teste 7 dias por R$ 1,00</a>
+    <a href="#teste" class="topbar">Teste 7 dias grátis</a>
     <!-- ============== HERO ============== -->
     <header class="hero-dark hero-grid relative overflow-hidden">
         <div class="relative mx-auto max-w-7xl px-6 py-20 md:py-28 lg:py-32">
@@ -371,7 +371,7 @@ include __DIR__ . '/header.php';
                         </span>
                         <span class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border text-white/70" style="border-color:rgba(37,211,102,0.25); background:rgba(37,211,102,0.05)">
                             <i data-lucide="badge-check" style="width:16px;height:16px;color:#25D366;stroke-width:2"></i>
-                            Teste 7 dias por R$ 1
+                            Teste 7 dias grátis
                         </span>
                         <span class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border text-white/70" style="border-color:rgba(37,211,102,0.25); background:rgba(37,211,102,0.05)">
                             <i data-lucide="badge-check" style="width:16px;height:16px;color:#25D366;stroke-width:2"></i>
@@ -855,19 +855,19 @@ include __DIR__ . '/header.php';
         </div>
     </section>
 
-    <!-- ============== TESTE 7 DIAS POR R$ 1,00 ============== -->
+    <!-- ============== TESTE 7 DIAS GRÁTIS ============== -->
     <section id="teste" class="hero-dark relative overflow-hidden px-6 py-16 md:py-24">
         <div class="mx-auto max-w-4xl text-center relative">
             <h2 class="font-display text-3xl md:text-5xl font-bold leading-[1.12] text-white mb-4">
                 Você não precisa acreditar em nada do que leu até aqui.
             </h2>
             <p class="font-display text-4xl md:text-6xl font-extrabold mb-10" style="color:var(--color-brand)">
-                Teste 7 dias por R$ 1,00.
+                Teste 7 dias grátis.
             </p>
 
             <div class="space-y-5 text-lg leading-relaxed text-white/60 max-w-2xl mx-auto">
-                <p>Um real é o suficiente para você conectar o seu WhatsApp, montar a primeira campanha e ver as ofertas saindo nos seus grupos. Em sete dias você não está testando um painel — está vendo a sua operação rodar sem você.</p>
-                <p>Se não for o que você esperava, é só cancelar antes do fim do período. Não tem multa, não tem fidelidade, não tem conversa para segurar você.</p>
+                <p>Sem pagar nada, você conecta o seu WhatsApp, monta a primeira campanha e vê as ofertas saindo nos seus grupos. Em sete dias você não está testando um painel — está vendo a sua operação rodar sem você.</p>
+                <p>Se não for o que você esperava, é só não continuar: nada é cobrado. Não tem multa, não tem fidelidade, não tem conversa para segurar você.</p>
             </div>
 
             <div class="mt-10 flex flex-col sm:flex-row items-center justify-center gap-5 sm:gap-10">
@@ -877,13 +877,13 @@ include __DIR__ . '/header.php';
                 </span>
                 <span class="test-badge">
                     <span class="test-badge-icon"><i data-lucide="check"></i></span>
-                    Cancele quando quiser
+                    Sem compromisso
                 </span>
             </div>
 
             <div class="mt-12">
-                <a href="https://sistema.nimbuspromocoes.com/assinar?plano=basic&teste=1" data-lead-plan="comecar" data-lead-label="teste de 7 dias por R$ 1,00" class="btn-primary inline-flex items-center justify-center gap-2 rounded-2xl px-8 py-4 text-base font-semibold">
-                    <span>Começar por R$ 1,00</span>
+                <a href="https://sistema.nimbuspromocoes.com/assinar?plano=basic&teste=1" data-lead-plan="comecar" data-lead-label="teste grátis de 7 dias" class="btn-primary inline-flex items-center justify-center gap-2 rounded-2xl px-8 py-4 text-base font-semibold">
+                    <span>Começar grátis</span>
                     <i data-lucide="arrow-right"></i>
                 </a>
                 <p class="mt-4 text-sm text-white/40">Leva menos de dois minutos para conectar.</p>
@@ -900,7 +900,7 @@ include __DIR__ . '/header.php';
                 </h2>
                 <div class="mt-6 inline-flex items-center gap-2 text-sm text-stone-600">
                     <i data-lucide="shield-check" style="color:var(--color-brand)"></i>
-                    <span>Todos os planos começam com <strong>7 dias por R$ 1,00</strong> e <strong>sem fidelidade</strong></span>
+                    <span>Comece com <strong>7 dias grátis no Básico</strong> — e <strong>sem fidelidade</strong></span>
                 </div>
             </div>
 
@@ -909,8 +909,8 @@ include __DIR__ . '/header.php';
                 <div class="card-soft rounded-2xl p-8 flex flex-col">
                     <div class="mb-6">
                         <h3 class="font-display text-sm font-semibold uppercase tracking-widest text-stone-500 mb-2">Bronze</h3>
-                        <p class="font-display text-4xl font-bold" style="color:var(--color-ink)">R$ 69<span class="text-xl text-stone-400">,90</span><span class="text-sm font-medium text-stone-500">/mês</span></p>
-                        <p class="text-sm text-stone-500 mt-1">Equivale a R$ 2,33/dia</p>
+                        <p class="font-display text-4xl font-bold" style="color:var(--color-ink)">R$ 29<span class="text-xl text-stone-400">,90</span><span class="text-sm font-medium text-stone-500">/mês</span></p>
+                        <p class="text-sm text-stone-500 mt-1">Equivale a R$ 1,00/dia</p>
                     </div>
                     <ul class="space-y-3 mb-8 text-sm flex-grow">
                         <li class="flex gap-3"><i data-lucide="check" style="color:var(--color-brand);flex-shrink:0;margin-top:2px"></i>1 WhatsApp conectado</li>
@@ -929,8 +929,8 @@ include __DIR__ . '/header.php';
                     <span class="absolute -top-3 left-1/2 -translate-x-1/2 text-white px-3 py-1 rounded-full text-xs font-bold uppercase tracking-widest" style="background:var(--color-brand)">Mais Escolhido</span>
                     <div class="mb-6">
                         <h3 class="font-display text-sm font-semibold uppercase tracking-widest text-white/50 mb-2">Prata</h3>
-                        <p class="font-display text-4xl font-bold plan-price">R$ 99<span class="text-xl opacity-60">,90</span><span class="text-sm font-medium text-white/50">/mês</span></p>
-                        <p class="text-sm text-white/50 mt-1">Equivale a R$ 3,33/dia</p>
+                        <p class="font-display text-4xl font-bold plan-price">R$ 49<span class="text-xl opacity-60">,90</span><span class="text-sm font-medium text-white/50">/mês</span></p>
+                        <p class="text-sm text-white/50 mt-1">Equivale a R$ 1,66/dia</p>
                     </div>
                     <ul class="space-y-3 mb-8 text-sm text-white/90 flex-grow">
                         <li class="flex gap-3"><i data-lucide="check" style="color:var(--color-brand);flex-shrink:0;margin-top:2px"></i>3 WhatsApp conectados</li>
@@ -951,8 +951,8 @@ include __DIR__ . '/header.php';
                 <div class="card-soft rounded-2xl p-8 flex flex-col">
                     <div class="mb-6">
                         <h3 class="font-display text-sm font-semibold uppercase tracking-widest text-stone-500 mb-2">Ouro</h3>
-                        <p class="font-display text-4xl font-bold" style="color:var(--color-ink)">R$ 149<span class="text-xl text-stone-400">,90</span><span class="text-sm font-medium text-stone-500">/mês</span></p>
-                        <p class="text-sm text-stone-500 mt-1">Equivale a R$ 5,00/dia</p>
+                        <p class="font-display text-4xl font-bold" style="color:var(--color-ink)">R$ 79<span class="text-xl text-stone-400">,90</span><span class="text-sm font-medium text-stone-500">/mês</span></p>
+                        <p class="text-sm text-stone-500 mt-1">Equivale a R$ 2,66/dia</p>
                     </div>
                     <ul class="space-y-3 mb-8 text-sm flex-grow">
                         <li class="flex gap-3"><i data-lucide="check" style="color:var(--color-brand);flex-shrink:0;margin-top:2px"></i>5 WhatsApp conectados</li>
@@ -1066,7 +1066,7 @@ include __DIR__ . '/header.php';
             <div class="mt-16 text-center">
                 <p class="text-stone-600 mb-6">Pronto pra deixar a operação rodando sozinha?</p>
                 <a href="#teste" class="btn-primary inline-flex items-center gap-2 rounded-2xl px-7 py-4 text-base font-semibold">
-                    <span>Testar por R$ 1,00</span>
+                    <span>Testar 7 dias grátis</span>
                     <i data-lucide="arrow-right"></i>
                 </a>
             </div>
@@ -1102,7 +1102,7 @@ include __DIR__ . '/header.php';
                     pagina ou no lead-modal.php, suba a data/numero nos DOIS
                     arquivos (o modal usa o mesmo valor em NIMBUS_LP_VERSION).
                     -->
-                    <span class="text-white/40" title="Versão da landing publicada">v2026-07-31.2</span>
+                    <span class="text-white/40" title="Versão da landing publicada">v2026-10-20.1</span>
                 </p>
                 <!-- TODO: incluir razão social e CNPJ -->
             </div>

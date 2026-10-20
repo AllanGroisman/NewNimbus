@@ -58,21 +58,21 @@ describe("billing/notify — primeira assinatura", () => {
     expect(aviso.payload.planLabel).toBe("Pro");
     expect(aviso.payload.trial).toBe(false);
     // Fora do teste, o valor cobrado agora é a mensalidade do plano.
-    expect(aviso.payload.amount).toBe(9990);
+    expect(aviso.payload.amount).toBe(4990);
     // Ancorada na assinatura: reentrega do mesmo evento não repete o e-mail.
     expect(aviso.dedupeKey).toBe("subscription_started:u-1:sub_1");
   });
 
-  it("free → básico em teste manda subscription_started com o valor do teste", () => {
+  it("free → básico em teste manda subscription_started sem cobrança", () => {
     const aviso = decidir(
       { planId: "free", status: "inactive" },
       { planId: "basic", status: "trialing", currentPeriodEnd: new Date("2026-08-22"), stripeSubscriptionId: "sub_2" },
     );
     expect(aviso.kind).toBe("subscription_started");
     expect(aviso.payload.trial).toBe(true);
-    // Pagou R$ 1,00 agora; a mensalidade só entra na frase da próxima cobrança.
-    expect(aviso.payload.amount).toBe(100);
-    expect(aviso.payload.planAmount).toBe(6990);
+    // Teste grátis: nada cobrado agora; a mensalidade só entra na frase da próxima cobrança.
+    expect(aviso.payload.amount).toBe(0);
+    expect(aviso.payload.planAmount).toBe(2990);
   });
 
   it("segundo evento da mesma assinatura não repete (já era pago)", () => {

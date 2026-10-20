@@ -90,15 +90,15 @@ function decidirAviso({ before, after, user }) {
   }
 
   // 3. Assinou pela primeira vez (ou voltou depois de cancelar): free/sem plano
-  // → plano pago em dia. É o comprovante de que o pagamento entrou — no teste de
-  // R$ 1,00 é ele que avisa quando e quanto será a cobrança cheia.
+  // → plano pago em dia. É o comprovante de que o pagamento entrou — no teste
+  // grátis é ele que avisa até quando vai e quanto custa depois.
   // A dedupeKey ancorada no id da assinatura segura as reentregas do Stripe, e
   // depois do primeiro evento `antes` já é pago, então a regra nem é alcançada.
   const eraPago = !!antes.planId && antes.planId !== "free";
   if (!eraPago && depois.planId && depois.planId !== "free" && EM_DIA.has(depois.status)) {
     const trial = depois.status === "trialing";
     // Início adiado pela cortesia do admin: o status é "trialing" igual ao teste
-    // de R$1, mas nada foi cobrado agora — dizer "recebemos seu pagamento" seria
+    // grátis, mas nada foi cobrado agora — dizer "recebemos seu pagamento" seria
     // mentira. A cortesia ainda vigente é o que separa um caso do outro.
     const adiado = trial && limits.manualTrialActive(depois);
     const mensal = centavosDoPlano(depois.planId);
@@ -108,10 +108,9 @@ function decidirAviso({ before, after, user }) {
         ...base(user, depois),
         trial,
         deferred: adiado,
-        // No teste, o que a pessoa pagou agora foi a taxa de R$ 1,00 — o valor
-        // do plano só entra na frase sobre a próxima cobrança. No início adiado
-        // não houve cobrança nenhuma.
-        amount: adiado ? 0 : trial ? limits.TRIAL_FEE_CENTS : mensal,
+        // Teste grátis e início adiado: nada foi cobrado agora — o valor do
+        // plano só entra na frase sobre a próxima cobrança.
+        amount: adiado || trial ? 0 : mensal,
         planAmount: mensal,
         currency: "brl",
         // Em trial, currentPeriodEnd é o fim do teste (é quando a cobrança cheia
@@ -223,7 +222,7 @@ async function donoDoCustomer(customer) {
 
 // Recibo das cobranças recorrentes — `invoice.payment_succeeded`.
 // A primeira fatura da assinatura (billing_reason "subscription_create", que é
-// onde entra a taxa de R$ 1,00 do teste) fica de fora: quem confirma aquela é o
+// no teste grátis sai de R$ 0,00) fica de fora: quem confirma aquela é o
 // `subscription_started`, senão o cliente recebe dois e-mails da mesma cobrança.
 async function onInvoicePaid({ invoice, livemode }) {
   try {

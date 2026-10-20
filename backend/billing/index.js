@@ -53,9 +53,9 @@ async function getStatus(userId, userRole) {
     // Modo do Stripe valendo agora — a página de assinatura avisa o admin
     // quando o sistema está em modo teste.
     stripeMode: stripe.mode(),
-    // Trial de R$1 só pra quem nunca assinou nem usou trial (assinantes antigos
+    // Teste grátis só pra quem nunca assinou nem usou trial (assinantes antigos
     // não têm trialUsedAt, mas têm stripeSubscriptionId). A cortesia do admin NÃO
-    // entra nesta conta: quem ganhou cortesia continua podendo fazer o teste de R$1.
+    // entra nesta conta: quem ganhou cortesia continua podendo fazer o teste grátis.
     trialEligible: !sub.trialUsedAt && !sub.stripeSubscriptionId,
     // Cortesia do admin — null quando a conta nunca recebeu uma. `active` é o que
     // vale agora; `dormant` é a cortesia ainda na validade que está perdendo pra

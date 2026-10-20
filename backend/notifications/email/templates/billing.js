@@ -44,9 +44,9 @@ function moeda(cents, currency) {
   }).format(n / 100);
 }
 
-// Confirmação da primeira cobrança. A frase `cobranca` é o miolo: no teste de
-// R$ 1,00 o que a pessoa precisa saber é quando e quanto vai ser cobrado depois
-// — é a informação que evita a surpresa (e o chargeback) 7 dias à frente.
+// Confirmação do início da assinatura. A frase `cobranca` é o miolo: no teste
+// grátis o que a pessoa precisa saber é até quando vai e que, sem cartão, o
+// acesso para — e quanto custa depois, pra decisão não virar surpresa.
 function subscription_started(p) {
   const fim = data(p.periodEnd);
   const mensal = moeda(p.planAmount, p.currency);
@@ -63,11 +63,12 @@ function subscription_started(p) {
       ? `A primeira cobrança${mensal ? ` de *${mensal}*` : ""} acontece em *${fim}*, automaticamente no cartão cadastrado.`
       : "A primeira cobrança acontece no fim da cortesia, automaticamente no cartão cadastrado.";
   } else if (p.trial) {
-    abertura = `Recebemos seu pagamento de *${moeda(p.amount, p.currency)}* e sua assinatura do plano *${plano}* já está ativa.`;
-    cobranca = `Seu teste vai até *${fim || "o fim do período"}*`
-      + (mensal
-        ? `. A partir daí a assinatura passa a *${mensal} por mês*, cobrada automaticamente no mesmo cartão.`
-        : ", e a partir daí a assinatura é cobrada automaticamente no mesmo cartão.");
+    // Teste grátis: nada foi cobrado e, em geral, não há cartão cadastrado.
+    abertura = `Seu teste grátis do plano *${plano}* começou — não cobramos nada.`;
+    cobranca = `Seu teste vai até *${fim || "o fim do período"}*. Pra continuar depois disso, `
+      + "cadastre um cartão na tela de Assinatura"
+      + (mensal ? ` — o plano custa *${mensal} por mês*.` : ".")
+      + " Sem cartão, o acesso é pausado quando o teste acaba.";
   } else {
     abertura = `Recebemos seu pagamento de *${moeda(p.amount, p.currency)}* e sua assinatura do plano *${plano}* já está ativa.`;
     cobranca = fim

@@ -223,9 +223,9 @@ async function handleStripeEvent(event) {
         return;
       }
       // Marca trialUsedAt na primeira vez que vemos uma sub com trial — queima
-      // a elegibilidade do trial de R$1 (set-if-null = idempotente).
+      // a elegibilidade do teste grátis (set-if-null = idempotente).
       // `trialFromManual` é o trial que existe só pra adiar a primeira cobrança
-      // até o fim de uma cortesia: esse não é o teste de R$1 e não queima nada.
+      // até o fim de uma cortesia: esse não é o teste grátis e não queima nada.
       if (norm.trialEnd && !norm.trialFromManual) {
         const existing = await billing.getByUserId(userId);
         if (!existing?.trialUsedAt) norm.trialUsedAt = new Date();
@@ -813,7 +813,7 @@ app.post("/api/public/claim", publicCheckoutLimiter, async (req, res) => {
       return res.json({
         requiresLogin: true,
         email: user.email,
-        message: "Pagamento confirmado! Sua assinatura já está ativa — entre com seu e-mail e senha.",
+        message: "Tudo certo! Sua assinatura já está ativa — entre com seu e-mail e senha.",
       });
     }
 
@@ -1251,7 +1251,7 @@ async function reconcileWithStripe(userId) {
   const norm = await stripeMod.getActiveSubscriptionForCustomer(sub.stripeCustomerId);
   if (!norm) return false;
   // Mesma ressalva do webhook: trial que só adia a cobrança até o fim de uma
-  // cortesia não é o teste de R$1 e não queima a elegibilidade da conta.
+  // cortesia não é o teste grátis e não queima a elegibilidade da conta.
   if (norm.trialEnd && !norm.trialFromManual && !sub.trialUsedAt) norm.trialUsedAt = new Date();
   await billing.update(userId, norm);
   // Plano pode ter mudado no Stripe sem webhook chegar — aplica os limites.
@@ -1382,7 +1382,7 @@ app.get("/api/billing/details", auth.requireAuth, async (req, res) => {
 });
 
 // Cria Checkout Session pra um plano. Body: { planId, trial? }.
-// trial=true → "7 dias por R$1" (só plano Básico, 1x por usuário).
+// trial=true → "7 dias grátis" (só plano Básico, 1x por usuário).
 // Responde { url } — frontend faz window.location.assign(url).
 app.post("/api/billing/checkout", auth.requireAuth, async (req, res) => {
   try {
@@ -1446,7 +1446,7 @@ app.post("/api/billing/checkout", auth.requireAuth, async (req, res) => {
     // O default é MANTER porque é o único que não cobra por dias que ela já tem
     // — um cliente antigo que não mande o campo nunca é cobrado por engano.
     //
-    // Em qualquer um dos dois casos o teste de R$1 não entra: o acesso já está
+    // Em qualquer um dos dois casos o teste grátis não entra: o acesso já está
     // liberado. A elegibilidade fica intacta pra depois; quem a queima é o
     // webhook, e ele sabe distinguir adiamento de teste pago.
     const manterCortesia = req.body?.keepManualTrial !== false;
@@ -2397,7 +2397,7 @@ app.patch("/api/admin/users/:id/suspend", auth.requireAuth, auth.requireAdmin, a
 });
 
 // Trial manual (cortesia): o admin libera um plano por N dias sem passar pelo
-// Stripe. Não é o teste de R$1 — não consome `trialUsedAt` e não cobra nada. Uma
+// Stripe. Não é o teste grátis — não consome `trialUsedAt` e não cobra nada. Uma
 // assinatura paga vence a cortesia; ela só assume no vazio.
 //
 // `applyPlanLimits` depois de gravar é o que despausa as campanhas/números que
