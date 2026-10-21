@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { adminDlTemplates, adminDlTemplateSave, adminDlTemplateRemove, adminDlTemplatesRestore, errText } from "../../../data/api";
 import { PRIMARY } from "../../../data/constants";
 import {
-  CANVAS, FONTS, emptyTemplate, frameSize, hitTest, layerBox,
+  CANVAS, FONTS, emptyTemplate, frameSize, hitTest, imageSrcs, layerBox,
   loadImages, newLayer, paintOverlay, videoPresets, videoRect,
 } from "./overlay";
 import {
@@ -21,7 +21,7 @@ function Preview({ template, title, thumbnail, sel, onSel, onMove }) {
   const [W, H] = frameSize(template);
   const rect = videoRect(template);
 
-  const srcKey = (template.layers || []).filter((l) => l.type === "image").map((l) => l.src).join("|");
+  const srcKey = imageSrcs(template).join("|");
   useEffect(() => {
     let live = true;
     loadImages(template).then((m) => live && setImages(m));
@@ -79,7 +79,10 @@ function Preview({ template, title, thumbnail, sel, onSel, onMove }) {
           style={{
             position: "absolute", left: 0, width: "100%",
             top: `${(rect.y / H) * 100}%`, height: `${(rect.h / H) * 100}%`,
-            objectFit: "cover",
+            // Igual ao ffmpeg: no "caber inteiro" a sobra sai na cor das barras.
+            ...(template.video?.fit === "contain"
+              ? { objectFit: "contain", background: template.video?.background || "#000000" }
+              : { objectFit: "cover" }),
           }}
         />
       )}
@@ -115,8 +118,15 @@ const Cor = ({ value, onChange }) => (
 
 const row = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8, marginBottom: 8 };
 
-// Os dois de fábrica ("Faixa no topo", "Barras + vídeo reduzido") são
-// templates comuns: editar e salvar muda o padrão. "Restaurar padrões" traz de
+const ICONE = { box: "▭", text: "T", image: "🖼", tweet: "🐦" };
+
+const MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+const p2 = (n) => String(n).padStart(2, "0");
+// Mesmo formato da linha de data do tweet: "17:00 · 01 de Julho de 2021".
+const dataTweet = (d = new Date()) => `${p2(d.getHours())}:${p2(d.getMinutes())} · ${p2(d.getDate())} de ${MESES[d.getMonth()]} de ${d.getFullYear()}`;
+
+// Os de fábrica ("Faixa no topo", "Barras + vídeo reduzido", "TwitterReact")
+// são templates comuns: editar e salvar muda o padrão. "Restaurar padrões" traz de
 // volta a versão original deles sem tocar nos outros.
 export default function TemplateEditor({ templates, initialId, refVideo, onClose, onSaved }) {
   const [draft, setDraft] = useState(() => clone(templates.find((t) => t.id === initialId) || templates[0] || emptyTemplate()));
@@ -151,6 +161,25 @@ export default function TemplateEditor({ templates, initialId, refVideo, onClose
     // data-URL: o logo viaja dentro do próprio template, sem pasta de uploads.
     reader.onload = () => patch(i, { src: reader.result });
     reader.readAsDataURL(file);
+  };
+
+  // A foto do tweet sai num círculo de ~170px: recortar o quadrado central e
+  // reduzir para 320px aqui deixa o template leve e longe do limite de 2 MB
+  // por imagem do backend, por maior que seja a foto escolhida.
+  const carregarFoto = (i, file) => {
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const lado = Math.min(img.width, img.height);
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 320;
+      canvas.getContext("2d").drawImage(img, (img.width - lado) / 2, (img.height - lado) / 2, lado, lado, 0, 0, 320, 320);
+      patch(i, { avatar: canvas.toDataURL("image/png") });
+      URL.revokeObjectURL(url);
+    };
+    img.onerror = () => URL.revokeObjectURL(url);
+    img.src = url;
   };
 
   const trocarFormato = (format) => setDraft((d) => ({
@@ -287,6 +316,7 @@ export default function TemplateEditor({ templates, initialId, refVideo, onClose
                 <button type="button" style={botaoSecundario} onClick={() => add("box")}>+ Faixa</button>
                 <button type="button" style={botaoSecundario} onClick={() => add("text")}>+ Texto</button>
                 <button type="button" style={botaoSecundario} onClick={() => add("image")}>+ Logo</button>
+                <button type="button" style={botaoSecundario} onClick={() => add("tweet")}>+ Tweet</button>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 {(draft.layers || []).map((l, i) => (
@@ -295,9 +325,9 @@ export default function TemplateEditor({ templates, initialId, refVideo, onClose
                     background: i === sel ? "var(--color-background-secondary)" : "transparent",
                     border: `1px solid ${i === sel ? PRIMARY : "transparent"}`, cursor: "pointer", fontSize: 12,
                   }} onClick={() => setSel(i)}>
-                    <span>{l.type === "box" ? "▭" : l.type === "text" ? "T" : "🖼"}</span>
+                    <span>{ICONE[l.type] || "🖼"}</span>
                     <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {l.type === "text" ? l.text || "(vazio)" : l.type === "box" ? "Faixa" : "Logo"}
+                      {l.type === "text" ? l.text || "(vazio)" : l.type === "tweet" ? l.name || "Tweet" : l.type === "box" ? "Faixa" : "Logo"}
                     </span>
                     <button type="button" title="Subir" style={botaoSecundario} onClick={(e) => { e.stopPropagation(); mover(i, -1); }}>↑</button>
                     <button type="button" title="Descer" style={botaoSecundario} onClick={(e) => { e.stopPropagation(); mover(i, 1); }}>↓</button>
@@ -308,7 +338,10 @@ export default function TemplateEditor({ templates, initialId, refVideo, onClose
               </div>
             </div>
 
-            {layer && <Inspector layer={layer} onPatch={(o) => patch(sel, o)} onLogo={(f) => carregarLogo(sel, f)} />}
+            {layer && (
+              <Inspector layer={layer} onPatch={(o) => patch(sel, o)}
+                onLogo={(f) => carregarLogo(sel, f)} onFoto={(f) => carregarFoto(sel, f)} />
+            )}
           </div>
         </div>
 
@@ -335,7 +368,7 @@ export default function TemplateEditor({ templates, initialId, refVideo, onClose
   );
 }
 
-function Inspector({ layer, onPatch, onLogo }) {
+function Inspector({ layer, onPatch, onLogo, onFoto }) {
   return (
     <div style={{ borderTop: "0.5px solid var(--color-border-tertiary)", paddingTop: 12 }}>
       <div style={row}>
@@ -376,6 +409,56 @@ function Inspector({ layer, onPatch, onLogo }) {
           <label style={{ ...hintStyle, display: "flex", alignItems: "center", gap: 6 }}>
             <input type="checkbox" checked={!!layer.uppercase} onChange={(e) => onPatch({ uppercase: e.target.checked })} />
             TUDO EM MAIÚSCULAS
+          </label>
+        </>
+      )}
+
+      {layer.type === "tweet" && (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+            {layer.avatar
+              ? <img src={layer.avatar} alt="" style={{ width: 44, height: 44, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
+              : <span style={{ width: 44, height: 44, borderRadius: "50%", background: "#cfd9de", flexShrink: 0 }} />}
+            <Field label="Foto do perfil">
+              <input type="file" accept="image/png,image/jpeg,image/webp" style={inputStyle}
+                onChange={(e) => onFoto(e.target.files?.[0])} />
+            </Field>
+          </div>
+          <div style={row}>
+            <Field label="Nome da conta">
+              <input value={layer.name || ""} onChange={(e) => onPatch({ name: e.target.value })} style={inputStyle} />
+            </Field>
+            <Field label="@">
+              <input value={layer.handle || ""} onChange={(e) => onPatch({ handle: e.target.value.replace(/^@+/, "") })} style={inputStyle} />
+            </Field>
+          </div>
+          <Field label="Data">
+            <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+              <input value={layer.date || ""} onChange={(e) => onPatch({ date: e.target.value })} style={inputStyle} />
+              <button type="button" style={botaoSecundario} onClick={() => onPatch({ date: dataTweet() })}>Agora</button>
+            </div>
+          </Field>
+          <Field label="Texto do tweet — use {titulo} para o título do vídeo">
+            <textarea
+              value={layer.text || ""}
+              onChange={(e) => onPatch({ text: e.target.value })}
+              rows={3}
+              style={{ ...inputStyle, resize: "vertical", marginBottom: 8 }}
+            />
+          </Field>
+          <div style={row}>
+            <Field label="Tamanho do texto"><Num value={layer.size} onChange={(v) => onPatch({ size: v })} /></Field>
+            <Field label="Largura (quebra a linha)"><Num value={layer.w} onChange={(v) => onPatch({ w: v })} /></Field>
+            <Field label="Tema">
+              <select value={layer.theme || "light"} onChange={(e) => onPatch({ theme: e.target.value })} style={inputStyle}>
+                <option value="light">Claro — para fundo branco</option>
+                <option value="dark">Escuro — para fundo preto</option>
+              </select>
+            </Field>
+          </div>
+          <label style={{ ...hintStyle, display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+            <input type="checkbox" checked={!!layer.verified} onChange={(e) => onPatch({ verified: e.target.checked })} />
+            Selo azul de verificado
           </label>
         </>
       )}

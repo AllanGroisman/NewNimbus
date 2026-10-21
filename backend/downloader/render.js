@@ -2,8 +2,9 @@
 // desenhou. Binário vem do ffmpeg-static, o mesmo que o yt-dlp já usa.
 //
 // O PNG é opaco fora da área do vídeo (é ele que pinta as barras) e transparente
-// em cima dela. Por isso a cor do `pad` aqui é irrelevante: o que o usuário viu
-// na prévia é literalmente o bitmap que entra no filtro.
+// em cima dela. No "cover" o vídeo enche esse buraco e a cor do `pad` é
+// irrelevante; no "contain" a sobra ao lado do vídeo aparece pelo buraco, então
+// ela é pintada com a cor das barras — é o que a prévia mostra.
 const { spawn } = require("child_process");
 const path = require("path");
 const ffmpegPath = require("ffmpeg-static");
@@ -16,16 +17,20 @@ function geometry(template) {
   const [W, H] = CANVAS[template?.format === "horizontal" ? "horizontal" : "vertical"];
   const top = par(Math.min(Math.max(0, Number(template?.video?.top) || 0), H - 2));
   const height = par(Math.min(Math.max(2, Number(template?.video?.height) || H), H - top));
-  return { W, H, top, height, fit: template?.video?.fit === "contain" ? "contain" : "cover" };
+  // A cor vem do body do POST /jobs e vai parar dentro do filtergraph: só passa
+  // #rrggbb, qualquer outra coisa vira preto.
+  const bg = String(template?.video?.background || "");
+  const background = /^#[0-9a-f]{6}$/i.test(bg) ? `0x${bg.slice(1)}` : "black";
+  return { W, H, top, height, fit: template?.video?.fit === "contain" ? "contain" : "cover", background };
 }
 
-function filtergraph({ W, H, top, height, fit }) {
+function filtergraph({ W, H, top, height, fit, background = "black" }) {
   // cover preenche a faixa e corta a sobra; contain mostra o vídeo inteiro e
   // deixa sobra. O trunc(../4)*2 mantém o offset par — offset ímpar desloca o
   // croma meio pixel em yuv420p.
   const base = fit === "contain"
     ? `[0:v]scale=${W}:${height}:force_original_aspect_ratio=decrease:flags=lanczos,setsar=1,`
-      + `pad=${W}:${H}:trunc((${W}-iw)/4)*2:${top}+trunc((${height}-ih)/4)*2:color=black[base]`
+      + `pad=${W}:${H}:trunc((${W}-iw)/4)*2:${top}+trunc((${height}-ih)/4)*2:color=${background}[base]`
     : `[0:v]scale=${W}:${height}:force_original_aspect_ratio=increase:flags=lanczos,`
       + `crop=${W}:${height},setsar=1,pad=${W}:${H}:0:${top}:color=black[base]`;
 

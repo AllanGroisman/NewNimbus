@@ -13,7 +13,10 @@ Rodar o Claude na VPS e desligar o computador (via tmux):
 
 1. [] Quero acrescentar para poder repassar Canais e não somente grupos do WhatsApp.
 
-2. [] Ao clicar em editar descrição dos grupos do whats, aparece escreita a descrição atual? Queria uma forma fácil de poder copiar tb a mesma descrição para todos os grupos de uma campanha, pode ser no proprio popup de editar a descricao, inclusive quando apertar pra salvar apareça para salvar apenas para esse ou aplicar em todos os grupos da campanha.
+2. [x] Ao clicar em editar descrição dos grupos do whats, aparece escreita a descrição atual? Queria uma forma fácil de poder copiar tb a mesma descrição para todos os grupos de uma campanha, pode ser no proprio popup de editar a descricao, inclusive quando apertar pra salvar apareça para salvar apenas para esse ou aplicar em todos os grupos da campanha.
 
 3. [x] Quero que a aba desempenho da shopee se aproxime o maximo possivel da aba do ML.
 
+4. [] olha o image.png, quero que nos templates do downloader, tenha um chamado TwitterReact que siga aquele padrão ali e que de pra editar a fotinho, nome da conta, @, data e o que estaria escrito no tweet.
+
+5. [] Quero ter a aba desempenho da amazon tb que fica em https://associados.amazon.com.br/p/reporting/earnings. O que é necessario?
