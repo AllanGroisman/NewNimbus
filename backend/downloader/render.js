@@ -12,35 +12,90 @@ const ffmpegPath = require("ffmpeg-static");
 const CANVAS = { vertical: [1080, 1920], horizontal: [1920, 1080] };
 // Lado ímpar faz o libx264 recusar yuv420p.
 const par = (n) => Math.max(2, Math.round(n / 2) * 2);
+// Offset também tem que ser par (ímpar desloca o croma), mas pode ser zero: com
+// o `par` o "Tela cheia" saía em top=2, com 2px de barra no alto.
+const even = (n) => Math.round(n / 2) * 2;
 
+// Retângulo do vídeo dentro do quadro. Template antigo não tem left/width e sai
+// na largura toda, como sempre saiu.
 function geometry(template) {
   const [W, H] = CANVAS[template?.format === "horizontal" ? "horizontal" : "vertical"];
-  const top = par(Math.min(Math.max(0, Number(template?.video?.top) || 0), H - 2));
-  const height = par(Math.min(Math.max(2, Number(template?.video?.height) || H), H - top));
+  const v = template?.video;
+  const top = even(Math.min(Math.max(0, Number(v?.top) || 0), H - 2));
+  const height = par(Math.min(Math.max(2, Number(v?.height) || H), H - top));
+  const left = even(Math.min(Math.max(0, Number(v?.left) || 0), W - 2));
+  const width = par(Math.min(Math.max(2, Number(v?.width) || W), W - left));
   // A cor vem do body do POST /jobs e vai parar dentro do filtergraph: só passa
   // #rrggbb, qualquer outra coisa vira preto.
-  const bg = String(template?.video?.background || "");
+  const bg = String(v?.background || "");
   const background = /^#[0-9a-f]{6}$/i.test(bg) ? `0x${bg.slice(1)}` : "black";
-  return { W, H, top, height, fit: template?.video?.fit === "contain" ? "contain" : "cover", background };
+  return { W, H, top, height, left, width, fit: v?.fit === "contain" ? "contain" : "cover", background };
 }
 
-function filtergraph({ W, H, top, height, fit, background = "black" }) {
-  // cover preenche a faixa e corta a sobra; contain mostra o vídeo inteiro e
-  // deixa sobra. O trunc(../4)*2 mantém o offset par — offset ímpar desloca o
+function filtergraph({ W, H, top, height, left = 0, width = W, fit, background = "black" }, fades = []) {
+  // cover preenche o retângulo e corta a sobra; contain mostra o vídeo inteiro
+  // e deixa sobra. O trunc(../4)*2 mantém o offset par — offset ímpar desloca o
   // croma meio pixel em yuv420p.
   const base = fit === "contain"
-    ? `[0:v]scale=${W}:${height}:force_original_aspect_ratio=decrease:flags=lanczos,setsar=1,`
-      + `pad=${W}:${H}:trunc((${W}-iw)/4)*2:${top}+trunc((${height}-ih)/4)*2:color=${background}[base]`
-    : `[0:v]scale=${W}:${height}:force_original_aspect_ratio=increase:flags=lanczos,`
-      + `crop=${W}:${height},setsar=1,pad=${W}:${H}:0:${top}:color=black[base]`;
+    ? `[0:v]scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=lanczos,setsar=1,`
+      + `pad=${W}:${H}:${left}+trunc((${width}-iw)/4)*2:${top}+trunc((${height}-ih)/4)*2:color=${background}[base]`
+    : `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase:flags=lanczos,`
+      + `crop=${width}:${height},setsar=1,pad=${W}:${H}:${left}:${top}:color=black[base]`;
 
-  return [
-    base,
-    `[1:v]scale=${W}:${H}:flags=lanczos[ovl]`,
-    // yuv444 na composição mantém o croma cheio (texto branco fino não ganha
-    // franja) e só no fim cai para yuv420p, que é o que todo player aceita.
-    "[base][ovl]overlay=0:0:format=yuv444:eof_action=repeat,format=yuv420p[v]",
-  ].join(";");
+  // yuv444 na composição mantém o croma cheio (texto branco fino não ganha
+  // franja) e só no fim cai para yuv420p, que é o que todo player aceita.
+  const parts = [base, `[1:v]scale=${W}:${H}:flags=lanczos[ovl]`];
+  if (!fades.length) {
+    parts.push("[base][ovl]overlay=0:0:format=yuv444:eof_action=repeat,format=yuv420p[v]");
+    return parts.join(";");
+  }
+
+  // Camadas que somem: cada fade é um PNG do quadro inteiro de antes do sumiço,
+  // empilhado por cima do overlay fixo. O loop repete o frame já decodificado
+  // (o -loop 1 decodificaria o PNG de novo a cada frame), o trim encerra o
+  // stream quando o fade acaba e o eof_action=pass deixa o resto do vídeo sem
+  // composição nenhuma. O trim nunca passa do fim do vídeo: o overlay estica a
+  // saída, congelando o último frame, enquanto a segunda entrada tiver frames.
+  parts.push("[base][ovl]overlay=0:0:format=yuv444:eof_action=repeat[s0]");
+  fades.forEach(({ at, fade, end }, k) => {
+    const sumir = fade > 0 ? `,fade=t=out:st=${num(at)}:d=${num(fade)}:alpha=1` : "";
+    parts.push(
+      `[${k + 2}:v]scale=${W}:${H}:flags=lanczos,format=rgba,loop=loop=-1:size=1:start=0,trim=end=${num(end)}${sumir}[f${k}]`,
+      `[s${k}][f${k}]overlay=0:0:format=yuv444:eof_action=pass${k === fades.length - 1 ? ",format=yuv420p[v]" : `[s${k + 1}]`}`,
+    );
+  });
+  return parts.join(";");
+}
+
+// Os tempos entram no filtergraph como texto: número com 3 casas e nada mais.
+const num = (n) => String(Number((Number(n) || 0).toFixed(3)));
+
+// Quando cada fade termina, limitado à duração real do arquivo. Fade que nem
+// começa antes do fim também fica: é ele que mostra a camada até o último frame.
+function fadeTimes(fades, total) {
+  return (fades || [])
+    .map(({ file, at, fade }) => {
+      const end = total > 0 ? Math.min(at + fade, total) : at + fade;
+      return { file, at, fade, end };
+    })
+    .filter((f) => f.end > 0.05);
+}
+
+// Duração do arquivo baixado, lida do cabeçalho que o ffmpeg imprime (não há
+// ffprobe no ffmpeg-static). A da listagem não serve aqui: vem arredondada, ou
+// nula no TikTok.
+function probeDuration(input) {
+  return new Promise((resolve) => {
+    let err = "";
+    const child = spawn(ffmpegPath, ["-hide_banner", "-nostdin", "-i", input], { windowsHide: true });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (d) => { err += d; });
+    child.on("error", () => resolve(null));
+    child.on("close", () => {
+      const m = err.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+      resolve(m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : null);
+    });
+  });
 }
 
 function outputPath(input) {
@@ -53,7 +108,7 @@ function lastLine(text) {
   return lines[lines.length - 1] || "";
 }
 
-function run({ input, overlay, geo, output, duration, audio, onProgress }) {
+function run({ input, overlay, fades = [], geo, output, duration, audio, onProgress }) {
   const args = [
     // -nostdin: sem isso o ffmpeg disputa a entrada do processo pai.
     "-hide_banner", "-nostdin", "-y",
@@ -61,7 +116,8 @@ function run({ input, overlay, geo, output, duration, audio, onProgress }) {
     // Sem -loop: o PNG dá EOF no primeiro frame e o eof_action=repeat do overlay
     // segura esse frame até o vídeo acabar. Com -loop a saída seria infinita.
     "-i", overlay,
-    "-filter_complex", filtergraph(geo),
+    ...fades.flatMap((f) => ["-i", f.file]),
+    "-filter_complex", filtergraph(geo, fades),
     "-map", "[v]",
     // O "?" faz vídeo sem trilha de áudio não derrubar o comando.
     "-map", "0:a?",
@@ -119,9 +175,13 @@ function run({ input, overlay, geo, output, duration, audio, onProgress }) {
 }
 
 // Resolve com o caminho do arquivo com o template aplicado.
-async function renderOverlay({ input, overlay, template, duration, onProgress }) {
+async function renderOverlay({ input, overlay, fades, template, duration, onProgress }) {
   const geo = geometry(template);
-  const base = { input, overlay, geo, output: outputPath(input), duration, onProgress };
+  let total = Number(duration) || 0;
+  if (fades?.length) total = (await probeDuration(input)) || total;
+  const base = {
+    input, overlay, fades: fadeTimes(fades, total), geo, output: outputPath(input), duration: total, onProgress,
+  };
   try {
     return await run({ ...base, audio: ["-c:a", "copy"] });
   } catch {
@@ -131,4 +191,4 @@ async function renderOverlay({ input, overlay, template, duration, onProgress })
   }
 }
 
-module.exports = { renderOverlay, geometry, filtergraph, outputPath };
+module.exports = { renderOverlay, geometry, filtergraph, fadeTimes, outputPath };

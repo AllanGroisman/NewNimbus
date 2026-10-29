@@ -56,13 +56,14 @@ const FACTORY = [
     // centralizado embaixo do tweet, com branco dos lados.
     name: "TwitterReact",
     format: "vertical",
-    video: { top: 620, height: 1000, background: "#ffffff", fit: "contain" },
+    video: { top: 620, height: 1000, left: 0, width: 1080, background: "#ffffff", fit: "contain" },
     layers: [
       {
-        type: "tweet", x: 84, y: 150, w: 912, size: 56,
+        type: "tweet", x: 84, y: 150, w: 912, size: 56, scale: 1,
         avatar: "", name: "Nome da Conta", handle: "suaconta", verified: true,
         text: "Escreva aqui o texto do tweet.", date: "17:00 · 01 de Julho de 2021",
         theme: "light", opacity: 1,
+        card: { show: true, color: "#ffffff", borderColor: "#cfd9de", borderWidth: 3, radius: 40, padding: 48 },
       },
     ],
   },
@@ -125,6 +126,9 @@ function sanitize(body) {
     video: {
       top: Number(body?.video?.top) || 0,
       height: Number(body?.video?.height) || 0,
+      // Zero na largura = largura toda (ver geometry, no render.js).
+      left: Number(body?.video?.left) || 0,
+      width: Number(body?.video?.width) || 0,
       background: String(body?.video?.background || "#000000").slice(0, 32),
       fit: body?.video?.fit === "contain" ? "contain" : "cover",
     },

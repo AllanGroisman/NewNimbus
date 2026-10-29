@@ -12,7 +12,7 @@ import VideoCard, { PlatformBadge, SkeletonCard } from "../components/admin/down
 import SelectionBar from "../components/admin/downloader/SelectionBar";
 import DownloadPanel from "../components/admin/downloader/DownloadPanel";
 import TemplateEditor from "../components/admin/downloader/TemplateEditor";
-import { frameSize, loadImages, renderToDataUrl, usesTitle } from "../components/admin/downloader/overlay";
+import { frameSize, loadImages, overlayPlan, renderToDataUrl, usesTitle, videoRect } from "../components/admin/downloader/overlay";
 import { botaoSecundario, chipStyle, hintStyle } from "../components/admin/downloader/downloaderEstilos";
 import {
   adminDlList, adminDlVideo, adminDlProducts, adminDlTemplates, adminDlJobCreate, adminDlJob, errText,
@@ -172,25 +172,37 @@ export default function PageAdminDownloader() {
       const tpl = templates.find((t) => t.id === templateId);
       // Template sem camada alguma e com o vídeo em tela cheia não muda nada no
       // arquivo: pular o encode economiza minutos por lote.
-      const aplica = Boolean(tpl && (tpl.layers?.length || (tpl.video?.height || 0) < frameSize(tpl)[1]));
+      const r = tpl && videoRect(tpl);
+      const [W, H] = frameSize(tpl);
+      const aplica = Boolean(tpl && (tpl.layers?.length || r.w < W || r.h < H));
       // O PNG é um só para o lote inteiro, a não ser que o texto use {titulo}.
       const porVideo = aplica && usesTitle(tpl);
       const images = aplica ? await loadImages(tpl) : null;
-      const overlay = aplica && !porVideo ? await renderToDataUrl(tpl, { images }) : undefined;
+      // Camada que some no meio do vídeo vira um PNG a mais por momento de
+      // sumiço (ver overlayPlan). Sem nenhuma, é o PNG único de sempre.
+      const plano = aplica ? overlayPlan(tpl) : null;
+      const pngs = async (title) => {
+        const fades = [];
+        for (const f of plano.fades) {
+          fades.push({ overlay: await renderToDataUrl(f.template, { title, images }), at: f.at, fade: f.fade });
+        }
+        return {
+          overlay: await renderToDataUrl(plano.base, { title, images }),
+          fades: fades.length ? fades : undefined,
+        };
+      };
+      const lote = aplica && !porVideo ? await pngs() : {};
 
       const videos = [];
       for (const { id, url, title, duration } of selectedShown) {
-        videos.push({
-          id, url, title, duration,
-          overlay: porVideo ? await renderToDataUrl(tpl, { title, images }) : undefined,
-        });
+        videos.push({ id, url, title, duration, ...(porVideo ? await pngs(title) : {}) });
       }
 
       const { jobId } = await adminDlJobCreate({
         videos,
         // Só a geometria vai para o backend: as camadas já estão no PNG.
         template: aplica ? { format: tpl.format, video: tpl.video } : undefined,
-        overlay,
+        ...lote,
       });
       setJob(null);
       setJobId(jobId);

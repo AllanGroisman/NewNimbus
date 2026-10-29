@@ -17,6 +17,5 @@ Rodar o Claude na VPS e desligar o computador (via tmux):
 
 3. [x] Quero que a aba desempenho da shopee se aproxime o maximo possivel da aba do ML.
 
-4. [] olha o image.png, quero que nos templates do downloader, tenha um chamado TwitterReact que siga aquele padrão ali e que de pra editar a fotinho, nome da conta, @, data e o que estaria escrito no tweet.
+4. [] O twitter react ta legal, mas não to conseguindo upar a imagem pra fotinho de perfil, quero tb que tenha um retangulo por tras do "tweet" que eu possa mudar a cor e o contorno. Tb quero poder mudar o tamanho de todo o tweet e de todo o video. Tb quero poder expandir o preview para ver como esta fincando o template, ta muitop pequeno e nao da pra ver nada hoje.
 
-5. [] Quero ter a aba desempenho da amazon tb que fica em https://associados.amazon.com.br/p/reporting/earnings. O que é necessario?

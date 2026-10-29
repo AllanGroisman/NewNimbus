@@ -37,7 +37,23 @@ function savePng(dir, name, dataUrl) {
   return file;
 }
 
-function createJob(videos, { template = null, overlay = null, ownerId = null } = {}) {
+// Camadas que somem no meio do vídeo: cada fade é o quadro inteiro como estava
+// antes de um grupo de camadas sumir, na ordem de empilhar (de baixo para
+// cima). `at` e `fade` vão parar no filtergraph, então saem daqui já números.
+const MAX_FADES = 4;
+function saveFades(dir, prefix, list) {
+  return (Array.isArray(list) ? list : []).slice(0, MAX_FADES).map((f, k) => {
+    const file = savePng(dir, `${prefix}-${k}.png`, f?.overlay);
+    if (!file) return null;
+    return {
+      file,
+      at: Math.min(Math.max(0, Number(f.at) || 0), 3600),
+      fade: Math.min(Math.max(0, Number(f.fade) || 0), 10),
+    };
+  }).filter(Boolean);
+}
+
+function createJob(videos, { template = null, overlay = null, fades = null, ownerId = null } = {}) {
   const id = crypto.randomUUID();
   const dir = path.join(TMP, id);
   fs.mkdirSync(dir, { recursive: true });
@@ -45,6 +61,7 @@ function createJob(videos, { template = null, overlay = null, ownerId = null } =
   // Um PNG só para o lote inteiro, salvo quando o texto usa {titulo} — aí cada
   // vídeo manda o seu.
   const shared = overlay ? savePng(dir, "overlay.png", overlay) : null;
+  const sharedFades = overlay ? saveFades(dir, "fade", fades) : [];
 
   const job = {
     id,
@@ -66,6 +83,7 @@ function createJob(videos, { template = null, overlay = null, ownerId = null } =
       duration: Number(v.duration) || null,
       // Índice e não id no nome: id de vídeo pode ter caractere inválido em path.
       overlay: v.overlay ? savePng(dir, `overlay-${i}.png`, v.overlay) : shared,
+      fades: v.overlay ? saveFades(dir, `fade-${i}`, v.fades) : sharedFades,
       status: "queued",
       percent: 0,
       file: null,
@@ -115,6 +133,7 @@ function pumpRender() {
     renderOverlay({
       input: item.raw,
       overlay: item.overlay,
+      fades: item.fades,
       template: job.template,
       duration: item.duration,
       onProgress: (p) => { item.percent = p; },

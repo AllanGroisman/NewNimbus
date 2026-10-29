@@ -20,6 +20,8 @@ export function frameSize(template) {
 
 // Dimensão de vídeo tem que ser par: libx264 com yuv420p recusa lado ímpar.
 export const par = (n) => Math.max(2, Math.round(n / 2) * 2);
+// Offset par também, mas podendo ser zero (o par acima transformava top 0 em 2).
+const even = (n) => Math.round(n / 2) * 2;
 
 export function resolveText(layer, { title = "" } = {}) {
   const raw = String(layer.text || "").replace(/\{titulo\}/gi, title);
@@ -54,11 +56,57 @@ function wrap(ctx, text, maxWidth) {
 
 // Área que o vídeo ocupa dentro do quadro. Mesma conta do backend
 // (render.js/geometry) — as duas têm que dar exatamente o mesmo retângulo.
+// Template sem left/width ocupa a largura toda.
 export function videoRect(template) {
   const [W, H] = frameSize(template);
-  const top = par(Math.min(Math.max(0, Number(template?.video?.top) || 0), H - 2));
-  const height = par(Math.min(Math.max(2, Number(template?.video?.height) || H), H - top));
-  return { x: 0, y: top, w: W, h: height };
+  const v = template?.video;
+  const top = even(Math.min(Math.max(0, Number(v?.top) || 0), H - 2));
+  const height = par(Math.min(Math.max(2, Number(v?.height) || H), H - top));
+  const left = even(Math.min(Math.max(0, Number(v?.left) || 0), W - 2));
+  const width = par(Math.min(Math.max(2, Number(v?.width) || W), W - left));
+  return { x: left, y: top, w: width, h: height };
+}
+
+// Camada que some no meio do vídeo: `exit: { at, fade }`, em segundos.
+export const hasExit = (l) => Boolean(l?.exit) && Number.isFinite(Number(l.exit.at));
+const exitAt = (l) => Math.max(0, Number(l.exit.at) || 0);
+const exitFade = (l) => Math.min(10, Math.max(0, Number(l.exit.fade) || 0));
+
+// Quanto da camada aparece no instante `time` (só a prévia animada passa um).
+// Sem `time`, tudo aparece — é assim que os PNGs do ffmpeg são desenhados.
+export function exitAlpha(l, time) {
+  if (time == null || !hasExit(l)) return 1;
+  const at = exitAt(l);
+  const fade = exitFade(l);
+  if (time < at) return 1;
+  return fade > 0 && time < at + fade ? 1 - (time - at) / fade : 0;
+}
+
+// Quando a prévia animada termina: o último sumiço, ou 0 se nada some.
+export function exitEnd(template) {
+  return Math.max(0, ...(template?.layers || []).filter(hasExit).map((l) => exitAt(l) + exitFade(l)));
+}
+
+// PNGs que o ffmpeg empilha quando há camadas que somem. `base` é o que fica o
+// vídeo todo; cada fade é o quadro INTEIRO como estava antes de um grupo de
+// camadas sumir, e some por cima do de baixo. Quadro inteiro, e não só a camada
+// que some, porque assim a ordem das camadas continua certa: um logo por cima
+// do tweet continua por cima dele até o tweet sumir. Fades na ordem de empilhar
+// (de baixo para cima): o primeiro a sumir fica no topo.
+export function overlayPlan(template) {
+  const layers = template?.layers || [];
+  const key = (l) => `${exitAt(l)}|${exitFade(l)}`;
+  const groups = [...new Map(layers.filter(hasExit).map((l) => [key(l), { key: key(l), at: exitAt(l), fade: exitFade(l) }])).values()]
+    .sort((a, b) => a.at - b.at || a.fade - b.fade);
+  // Antes do grupo k sumir, os grupos 0..k-1 já foram.
+  const before = (k) => ({
+    ...template,
+    layers: layers.filter((l) => !hasExit(l) || groups.findIndex((g) => g.key === key(l)) >= k),
+  });
+  return {
+    base: { ...template, layers: layers.filter((l) => !hasExit(l)) },
+    fades: groups.map((g, k) => ({ template: before(k), at: g.at, fade: g.fade })).reverse(),
+  };
 }
 
 export function paintOverlay(ctx, template, opts = {}) {
@@ -69,15 +117,17 @@ export function paintOverlay(ctx, template, opts = {}) {
   // transparente. Assim as barras são literalmente o que se vê na prévia, e o
   // ffmpeg não precisa saber de cor nenhuma.
   const r = videoRect(template);
-  if (r.h < H) {
+  if (r.h < H || r.w < W) {
     ctx.fillStyle = template?.video?.background || "#000000";
     ctx.fillRect(0, 0, W, H);
     ctx.clearRect(r.x, r.y, r.w, r.h);
   }
 
   for (const layer of template?.layers || []) {
+    const alpha = (layer.opacity ?? 1) * exitAlpha(layer, opts.time);
+    if (alpha <= 0) continue;
     ctx.save();
-    ctx.globalAlpha = layer.opacity ?? 1;
+    ctx.globalAlpha = alpha;
     if (layer.type === "box") paintBox(ctx, layer);
     else if (layer.type === "text") paintText(ctx, layer, opts);
     else if (layer.type === "image") paintImage(ctx, layer, opts.images);
@@ -142,8 +192,15 @@ const tweetFonts = (s) => ({
   date: `400 ${Math.round(s * 0.6)}px ${TWEET_FONT}`,
 });
 
-// Posições de cada pedaço do tweet. A pintura e a caixa de seleção (layerBox)
-// saem daqui, então as duas nunca discordam.
+// Retângulo atrás do tweet, no estilo do tweet embutido: branco com borda cinza.
+export const TWEET_CARD = { show: true, color: "#ffffff", borderColor: "#cfd9de", borderWidth: 3, radius: 40, padding: 48 };
+
+// "Tamanho do tweet": multiplica tudo, inclusive a largura e o retângulo.
+const tweetScale = (l) => Math.min(5, Math.max(0.1, Number(l.scale) || 1));
+
+// Posições de cada pedaço do tweet, com a origem (0,0) no canto da foto e antes
+// da escala. A pintura e a caixa de seleção (layerBox) saem daqui, então as duas
+// nunca discordam.
 function tweetLayout(ctx, l, opts) {
   const s = l.size || 56;
   const f = tweetFonts(s);
@@ -152,9 +209,9 @@ function tweetLayout(ctx, l, opts) {
   const gap = Math.round(s * 0.35);
   const nameSize = Math.round(s * 0.95);
   const handleSize = Math.round(s * 0.8);
-  const textX = l.x + avatar + gap;
+  const textX = avatar + gap;
   // Nome + @ centralizados na altura da foto.
-  const headY = l.y + (avatar - (nameSize * 1.25 + handleSize * 1.2)) / 2;
+  const headY = (avatar - (nameSize * 1.25 + handleSize * 1.2)) / 2;
 
   ctx.font = f.name;
   const nameW = ctx.measureText(l.name || "").width;
@@ -163,27 +220,54 @@ function tweetLayout(ctx, l, opts) {
   ctx.font = f.text;
   const lines = wrap(ctx, resolveText(l, opts), w);
   const step = s * 1.3;
-  const bodyY = l.y + avatar + Math.round(s * 0.5);
+  const bodyY = avatar + Math.round(s * 0.5);
   const dateY = bodyY + lines.length * step + Math.round(s * 0.45);
   const dateSize = Math.round(s * 0.6);
   const bodyW = Math.max(0, ...lines.map((t) => ctx.measureText(t).width));
+  const content = { x: 0, y: 0, w: Math.max(w, bodyW, avatar + gap + nameW + selo), h: dateY + dateSize * 1.2 };
+  // O retângulo cresce para fora do conteúdo: ligar ou mudar a margem não
+  // tira o texto do lugar.
+  const pad = Math.max(0, Number(l.card?.padding) || 0);
+  const card = { x: -pad, y: -pad, w: content.w + pad * 2, h: content.h + pad * 2 };
   return {
     fonts: f,
-    avatar: { x: l.x, y: l.y, d: avatar },
+    avatar: { x: 0, y: 0, d: avatar },
     name: { x: textX, y: headY, w: nameW },
     selo: { x: textX + nameW + Math.round(s * 0.2), y: headY + (nameSize * 1.15 - selo) / 2, d: selo },
     handle: { x: textX, y: headY + nameSize * 1.25 },
-    body: { x: l.x, y: bodyY, lines, step },
-    date: { x: l.x, y: dateY },
-    box: { x: l.x, y: l.y, w: Math.max(w, bodyW, avatar + gap + nameW + selo), h: dateY + dateSize * 1.2 - l.y },
+    body: { x: 0, y: bodyY, lines, step },
+    date: { x: 0, y: dateY },
+    card,
+    box: l.card?.show ? card : content,
   };
+}
+
+function paintCard(ctx, card, { x, y, w, h }) {
+  // O contorno é traçado para dentro, para a borda de fora bater com a caixa
+  // de seleção.
+  const bw = Math.min(Math.max(0, Number(card.borderWidth) || 0), w / 2, h / 2);
+  const r = Math.max(0, Math.min((Number(card.radius) || 0) - bw / 2, (w - bw) / 2, (h - bw) / 2));
+  ctx.beginPath();
+  ctx.roundRect(x + bw / 2, y + bw / 2, w - bw, h - bw, r);
+  ctx.fillStyle = card.color || "#ffffff";
+  ctx.fill();
+  if (bw) {
+    ctx.lineWidth = bw;
+    ctx.strokeStyle = card.borderColor || "#cfd9de";
+    ctx.stroke();
+  }
 }
 
 function paintTweet(ctx, l, opts) {
   const c = TWEET_THEMES[l.theme === "dark" ? "dark" : "light"];
   const L = tweetLayout(ctx, l, opts);
+  const k = tweetScale(l);
+  ctx.translate(l.x, l.y);
+  ctx.scale(k, k);
   ctx.textBaseline = "top";
   ctx.textAlign = "left";
+
+  if (l.card?.show) paintCard(ctx, l.card, L.card);
 
   const { x, y, d } = L.avatar;
   ctx.save();
@@ -271,7 +355,11 @@ export async function renderToDataUrl(template, opts = {}) {
 // Caixa ocupada pela camada, em pixels do quadro. Texto precisa do ctx porque só
 // o measureText sabe a largura real depois da quebra de linha.
 export function layerBox(ctx, l, opts = {}) {
-  if (l.type === "tweet") return tweetLayout(ctx, l, opts).box;
+  if (l.type === "tweet") {
+    const b = tweetLayout(ctx, l, opts).box;
+    const k = tweetScale(l);
+    return { x: l.x + b.x * k, y: l.y + b.y * k, w: b.w * k, h: b.h * k };
+  }
   if (l.type !== "text") return { x: l.x, y: l.y, w: l.w, h: l.h };
   ctx.font = fontOf(l);
   const lines = wrap(ctx, resolveText(l, opts), l.w || Infinity);
@@ -295,12 +383,13 @@ export function hitTest(ctx, template, px, py, opts = {}) {
 // Presets de geometria do vídeo dentro do quadro: é isso que cria o formato
 // "vídeo reduzido entre barras".
 export function videoPresets(format) {
-  const [, H] = CANVAS[format === "horizontal" ? "horizontal" : "vertical"];
+  const [W, H] = CANVAS[format === "horizontal" ? "horizontal" : "vertical"];
   const faixa = Math.round(H * 0.14);
+  const full = { left: 0, width: W };
   return [
-    { label: "Tela cheia", video: { top: 0, height: H } },
-    { label: "Barra em cima", video: { top: par(faixa), height: par(H - faixa) } },
-    { label: "Barras em cima e embaixo", video: { top: par(faixa), height: par(H - faixa * 2) } },
+    { label: "Tela cheia", video: { ...full, top: 0, height: H } },
+    { label: "Barra em cima", video: { ...full, top: par(faixa), height: par(H - faixa) } },
+    { label: "Barras em cima e embaixo", video: { ...full, top: par(faixa), height: par(H - faixa * 2) } },
   ];
 }
 
@@ -314,10 +403,11 @@ export function newLayer(type, template) {
   }
   if (type === "tweet") {
     return {
-      type: "tweet", x: Math.round(W * 0.08), y: Math.round(H * 0.08), w: Math.round(W * 0.84), size: Math.round(W / 19),
+      type: "tweet", x: Math.round(W * 0.08), y: Math.round(H * 0.08), w: Math.round(W * 0.84), size: Math.round(W / 19), scale: 1,
       avatar: "", name: "Nome da Conta", handle: "suaconta", verified: true,
       text: "Escreva aqui o texto do tweet.", date: "17:00 · 01 de Julho de 2021",
       theme: "light", opacity: 1,
+      card: { ...TWEET_CARD },
     };
   }
   return {

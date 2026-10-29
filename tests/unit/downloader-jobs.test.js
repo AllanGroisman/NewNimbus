@@ -111,3 +111,35 @@ describe("comparação da chave", () => {
     expect(compara(trocado, job.key)).toBe(false);
   });
 });
+
+// Camadas que somem: os PNGs extras vão para o disco do lote e os tempos, que
+// entram no filtergraph do ffmpeg, saem daqui já como números dentro de limites.
+describe("fades do template", () => {
+  const PNG = "data:image/png;base64,iVBORw0KGgo=";
+  const TPL = { format: "vertical", video: { top: 0, height: 1920 } };
+
+  it("PNG do lote vale para todos os vídeos, com os tempos saneados", () => {
+    const job = novoJob([VIDEO, { ...VIDEO, id: "def456" }], {
+      template: TPL, overlay: PNG,
+      fades: [{ overlay: PNG, at: "5", fade: 1 }, { overlay: PNG, at: -3, fade: 99 }, { overlay: "lixo", at: 1, fade: 1 }],
+    });
+    for (const item of job.items) {
+      expect(item.fades.map(({ at, fade }) => ({ at, fade }))).toEqual([{ at: 5, fade: 1 }, { at: 0, fade: 10 }]);
+      for (const f of item.fades) expect(fs.existsSync(f.file)).toBe(true);
+    }
+  });
+
+  it("vídeo com PNG próprio ({titulo}) usa os seus fades, não os do lote", () => {
+    const job = novoJob([{ ...VIDEO, overlay: PNG, fades: [{ overlay: PNG, at: 2, fade: 0.5 }] }], {
+      template: TPL, overlay: PNG, fades: [{ overlay: PNG, at: 9, fade: 1 }],
+    });
+    expect(job.items[0].fades.map((f) => f.at)).toEqual([2]);
+  });
+
+  it("no máximo 4 fades por vídeo, e nenhum caminho deles na visão pública", () => {
+    const fades = Array.from({ length: 6 }, (_, k) => ({ overlay: PNG, at: k + 1, fade: 1 }));
+    const job = novoJob([VIDEO], { template: TPL, overlay: PNG, fades });
+    expect(job.items[0].fades).toHaveLength(4);
+    expect(JSON.stringify(jobs.serialize(job))).not.toContain("fade-");
+  });
+});

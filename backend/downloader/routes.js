@@ -27,7 +27,8 @@ const templates = require("./templates");
 const router = express.Router();
 
 // Teto por lote. É o que mantém o corpo do POST /jobs dentro dos 64mb: cada
-// vídeo pode mandar o seu PNG de overlay quando o texto usa {titulo}.
+// vídeo pode mandar o seu PNG de overlay (e os das camadas que somem) quando o
+// texto usa {titulo}.
 const MAX_VIDEOS = 30;
 // Vídeo baixado + a cópia com template ocupam bastante; abaixo disto o lote
 // falharia no meio, com metade dos arquivos no disco.
@@ -183,6 +184,7 @@ router.post("/jobs", async (req, res) => {
     const job = jobs.createJob(videos, {
       template: req.body?.template,
       overlay: req.body?.overlay,
+      fades: req.body?.fades,
       ownerId: req.user?.id ?? null,
     });
     res.json({ jobId: job.id });
