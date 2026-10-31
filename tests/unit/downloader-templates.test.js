@@ -16,7 +16,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const backend = path.resolve(__dirname, "..", "..", "backend");
 const { sanitize } = require(path.join(backend, "downloader", "templates.js"));
-const { geometry, filtergraph, fadeTimes } = require(path.join(backend, "downloader", "render.js"));
+const { geometry, filtergraph, fadeTimes, parseProbe } = require(path.join(backend, "downloader", "render.js"));
 
 const PNG = "data:image/png;base64,iVBORw0KGgo=";
 const tweet = (extra = {}) => ({
@@ -181,5 +181,52 @@ describe("filtergraph com camadas que somem", () => {
   it("sem fades, o filtergraph é o de sempre", () => {
     expect(filtergraph(geo, [])).toBe(filtergraph(geo));
     expect(filtergraph(geo)).toContain("eof_action=repeat,format=yuv420p[v]");
+  });
+});
+
+// Tela final: alguns segundos emendados depois do vídeo. Template sem ela tem
+// que continuar saindo igualzinho a antes.
+describe("tela final", () => {
+  const geo = geometry({ format: "vertical", video: { top: 620, height: 1000 } });
+
+  it("sanitize guarda a tela final com limites e cores saneadas", () => {
+    const out = sanitize({ outro: { show: 1, seconds: 99, background: "red;x", text: "a".repeat(500), cta: "LINK" } });
+    expect(out.outro).toMatchObject({ show: true, seconds: 15, background: "#ffffff", cta: "LINK" });
+    expect(out.outro.text).toHaveLength(400);
+  });
+
+  it("template sem tela final não ganha uma", () => {
+    expect(sanitize({ name: "T" })).not.toHaveProperty("outro");
+  });
+
+  it("com áudio, emenda vídeo e silêncio no mesmo formato", () => {
+    const g = filtergraph(geo, [], { input: 2, hasAudio: true });
+    expect(g).toContain("format=yuv420p[main]");
+    expect(g).toContain("[2:v]scale=1080:1920");
+    expect(g).toContain("[3:a]aresample=48000");
+    expect(g).toMatch(/\[main\]\[a0\]\[end\]\[a1\]concat=n=2:v=1:a=1\[v\]\[a\]$/);
+  });
+
+  it("sem áudio, emenda só o vídeo", () => {
+    const g = filtergraph(geo, [], { input: 2, hasAudio: false });
+    expect(g).toMatch(/\[main\]\[end\]concat=n=2:v=1:a=0\[v\]$/);
+    expect(g).not.toContain(":a]");
+  });
+
+  it("com fades, a tela final entra depois deles", () => {
+    const g = filtergraph(geo, fadeTimes([{ file: "f", at: 5, fade: 1 }], 30), { input: 3, hasAudio: false });
+    expect(g).toContain("eof_action=pass,format=yuv420p[main]");
+    expect(g).toContain("[3:v]scale=");
+  });
+
+  it("parseProbe lê duração, fps e áudio do cabeçalho do ffmpeg", () => {
+    const head = [
+      "  Duration: 00:01:02.50, start: 0.000000, bitrate: 900 kb/s",
+      "  Stream #0:0[0x1](und): Video: h264 (avc1), yuv420p, 720x1280, 800 kb/s, 29.97 fps, 29.97 tbr, 30k tbn",
+      "  Stream #0:1[0x2](und): Audio: aac (mp4a), 44100 Hz, stereo, fltp, 128 kb/s",
+    ].join("\n");
+    expect(parseProbe(head)).toEqual({ duration: 62.5, fps: 29.97, hasAudio: true });
+    expect(parseProbe(head.split("\n").slice(0, 2).join("\n")).hasAudio).toBe(false);
+    expect(parseProbe("lixo")).toEqual({ duration: null, fps: 30, hasAudio: false });
   });
 });

@@ -143,3 +143,23 @@ describe("fades do template", () => {
     expect(JSON.stringify(jobs.serialize(job))).not.toContain("fade-");
   });
 });
+
+// Tela final: um PNG por lote e os segundos, que vão para a linha de comando do
+// ffmpeg, já como número dentro de limites.
+describe("tela final do lote", () => {
+  const PNG = "data:image/png;base64,iVBORw0KGgo=";
+  const TPL = { format: "vertical", video: { top: 0, height: 1920 } };
+
+  it("salva o PNG e limita os segundos", () => {
+    const job = novoJob([VIDEO], { template: TPL, overlay: PNG, outro: { overlay: PNG, seconds: "99" } });
+    expect(job.outro.seconds).toBe(15);
+    expect(fs.existsSync(job.outro.file)).toBe(true);
+    expect(JSON.stringify(jobs.serialize(job))).not.toContain("outro.png");
+  });
+
+  it("sem PNG válido, sem template ou com duração curta demais, não há tela final", () => {
+    expect(novoJob([VIDEO], { template: TPL, overlay: PNG, outro: { overlay: "lixo", seconds: 3 } }).outro).toBeNull();
+    expect(novoJob([VIDEO], { overlay: PNG, outro: { overlay: PNG, seconds: 3 } }).outro).toBeNull();
+    expect(novoJob([VIDEO], { template: TPL, overlay: PNG, outro: { overlay: PNG, seconds: 0.1 } }).outro).toBeNull();
+  });
+});

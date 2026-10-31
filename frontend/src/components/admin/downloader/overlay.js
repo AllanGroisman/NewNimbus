@@ -342,6 +342,65 @@ export function loadImages(template) {
   }))).then((pairs) => new Map(pairs.filter(Boolean)));
 }
 
+// Tela final: alguns segundos emendados depois do vídeo (o backend faz o
+// concat). Uma tela só, sem camadas: fundo chapado, a chamada no meio e o
+// "link na bio" num botão embaixo.
+export const OUTRO = {
+  show: true, seconds: 3, background: "#ffffff", color: "#0f1419",
+  text: "Quer produtos como este do vídeo com as melhores promoções?\nEntre no nosso grupo de descontos!",
+  cta: "LINK NA BIO 👆", ctaColor: "#ffffff", ctaBackground: "#1d9bf0",
+};
+
+export const hasOutro = (template) => Boolean(template?.outro?.show) && Number(template.outro.seconds) > 0;
+
+export function paintOutro(ctx, template) {
+  const [W, H] = frameSize(template);
+  const o = { ...OUTRO, ...template?.outro };
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = o.background;
+  ctx.fillRect(0, 0, W, H);
+
+  const s = Math.round(Math.min(W, H) / 15);
+  ctx.textBaseline = "top";
+  ctx.textAlign = "center";
+  ctx.font = `700 ${s}px ${TWEET_FONT}`;
+  const lines = String(o.text || "").trim() ? wrap(ctx, String(o.text).trim(), W * 0.84) : [];
+  const step = s * 1.3;
+  const textH = lines.length * step;
+
+  const cs = Math.round(s * 1.05);
+  const cta = String(o.cta || "").trim();
+  ctx.font = `800 ${cs}px ${TWEET_FONT}`;
+  const pill = cta ? { w: ctx.measureText(cta).width + cs * 1.8, h: cs * 2.1 } : { w: 0, h: 0 };
+  const gap = lines.length && cta ? s * 1.4 : 0;
+
+  // O bloco (texto + botão) fica centralizado na altura.
+  let y = (H - (textH + gap + pill.h)) / 2;
+  ctx.fillStyle = o.color;
+  ctx.font = `700 ${s}px ${TWEET_FONT}`;
+  lines.forEach((t, i) => ctx.fillText(t, W / 2, y + i * step));
+  y += textH + gap;
+
+  if (cta) {
+    ctx.fillStyle = o.ctaBackground;
+    ctx.beginPath();
+    ctx.roundRect((W - pill.w) / 2, y, pill.w, pill.h, pill.h / 2);
+    ctx.fill();
+    ctx.fillStyle = o.ctaColor;
+    ctx.font = `800 ${cs}px ${TWEET_FONT}`;
+    ctx.fillText(cta, W / 2, y + (pill.h - cs) / 2);
+  }
+}
+
+export function renderOutroDataUrl(template) {
+  const [W, H] = frameSize(template);
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  paintOutro(canvas.getContext("2d"), template);
+  return canvas.toDataURL("image/png");
+}
+
 export async function renderToDataUrl(template, opts = {}) {
   const [W, H] = frameSize(template);
   const canvas = document.createElement("canvas");

@@ -5,7 +5,7 @@
 // "Tamanho do tweet". E o plano das camadas que somem decide quais PNGs o
 // ffmpeg empilha: errar ali faz camada sumir na hora errada ou trocar de ordem.
 import { describe, it, expect } from "vitest";
-import { exitAlpha, exitEnd, hitTest, layerBox, overlayPlan } from "../components/admin/downloader/overlay";
+import { OUTRO, exitAlpha, exitEnd, hasOutro, hitTest, layerBox, overlayPlan, paintOutro } from "../components/admin/downloader/overlay";
 
 // Sem canvas de verdade: a largura do texto é proporcional ao tamanho da fonte,
 // o que basta para a geometria ser determinística.
@@ -115,5 +115,43 @@ describe("camada que some", () => {
     ]);
     expect(fades[0].template.format).toBe("vertical");
     expect(exitEnd(t)).toBe(6);
+  });
+});
+
+// Tela final: o que liga o concat no backend e o que vai pintado no PNG dela.
+describe("tela final", () => {
+  it("hasOutro só com show ligado e duração positiva", () => {
+    expect(hasOutro({})).toBe(false);
+    expect(hasOutro({ outro: { ...OUTRO, show: false } })).toBe(false);
+    expect(hasOutro({ outro: { ...OUTRO, seconds: 0 } })).toBe(false);
+    expect(hasOutro({ outro: OUTRO })).toBe(true);
+  });
+
+  const pintor = () => {
+    const ctx = {
+      ...fakeCtx(), textos: [], fills: 0,
+      clearRect() {}, fillRect() {}, beginPath() {}, roundRect() {},
+      fill() { this.fills++; },
+      fillText(t, x, y) { this.textos.push({ t, x, y }); },
+    };
+    return ctx;
+  };
+
+  it("pinta o texto centralizado no quadro e o botão embaixo dele", () => {
+    const ctx = pintor();
+    paintOutro(ctx, { format: "vertical", outro: OUTRO });
+    const cta = ctx.textos.at(-1);
+    expect(cta.t).toBe(OUTRO.cta);
+    expect(ctx.textos.slice(0, -1).map((l) => l.t).join(" ")).toContain("Entre no nosso grupo de descontos!");
+    for (const l of ctx.textos) expect(l.x).toBe(540);
+    expect(cta.y).toBeGreaterThan(ctx.textos.at(-2).y);
+    expect(ctx.fills).toBe(1);
+  });
+
+  it("sem botão, nada de pílula", () => {
+    const ctx = pintor();
+    paintOutro(ctx, { format: "vertical", outro: { ...OUTRO, cta: "" } });
+    expect(ctx.fills).toBe(0);
+    expect(ctx.textos.length).toBeGreaterThan(0);
   });
 });

@@ -185,6 +185,7 @@ router.post("/jobs", async (req, res) => {
       template: req.body?.template,
       overlay: req.body?.overlay,
       fades: req.body?.fades,
+      outro: req.body?.outro,
       ownerId: req.user?.id ?? null,
     });
     res.json({ jobId: job.id });

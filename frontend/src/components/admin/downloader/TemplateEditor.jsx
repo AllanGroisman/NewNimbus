@@ -3,8 +3,8 @@ import { adminDlTemplates, adminDlTemplateSave, adminDlTemplateRemove, adminDlTe
 import { PRIMARY } from "../../../data/constants";
 import { MOBILE, useMedia } from "../../../data/useMedia";
 import {
-  CANVAS, FONTS, TWEET_CARD, emptyTemplate, exitEnd, frameSize, hasExit, hitTest, imageSrcs, layerBox,
-  loadImages, newLayer, paintOverlay, videoPresets, videoRect,
+  CANVAS, FONTS, OUTRO, TWEET_CARD, emptyTemplate, exitEnd, frameSize, hasExit, hasOutro, hitTest, imageSrcs, layerBox,
+  loadImages, newLayer, paintOutro, paintOverlay, videoPresets, videoRect,
 } from "./overlay";
 import {
   botaoPrimario, botaoSecundario, chipStyle, hintStyle,
@@ -19,7 +19,8 @@ const clone = (o) => JSON.parse(JSON.stringify(o));
 // do tamanho do quadro e o CSS só o escala.
 // `time` (segundos) só vem durante o "Ver animação": as camadas que somem são
 // desenhadas como estariam naquele instante do vídeo.
-function Preview({ template, title, thumbnail, sel, time, onSel, onMove, onMoveVideo }) {
+// `outro` mostra a tela final no lugar do vídeo: sem miniatura e sem arrastar.
+function Preview({ template, title, thumbnail, sel, time, outro, onSel, onMove, onMoveVideo }) {
   const ref = useRef(null);
   const drag = useRef(null);
   const [images, setImages] = useState(() => new Map());
@@ -37,6 +38,7 @@ function Preview({ template, title, thumbnail, sel, time, onSel, onMove, onMoveV
   useEffect(() => {
     const ctx = ref.current?.getContext("2d");
     if (!ctx) return;
+    if (outro) { paintOutro(ctx, template); return; }
     paintOverlay(ctx, template, { title, images, time });
     // A moldura da seleção entra só aqui: o PNG exportado nasce noutro canvas.
     const l = template.layers?.[sel];
@@ -48,7 +50,7 @@ function Preview({ template, title, thumbnail, sel, time, onSel, onMove, onMoveV
     ctx.setLineDash([14, 10]);
     ctx.strokeRect(b.x, b.y, b.w, b.h);
     ctx.restore();
-  }, [template, title, images, sel, time]);
+  }, [template, title, images, sel, time, outro]);
 
   const toFrame = (e) => {
     const r = ref.current.getBoundingClientRect();
@@ -56,6 +58,7 @@ function Preview({ template, title, thumbnail, sel, time, onSel, onMove, onMoveV
   };
 
   const down = (e) => {
+    if (outro) return;
     const [x, y] = toFrame(e);
     const i = hitTest(ref.current.getContext("2d"), template, x, y, { title });
     onSel(i);
@@ -89,7 +92,7 @@ function Preview({ template, title, thumbnail, sel, time, onSel, onMove, onMoveV
       aspectRatio: `${W} / ${H}`, background: "#000",
       borderRadius: 8, overflow: "hidden", flexShrink: 0,
     }}>
-      {thumbnail && (
+      {thumbnail && !outro && (
         <img
           src={thumbnail}
           alt=""
@@ -158,6 +161,8 @@ export default function TemplateEditor({ templates, initialId, refVideo, onClose
   const [erro, setErro] = useState(null);
   const [grande, setGrande] = useState(false);
   const [tempo, setTempo] = useState(null);
+  // Id do template cuja tela final está na prévia: abrir outro volta ao vídeo.
+  const [finalDe, setFinalDe] = useState(null);
   const anim = useRef(0);
   // No celular a prévia fica em cima e tudo rola junto; no resto, prévia e
   // controles rolam cada um por si, e a prévia nunca sai da tela.
@@ -177,10 +182,15 @@ export default function TemplateEditor({ templates, initialId, refVideo, onClose
     ? `min(100%, ${grande ? `calc((${alturaUtil}) * ${W / H})` : `${H > W ? 320 : 480}px`})`
     : `min(${grande ? "calc(100% - 340px)" : `${H > W ? 320 : 480}px`}, calc((${alturaUtil}) * ${W / H}))`;
   const temAnimacao = (draft.layers || []).some(hasExit);
+  const outro = draft.outro || null;
+  const idFinal = draft.id || "novo";
+  const mostrandoFinal = finalDe === idFinal && hasOutro(draft);
+  const setVerFinal = (on) => setFinalDe(on ? idFinal : null);
 
   const setLayers = (fn) => setDraft((d) => ({ ...d, layers: fn(d.layers || []) }));
   const patch = (i, obj) => setLayers((ls) => ls.map((l, k) => (k === i ? { ...l, ...obj } : l)));
   const setVideo = (obj) => setDraft((d) => ({ ...d, video: { ...d.video, ...obj } }));
+  const setOutro = (obj) => setDraft((d) => ({ ...d, outro: { ...OUTRO, ...d.outro, ...obj } }));
 
   const add = (type) => {
     setLayers((ls) => [...ls, newLayer(type, draft)]);
@@ -374,6 +384,7 @@ export default function TemplateEditor({ templates, initialId, refVideo, onClose
               thumbnail={refVideo?.thumbnail}
               sel={sel}
               time={tempo}
+              outro={mostrandoFinal}
               onSel={setSel}
               onMove={(i, x, y) => patch(i, { x, y })}
               onMoveVideo={(left, top) => setVideo({ left, top })}
@@ -392,6 +403,12 @@ export default function TemplateEditor({ templates, initialId, refVideo, onClose
                 <button type="button" style={{ ...botaoSecundario, minWidth: 130 }} onClick={animar}
                   title="Mostra as camadas sumindo como no vídeo">
                   {tempo != null ? `⏱ ${tempo.toFixed(1)}s do vídeo` : "▶ Ver animação"}
+                </button>
+              )}
+              {hasOutro(draft) && (
+                <button type="button" style={chipStyle({ active: mostrandoFinal })} onClick={() => setVerFinal(!mostrandoFinal)}
+                  title="Mostra a tela que entra depois do vídeo">
+                  {mostrandoFinal ? "🎬 Ver vídeo" : "🏁 Ver tela final"}
                 </button>
               )}
             </div>
@@ -444,6 +461,36 @@ export default function TemplateEditor({ templates, initialId, refVideo, onClose
                   </select>
                 </Field>
               </div>
+            </div>
+
+            <div>
+              <label style={{ ...hintStyle, display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                <input type="checkbox" checked={!!outro?.show}
+                  onChange={(e) => { setOutro({ show: e.target.checked }); setVerFinal(e.target.checked); }} />
+                Tela final (entra depois do vídeo)
+              </label>
+              {outro?.show && (
+                <>
+                  <Field label="Texto">
+                    <textarea
+                      value={outro.text ?? ""}
+                      onChange={(e) => setOutro({ text: e.target.value })}
+                      rows={3}
+                      style={{ ...inputStyle, resize: "vertical", marginBottom: 8 }}
+                    />
+                  </Field>
+                  <div style={row}>
+                    <Field label="Botão"><input value={outro.cta ?? ""} onChange={(e) => setOutro({ cta: e.target.value })} style={inputStyle} /></Field>
+                    <Field label="Duração (s)"><Num value={outro.seconds} step={0.5} onChange={(v) => setOutro({ seconds: Math.min(15, Math.max(0.5, v)) })} /></Field>
+                  </div>
+                  <div style={row}>
+                    <Field label="Fundo"><Cor value={outro.background} onChange={(v) => setOutro({ background: v })} /></Field>
+                    <Field label="Cor do texto"><Cor value={outro.color} onChange={(v) => setOutro({ color: v })} /></Field>
+                    <Field label="Cor do botão"><Cor value={outro.ctaBackground} onChange={(v) => setOutro({ ctaBackground: v })} /></Field>
+                    <Field label="Texto do botão"><Cor value={outro.ctaColor} onChange={(v) => setOutro({ ctaColor: v })} /></Field>
+                  </div>
+                </>
+              )}
             </div>
 
             <div>

@@ -15,7 +15,7 @@ vi.mock("../data/api", () => ({
 }));
 
 import TemplateEditor from "../components/admin/downloader/TemplateEditor.jsx";
-import { TWEET_CARD } from "../components/admin/downloader/overlay";
+import { OUTRO, TWEET_CARD } from "../components/admin/downloader/overlay";
 import { adminDlTemplates, adminDlTemplateSave } from "../data/api";
 
 // Como o TwitterReact ficou salvo antes de existir o retângulo e o left/width.
@@ -102,5 +102,31 @@ describe("sumir depois de alguns segundos", () => {
     await userEvent.click(screen.getByText("Nome da Conta"));
     await userEvent.click(screen.getByLabelText(/sumir depois de alguns segundos/i));
     expect((await salvo()).layers[0].exit).toBeNull();
+  });
+});
+
+describe("tela final", () => {
+  it("template antigo ganha a tela final padrão ao ligar, com o texto editável", async () => {
+    abrir();
+    expect(screen.queryByRole("button", { name: /ver tela final/i })).toBeNull();
+    await userEvent.click(screen.getByLabelText(/tela final \(entra depois/i));
+    fireEvent.change(screen.getByLabelText(/^botão$/i), { target: { value: "ENTRE JÁ" } });
+    expect((await salvo()).outro).toEqual({ ...OUTRO, cta: "ENTRE JÁ" });
+  });
+
+  it("ligar mostra a tela final na prévia, e o botão volta para o vídeo", async () => {
+    abrir();
+    await userEvent.click(screen.getByLabelText(/tela final \(entra depois/i));
+    await userEvent.click(screen.getByRole("button", { name: /ver vídeo/i }));
+    expect(screen.getByRole("button", { name: /ver tela final/i })).toBeTruthy();
+  });
+
+  it("desligar mantém os textos, só com show falso", async () => {
+    abrir();
+    const caixa = screen.getByLabelText(/tela final \(entra depois/i);
+    await userEvent.click(caixa);
+    await userEvent.click(caixa);
+    expect(screen.queryByRole("button", { name: /tela final|ver vídeo/i })).toBeNull();
+    expect((await salvo()).outro).toEqual({ ...OUTRO, show: false });
   });
 });

@@ -32,7 +32,10 @@ function geometry(template) {
   return { W, H, top, height, left, width, fit: v?.fit === "contain" ? "contain" : "cover", background };
 }
 
-function filtergraph({ W, H, top, height, left = 0, width = W, fit, background = "black" }, fades = []) {
+// `outro` ({ input, hasAudio }): a tela final, um PNG que vira alguns segundos
+// de vídeo depois do fim. `input` é o índice da entrada do PNG; com áudio, o
+// silêncio dessa parte é a entrada seguinte.
+function filtergraph({ W, H, top, height, left = 0, width = W, fit, background = "black" }, fades = [], outro = null) {
   // cover preenche o retângulo e corta a sobra; contain mostra o vídeo inteiro
   // e deixa sobra. O trunc(../4)*2 mantém o offset par — offset ímpar desloca o
   // croma meio pixel em yuv420p.
@@ -45,9 +48,11 @@ function filtergraph({ W, H, top, height, left = 0, width = W, fit, background =
   // yuv444 na composição mantém o croma cheio (texto branco fino não ganha
   // franja) e só no fim cai para yuv420p, que é o que todo player aceita.
   const parts = [base, `[1:v]scale=${W}:${H}:flags=lanczos[ovl]`];
+  // Com tela final, o vídeo composto ainda vai ser emendado: sai como [main].
+  const out = outro ? "[main]" : "[v]";
   if (!fades.length) {
-    parts.push("[base][ovl]overlay=0:0:format=yuv444:eof_action=repeat,format=yuv420p[v]");
-    return parts.join(";");
+    parts.push(`[base][ovl]overlay=0:0:format=yuv444:eof_action=repeat,format=yuv420p${out}`);
+    return withOutro(parts, outro, W, H).join(";");
   }
 
   // Camadas que somem: cada fade é um PNG do quadro inteiro de antes do sumiço,
@@ -61,10 +66,29 @@ function filtergraph({ W, H, top, height, left = 0, width = W, fit, background =
     const sumir = fade > 0 ? `,fade=t=out:st=${num(at)}:d=${num(fade)}:alpha=1` : "";
     parts.push(
       `[${k + 2}:v]scale=${W}:${H}:flags=lanczos,format=rgba,loop=loop=-1:size=1:start=0,trim=end=${num(end)}${sumir}[f${k}]`,
-      `[s${k}][f${k}]overlay=0:0:format=yuv444:eof_action=pass${k === fades.length - 1 ? ",format=yuv420p[v]" : `[s${k + 1}]`}`,
+      `[s${k}][f${k}]overlay=0:0:format=yuv444:eof_action=pass${k === fades.length - 1 ? `,format=yuv420p${out}` : `[s${k + 1}]`}`,
     );
   });
-  return parts.join(";");
+  return withOutro(parts, outro, W, H).join(";");
+}
+
+// Emenda a tela final depois do vídeo. O concat exige os dois pedaços com o
+// mesmo tamanho, SAR e formato — e, com áudio, a mesma taxa e layout nos dois,
+// daí o aformat igual no áudio do vídeo e no silêncio.
+const AUDIO_FMT = "aresample=48000,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo";
+function withOutro(parts, outro, W, H) {
+  if (!outro) return parts;
+  parts.push(`[${outro.input}:v]scale=${W}:${H}:flags=lanczos,setsar=1,format=yuv420p[end]`);
+  if (!outro.hasAudio) {
+    parts.push("[main][end]concat=n=2:v=1:a=0[v]");
+    return parts;
+  }
+  parts.push(
+    `[0:a]${AUDIO_FMT}[a0]`,
+    `[${outro.input + 1}:a]${AUDIO_FMT}[a1]`,
+    "[main][a0][end][a1]concat=n=2:v=1:a=1[v][a]",
+  );
+  return parts;
 }
 
 // Os tempos entram no filtergraph como texto: número com 3 casas e nada mais.
@@ -81,20 +105,27 @@ function fadeTimes(fades, total) {
     .filter((f) => f.end > 0.05);
 }
 
-// Duração do arquivo baixado, lida do cabeçalho que o ffmpeg imprime (não há
-// ffprobe no ffmpeg-static). A da listagem não serve aqui: vem arredondada, ou
-// nula no TikTok.
-function probeDuration(input) {
+// Duração, fps e se há áudio no arquivo baixado, lidos do cabeçalho que o
+// ffmpeg imprime (não há ffprobe no ffmpeg-static). A duração da listagem não
+// serve aqui: vem arredondada, ou nula no TikTok.
+function parseProbe(text) {
+  const d = text.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+  const f = text.match(/Stream #[^\n]*Video:[^\n]*?(\d+(?:\.\d+)?) fps/);
+  return {
+    duration: d ? Number(d[1]) * 3600 + Number(d[2]) * 60 + Number(d[3]) : null,
+    fps: f && Number(f[1]) > 0 && Number(f[1]) <= 120 ? Number(f[1]) : 30,
+    hasAudio: /Stream #[^\n]*Audio:/.test(text),
+  };
+}
+
+function probe(input) {
   return new Promise((resolve) => {
     let err = "";
     const child = spawn(ffmpegPath, ["-hide_banner", "-nostdin", "-i", input], { windowsHide: true });
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (d) => { err += d; });
     child.on("error", () => resolve(null));
-    child.on("close", () => {
-      const m = err.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
-      resolve(m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : null);
-    });
+    child.on("close", () => resolve(parseProbe(err)));
   });
 }
 
@@ -108,7 +139,16 @@ function lastLine(text) {
   return lines[lines.length - 1] || "";
 }
 
-function run({ input, overlay, fades = [], geo, output, duration, audio, onProgress }) {
+function run({ input, overlay, fades = [], outro = null, geo, output, duration, audio, onProgress }) {
+  // A tela final entra depois dos fades: PNG repetido pelo tempo dela e, se o
+  // vídeo tem áudio, silêncio do mesmo tamanho para o concat ter o que emendar.
+  const end = outro && { input: 2 + fades.length, hasAudio: outro.hasAudio };
+  const outroArgs = outro
+    ? [
+      "-loop", "1", "-framerate", num(outro.fps), "-t", num(outro.seconds), "-i", outro.file,
+      ...(outro.hasAudio ? ["-f", "lavfi", "-t", num(outro.seconds), "-i", "anullsrc=r=48000:cl=stereo"] : []),
+    ]
+    : [];
   const args = [
     // -nostdin: sem isso o ffmpeg disputa a entrada do processo pai.
     "-hide_banner", "-nostdin", "-y",
@@ -117,10 +157,12 @@ function run({ input, overlay, fades = [], geo, output, duration, audio, onProgr
     // segura esse frame até o vídeo acabar. Com -loop a saída seria infinita.
     "-i", overlay,
     ...fades.flatMap((f) => ["-i", f.file]),
-    "-filter_complex", filtergraph(geo, fades),
+    ...outroArgs,
+    "-filter_complex", filtergraph(geo, fades, end),
     "-map", "[v]",
-    // O "?" faz vídeo sem trilha de áudio não derrubar o comando.
-    "-map", "0:a?",
+    // O "?" faz vídeo sem trilha de áudio não derrubar o comando. Com tela
+    // final o áudio já sai emendado do filtergraph.
+    ...(!outro ? ["-map", "0:a?"] : outro.hasAudio ? ["-map", "[a]"] : []),
     // -threads 2: o libx264 pega todos os núcleos por padrão e, num VPS pequeno,
     // deixa o scraping e o Baileys sem CPU enquanto o lote renderiza. Dois
     // threads mantêm o encode rápido o suficiente sem tomar a máquina.
@@ -175,13 +217,21 @@ function run({ input, overlay, fades = [], geo, output, duration, audio, onProgr
 }
 
 // Resolve com o caminho do arquivo com o template aplicado.
-async function renderOverlay({ input, overlay, fades, template, duration, onProgress }) {
+// `outro` ({ file, seconds }) é a tela final, emendada depois do vídeo.
+async function renderOverlay({ input, overlay, fades, outro, template, duration, onProgress }) {
   const geo = geometry(template);
   let total = Number(duration) || 0;
-  if (fades?.length) total = (await probeDuration(input)) || total;
+  const info = fades?.length || outro ? await probe(input) : null;
+  total = info?.duration || total;
+  // Sem o cabeçalho, supõe que tem áudio: se não tiver, o ffmpeg falha e o
+  // vídeo sai cru com o aviso, em vez de sair mudo sem ninguém saber.
+  const end = outro && { ...outro, fps: info?.fps || 30, hasAudio: info ? info.hasAudio : true };
   const base = {
-    input, overlay, fades: fadeTimes(fades, total), geo, output: outputPath(input), duration: total, onProgress,
+    input, overlay, fades: fadeTimes(fades, total), outro: end, geo, output: outputPath(input),
+    duration: total && end ? total + end.seconds : total, onProgress,
   };
+  // Emendar exige recodificar o áudio: o "copy" nem é tentado.
+  if (end) return run({ ...base, audio: ["-c:a", "aac", "-b:a", "192k"] });
   try {
     return await run({ ...base, audio: ["-c:a", "copy"] });
   } catch {
@@ -191,4 +241,4 @@ async function renderOverlay({ input, overlay, fades, template, duration, onProg
   }
 }
 
-module.exports = { renderOverlay, geometry, filtergraph, fadeTimes, outputPath };
+module.exports = { renderOverlay, geometry, filtergraph, fadeTimes, outputPath, parseProbe };

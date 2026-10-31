@@ -53,7 +53,16 @@ function saveFades(dir, prefix, list) {
   }).filter(Boolean);
 }
 
-function createJob(videos, { template = null, overlay = null, fades = null, ownerId = null } = {}) {
+// Tela final, emendada depois do vídeo. Um PNG só para o lote: ela não usa
+// {titulo}. Os segundos vão para a linha de comando do ffmpeg, então saem
+// daqui já número e dentro de limites.
+function saveOutro(dir, outro) {
+  const file = outro ? savePng(dir, "outro.png", outro.overlay) : null;
+  const seconds = Math.min(Math.max(0, Number(outro?.seconds) || 0), 15);
+  return file && seconds >= 0.5 ? { file, seconds } : null;
+}
+
+function createJob(videos, { template = null, overlay = null, fades = null, outro = null, ownerId = null } = {}) {
   const id = crypto.randomUUID();
   const dir = path.join(TMP, id);
   fs.mkdirSync(dir, { recursive: true });
@@ -76,6 +85,7 @@ function createJob(videos, { template = null, overlay = null, fades = null, owne
     ownerId,
     createdAt: Date.now(),
     template: template || null,
+    outro: template ? saveOutro(dir, outro) : null,
     items: videos.map((v, i) => ({
       id: String(v.id),
       url: v.url,
@@ -134,6 +144,7 @@ function pumpRender() {
       input: item.raw,
       overlay: item.overlay,
       fades: item.fades,
+      outro: job.outro,
       template: job.template,
       duration: item.duration,
       onProgress: (p) => { item.percent = p; },

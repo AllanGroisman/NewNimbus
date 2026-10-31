@@ -11,6 +11,15 @@ const SEEN_FILE = path.join(DIR, "factory-seen.json");
 
 const IMPACT = "Impact, Haettenschweiler, sans-serif";
 
+// Tela final do TwitterReact: a chamada para o grupo, alguns segundos depois do
+// vídeo acabar. Mesmo padrão que o editor usa ao ligar a tela final
+// (OUTRO, no overlay.js).
+const OUTRO = {
+  show: true, seconds: 3, background: "#ffffff", color: "#0f1419",
+  text: "Quer produtos como este do vídeo com as melhores promoções?\nEntre no nosso grupo de descontos!",
+  cta: "LINK NA BIO 👆", ctaColor: "#ffffff", ctaBackground: "#1d9bf0",
+};
+
 // Templates de fábrica para o editor abrir com algo em vez de uma tela em
 // branco: faixa sobre o vídeo inteiro, "vídeo reduzido" entre barras e o post
 // em formato de tweet com o vídeo embaixo.
@@ -66,6 +75,7 @@ const FACTORY = [
         card: { show: true, color: "#ffffff", borderColor: "#cfd9de", borderWidth: 3, radius: 40, padding: 48 },
       },
     ],
+    outro: OUTRO,
   },
 ];
 
@@ -111,6 +121,23 @@ function write(list) {
 const MAX_IMG = 2 * 1024 * 1024; // logo de verdade tem 20-200 KB
 const imagemOk = (src) => /^data:image\/(png|jpeg|webp);base64,/.test(src || "") && src.length <= MAX_IMG;
 
+const cor = (v, padrao) => (/^#[0-9a-f]{6}$/i.test(String(v || "")) ? String(v) : padrao);
+
+// Sem `outro` no body, o template não ganha um: continua sem tela final.
+function sanitizeOutro(o) {
+  if (!o || typeof o !== "object") return undefined;
+  return {
+    show: Boolean(o.show),
+    seconds: Math.min(Math.max(0.5, Number(o.seconds) || OUTRO.seconds), 15),
+    background: cor(o.background, OUTRO.background),
+    color: cor(o.color, OUTRO.color),
+    text: String(o.text ?? "").slice(0, 400),
+    cta: String(o.cta ?? "").slice(0, 80),
+    ctaColor: cor(o.ctaColor, OUTRO.ctaColor),
+    ctaBackground: cor(o.ctaBackground, OUTRO.ctaBackground),
+  };
+}
+
 // O body vem do próprio editor, mas nada custa garantir que um template
 // malformado não derrube a leitura do arquivo inteiro depois.
 function sanitize(body) {
@@ -120,6 +147,7 @@ function sanitize(body) {
     // Tweet com foto inválida continua valendo, só sem a foto.
     .map((l) => (l.type === "tweet" && !imagemOk(l.avatar) ? { ...l, avatar: "" } : l))
     .slice(0, 40);
+  const outro = sanitizeOutro(body?.outro);
   return {
     name: String(body?.name || "Sem nome").slice(0, 80),
     format: body?.format === "horizontal" ? "horizontal" : "vertical",
@@ -133,6 +161,7 @@ function sanitize(body) {
       fit: body?.video?.fit === "contain" ? "contain" : "cover",
     },
     layers,
+    ...(outro ? { outro } : {}),
   };
 }
 

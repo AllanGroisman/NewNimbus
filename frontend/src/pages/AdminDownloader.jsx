@@ -12,7 +12,7 @@ import VideoCard, { PlatformBadge, SkeletonCard } from "../components/admin/down
 import SelectionBar from "../components/admin/downloader/SelectionBar";
 import DownloadPanel from "../components/admin/downloader/DownloadPanel";
 import TemplateEditor from "../components/admin/downloader/TemplateEditor";
-import { frameSize, loadImages, overlayPlan, renderToDataUrl, usesTitle, videoRect } from "../components/admin/downloader/overlay";
+import { frameSize, hasOutro, loadImages, overlayPlan, renderOutroDataUrl, renderToDataUrl, usesTitle, videoRect } from "../components/admin/downloader/overlay";
 import { botaoSecundario, chipStyle, hintStyle } from "../components/admin/downloader/downloaderEstilos";
 import {
   adminDlList, adminDlVideo, adminDlProducts, adminDlTemplates, adminDlJobCreate, adminDlJob, errText,
@@ -170,11 +170,11 @@ export default function PageAdminDownloader() {
     setPreparing(true);
     try {
       const tpl = templates.find((t) => t.id === templateId);
-      // Template sem camada alguma e com o vídeo em tela cheia não muda nada no
-      // arquivo: pular o encode economiza minutos por lote.
+      // Template sem camada alguma, com o vídeo em tela cheia e sem tela final
+      // não muda nada no arquivo: pular o encode economiza minutos por lote.
       const r = tpl && videoRect(tpl);
       const [W, H] = frameSize(tpl);
-      const aplica = Boolean(tpl && (tpl.layers?.length || r.w < W || r.h < H));
+      const aplica = Boolean(tpl && (tpl.layers?.length || r.w < W || r.h < H || hasOutro(tpl)));
       // O PNG é um só para o lote inteiro, a não ser que o texto use {titulo}.
       const porVideo = aplica && usesTitle(tpl);
       const images = aplica ? await loadImages(tpl) : null;
@@ -203,6 +203,8 @@ export default function PageAdminDownloader() {
         // Só a geometria vai para o backend: as camadas já estão no PNG.
         template: aplica ? { format: tpl.format, video: tpl.video } : undefined,
         ...lote,
+        // A tela final não usa {titulo}: um PNG só para o lote.
+        ...(aplica && hasOutro(tpl) ? { outro: { overlay: renderOutroDataUrl(tpl), seconds: tpl.outro.seconds } } : {}),
       });
       setJob(null);
       setJobId(jobId);
