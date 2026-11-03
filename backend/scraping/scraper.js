@@ -969,6 +969,9 @@ async function enrichAmazonProducts(products, browser, category, { concurrency =
           const pdp = parseAmazonPdpPricing(await page.evaluate(readAmazonPdpPricing));
           if (pdp.price == null) {
             // Sem preço na página (indisponível, sem buy box, layout mudou) → não entra.
+            // A marca é pra re-busca da faxina (faxina/rebusca.js): a página abriu e a
+            // loja não está vendendo — diferente do CAPTCHA, que não diz nada.
+            p._semOferta = pdp.priceSource;
             summary.failed++;
             consecutiveFails = 0;
             continue;

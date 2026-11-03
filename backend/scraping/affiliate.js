@@ -557,10 +557,19 @@ function buildShopeeItemLookupPayload(itemId, shopId) {
 // é papel dela; a do usuário só gera o link dele no envio. Retorna o node cru
 // (ou null) — o chamador mapeia os campos (mesmo formato de shopeeNodeToProduct).
 async function fetchShopeeItemByIds(itemId, shopId) {
+  const r = await consultarShopeeItem(itemId, shopId);
+  return r.ok ? r.node : null;
+}
+
+// Mesma consulta, separando os dois "não veio nada": `{ ok: true, node: null }` é
+// a API respondendo que o item não está (mais) no programa de afiliados — sumiu ou
+// saiu da venda; `{ ok: false }` é a consulta que falhou (sem conta, HTTP, erro da
+// API, rede) e não diz nada sobre o item. A faxina só apaga no primeiro caso.
+async function consultarShopeeItem(itemId, shopId) {
   const c = getScraperShopeeCreds();
   if (!c) {
     console.warn("[afiliados Shopee] fetchShopeeItemByIds: conta Shopee do sistema não configurada (Admin › Shopee) — pulando");
-    return null;
+    return { ok: false, reason: "Conta Shopee do sistema não configurada (Admin › Shopee)." };
   }
   const { appId, appSecret } = c;
   const timestamp = Math.floor(Date.now() / 1000);
@@ -574,17 +583,19 @@ async function fetchShopeeItemByIds(itemId, shopId) {
     });
     if (!res.ok) {
       console.error(`[afiliados Shopee] fetchShopeeItemByIds HTTP ${res.status}`);
-      return null;
+      return { ok: false, reason: `A Shopee respondeu HTTP ${res.status}.` };
     }
     const data = await res.json();
     if (data?.errors?.length) {
       console.warn(`[afiliados Shopee] fetchShopeeItemByIds erro API: ${JSON.stringify(data.errors).slice(0, 200)}`);
-      return null;
+      return { ok: false, reason: "A API da Shopee devolveu erro." };
     }
-    return data?.data?.productOfferV2?.nodes?.[0] || null;
+    const nodes = data?.data?.productOfferV2?.nodes;
+    if (!Array.isArray(nodes)) return { ok: false, reason: "Resposta da Shopee sem a lista de produtos." };
+    return { ok: true, node: nodes[0] || null };
   } catch (err) {
     console.error(`[afiliados Shopee] fetchShopeeItemByIds falhou: ${err.message}`);
-    return null;
+    return { ok: false, reason: err.message };
   }
 }
 
@@ -1308,6 +1319,7 @@ function startAutoRefresh(intervalMs) {
 
 module.exports = {
   criarLinkAfiliadoMLSistema,
+  consultarShopeeItem,
   postCreateLink,
   // ML
   gerarLinkAfiliadoML,

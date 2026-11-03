@@ -23,6 +23,7 @@ const groupStats = require("./group-stats/stats");
 const contadoresEnvio = require("./utils/contadores-envio");
 const catalog = require("./catalog");
 const adminScraper = require("./scraping/admin");
+const faxina = require("./faxina");
 const storeLocks = require("./scraping/store-locks");
 const mlHub = require("./scraping/ml-hub");
 const scrapTester = require("./scraping/tester");
@@ -2814,6 +2815,52 @@ app.get("/api/admin/scraper/status", auth.requireAuth, auth.requireAdmin, (req, 
 });
 
 // ────────────────────────────────────────────────────────────────────────
+// Admin — Faxina (cupons que não funcionam, produtos antigos, re-busca)
+// ────────────────────────────────────────────────────────────────────────
+
+app.get("/api/admin/faxina/status", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json(faxina.status());
+});
+
+app.put("/api/admin/faxina/config", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const cfg = faxina.writeConfig(req.body || {});
+    if (!await confirmConfigSaved(res)) return;
+    res.json({ config: cfg });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/faxina/limpeza/previa", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    res.json(await faxina.previaLimpeza());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/faxina/limpeza/run", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  if (faxina.status().limpeza.running) return res.status(409).json({ error: "A limpeza já está rodando." });
+  try {
+    res.json({ ok: true, result: await faxina.rodarLimpeza() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/faxina/rebusca/run", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  if (faxina.status().rebusca.running) return res.status(409).json({ error: "A re-busca já está rodando." });
+  faxina.rodarRebusca().catch(err => console.error("[faxina.rebusca]", err.message));
+  res.json({ ok: true, message: "Re-busca iniciada em segundo plano" });
+});
+
+app.post("/api/admin/faxina/rebusca/cancel", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  if (!faxina.cancelarRebusca()) return res.status(409).json({ error: "A re-busca não está rodando." });
+  res.json({ ok: true });
+});
+
+// ────────────────────────────────────────────────────────────────────────
 // Admin — ScrapTester (monitor de saúde do scraping)
 // ────────────────────────────────────────────────────────────────────────
 
@@ -5051,6 +5098,8 @@ async function boot() {
     require("./dm-broadcast/runner").start();
     adminScraper.start();
     scrapTester.start();
+    // Faxina (Admin › Faxina): limpeza e re-busca do catálogo, cada uma com sua agenda.
+    faxina.start();
     // A rodada GERAL de cupons do ML continua sendo o botão do admin, mas o
     // resultado da última precisa sobreviver ao reboot — senão a tela abre dizendo
     // que nunca rodou.

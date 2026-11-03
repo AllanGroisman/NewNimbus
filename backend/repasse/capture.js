@@ -264,6 +264,31 @@ async function onUpsert(userId, numberId, messages) {
   return Promise.allSettled(jobs);
 }
 
+// O produto que o grupo líder divulgou também entra no catálogo, pra as campanhas
+// normais acharem na busca — é oferta escolhida a dedo por quem vive disso. Vai só
+// o que é DO PRODUTO: `manual`, `source: "repasse"` e o cupom da legenda ficam de
+// fora porque o fromRow espalha o payload no item da campanha, e ali eles mudariam
+// o envio (o scheduler grava no log do repasse todo item com source "repasse").
+// A categoria vem de catalog.categoryFor; a validade é a do catálogo inteiro (o
+// purge diário do scraping apaga o que não foi visto no dia).
+async function saveToCatalog(items) {
+  const catalog = require("../catalog");
+  const products = [];
+  for (const it of items) {
+    let category = null;
+    try { category = await catalog.categoryFor({ name: it.name, link: it.link }); }
+    catch (err) { console.warn(`[repasse] categoria de "${it.name}" falhou: ${err.message}`); }
+    products.push({
+      name: it.name, link: it.link, img: it.img,
+      price: it.price, originalPrice: it.originalPrice, discount: it.discount,
+      sold: it.sold, soldCount: it.soldCount, rating: it.rating,
+      freeShipping: it.freeShipping, store: it.store, category,
+    });
+  }
+  const r = await catalog.upsertProducts(products);
+  console.log(`[repasse] catálogo: +${r.inserted} novos, ${r.updated} atualizados (categorias: ${products.map(p => p.category || "—").join(", ")})`);
+}
+
 // `text` é a mensagem inteira do líder — só usada pelas campanhas no modo
 // "mensagem original" (ver original-message.js).
 async function processMessage(userId, leaders, urls, waJid, coupon = null, text = "") {
@@ -472,6 +497,11 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null, text 
   }
 
   if (!items.length) return;
+
+  // Uma vez por mensagem (não por campanha), e solto: o catálogo é bônus, não
+  // pode atrasar nem derrubar a captura.
+  saveToCatalog(items).catch(err =>
+    console.error(`[repasse] falha ao gravar no catálogo: ${err.message}`));
 
   // Insere em cada campanha líder desse grupo (normalmente só uma).
   for (const { groupId } of leaders) {

@@ -691,3 +691,84 @@ describe("repasse capture — modo mensagem original", () => {
     expect(g.queue[0].originalLinks.map(l => l.raw)).toEqual(["https://www.mercadolivre.com.br/p/MLB444"]);
   });
 });
+
+// O produto que o líder divulgou também alimenta o catálogo das campanhas normais.
+describe("repasse capture — catálogo", () => {
+  const catalog = require(path.join(backendDir, "catalog"));
+
+  async function waitForCatalog(where, timeoutMs = 5000) {
+    const t0 = Date.now();
+    for (;;) {
+      const row = await prisma().catalogProduct.findFirst({ where });
+      if (row || Date.now() - t0 > timeoutMs) return row;
+      await new Promise(r => setTimeout(r, 50));
+    }
+  }
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    global.fetch = vi.fn(async (url) => ({ url, body: { cancel: async () => {} } }));
+    vi.spyOn(scraper, "scrapeSingleProduct").mockImplementation(async (url) => ({
+      name: "Areia Higiênica Biodegradável Para Gatos 4kg", link: url, price: 39.9, originalPrice: 59.9,
+      discount: 33, img: "https://img/x.jpg", store: scraper.detectStore(url),
+    }));
+  });
+
+  it("produto capturado entra no catálogo, com a categoria dos parecidos e sem marcas do repasse", async () => {
+    await catalog.upsertProducts([
+      { name: "Areia Higiênica Biodegradável Gatos 2kg", link: "https://www.mercadolivre.com.br/p/MLB7001", store: "Mercado Livre", category: "pet", price: 20, img: "i" },
+      { name: "Areia Higiênica Para Gatos Fina", link: "https://www.mercadolivre.com.br/p/MLB7002", store: "Mercado Livre", category: "pet", price: 20, img: "i" },
+      { name: "Fone de Ouvido Bluetooth", link: "https://www.mercadolivre.com.br/p/MLB7003", store: "Mercado Livre", category: "eletronicos", price: 50, img: "i" },
+    ]);
+    const { user } = await createTestUser({ plan: "pro" });
+    affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
+    await storage.saveState(user.id, { groups: [repasseGroup(5101, { auto: true })] });
+    await capture.rebuildLeaderIndex();
+
+    await capture.onUpsert(user.id, NUMBER_ID, [msgWithText("use o cupom GATO10 https://www.mercadolivre.com.br/p/MLB7100")]);
+
+    const row = await waitForCatalog({ name: "Areia Higiênica Biodegradável Para Gatos 4kg" });
+    expect(row).toBeTruthy();
+    expect(row.category).toBe("pet");
+    expect(row.price).toBe(39.9);
+    expect(row.payload).not.toHaveProperty("source");
+    expect(row.payload).not.toHaveProperty("manual");
+    expect(row.payload).not.toHaveProperty("coupon");
+    // A campanha de repasse segue recebendo o item normalmente.
+    const g = (await storage.loadState(user.id)).groups.find(x => x.id === 5101);
+    expect(g.queue.length).toBe(1);
+  });
+
+  it("produto que já está no catálogo mantém a categoria e ganha o preço novo", async () => {
+    await catalog.upsertProducts([
+      { name: "Nome antigo", link: "https://www.mercadolivre.com.br/p/MLB7200", store: "Mercado Livre", category: "casa", price: 10, img: "i" },
+    ]);
+    const { user } = await createTestUser({ plan: "pro" });
+    affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
+    await storage.saveState(user.id, { groups: [repasseGroup(5102, { auto: true })] });
+    await capture.rebuildLeaderIndex();
+
+    await capture.onUpsert(user.id, NUMBER_ID, [msgWithText("https://www.mercadolivre.com.br/p/MLB7200")]);
+
+    const row = await waitForCatalog({ price: 39.9 });
+    expect(row).toBeTruthy();
+    expect(row.category).toBe("casa");
+  });
+
+  it("nome sem nenhum parecido entra sem categoria", async () => {
+    expect(await catalog.categoryFor({ name: "Baralho Yugioh Impacto do Caos", link: "https://www.mercadolivre.com.br/p/MLB7300" })).toBeNull();
+  });
+
+  it("falha no catálogo não impede o item de entrar na campanha", async () => {
+    vi.spyOn(catalog, "upsertProducts").mockRejectedValue(new Error("banco fora"));
+    const { user } = await createTestUser({ plan: "pro" });
+    affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
+    await storage.saveState(user.id, { groups: [repasseGroup(5103, { auto: true })] });
+    await capture.rebuildLeaderIndex();
+
+    await capture.onUpsert(user.id, NUMBER_ID, [msgWithText("https://www.mercadolivre.com.br/p/MLB7400")]);
+
+    const g = (await storage.loadState(user.id)).groups.find(x => x.id === 5103);
+    expect(g.queue.length).toBe(1);
+  });
+});

@@ -291,6 +291,45 @@ async function runSearchSql(sql, fuzzy) {
   return rows;
 }
 
+// Categoria de um produto que chegou SEM ela (o repasse: o grupo líder manda só o
+// link). As campanhas filtram o catálogo por categoria, então produto sem uma não
+// aparece pra nenhuma. Se ele já está no catálogo, vale a categoria da linha (veio
+// do scraping, que sabe de onde raspou). Se é novo, vota entre os 10 nomes mais
+// parecidos que já têm categoria, pesando pela semelhança — um vizinho fora da
+// curva ("Condicionador Kids" em bebê) perde para os outros. Abaixo do corte não
+// chuta: devolve null, e o produto entra sem categoria.
+//
+// Corte calibrado com nomes reais do repasse: 0,28 ainda acerta "Abajur sem fio"
+// → casa (0,25 já ligava "Balança digital" a um fone de ouvido).
+const CATEGORY_GUESS_THRESHOLD = 0.28;
+
+async function categoryFor({ name, link }) {
+  const key = productKey({ link });
+  const anuncio = mlAnuncioIdFromUrl(link);
+  const existe = await prisma().catalogProduct.findFirst({
+    where: { OR: [{ key }, ...(anuncio ? [{ mlAnuncioId: anuncio }] : [])], category: { not: null } },
+    select: { category: true },
+  });
+  if (existe) return existe.category;
+
+  const n = normalizeText(name);
+  if (!n) return null;
+  const [, rows] = await prisma().$transaction([
+    prisma().$executeRawUnsafe(`SET LOCAL pg_trgm.similarity_threshold = ${CATEGORY_GUESS_THRESHOLD}`),
+    prisma().$queryRaw`
+      SELECT cp."category", similarity(cp."nameSearch", ${n}) AS s
+        FROM "catalog_products" cp
+       WHERE cp."category" IS NOT NULL AND cp."nameSearch" % ${n}
+       ORDER BY s DESC
+       LIMIT 10`,
+  ]);
+  const votos = new Map();
+  for (const r of rows) votos.set(r.category, (votos.get(r.category) || 0) + Number(r.s));
+  let melhor = null;
+  for (const [cat, peso] of votos) if (!melhor || peso > melhor[1]) melhor = [cat, peso];
+  return melhor ? melhor[0] : null;
+}
+
 // ── Cupom na busca das campanhas (task 19) ─────────────────────────────────
 //
 // O preço que o cliente paga com o MELHOR cupom anunciável do produto, em SQL.
@@ -624,10 +663,79 @@ async function clearAll() {
   return { removed: r.count, sondas: sondas.count };
 }
 
+// ── Faxina (aba Admin › Faxina) ─────────────────────────────────────────────
+
+// Quantos produtos o `pruneBeforeDate(cutoff, { keepCouponLinked: true })`
+// apagaria — a prévia da limpeza. Mesma regra do DELETE de lá.
+async function contarAntesDe(cutoffDate) {
+  const cutoff = new Date(cutoffDate);
+  const [r] = await prisma().$queryRaw`
+    SELECT COUNT(*)::int AS n FROM "catalog_products" cp
+     WHERE cp."lastSeenAt" < ${cutoff}
+       AND NOT EXISTS (
+         SELECT 1 FROM "ml_coupon_products" p
+           JOIN "ml_coupons" c ON c."campaign_id" = p."campaign_id"
+          WHERE p."productKey" = cp."key"
+            AND (c."expiresAt" IS NULL OR c."expiresAt" > now()))`;
+  return r?.n || 0;
+}
+
+// Uma página da fila da re-busca: os vistos ANTES de `ate` (o início da rodada),
+// do mais desatualizado pro mais novo. O cursor é (lastSeenAt, key) do último da
+// página anterior. Quem a re-busca atualiza ganha lastSeenAt de agora e sai da
+// fila sozinho — não é visitado duas vezes na mesma rodada.
+async function listarParaRebusca({ ate, depois = null, limite = 50 }) {
+  const fim = new Date(ate);
+  const cursor = depois
+    ? Prisma.sql`AND ("lastSeenAt", "key") > (${new Date(depois.lastSeenAt)}, ${depois.key})`
+    : Prisma.empty;
+  return prisma().$queryRaw`
+    SELECT "key", "link", "store", "name", "price", "lastSeenAt" FROM "catalog_products"
+     WHERE "lastSeenAt" < ${fim} ${cursor}
+     ORDER BY "lastSeenAt" ASC, "key" ASC
+     LIMIT ${limite}`;
+}
+
+async function contarParaRebusca(ate) {
+  return prisma().catalogProduct.count({ where: { lastSeenAt: { lt: new Date(ate) } } });
+}
+
+// Grava o que a re-busca trouxe NA LINHA desta chave. Não passa pelo
+// upsertProducts de propósito: o link que a loja devolve (permalink da landing do
+// ML, productLink da Shopee) pode dar outra chave e criaria uma segunda linha do
+// mesmo produto. Só os campos que a loja confirmou; o resto da linha fica.
+async function atualizarDaRebusca(key, p) {
+  const data = { lastSeenAt: new Date() };
+  if (p.name) { data.name = p.name; data.nameSearch = normalizeText(p.name); }
+  if (p.img) data.img = p.img;
+  if (p.price != null) data.price = p.price;
+  if ("originalPrice" in p) data.originalPrice = p.originalPrice ?? null;
+  if ("discount" in p) data.discount = p.discount ?? null;
+  if (p.rating != null) data.rating = p.rating;
+  if (p.sold) data.sold = p.sold;
+  if (p.soldCount != null && Number.isFinite(Number(p.soldCount))) data.soldCount = Math.round(Number(p.soldCount));
+  else if (p.sold) data.soldCount = parseSold(p.sold);
+  const r = await prisma().catalogProduct.updateMany({ where: { key }, data });
+  return r.count;
+}
+
+async function apagarPorKeys(keys) {
+  const lista = [...new Set((keys || []).filter(Boolean))];
+  if (!lista.length) return 0;
+  const r = await prisma().catalogProduct.deleteMany({ where: { key: { in: lista } } });
+  return r.count;
+}
+
 module.exports = {
+  contarAntesDe,
+  listarParaRebusca,
+  contarParaRebusca,
+  atualizarDaRebusca,
+  apagarPorKeys,
   productKey,
   resolveKeys,
   upsertProducts,
+  categoryFor,
   loadAll,
   getByLink,
   CATALOG_MAX_AGE_MS,

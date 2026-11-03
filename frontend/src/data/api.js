@@ -662,6 +662,14 @@ export async function adminRunScraper({ resume = false } = {}) { return http("PO
 export async function adminPauseScraper()        { return http("POST", "/api/admin/scraper/pause"); }
 export async function adminCancelScraper()       { return http("POST", "/api/admin/scraper/cancel"); }
 export async function adminScraperStatus()       { return http("GET",  "/api/admin/scraper/status"); }
+
+// ─── Admin / Faxina (cupons mortos, produtos antigos, re-busca) ─────────
+export async function adminFaxinaStatus()          { return http("GET",  "/api/admin/faxina/status"); }
+export async function adminFaxinaSalvarConfig(cfg) { return http("PUT",  "/api/admin/faxina/config", cfg); }
+export async function adminFaxinaPrevia()          { return http("POST", "/api/admin/faxina/limpeza/previa", undefined, { timeoutMs: SLOW_TIMEOUT_MS }); }
+export async function adminFaxinaLimpar()          { return http("POST", "/api/admin/faxina/limpeza/run", undefined, { timeoutMs: SLOW_TIMEOUT_MS }); }
+export async function adminFaxinaRebuscar()        { return http("POST", "/api/admin/faxina/rebusca/run"); }
+export async function adminFaxinaCancelar()        { return http("POST", "/api/admin/faxina/rebusca/cancel"); }
 export async function adminScraperShopee()           { return http("GET",    "/api/admin/scraper/shopee"); }
 export async function adminScraperShopeeSave(body)   { return http("PUT",    "/api/admin/scraper/shopee", body); }
 export async function adminScraperShopeeClear()      { return http("DELETE", "/api/admin/scraper/shopee"); }

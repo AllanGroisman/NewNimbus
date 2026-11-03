@@ -38,6 +38,7 @@ import PageGrupos from "./pages/Grupos";
 import PageAffiliateAmazon from "./pages/AffiliateAmazon";
 import PageAffiliateShopee from "./pages/AffiliateShopee";
 import PageAdminScraper from "./pages/AdminScraper";
+import PageAdminFaxina from "./pages/AdminFaxina";
 import PageAdminScrapTester from "./pages/AdminScrapTester";
 import PageAdminML from "./pages/AdminML";
 import PageAdminAmazon from "./pages/AdminAmazon";
@@ -1173,6 +1174,7 @@ export default function App() {
     grupos: <PageGrupos onOpenCampanha={abrirCampanha} />,
     "admin-cupons":   user?.role === "admin" ? <PageAdminCupons /> : fallbackPage,
     "admin-scraper":  user?.role === "admin" ? <PageAdminScraper /> : fallbackPage,
+    "admin-faxina":   user?.role === "admin" ? <PageAdminFaxina /> : fallbackPage,
     "admin-scrap-tester": user?.role === "admin" ? <PageAdminScrapTester /> : fallbackPage,
     "admin-ml":       user?.role === "admin" ? <PageAdminML /> : fallbackPage,
     "admin-amazon":   user?.role === "admin" ? <PageAdminAmazon /> : fallbackPage,

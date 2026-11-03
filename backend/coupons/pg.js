@@ -979,6 +979,33 @@ async function apagarVencidos({ simular = false } = {}) {
     where: { expiresAt: { not: null, lt: agora } },
     select: { campaignId: true },
   })).map(c => c.campaignId);
+  return apagarCampanhas(ids, { simular });
+}
+
+// Os cupons que não funcionam mais (aba Admin › Faxina): os vencidos e os que têm
+// a palavra testada no ML com veredito `invalid`. O cruzamento é pela PALAVRA
+// (`ml_coupons.code` × `ml_coupon_codes.code`) — o `recordCodeCheck` zera o
+// `campaign_id` da palavra quando ela deixa de valer, então a campanha da palavra
+// não serve. Como a palavra é a chave de `ml_coupon_codes`, uma revalidação
+// (`valid`) sobrescreve o `invalid` e o cupom sai sozinho desta lista.
+async function apagarCuponsMortos({ simular = false } = {}) {
+  const agora = nowish();
+  const rows = await prisma().$queryRaw`
+    SELECT c."campaign_id" AS id,
+           (c."expiresAt" IS NOT NULL AND c."expiresAt" < ${agora}) AS vencido
+      FROM "ml_coupons" c
+     WHERE (c."expiresAt" IS NOT NULL AND c."expiresAt" < ${agora})
+        OR EXISTS (
+          SELECT 1 FROM "ml_coupon_codes" k
+           WHERE upper(k."code") = upper(c."code") AND k."verdict" = 'invalid')`;
+  const r = await apagarCampanhas(rows.map(x => x.id), { simular });
+  const vencidos = rows.filter(x => x.vencido).length;
+  return { ...r, vencidos, palavraInvalida: rows.length - vencidos };
+}
+
+// Apaga estas campanhas, os vínculos delas e os produtos que só existiam pela
+// vitrine delas. O corpo comum de "Apagar vencidos" e da faxina.
+async function apagarCampanhas(ids, { simular = false } = {}) {
   if (!ids.length) return { cupons: 0, vinculos: 0, produtos: 0, produtosMantidos: 0 };
 
   const { ligados, apagaveis } = await contarProdutosDaVitrine(ids);
@@ -1077,6 +1104,7 @@ module.exports = {
   clearAll,
   deleteCoupon,
   apagarVencidos,
+  apagarCuponsMortos,
   apagarProdutosDaVitrine,
   marcarVitrineVazia,
   couponsSemVitrine,
