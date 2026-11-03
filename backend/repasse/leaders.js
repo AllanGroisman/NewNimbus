@@ -42,6 +42,8 @@ function normalizeRepasse(scraping) {
   if (sc.repasse?.messageMode === "original" || sc.repasse?.messageMode === "template") {
     repasse.messageMode = sc.repasse.messageMode;
   }
+  // "Só enviar com cupom válido" (scheduler.js:estadoCupomDoItem). Ausente = desligado.
+  if (sc.repasse?.soCupomValido === true) repasse.soCupomValido = true;
   return { ...sc, repasse };
 }
 

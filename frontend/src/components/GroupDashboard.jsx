@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, storeLockMessage, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, soldText, getGroupCategories, getGroupStats, computeQueueETA, formatETA, formatTimeBR, formatDateBR, isSameDayBR, WHATSNIMBUS_EVENTS } from "../data/constants";
-import { createWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, checkWAGroups, refillQueueNow, clearGroupQueue, saveGroupQueue, saveItemCoupon, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue, errText } from "../data/api";
+import { createWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, checkWAGroups, refillQueueNow, clearGroupQueue, saveGroupQueue, saveItemCoupon, estadosCupomDaFila, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue, errText } from "../data/api";
 import { refillResultMsg, queueMax } from "../data/refill";
 import { DEFAULT_MESSAGE_TEMPLATE, CLASSIC_MESSAGE_TEMPLATE, LEGACY_DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
 import { renderMessageTemplate, previewItem, PREVIEW_ITEM } from "../data/messageTemplate";
@@ -52,6 +52,8 @@ const TEMPLATE_VARS = [
   { token: "{preco_com_cupom}", desc: "Preço já com o desconto do cupom. Sem cupom valendo, some se o modelo já mostra o {preco}; senão vira o preço normal" },
   { token: "{desconto_cupom}", desc: "O que o cupom tira: \"15% OFF\" ou \"R$ 30,00 OFF\"" },
   { token: "{economia_cupom}", desc: "Quanto o cupom economiza neste produto, em reais" },
+  { token: "{desconto_total}", desc: "% de desconto somando promoção e cupom, comparado com o preço antigo. Sem cupom valendo, some se o modelo já mostra o {desconto}" },
+  { token: "{economia_total}", desc: "Quanto economiza no total (promoção + cupom), em reais. Sem cupom valendo, some se o modelo já mostra a {economia}" },
   { token: "{frete}", desc: "\"Frete grátis\" quando a loja informa (Shopee não informa)" },
   { token: "{vendas}", desc: "Nº de vendas, ex.: \"1,2 mil vendidos\"" },
   { token: "{avaliacao}", desc: "Nota do produto, ex.: \"4,8\"" },
@@ -308,7 +310,14 @@ function OriginalTextPreview({ text }) {
 
 // `touch`: arrastar (drag HTML5) não funciona no dedo — no celular o card não é
 // arrastável e ganha os botões ↑ ↓ no lugar.
-function QueueItemCard({ item, idx, eta, isLast, touch, onRemove, onMoveToTop, onMoveUp, onMoveDown, onSaveCoupon, onDragStart, onDragOver, onDragEnd, onDrop, isDragOver, isDragging }) {
+// Com "Só enviar com cupom válido" ligado, o card do item que não vai sair fica
+// apagado e diz por quê (scheduler.js:barradoPorCupom).
+const CUPOM_BARRADO = {
+  invalido: "🚫 Cupom inválido — não será enviado",
+  testando: "⏳ Testando o cupom — envia quando validar",
+};
+
+function QueueItemCard({ item, idx, eta, isLast, touch, estadoCupom, onRemove, onMoveToTop, onMoveUp, onMoveDown, onSaveCoupon, onDragStart, onDragOver, onDragEnd, onDrop, isDragOver, isDragging }) {
   const addedAt = item.addedAt ? new Date(item.addedAt) : null;
   const addedAtStr = addedAt && !isNaN(addedAt.getTime()) ? addedAt.toLocaleString("pt-BR") : null;
   const discountStr = !isEmpty(item.discount) ? (typeof item.discount === "number" ? `${item.discount}%` : String(item.discount)) : null;
@@ -329,7 +338,7 @@ function QueueItemCard({ item, idx, eta, isLast, touch, onRemove, onMoveToTop, o
         background: "var(--color-background-primary)",
         border,
         borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 12,
-        opacity: isDragging ? 0.4 : 1,
+        opacity: isDragging ? 0.4 : (CUPOM_BARRADO[estadoCupom] ? 0.45 : 1),
         cursor: touch ? "default" : "grab",
         transition: "border-color 0.15s, opacity 0.15s",
       }}
@@ -338,7 +347,9 @@ function QueueItemCard({ item, idx, eta, isLast, touch, onRemove, onMoveToTop, o
         <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "var(--color-text-secondary)" }}>
           {!touch && <span title="Arraste para reordenar" style={{ cursor: "grab", color: "var(--color-text-secondary)", fontSize: 14, lineHeight: 1, userSelect: "none" }}>⋮⋮</span>}
           <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 18, padding: "0 6px", borderRadius: 9, background: idx === 0 ? PRIMARY_LIGHT : "var(--color-background-secondary)", color: idx === 0 ? PRIMARY_DARK : "var(--color-text-secondary)", fontWeight: 500, fontSize: 11 }}>#{idx + 1}</span>
-          <span>⏱ {idx === 0 ? "Próximo às" : "Previsto"} <strong style={{ color: idx === 0 ? PRIMARY_DARK : "var(--color-text-primary)" }}>{formatETA(eta)}</strong></span>
+          {CUPOM_BARRADO[estadoCupom]
+            ? <span style={{ color: "var(--color-text-primary)", fontWeight: 500 }}>{CUPOM_BARRADO[estadoCupom]}</span>
+            : <span>⏱ {idx === 0 ? "Próximo às" : "Previsto"} <strong style={{ color: idx === 0 ? PRIMARY_DARK : "var(--color-text-primary)" }}>{formatETA(eta)}</strong></span>}
         </div>
         <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
           {touch && (
@@ -525,6 +536,23 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const queueKeySig = (group.queue || []).map(q => q.key ?? q.id ?? q.name).join("|");
   const pendingKeySig = (group.pending || []).map(p => p.key ?? p.id ?? p.name).join("|");
   useEffect(() => { setQueue(group.queue || []); }, [queueKeySig]);
+
+  // "Só enviar com cupom válido": quais itens da fila estão barrados. Só pergunta
+  // ao servidor com a aba Fila aberta e a opção salva ligada.
+  const [estadosCupom, setEstadosCupom] = useState({});
+  // Editar o cupom de um item muda o estado dele: pergunta de novo.
+  const queueCupomSig = (group.queue || []).map(q => q.coupon || "").join("|");
+  const soCupomValidoSalvo = group?.scraping?.kind === "repasse" && !!group?.scraping?.repasse?.soCupomValido;
+  useEffect(() => {
+    if (tab !== "queue" || !soCupomValidoSalvo) { setEstadosCupom({}); return; }
+    let vivo = true;
+    const carregar = () => estadosCupomDaFila(group.id)
+      .then(r => { if (vivo) setEstadosCupom(r?.ativo ? (r.estados || {}) : {}); })
+      .catch(() => {});
+    carregar();
+    const t = setInterval(carregar, 30_000);
+    return () => { vivo = false; clearInterval(t); };
+  }, [tab, soCupomValidoSalvo, group.id, queueKeySig, queueCupomSig]);
   useEffect(() => { setPending(group.pending || []); }, [pendingKeySig]);
 
   async function handleClearHistory() {
@@ -1545,6 +1573,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     // Aprovação automática e mensagem original moraram na aba Grupos até a task 24.
     || (isRepasseGroup && stableJSON(scraping?.auto) !== stableJSON(group.scraping?.auto))
     || (isRepasseGroup && stableJSON(scraping?.repasse?.messageMode) !== stableJSON(group.scraping?.repasse?.messageMode))
+    || (isRepasseGroup && !!scraping?.repasse?.soCupomValido !== !!group.scraping?.repasse?.soCupomValido)
     || stableJSON(scraping?.notifications) !== stableJSON(group.scraping?.notifications)
     || stableJSON(scraping?.mlTag) !== stableJSON(group.scraping?.mlTag)
     || cooldownDirty;
@@ -2038,6 +2067,21 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                   label="Repassar a mensagem original"
                   value={scraping.repasse?.messageMode === "original"}
                   onChange={v => setScraping(s => ({ ...s, repasse: { ...(s.repasse || {}), messageMode: v ? "original" : "template" } }))}
+                />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0 0", borderTop: "0.5px solid var(--color-border-tertiary)" }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>Só enviar com cupom válido</div>
+                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                    {scraping.repasse?.soCupomValido
+                      ? "Produto com cupom que não vale (ou ainda em teste) fica apagado na fila e não é enviado — sai sozinho se o cupom passar a valer. Produto sem cupom sai normal."
+                      : "Produto com cupom inválido é enviado mesmo assim, com o preço sem o desconto."}
+                  </div>
+                </div>
+                <Toggle
+                  label="Só enviar com cupom válido"
+                  value={!!scraping.repasse?.soCupomValido}
+                  onChange={v => setScraping(s => ({ ...s, repasse: { ...(s.repasse || {}), soCupomValido: v } }))}
                 />
               </div>
             </div>
@@ -2679,7 +2723,11 @@ onError={setActionError}
               </div>
             </div>
           ) : (() => {
-            const etas = computeQueueETA(group);
+            // Os apagados não saem: o horário previsto dos outros é calculado sem eles.
+            const barrado = (it) => !!CUPOM_BARRADO[estadosCupom[it.id ?? it.key]];
+            const etasLivres = computeQueueETA({ ...group, queue: queue.filter(it => !barrado(it)) });
+            let livre = 0;
+            const etas = queue.map(it => (barrado(it) ? null : etasLivres[livre++]));
             return (
               <div data-tour="qu-list" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {queue.length > 1 && (
@@ -2695,6 +2743,7 @@ onError={setActionError}
                     item={item}
                     idx={idx}
                     eta={etas[idx]}
+                    estadoCupom={estadosCupom[item.id ?? item.key]}
                     isLast={idx === queue.length - 1}
                     touch={touch}
                     onRemove={() => setConfirmRemoveQueueItem(item)}

@@ -2101,6 +2101,19 @@ app.put("/api/state/groups/:gid/queue", auth.requireAuth, requireActiveSubscript
   }
 });
 
+// Estado do cupom de cada item da fila (só com "Só enviar com cupom válido"
+// ligado): a aba Fila apaga os que não vão sair (scheduler.js:barradoPorCupom).
+app.get("/api/state/groups/:gid/queue/cupons", auth.requireAuth, async (req, res) => {
+  try {
+    const state = await storage.loadState(req.user.id);
+    const group = (state?.groups || []).find(g => String(g.id) === String(req.params.gid));
+    if (!group) return res.status(404).json({ error: "Campanha não encontrada" });
+    res.json(await scheduler.estadosCupomDaFila(group));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Limpa a fila de envios da campanha
 app.delete("/api/state/groups/:gid/queue", auth.requireAuth, async (req, res) => {
   try {
@@ -3915,6 +3928,18 @@ app.get("/api/admin/repasse/cupom-checkout/pendentes", auth.requireAuth, auth.re
 
 // O "Testar automaticamente" da fila: liga/desliga o laço da aba, sem mexer na
 // rodada do servidor (campanha e vitrine).
+// Quantos minutos o envio de um produto do repasse espera o teste do cupom dele
+// (scheduler.js:aguardandoCupom). 0 desliga a espera.
+app.put("/api/admin/repasse/cupom-checkout/espera", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const config = couponAutotestConfig.writeConfig({ esperaCupomMin: req.body?.minutos });
+    if (!await confirmConfigSaved(res)) return;
+    res.json({ esperaCupomMin: config.esperaCupomMin });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.put("/api/admin/repasse/cupom-checkout/auto", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
     const config = couponAutotestConfig.writeConfig({ checkoutAuto: req.body?.auto });
@@ -4295,6 +4320,18 @@ app.put("/api/admin/notifications/config", auth.requireAuth, auth.requireAdmin, 
     res.json({ ok: true, config: saved });
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+// A tela do admin avisa que o ML pediu verificação no Chrome do servidor; o
+// notifier manda o link do VNC no WhatsApp (com trava anti-rajada).
+app.post("/api/admin/notifications/muro", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const { muro, onde } = req.body || {};
+    const enviado = await adminNotifier.notifyMuroChrome({ muro, onde });
+    res.json({ ok: true, enviado });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

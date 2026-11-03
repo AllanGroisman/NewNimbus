@@ -28,6 +28,8 @@ vi.mock("../data/api", () => ({
   manualAddToQueue: vi.fn(),
   clearGroupQueue: vi.fn(),
   saveGroupQueue: vi.fn(),
+  saveItemCoupon: vi.fn(),
+  estadosCupomDaFila: vi.fn().mockResolvedValue({ ativo: false, estados: {} }),
   approveAllPending: vi.fn(),
   rejectAllPending: vi.fn(),
   getWAGroupPicture: vi.fn().mockResolvedValue({ url: null }),
@@ -582,6 +584,26 @@ describe("GroupDashboard — fila vazia no modo repasse", () => {
     expect(screen.getByText(/grupos de origem/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Ir para Grupos/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Ir para Busca de Produtos/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("GroupDashboard — só enviar com cupom válido", () => {
+  it("card com cupom inválido fica apagado e diz que não vai sair", async () => {
+    const api = await import("../data/api");
+    api.estadosCupomDaFila.mockResolvedValueOnce({ ativo: true, estados: { a: "invalido", b: "sem_cupom" } });
+    renderDashboard({
+      group: {
+        scraping: { kind: "repasse", sources: [], filters: {}, repasse: { leaders: [], soCupomValido: true } },
+        queue: [
+          { key: "a", name: "ETB ruim", store: "Mercado Livre", source: "repasse", coupon: "RUIM", price: 10 },
+          { key: "b", name: "Booster", store: "Mercado Livre", source: "repasse", price: 20 },
+        ],
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Fila/ }));
+    expect(await screen.findByText(/Cupom inválido — não será enviado/)).toBeInTheDocument();
+    expect(api.estadosCupomDaFila).toHaveBeenCalledWith(1);
+    expect(screen.getAllByText(/Cupom inválido/)).toHaveLength(1);
   });
 });
 

@@ -22,10 +22,12 @@ const MODELOS = {
   padrao: DEFAULT_MESSAGE_TEMPLATE,
   classico: CLASSIC_MESSAGE_TEMPLATE,
   legado: LEGACY_DEFAULT_MESSAGE_TEMPLATE,
-  todas: "{produto}|{preco}|{preco_com_cupom}|{preco_antigo}|{desconto}|{economia}\n{loja} {vendas} {avaliacao} {frete}\n{cupom} {desconto_cupom} {economia_cupom}\n{link} {todos} {xyz}",
+  todas: "{produto}|{preco}|{preco_com_cupom}|{preco_antigo}|{desconto}|{economia}\n{loja} {vendas} {avaliacao} {frete}\n{cupom} {desconto_cupom} {economia_cupom}\n{desconto_total} {economia_total}\n{link} {todos} {xyz}",
   so_preco_com_cupom: "{produto}\n\n💸 {preco_com_cupom}\n\n\n🛒 {link}",
   preco_caido: "Por {preco} ({desconto} OFF)\nCom cupom {preco_com_cupom}\n{link}",
   mesma_linha: "{preco} / {preco_com_cupom}\n🎟️ {cupom}",
+  total_e_desconto: "{desconto} OFF\nTotal {desconto_total}\nEconomia {economia}\nNo total {economia_total}",
+  de_com_cupom: "De {preco_antigo}\nPor {preco_com_cupom}\n-{desconto_total}",
   vazio: "",
 };
 
@@ -35,6 +37,8 @@ const ITENS = {
   sem_cupom: previewItem({ cupom: false }),
   nada: previewItem({ promo: false, cupom: false }),
   shopee_sem_desconto: { name: "Fone", price: 49.9, originalPrice: null, discount: 0, soldCount: 3200, store: "Shopee", freeShipping: false, link: "https://s.shopee.com.br/x" },
+  so_cupom: { name: "ETB", price: 1099, priceWithCoupon: 999, coupon: "SEMPREPROMO", store: "Mercado Livre", link: "L" },
+  ml_pilula_cupom: { name: "Panela", price: 58, originalPrice: null, discount: 42, priceWithCoupon: 48, coupon: "X", store: "Mercado Livre", link: "L" },
   ml_pilula: { name: "Panela", price: 58, originalPrice: null, discount: 42, sold: "+1 mil vendidos", store: "Mercado Livre", link: "https://meli.la/x" },
   palavra_sem_regra: { name: "Livro", price: 30, originalPrice: 40, coupon: "AMZ10", store: "Amazon", link: "https://amzn.to/x" },
   preco_quebrado: { name: "Cabo", price: 19.999, originalPrice: 19.999, rating: 4.75, link: "L" },

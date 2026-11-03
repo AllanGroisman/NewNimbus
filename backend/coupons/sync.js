@@ -565,7 +565,9 @@ function localAtivo() { return !!_local; }
 // considerada perdida. Quem percorre as páginas é a TELA — se o admin fechar a aba
 // no meio, ninguém chama o `fimLocalRun` e a rodada ficaria "rodando" para sempre,
 // travando o /run e o "Apagar todos" até o processo reiniciar.
-const LOCAL_SEM_NOTICIA_MS = 5 * 60 * 1000;
+// 30 min: um muro do ML pode deixar a extensão esperando o humano até 25 min
+// sem nenhuma notícia (extension/aba.js:ESPERA_MURO_MS).
+const LOCAL_SEM_NOTICIA_MS = 30 * 60 * 1000;
 
 function tocarLocal() { if (_local) _local.ultimoContato = Date.now(); }
 
@@ -674,7 +676,7 @@ function podeEntregar(e) {
 }
 
 // Uma aba que morre segurando uma página deixaria a entrada eternamente "com algo
-// em voo": a rodada não terminaria e ficaria pendurada até o watchdog de 5 min.
+// em voo": a rodada não terminaria e ficaria pendurada até o watchdog de 30 min.
 // Passado tempo demais, a página volta para a fila — nominalmente, e não mexendo
 // no `proxima` da entrada, que redespacharia junto tudo o que veio depois dela.
 const PAGINA_PERDIDA_MS = 3 * 45000;   // 3× o que a extensão espera uma página carregar
@@ -998,7 +1000,7 @@ async function paginaLocal({ grouping = null, pagina = null, props = null, ativa
   const nPagina = Number(pagina) || emVooDaEntrada[0]?.pagina || (entrada ? entrada.proxima : 1);
   const chave = chaveDaPagina(grouping, nPagina);
   // SEMPRE, e em todo caminho: uma chave que fica para trás é uma entrada que
-  // nunca fica quieta, e uma rodada que só termina no watchdog de 5 minutos.
+  // nunca fica quieta, e uma rodada que só termina no watchdog de 30 minutos.
   _local.emVoo.delete(chave);
   // Repetida = esta página já foi processada. Uma aba que refaz o POST depois de
   // um timeout juntaria os cupons de novo (inofensivo, o merge é idempotente) mas

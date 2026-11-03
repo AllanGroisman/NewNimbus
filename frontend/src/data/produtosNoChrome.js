@@ -329,7 +329,7 @@ async function ativarLote(ids, { cfg, pular, parou, log, onProgresso, fundo = fa
     // Num `finally`, e não em sequência, porque a varredura PODE lançar: basta
     // uma das chamadas ao servidor falhar. Quando isso acontecia, nenhuma das
     // duas linhas abaixo rodava — o servidor ficava com a rodada "running",
-    // recusando a próxima tentativa com 409 até o watchdog de 5 min soltar, e a
+    // recusando a próxima tentativa com 409 até o watchdog de 30 min soltar, e a
     // aba do ML ficava aberta. Mesmo formato do `varrerLista` da etapa 1.
     await fecharAbaDoColetor(tabId);
     // O `local/fim` é obrigatório mesmo aqui: sem ele o servidor fica "running" e

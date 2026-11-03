@@ -112,7 +112,7 @@ function formatVendas(p) {
 // tests/unit/template-parity.test.js compara as duas.
 const TEMPLATE_TOKEN_RE = /\{(\w+)\}/g;
 
-function templateValues(p) {
+function templateValues(p, { modeloTemPreco = false } = {}) {
   const num = v => (v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : null);
   const pos = v => (num(v) > 0 ? num(v) : null);
   const text = v => (v == null ? "" : String(v).trim()) || null;
@@ -133,6 +133,20 @@ function templateValues(p) {
   const saving = pos(p.couponSaving);
   const rating = pos(p.rating);
 
+  // A vantagem TOTAL (promoção + cupom): do "De" até o menor preço final. Os %
+  // não se somam — o cupom incide sobre o preço já promocional (24% + 10% = 31,6%).
+  // Sem "De" mas com o % (pílula do ML), a base é reconstruída a partir dele.
+  let base = original;
+  if (base == null && price != null && discount != null && discount < 100) base = price / (1 - discount / 100);
+  if (base == null) base = price;
+  const final = withCoupon ?? price;
+  // Só o cupom desconta (sem "De" e sem % de promoção): o "De" vira o preço sem
+  // cupom, pra o "Por" com cupom e o {desconto_total} terem de onde partir. Não
+  // vale se o modelo mostra o {preco} — sairia "De 1.099 / Por 1.099".
+  const deDoCupom = original == null && discount == null && withCoupon != null && withCoupon < price && !modeloTemPreco;
+  const totalPct = base != null && final != null ? Math.round((1 - final / base) * 100) : null;
+  const totalSaving = base != null && final != null ? Math.round((base - final) * 100) / 100 : null;
+
   return {
     produto: text(p.name),
     preco: price != null ? fmt(price) : null,
@@ -140,7 +154,7 @@ function templateValues(p) {
     // que lê o cupom no banco na hora do envio). Sem cupom vira o preço normal —
     // e o renderTemplate tira a linha quando o {preco} já aparece em outra.
     preco_com_cupom: withCoupon != null ? fmt(withCoupon) : (price != null ? fmt(price) : null),
-    preco_antigo: original != null ? fmt(original) : null,
+    preco_antigo: original != null ? fmt(original) : (deDoCupom ? fmt(price) : null),
     desconto: discount != null ? `${discount}%` : null,
     economia: original != null ? fmt(Math.round((original - price) * 100) / 100) : null,
     loja: text(p.store),
@@ -152,27 +166,33 @@ function templateValues(p) {
     // Sem cupom válido os dois chegam nulos do sendItem.
     desconto_cupom: text(p.couponLabel),
     economia_cupom: saving != null ? fmt(saving) : null,
+    desconto_total: totalPct >= 1 ? `${totalPct}%` : null,
+    economia_total: totalSaving > 0 ? fmt(totalSaving) : null,
     link: text(p.link),
     // Só o texto: quem marca de verdade é o `mentions` que o sendItem pede.
     todos: "@todos",
   };
 }
 
+const PARES_SEM_CUPOM = [["preco_com_cupom", "preco"], ["desconto_total", "desconto"], ["economia_total", "economia"]];
+
 function renderTemplate(template, p) {
   const tpl = String(template || "");
   const item = p || {};
-  const values = templateValues(item);
+  const values = templateValues(item, { modeloTemPreco: tpl.includes("{preco}") });
   const known = k => Object.prototype.hasOwnProperty.call(values, k);
   // Token desconhecido ({xyz}) fica como está e não derruba a linha.
   const hasEmpty = line => [...line.matchAll(TEMPLATE_TOKEN_RE)].some(m => known(m[1]) && values[m[1]] == null);
   let lines = tpl.split("\n").filter(line => !hasEmpty(line));
-  // Sem cupom valendo, o {preco_com_cupom} seria só o {preco} de novo: se o
-  // {preco} aparece em outra linha, a do {preco_com_cupom} some. Decidido depois
-  // do filtro acima — se a linha do {preco} caiu, é o {preco_com_cupom} quem
-  // mostra o preço.
+  // Sem cupom valendo, cada variável "com cupom" repete a comum ({preco_com_cupom}
+  // = {preco}, {desconto_total} = {desconto}, {economia_total} = {economia}): se a
+  // comum aparece em outra linha, a linha da "com cupom" some. Decidido depois do
+  // filtro acima — se a linha da comum caiu, é a "com cupom" quem mostra o valor.
   if (!(Number(item.priceWithCoupon) > 0)) {
-    const isCouponLine = l => l.includes("{preco_com_cupom}");
-    if (lines.some(l => l.includes("{preco}") && !isCouponLine(l))) lines = lines.filter(l => !isCouponLine(l));
+    for (const [total, comum] of PARES_SEM_CUPOM) {
+      const isTotalLine = l => l.includes(`{${total}}`);
+      if (lines.some(l => l.includes(`{${comum}}`) && !isTotalLine(l))) lines = lines.filter(l => !isTotalLine(l));
+    }
   }
   return lines.join("\n")
     .replace(TEMPLATE_TOKEN_RE, (all, k) => (known(k) ? values[k] : all))
@@ -670,6 +690,97 @@ async function couponRuleForItem(item) {
   return null;
 }
 
+// O produto do repasse chegou com uma palavra de cupom que o sistema ainda não
+// sabe quanto desconta? Então ele espera um pouco na fila: o teste no checkout
+// (repasse/coupon-autotest.js:pendentesCheckout, palavra nova primeiro) costuma
+// responder em minutos, e sem ele o {preco_com_cupom} sai sem o desconto — foi o
+// que aconteceu com 78 dos 97 produtos do SEMPREPROMO num dia só.
+//
+// Só espera quando a espera pode dar em algo: teste automático ligado, sem o
+// breaker de bloqueio armado, e palavra que o ML não recusou. A espera é contada
+// do `addedAt` (addItemToGroup), então nunca passa de `esperaCupomMin`.
+async function aguardandoCupom(group, item, agora = Date.now()) {
+  if (!isRepasse(group) || item?.source !== "repasse") return false;
+  if (item.store !== "Mercado Livre" || item.originalText) return false;
+  const palavra = String(item.coupon || "").trim();
+  if (!palavra) return false;
+
+  let cfg, bloqueado;
+  try {
+    // Preguiçoso: o autotest puxa coupons/sync e o Chrome do servidor.
+    cfg = require("./repasse/coupon-autotest-config").readConfig();
+    const ate = require("./repasse/coupon-autotest").status().bloqueadoAte;
+    bloqueado = !!(ate && agora < new Date(ate).getTime());
+  } catch {
+    return false;
+  }
+  const esperaMs = (Number(cfg.esperaCupomMin) || 0) * 60_000;
+  if (!(esperaMs > 0) || !cfg.checkoutAuto || bloqueado) return false;
+
+  const entrou = new Date(item.addedAt || 0).getTime();
+  if (!Number.isFinite(entrou) || agora - entrou >= esperaMs) return false;
+
+  // Já se sabe o desconto (e a campanha não venceu): nada a esperar.
+  const regra = await couponRuleForItem(item).catch(() => null);
+  if (regra && !(regra.expiresAt && new Date(regra.expiresAt).getTime() <= agora)) return false;
+
+  // O ML já disse que a palavra não existe: esperar não muda a resposta.
+  const teste = await coupons.findCodeCheck(palavra.toUpperCase(), { maxAgeHours: Infinity }).catch(() => null);
+  if (teste?.verdict === "invalid") return false;
+  return true;
+}
+
+// A campanha de repasse pediu "só enviar com cupom válido"?
+function soCupomValido(group) {
+  return isRepasse(group) && group?.scraping?.repasse?.soCupomValido === true;
+}
+
+// O que se sabe hoje do cupom de um item da fila:
+//   "sem_cupom" — não tem palavra, ou não dá para validar (outra loja, mensagem
+//                 original): segue o fluxo de sempre;
+//   "valido"    — o desconto é conhecido e a campanha não venceu;
+//   "invalido"  — o ML respondeu que a palavra não existe;
+//   "testando"  — ainda sem resposta do teste no checkout.
+async function estadoCupomDoItem(item, agora = Date.now()) {
+  const palavra = String(item?.coupon || "").trim();
+  if (!palavra || item?.store !== "Mercado Livre" || item?.originalText) return "sem_cupom";
+  const regra = await couponRuleForItem(item).catch(() => null);
+  if (regra && !(regra.expiresAt && new Date(regra.expiresAt).getTime() <= agora)) return "valido";
+  const teste = await coupons.findCodeCheck(palavra.toUpperCase(), { maxAgeHours: Infinity }).catch(() => null);
+  if (teste?.verdict === "invalid") return "invalido";
+  return "testando";
+}
+
+// Com "só cupom válido" ligado, item do repasse com cupom que não vale (ou que
+// ainda não foi testado) fica parado na fila, sem prazo — sai quando validar.
+async function barradoPorCupom(group, item, agora = Date.now()) {
+  if (!soCupomValido(group) || item?.source !== "repasse") return false;
+  const estado = await estadoCupomDoItem(item, agora);
+  return estado === "invalido" || estado === "testando";
+}
+
+// Índice do primeiro item da fila que pode sair agora; -1 se todos esperam.
+async function primeiroProntoParaEnvio(group, queue, agora = Date.now()) {
+  for (let i = 0; i < queue.length; i++) {
+    if (await barradoPorCupom(group, queue[i], agora)) continue;
+    if (!(await aguardandoCupom(group, queue[i], agora))) return i;
+  }
+  return -1;
+}
+
+// Estado do cupom de cada item da fila, pra tela apagar os que não saem.
+// Chave = id (ou key) do item, a mesma que a tela usa pra editar o cupom.
+async function estadosCupomDaFila(group, agora = Date.now()) {
+  if (!soCupomValido(group)) return { ativo: false, estados: {} };
+  const estados = {};
+  for (const item of group.queue || []) {
+    const id = item?.id ?? item?.key;
+    if (id == null) continue;
+    estados[id] = item.source === "repasse" ? await estadoCupomDoItem(item, agora) : "sem_cupom";
+  }
+  return { ativo: true, estados };
+}
+
 // Conversão de link de afiliado por loja. Tabela em vez de três `else if`
 // idênticos: o descarte precisava do mesmo tratamento nos três, e repetir a
 // gravação do log três vezes é como ela sairia de sincronia.
@@ -930,10 +1041,15 @@ async function dispatchOne(userId, group, whatsappGroups, numbers) {
 
   if (!(group.whatsappGroupIds || []).length) return null;
 
-  const item = queue[0];
+  // O primeiro da fila que não está esperando o teste do cupom. Os que esperam
+  // ficam onde estão e saem num tick seguinte — com o desconto, se o teste
+  // chegou, ou sem ele quando a espera acaba.
+  const idx = await primeiroProntoParaEnvio(group, queue, now.getTime());
+  if (idx < 0) return null;
+  const item = queue[idx];
 
   if (queueMod.isRedis()) {
-    const newQueue = queue.slice(1);
+    const newQueue = queue.filter((_, i) => i !== idx);
     const lastSend = now.toISOString();
     await storage.updateGroupOps(userId, group.id, { queue: newQueue, lastSend });
     try {
@@ -1404,6 +1520,7 @@ async function addItemToGroup(userId, group, item, { force = false } = {}) {
 }
 
 module.exports = {
+  aguardandoCupom, primeiroProntoParaEnvio, estadoCupomDoItem, estadosCupomDaFila, soCupomValido,
   start, stop, tick, sendNextNow, refillNow, manualAdd, addItemToGroup,
   isRepasse, isAutoApprove, isAutoRefill, resolveSources, activeSources, sourcesForCampaign,
   status, processSendJob,

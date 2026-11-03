@@ -63,6 +63,12 @@ describe("normalizeRepasse guarda o messageMode", () => {
     expect(normalizeRepasse({ ...base, repasse: { leaders: [], messageMode: "original" } }).repasse.messageMode).toBe("original");
     expect(normalizeRepasse({ ...base, repasse: { leaders: [], messageMode: "xyz" } }).repasse.messageMode).toBeUndefined();
   });
+
+  it("guarda o soCupomValido só quando é true", () => {
+    expect(normalizeRepasse({ kind: "repasse", repasse: { leaders: [], soCupomValido: true } }).repasse.soCupomValido).toBe(true);
+    expect(normalizeRepasse({ kind: "repasse", repasse: { leaders: [], soCupomValido: "sim" } }).repasse.soCupomValido).toBeUndefined();
+    expect(normalizeRepasse({ kind: "repasse", repasse: { leaders: [] } }).repasse.soCupomValido).toBeUndefined();
+  });
 });
 
 describe("sendItem com mensagem original", () => {

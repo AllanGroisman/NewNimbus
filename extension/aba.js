@@ -9,7 +9,7 @@
 // pedindo verificação —, porque aí a decisão é do humano.
 
 export const ESPERA_CARGA_MS = 45000;
-export const ESPERA_MURO_MS = 5 * 60 * 1000;   // quanto se espera o humano resolver
+export const ESPERA_MURO_MS = 25 * 60 * 1000;   // quanto se espera o humano resolver (chega aviso no WhatsApp com o link do VNC)
 
 export const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 

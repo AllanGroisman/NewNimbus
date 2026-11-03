@@ -23,7 +23,7 @@ function formatVendas(p) {
   return "";
 }
 
-function templateValues(p) {
+function templateValues(p, { modeloTemPreco = false } = {}) {
   const num = v => (v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : null);
   const pos = v => (num(v) > 0 ? num(v) : null);
   const text = v => (v == null ? "" : String(v).trim()) || null;
@@ -40,11 +40,22 @@ function templateValues(p) {
   const saving = pos(p.couponSaving);
   const rating = pos(p.rating);
 
+  let base = original;
+  if (base == null && price != null && discount != null && discount < 100) base = price / (1 - discount / 100);
+  if (base == null) base = price;
+  const final = withCoupon ?? price;
+  // Só o cupom desconta (sem "De" e sem % de promoção): o "De" vira o preço sem
+  // cupom, pra o "Por" com cupom e o {desconto_total} terem de onde partir. Não
+  // vale se o modelo mostra o {preco} — sairia "De 1.099 / Por 1.099".
+  const deDoCupom = original == null && discount == null && withCoupon != null && withCoupon < price && !modeloTemPreco;
+  const totalPct = base != null && final != null ? Math.round((1 - final / base) * 100) : null;
+  const totalSaving = base != null && final != null ? Math.round((base - final) * 100) / 100 : null;
+
   return {
     produto: text(p.name),
     preco: price != null ? fmt(price) : null,
     preco_com_cupom: withCoupon != null ? fmt(withCoupon) : (price != null ? fmt(price) : null),
-    preco_antigo: original != null ? fmt(original) : null,
+    preco_antigo: original != null ? fmt(original) : (deDoCupom ? fmt(price) : null),
     desconto: discount != null ? `${discount}%` : null,
     economia: original != null ? fmt(Math.round((original - price) * 100) / 100) : null,
     loja: text(p.store),
@@ -54,21 +65,27 @@ function templateValues(p) {
     cupom: text(p.coupon),
     desconto_cupom: text(p.couponLabel),
     economia_cupom: saving != null ? fmt(saving) : null,
+    desconto_total: totalPct >= 1 ? `${totalPct}%` : null,
+    economia_total: totalSaving > 0 ? fmt(totalSaving) : null,
     link: text(p.link),
     todos: "@todos",
   };
 }
 
+const PARES_SEM_CUPOM = [["preco_com_cupom", "preco"], ["desconto_total", "desconto"], ["economia_total", "economia"]];
+
 export function renderMessageTemplate(template, p) {
   const tpl = String(template || "");
   const item = p || {};
-  const values = templateValues(item);
+  const values = templateValues(item, { modeloTemPreco: tpl.includes("{preco}") });
   const known = k => Object.prototype.hasOwnProperty.call(values, k);
   const hasEmpty = line => [...line.matchAll(TEMPLATE_TOKEN_RE)].some(m => known(m[1]) && values[m[1]] == null);
   let lines = tpl.split("\n").filter(line => !hasEmpty(line));
   if (!(Number(item.priceWithCoupon) > 0)) {
-    const isCouponLine = l => l.includes("{preco_com_cupom}");
-    if (lines.some(l => l.includes("{preco}") && !isCouponLine(l))) lines = lines.filter(l => !isCouponLine(l));
+    for (const [total, comum] of PARES_SEM_CUPOM) {
+      const isTotalLine = l => l.includes(`{${total}}`);
+      if (lines.some(l => l.includes(`{${comum}}`) && !isTotalLine(l))) lines = lines.filter(l => !isTotalLine(l));
+    }
   }
   return lines.join("\n")
     .replace(TEMPLATE_TOKEN_RE, (all, k) => (known(k) ? values[k] : all))

@@ -13,11 +13,17 @@
 //
 // Isolado num arquivo porque é IO com o mundo de fora — é o que os testes fingem.
 
+import { avisarMuro } from "./api";
+
 const DE = "nimbus-coletor";
 const PARA = "nimbus-admin";
 const TENTATIVAS_PRONTO = 5;
 const INTERVALO_PING_MS = 300;
 const TIMEOUT_MS = 5 * 60 * 1000;   // a coleta pode parar no meio esperando o humano
+// Quando a extensão avisa "muro", ela passa a esperar o humano até 25 min
+// (`ESPERA_MURO_MS` em extension/aba.js). O relógio do pedido recomeça com essa
+// espera + folga, senão a tela desistiria antes da extensão.
+export const TIMEOUT_APOS_MURO_MS = (25 + 2) * 60 * 1000;
 
 let info = null;   // null = ainda não perguntamos; { instalada, versao, comandos } depois
 
@@ -78,6 +84,11 @@ export function coletorEntende(comando, opts) {
 export function pedirAoColetor(tipo, payload = {}, { onProgresso, timeoutMs = TIMEOUT_MS } = {}) {
   const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   return new Promise((resolve, reject) => {
+    let timer = null;
+    const armar = (ms) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => { fim(); reject(new Error("A extensão não respondeu a tempo.")); }, ms);
+    };
     const fim = () => {
       window.removeEventListener("message", ouvir);
       clearTimeout(timer);
@@ -87,7 +98,17 @@ export function pedirAoColetor(tipo, payload = {}, { onProgresso, timeoutMs = TI
       const msg = ev.data;
       // O progresso de outro pedido não é deste: o id separa (a colheita em lote
       // dispara um comando por cupom).
-      if (msg.tipo === "progresso") { if (!msg.id || msg.id === id) onProgresso?.(msg.evento || msg); return; }
+      if (msg.tipo === "progresso") {
+        if (msg.id && msg.id !== id) return;
+        const evento = msg.evento || msg;
+        if (evento?.tipo === "muro") {
+          armar(Math.max(timeoutMs, TIMEOUT_APOS_MURO_MS));
+          // Fire-and-forget: o aviso no WhatsApp nunca pode atrapalhar a coleta.
+          avisarMuro({ muro: evento.muro, onde: tipo }).catch(() => {});
+        }
+        onProgresso?.(evento);
+        return;
+      }
       if (msg.tipo !== "resultado" || msg.id !== id) return;
       fim();
       // O envelope (`de`, `tipo`, `id`, `ok`) fica no transporte; para quem chamou
@@ -98,7 +119,7 @@ export function pedirAoColetor(tipo, payload = {}, { onProgresso, timeoutMs = TI
       resolve(r);
     };
     window.addEventListener("message", ouvir);
-    const timer = setTimeout(() => { fim(); reject(new Error("A extensão não respondeu a tempo.")); }, timeoutMs);
+    armar(timeoutMs);
     window.postMessage({ de: PARA, tipo, id, ...payload }, window.location.origin);
   });
 }

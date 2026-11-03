@@ -71,6 +71,28 @@ const _status = {
 //
 // Recebe as linhas do repasse/coupons.js:aggregate (código + o que o sistema já
 // sabe dele) e devolve a lista de trabalho, já ordenada e cortada pelos tetos.
+// Aprovada, mas a campanha que o teste achou já acabou — e a palavra foi vista de
+// novo depois disso. `inSystem === false` cobre a campanha que o purge já apagou
+// (pruneExpired) e por isso não tem mais `expiresAt` pra conferir. A espera do
+// indeterminado vale aqui também: sem ela, uma palavra que o ML segue aprovando
+// numa campanha que a página não deixa ler voltaria pra fila a cada rodada.
+function precisaRenovar(l, cfg, agora) {
+  if (!l.campaignId) return false;
+  const venceuEm = l.expiresAt ? new Date(l.expiresAt).getTime() : null;
+  const vencido = Number.isFinite(venceuEm) && venceuEm <= agora;
+  const sumiu = l.inSystem === false;
+  if (!vencido && !sumiu) return false;
+  // Campanha que não está aqui pode ser só a que ainda não foi importada (o
+  // caminho normal logo depois do teste) — por isso o "sumiu" só conta com o teste
+  // tendo mais de um dia: a importação teve sua chance e a palavra segue chegando.
+  if (!vencido && !l.checkedAt) return false;
+  const desde = vencido ? venceuEm : new Date(l.checkedAt).getTime();
+  if (!(new Date(l.ultima || 0).getTime() > desde)) return false;
+  const idade = l.checkedAt ? agora - new Date(l.checkedAt).getTime() : Infinity;
+  const espera = vencido ? cfg.esperaAposIndeterminadoHoras : Math.max(24, cfg.esperaAposIndeterminadoHoras);
+  return idade >= espera * HORA_MS;
+}
+
 function selecionar(linhas, cfg, agora = Date.now()) {
   const testes = [];
   const importacoes = [];
@@ -110,6 +132,16 @@ function selecionar(linhas, cfg, agora = Date.now()) {
     // isso, e mandar o Chrome atrás seria só queimar a conta à toa.
     if (l.verdict === "invalid") continue;
 
+    // Palavra aprovada cuja campanha já acabou (venceu, ou nem está mais aqui) e
+    // que VOLTOU a aparecer nos grupos depois disso: o ML costuma reaproveitar a
+    // palavra numa campanha nova (SEMPREPROMO, MODAML). Sem novo teste, o sistema
+    // não conhece o desconto de hoje e o {preco_com_cupom} sai sem ele — por isso
+    // ela volta pro checkout em vez de seguir pra importar uma campanha morta.
+    if (l.verdict === "valid" && precisaRenovar(l, cfg, agora)) {
+      testes.push({ code: l.code, motivo: "renovar", linha: l });
+      continue;
+    }
+
     // Daqui pra baixo a palavra é uma campanha de verdade. O que falta é trazê-la.
     if (!l.campaignId) continue;
 
@@ -144,8 +176,17 @@ function selecionar(linhas, cfg, agora = Date.now()) {
   // Nunca testado antes de reteste: a primeira resposta vale mais que a segunda
   // opinião sobre um engasgo. O aprovado sem campanha fica no meio: a palavra já
   // vale, falta só o dado que destrava o vínculo.
-  const ORDEM_MOTIVO = { "nunca-testado": 0, "sem-campanha-id": 1, indeterminado: 2 };
-  testes.sort((a, b) => (ORDEM_MOTIVO[a.motivo] - ORDEM_MOTIVO[b.motivo]) || porValor(a, b));
+  // A palavra que precisa de resposta (nunca testada, ou aprovada mas com a
+  // campanha vencida) vem antes; dentro dela, a que virou produto nas últimas 24h
+  // primeiro e
+  // da mais recente pra mais antiga — é a que tem produto esperando na fila AGORA
+  // (scheduler.js:aguardandoCupom). Volume de capturas desempata só depois.
+  const ORDEM_MOTIVO = { "nunca-testado": 0, renovar: 0, "sem-campanha-id": 1, indeterminado: 2 };
+  const fresca = t => ((t.linha.aproveitados || 0) > 0 && agora - new Date(t.linha.ultima || 0).getTime() < 24 * HORA_MS ? 0 : 1);
+  const porFrescor = (a, b) =>
+    (fresca(a) - fresca(b)) ||
+    (fresca(a) === 0 ? new Date(b.linha.ultima || 0) - new Date(a.linha.ultima || 0) : 0);
+  testes.sort((a, b) => (ORDEM_MOTIVO[a.motivo] - ORDEM_MOTIVO[b.motivo]) || porFrescor(a, b) || porValor(a, b));
   importacoes.sort(porValor);
   vitrines.sort(porValor);
 
@@ -314,8 +355,8 @@ async function importarEsperando(sync, campaignId, cfg) {
 // (coupons/agenda.js): o servidor sabe O QUE falta, o Chrome do admin FAZ.
 
 // Quanto tempo uma aba segura um código reivindicado. O teste leva de 20s a 1min;
-// com um muro, a extensão espera o humano até 5 min. Passado isso, a aba morreu.
-const RESERVA_MS = 10 * 60_000;
+// com um muro, a extensão espera o humano até 25 min. Passado isso, a aba morreu.
+const RESERVA_MS = 30 * 60_000;
 const _reservas = new Map();   // code → expira em (ms)
 
 function reservado(code, agora = Date.now()) {
@@ -365,7 +406,8 @@ async function pendentesCheckout({ limit = 50 } = {}) {
   const { testes } = selecionar(linhas.filter(l => l.link), { ...cfg, maxPorRodada: Infinity });
   // Reteste vai para o link que ainda não foi testado (ou o testado há mais
   // tempo): se a falha foi do link, insistir nele queimaria as tentativas.
-  const retestes = testes.filter(t => t.motivo !== "nunca-testado" && !vistos.has(t.code)).map(t => t.code);
+  // O "renovar" fica no link mais recente: a campanha nova é a da captura de hoje.
+  const retestes = testes.filter(t => t.motivo !== "nunca-testado" && t.motivo !== "renovar" && !vistos.has(t.code)).map(t => t.code);
   const outroLink = retestes.length
     ? await repasseCoupons.proximosLinks(retestes, { days: cfg.diasDeBusca })
     : new Map();
@@ -384,6 +426,7 @@ async function pendentesCheckout({ limit = 50 } = {}) {
     total: itens.length,
     auto: cfg.checkoutAuto && !bloqueado,
     checkoutAuto: cfg.checkoutAuto,
+    esperaCupomMin: cfg.esperaCupomMin,
     bloqueadoAte: bloqueado ? _status.bloqueadoAte : null,
   };
 }

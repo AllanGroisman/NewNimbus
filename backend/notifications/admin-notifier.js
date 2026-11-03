@@ -123,6 +123,15 @@ const DEFAULT_TEMPLATES = {
     "",
     "A agenda dos cupons roda no Chrome do admin: deixe a aba Admin › Cupom › Cupons do ML aberta, com a extensão instalada.",
   ].join("\n"),
+  muroChrome: [
+    "*[Nimbus] 🤖 ML pediu verificação*",
+    "📅 {data}",
+    "Onde: {onde}",
+    "Tipo: {muro}",
+    "",
+    "Resolva em http://192.168.0.247:6080/vnc.html",
+    "Espero até {espera} — depois a etapa desiste.",
+  ].join("\n"),
   test: [
     "*[Nimbus] 🔔 Teste de Notificação*",
     "📅 {data}",
@@ -393,6 +402,17 @@ const TEMPLATE_META = [
     ],
     example: { data: "25/08/2026 20:10", tag: "allangroisman" },
   },
+  {
+    key: "muroChrome",
+    label: "Captcha no Chrome do servidor",
+    variables: [
+      { name: "data", desc: "Data/hora do aviso" },
+      { name: "onde", desc: "Qual comando da extensão bateu no muro (vitrine, lista, palavra, checkout…)" },
+      { name: "muro", desc: "Tipo do muro (captcha, verificação, login)" },
+      { name: "espera", desc: "Quanto tempo a extensão espera alguém resolver" },
+    ],
+    example: { data: "03/11/2026 09:12", onde: "Vitrine de cupom", muro: "captcha", espera: "25 min" },
+  },
 ];
 
 const DEFAULT_CONFIG = {
@@ -409,6 +429,7 @@ const DEFAULT_CONFIG = {
     afiliadoCookie: true,
     bloqueios: true,
     cupons: true,
+    muroChrome: true,
   },
   templates: { ...DEFAULT_TEMPLATES },
 };
@@ -671,6 +692,37 @@ async function notifyBlockRecovered(vars = {}) {
   await send(renderTemplate(template, { data: formatDate(new Date().toISOString()), ...vars }));
 }
 
+// O ML pediu verificação no Chrome do servidor e a extensão está esperando alguém
+// resolver (pelo VNC). Quem chama é a tela do admin, ao receber o progresso "muro".
+// Uma colheita em lote pode bater vários muros seguidos: um aviso a cada
+// MURO_INTERVALO_MS basta — o link é o mesmo.
+const MURO_INTERVALO_MS = 10 * 60 * 1000;
+const MURO_ESPERA = "25 min";   // gêmeo de ESPERA_MURO_MS em extension/aba.js
+const MURO_ROTULO = { captcha: "captcha", verificacao: "verificação de conta", login: "login" };
+const ONDE_ROTULO = {
+  raspar: "Vitrine de cupom", lista: "Lista de cupons", palavra: "Teste de palavra",
+  checkout: "Teste no checkout", "cupom-no-checkout": "Cupom no checkout", "cupom-no-checkout-v2": "Cupom no checkout",
+  carrinho: "Limpeza do carrinho",
+};
+let _ultimoMuro = 0;
+
+async function notifyMuroChrome({ muro, onde } = {}, agora = Date.now()) {
+  const cfg = readConfig();
+  if (!cfg.events.muroChrome) return false;
+  if (agora - _ultimoMuro < MURO_INTERVALO_MS) return false;
+  _ultimoMuro = agora;
+  const template = cfg.templates.muroChrome || DEFAULT_TEMPLATES.muroChrome;
+  await send(renderTemplate(template, {
+    data: formatDate(new Date(agora).toISOString()),
+    onde: ONDE_ROTULO[onde] || String(onde || "—").slice(0, 60),
+    muro: MURO_ROTULO[muro] || String(muro || "verificação").slice(0, 40),
+    espera: MURO_ESPERA,
+  }));
+  return true;
+}
+
+function _resetMuro() { _ultimoMuro = 0; }
+
 // ── Cupons do ML (task 4) ──────────────────────────────────────────────────
 
 const ETAPAS_CUPONS = { lista: "Etapa 1 · Lista", produtos: "Etapa 2 · Produtos", tudo: "Etapa 3 · Buscar TUDO" };
@@ -829,6 +881,6 @@ function renderPreview(key, text) {
 
 module.exports = {
   readConfig, writeConfig, notifyMLCookieExpired, notifyMLCookieRecovered, notifyBlockDetected, notifyBlockRecovered, notifyScrapingResult, notifyScrapTesterResult, notifyError, notifySystemOnline, notifyRetryStorm, sendTest,
-  notifyCuponsRodada, notifyCuponsAgendaPulada, cuponsVars, templateDosCupons,
+  notifyCuponsRodada, notifyCuponsAgendaPulada, notifyMuroChrome, MURO_INTERVALO_MS, _resetMuro, cuponsVars, templateDosCupons,
   getTemplates, saveTemplates, renderPreview,
 };

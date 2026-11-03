@@ -347,6 +347,48 @@ describe("scheduler.renderTemplate — mensagem do envio", () => {
     expect(scheduler.renderTemplate("{economia_cupom}", { ...produto, couponSaving: 22.5 })).toBe("R$ 22,50");
   });
 
+  it("{desconto_total}/{economia_total}: do preço antigo até o preço com cupom, sem somar os %", () => {
+    // 24% de promoção + 10% de cupom = 31,6%, não 34%.
+    const item = { price: 1899, originalPrice: 2499, discount: 24, priceWithCoupon: 1709.1 };
+    expect(scheduler.renderTemplate("{desconto_total} | {economia_total}", item)).toBe("32% | R$ 789,90");
+  });
+
+  it("{desconto_total} sem preço antigo: só o cupom (o ETB de R$ 1.099 → R$ 999)", () => {
+    expect(scheduler.renderTemplate("{desconto_total} | {economia_total}", { price: 1099, priceWithCoupon: 999 }))
+      .toBe("9% | R$ 100,00");
+  });
+
+  it("{desconto_total} com só o % da promoção (pílula do ML): a base sai do %", () => {
+    // 58 com 42% OFF → base 100; com cupom 48 → 52%.
+    expect(scheduler.renderTemplate("{desconto_total}", { price: 58, discount: 42, priceWithCoupon: 48 })).toBe("52%");
+  });
+
+  it("sem promoção e sem cupom, as linhas do total somem", () => {
+    expect(scheduler.renderTemplate("A\n{desconto_total}\n{economia_total}", { price: 10 })).toBe("A");
+  });
+
+  it("sem cupom valendo, o total some se a variável comum já aparece; senão mostra a promoção", () => {
+    const item = { price: 75, originalPrice: 100 };
+    expect(scheduler.renderTemplate("{desconto}\nTotal {desconto_total}", item)).toBe("25%");
+    expect(scheduler.renderTemplate("{economia}\nTotal {economia_total}", item)).toBe("R$ 25,00");
+    expect(scheduler.renderTemplate("Total {desconto_total} · {economia_total}", item)).toBe("Total 25% · R$ 25,00");
+    // Com cupom valendo, os dois convivem.
+    expect(scheduler.renderTemplate("{desconto}\nTotal {desconto_total}", { ...item, priceWithCoupon: 60 }))
+      .toBe("25%\nTotal 40%");
+  });
+
+  it("só o cupom desconta: o 'De' vira o preço sem cupom — menos se o modelo mostra o {preco}", () => {
+    const etb = { price: 1099, priceWithCoupon: 999 };
+    expect(scheduler.renderTemplate("De {preco_antigo}\nPor {preco_com_cupom}\n-{desconto_total}", etb))
+      .toBe("De R$ 1.099,00\nPor R$ 999,00\n-9%");
+    expect(scheduler.renderTemplate("De {preco_antigo}\nPor {preco}\nCom cupom {preco_com_cupom}", etb))
+      .toBe("Por R$ 1.099,00\nCom cupom R$ 999,00");
+    // Sem cupom valendo, nada de "De".
+    expect(scheduler.renderTemplate("A\nDe {preco_antigo}", { price: 1099 })).toBe("A");
+    // Pílula do ML (só o %): não inventa um "De".
+    expect(scheduler.renderTemplate("A\nDe {preco_antigo}", { price: 58, discount: 42, priceWithCoupon: 48 })).toBe("A");
+  });
+
   it("{frete} só com frete grátis informado", () => {
     expect(scheduler.renderTemplate("A\n🚚 {frete}", { freeShipping: true })).toBe("A\n🚚 Frete grátis");
     expect(scheduler.renderTemplate("A\n🚚 {frete}", { freeShipping: false })).toBe("A");

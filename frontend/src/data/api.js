@@ -1003,6 +1003,11 @@ export async function adminRepasseCupomCheckoutAuto(auto) {
   return http("PUT", "/api/admin/repasse/cupom-checkout/auto", { auto: !!auto });
 }
 
+// Minutos que o envio de um produto do repasse espera o teste do cupom (0 = não espera).
+export async function adminRepasseCupomCheckoutEspera(minutos) {
+  return http("PUT", "/api/admin/repasse/cupom-checkout/espera", { minutos });
+}
+
 // Um teste pedido à mão: link do produto + código. Entra no começo da fila.
 export async function adminRepasseCupomCheckoutManual({ code, url }) {
   return http("POST", "/api/admin/repasse/cupom-checkout/manual", { code, url });
@@ -1052,7 +1057,11 @@ export async function adminPrefSet(chave, value)  { return http("PUT",  `/api/ad
 // ─── Admin / Notificações WhatsApp ─────────────────────────────────────
 export async function adminNotifConfig()          { return http("GET",  "/api/admin/notifications/config"); }
 export async function adminNotifSave(cfg)         { return http("PUT",  "/api/admin/notifications/config", cfg); }
+// Estado do cupom de cada item da fila ("Só enviar com cupom válido").
+export async function estadosCupomDaFila(groupId) { return http("GET", `/api/state/groups/${groupId}/queue/cupons`); }
 export async function adminNotifTest()            { return http("POST", "/api/admin/notifications/test"); }
+// O ML pediu verificação no Chrome: o servidor manda o link do VNC no WhatsApp.
+export async function avisarMuro({ muro, onde } = {}) { return http("POST", "/api/admin/notifications/muro", { muro, onde }); }
 export async function adminNotifGroups()          { return http("GET",  "/api/admin/whatsnimbus/groups"); }
 export async function adminNotifTemplates()               { return http("GET",  "/api/admin/notifications/templates"); }
 export async function adminNotifTemplatesSave(t)         { return http("PUT",  "/api/admin/notifications/templates", { templates: t }); }

@@ -15,6 +15,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   adminRepasseCupomCheckoutPendentes, adminRepasseCupomCheckoutAuto, adminRepasseCupomCheckoutManual,
+  adminRepasseCupomCheckoutEspera,
   adminRepasseCupomCheckoutManualRemover, errText,
 } from "../../data/api";
 import {
@@ -46,6 +47,8 @@ export default function FilaCheckoutRepasse({ temCheckout, depurar = false, temD
   const [fila, setFila] = useState(null);
   const [erro, setErro] = useState(null);
   const [salvandoAuto, setSalvandoAuto] = useState(false);
+  // O que está no campo da espera enquanto se digita; null = mostra o salvo.
+  const [esperaDigitada, setEsperaDigitada] = useState(null);
   const [adicionando, setAdicionando] = useState(false);
   const { testando, inicioEm, passo, lote, resultados, aviso, recargas } = useFilaCheckout();
   const setAviso = avisar;
@@ -136,6 +139,20 @@ export default function FilaCheckoutRepasse({ temCheckout, depurar = false, temD
     }
   };
 
+  const salvarEspera = async () => {
+    if (esperaDigitada == null) return;
+    const n = Math.min(120, Math.max(0, parseInt(esperaDigitada, 10) || 0));
+    setEsperaDigitada(null);
+    if (n === fila?.esperaCupomMin) return;
+    setFila(f => f && { ...f, esperaCupomMin: n });
+    try {
+      await adminRepasseCupomCheckoutEspera(n);
+    } catch (err) {
+      setAviso(errText(err, "Não deu pra salvar a espera."));
+    }
+    await carregar();
+  };
+
   const remover = async (item) => {
     try {
       await adminRepasseCupomCheckoutManualRemover(item.manualId);
@@ -161,6 +178,25 @@ export default function FilaCheckoutRepasse({ temCheckout, depurar = false, temD
               onChange={e => trocarAuto(e.target.checked)}
             />
             Testar automaticamente
+          </label>
+          <label
+            style={{ fontSize: 12, display: "flex", gap: 6, alignItems: "center" }}
+            title="Produto do repasse com cupom ainda não testado espera na fila até este tempo, pra sair já com o desconto. 0 = não segura."
+          >
+            Segurar envio até
+            <input
+              type="number"
+              min={0}
+              max={120}
+              aria-label="Minutos de espera pelo teste do cupom"
+              value={esperaDigitada ?? fila?.esperaCupomMin ?? ""}
+              disabled={!fila}
+              onChange={e => setEsperaDigitada(e.target.value)}
+              onBlur={salvarEspera}
+              onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+              style={{ width: 52, fontSize: 12 }}
+            />
+            min
           </label>
           <label
             style={{ fontSize: 12, display: "flex", gap: 6, alignItems: "center", cursor: temDepurar ? "pointer" : "default" }}
@@ -271,6 +307,7 @@ export default function FilaCheckoutRepasse({ temCheckout, depurar = false, temD
                     <td style={td}>
                       {item.origem === "manual" ? "manual" : `repasse · ${item.capturas ?? "?"} captura(s)`}
                       {item.motivo === "indeterminado" && <div style={{ color: "var(--color-text-secondary)" }}>nova tentativa</div>}
+                      {item.motivo === "renovar" && <div style={{ color: "var(--color-text-secondary)" }}>cupom vencido voltou</div>}
                     </td>
                     <td style={td}>{dataHora(item.criadoEm)}</td>
                     <td style={td}>

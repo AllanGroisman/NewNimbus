@@ -23,6 +23,7 @@ const EVENT_LABELS = {
   systemOnline: { label: "Sistema online",     desc: "Avisa quando o backend é (re)iniciado." },
   afiliadoCookie: { label: "Cookie de afiliado", desc: "Avisa quando o Mercado Livre recusa o cookie de um cliente ao gerar link de afiliado — e quando volta ao normal." },
   bloqueios:      { label: "Bloqueios de scraping", desc: "Avisa quando a mesma parede (CAPTCHA, muro de login) se repete no repasse, no Hub ou nos cupons — e quando volta ao normal." },
+  muroChrome:     { label: "Captcha no Chrome do servidor", desc: "Avisa na hora em que o Mercado Livre pede verificação (captcha) no Chrome do servidor, com o link do VNC para resolver. No máximo um aviso a cada 10 minutos." },
   cupons:         { label: "Cupons do ML", desc: "Resumo ao fim de cada etapa de cupons (1, 2 e 3), etapa interrompida (muro do ML, erro) e horário agendado que não rodou." },
 };
 

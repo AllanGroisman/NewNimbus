@@ -67,6 +67,12 @@ const DEFAULTS = {
   // O breaker: quanto o job fica parado depois de levar CAPTCHA/muro de login.
   // Insistir em bloqueio é o caminho mais curto pra queimar a conta do sistema.
   pausaAposBloqueioMin: 60,
+
+  // Quanto o envio de um produto do repasse espera o teste do cupom dele no
+  // checkout (scheduler.js:aguardandoCupom). Sem a espera o produto sai no tick
+  // seguinte à captura, antes de o sistema saber quanto o cupom desconta, e o
+  // {preco_com_cupom} sai sem o desconto. 0 = não segura.
+  esperaCupomMin: 15,
 };
 
 // Faixas do saneamento. O corpo do PUT chega cru do admin e estes números viram
@@ -81,6 +87,7 @@ const FAIXAS = {
   maxTentativas: [1, 20],
   esperaAposIndeterminadoHoras: [0, 720],
   pausaAposBloqueioMin: [0, 1440],
+  esperaCupomMin: [0, 120],
 };
 
 const BOOLEANOS = ["enabled", "checkoutAuto", "importarCampanha", "rasparVitrine"];

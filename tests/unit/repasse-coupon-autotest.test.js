@@ -113,13 +113,15 @@ describe("selecionar — as palavras que vão ao ML", () => {
     expect(codigos(r.testes)).toEqual(["NOVA", "ENGASGOU"]);
   });
 
-  it("ordena por cupom que chegou à fila, depois pelo visto mais recente", () => {
+  it("ordena: produto na fila nas últimas 24h primeiro; depois por cupom que chegou à fila e o visto mais recente", () => {
     const r = autotest.selecionar([
       linha({ code: "POUCO", aproveitados: 0, ultima: new Date(AGORA) }),
       linha({ code: "MUITO", aproveitados: 9, ultima: new Date(AGORA - 50 * HORA) }),
       linha({ code: "MEIO", aproveitados: 3, ultima: new Date(AGORA) }),
     ], CFG, AGORA);
-    expect(codigos(r.testes)).toEqual(["MUITO", "MEIO", "POUCO"]);
+    // MEIO tem produto esperando agora (scheduler.js:aguardandoCupom); MUITO é de
+    // dois dias atrás e POUCO nunca virou produto.
+    expect(codigos(r.testes)).toEqual(["MEIO", "MUITO", "POUCO"]);
   });
 });
 
@@ -250,3 +252,48 @@ describe("config do teste automático", () => {
     expect(cfgStore.sanitize({ lixo: 1 })).not.toHaveProperty("lixo");
   });
 });
+
+describe("selecionar — palavra aprovada cuja campanha venceu e voltou a aparecer", () => {
+  const motivos = r => r.testes.map(t => `${t.code}:${t.motivo}`);
+  const valida = (over = {}) => linha({
+    code: "SEMPREPROMO", verdict: "valid", campaignId: "13945499", inSystem: true, produtos: 1,
+    checkedAt: new Date(AGORA - 30 * 24 * HORA), expiresAt: new Date(AGORA - 10 * 24 * HORA),
+    ultima: new Date(AGORA - HORA), ...over,
+  });
+
+  it("vencida e capturada de novo depois: volta pro checkout como 'renovar'", () => {
+    expect(motivos(autotest.selecionar([valida()], CFG, AGORA))).toEqual(["SEMPREPROMO:renovar"]);
+  });
+
+  it("campanha já apagada (inSystem false) e vista depois do último teste: renovar", () => {
+    const l = valida({ inSystem: false, expiresAt: null });
+    const r = autotest.selecionar([l], CFG, AGORA);
+    expect(motivos(r)).toEqual(["SEMPREPROMO:renovar"]);
+    expect(r.pesado).toEqual([]);
+  });
+
+  it("não renova se não foi vista depois de vencer", () => {
+    const l = valida({ ultima: new Date(AGORA - 20 * 24 * HORA) });
+    expect(motivos(autotest.selecionar([l], CFG, AGORA))).toEqual([]);
+  });
+
+  it("não renova se o último teste é recente (mesma espera do indeterminado)", () => {
+    const l = valida({ checkedAt: new Date(AGORA - HORA), inSystem: false, expiresAt: null, ultima: new Date(AGORA - 10 * 60_000) });
+    expect(motivos(autotest.selecionar([l], CFG, AGORA))).toEqual([]);
+  });
+
+  it("campanha ainda vigente não renova", () => {
+    const l = valida({ expiresAt: new Date(AGORA + 24 * HORA) });
+    expect(motivos(autotest.selecionar([l], CFG, AGORA))).toEqual([]);
+  });
+
+  it("ordem: palavra das últimas 24h primeiro, a mais recente na frente, mesmo com menos capturas", () => {
+    const antiga = linha({ code: "VELHA", capturas: 50, aproveitados: 50, ultima: new Date(AGORA - 5 * 24 * HORA) });
+    const recente = linha({ code: "NOVA", capturas: 1, aproveitados: 1, ultima: new Date(AGORA - 2 * HORA) });
+    const agorinha = valida({ code: "RENOVA", ultima: new Date(AGORA - 60_000) });
+    const indet = linha({ code: "INDET", verdict: "indeterminado", checkCount: 1, checkedAt: new Date(AGORA - 10 * HORA), ultima: new Date(AGORA - 60_000) });
+    const r = autotest.selecionar([antiga, recente, indet, agorinha], { ...CFG, maxPorRodada: 10 }, AGORA);
+    expect(r.testes.map(t => t.code)).toEqual(["RENOVA", "NOVA", "VELHA", "INDET"]);
+  });
+});
+
