@@ -547,6 +547,11 @@ async function registrarCheckout({ code, url = null, material, source = "repasse
   let message = mensagemDe(resultado);
   if (vinculo?.noCatalogo) message += " · adicionado ao catálogo";
   else if (vinculo?.vinculados) message += " · ligado ao produto";
+  // Não valeu: os outros cupons de palavra da página que o teste abriu.
+  const daPagina = verdict !== "valid" && !resultado.bloqueio
+    ? await aproveitarPaginaDoTeste({ material, url })
+    : null;
+  if (daPagina?.palavras?.length) message += ` · achou na página: ${daPagina.palavras.join(", ")}`;
   // O primeiro teste no checkout de um código que só o robô antigo tinha tentado
   // recomeça a contagem: senão as 3 tentativas dele (Chrome do servidor barrado,
   // não resposta sobre o cupom) já estouravam o `maxTentativas` e o código saía da
@@ -602,7 +607,7 @@ async function registrarCheckout({ code, url = null, material, source = "repasse
     });
   }
 
-  return { resultado, verdict, message, linha, vinculo, repasse };
+  return { resultado, verdict, message, linha, vinculo, repasse, daPagina };
 }
 
 // ── A sonda do produto do repasse que chegou SEM cupom ───────────────────
@@ -656,11 +661,14 @@ async function pendentesSonda(agora = Date.now()) {
       if (!scheduler.isRepasse(g)) continue;
       for (const it of g.queue || []) {
         if (!it?.key || vistos.has(it.key) || !it.link) continue;
-        // Com palavra, só entra se o ML já a recusou — a que ainda não foi
-        // testada espera o teste dela, não a sonda.
+        // Com palavra, só entra se o teste dela já rodou e não serviu (recusada
+        // ou indeterminada) — a que ainda não foi testada espera o teste dela.
         const temPalavra = !!String(it.coupon || "").trim();
         if (temPalavra && !(await scheduler.palavraRecusada(it))) continue;
-        if (!(await scheduler.aguardandoCupom(g, it, agora))) continue;
+        // A janela do aguardandoCupom é curta; com "só cupom válido" o item
+        // barrado espera sem prazo e ainda precisa da sonda (precisaSondaBarrado).
+        if (!(await scheduler.aguardandoCupom(g, it, agora))
+          && !(await scheduler.precisaSondaBarrado(g, it, agora))) continue;
         vistos.add(it.key);
         itens.push({
           origem: "sonda", tipo: "sonda", code: chaveSonda(it.key), key: it.key, url: it.link,
@@ -673,37 +681,71 @@ async function pendentesSonda(agora = Date.now()) {
   return itens.sort((a, b) => new Date(a.criadoEm) - new Date(b.criadoEm));
 }
 
-// O material da sonda vira vínculo (lerEVincular) e a linha de `ml_checkout_probes`
-// que solta o envio. Diferente do coupons/checkout-lote.js:gravarResultado, não
-// exige o produto no catálogo: o item da fila basta. Devolve as PALAVRAS achadas.
-async function registrarSondaRepasse({ key, url, material = null, erro = null, source = "repasse-checkout" }) {
-  const k = String(key || "").trim();
-  if (!k || !url) throw Object.assign(new Error("Faltou o produto ou o link."), { status: 400 });
+// Lê a página dos cupons do checkout (`material`), liga ao produto os cupons que
+// valem nele (lerEVincular) e grava a linha de `ml_checkout_probes` de cada chave —
+// é ela que solta o item da fila (sondaRespondeu). Devolve a leitura e as PALAVRAS
+// achadas (melhorCupom só usa cupom com código). Usada pela sonda e pelo teste da
+// palavra que não deu certo (registrarCheckout).
+async function lerPaginaEVincular({ keys, url, material = null, erro = null }) {
   const { prisma } = require("../db");
   const { lerEVincular } = require("../coupons/product-coupons");
+  const chaves = [...new Set((keys || []).map(k => String(k || "").trim()).filter(Boolean))];
 
   const leitura = material && typeof material === "object"
-    ? await lerEVincular({ url, material, productKeys: [k] })
+    ? await lerEVincular({ url, material, productKeys: chaves })
     : { ok: false, motivo: erro || "A extensão não devolveu nada.", cupons: [], valem: [], gravado: null };
   const motivo = leitura.ok ? null
     : String(material?.motivo || material?.checkout?.blockedReason || leitura.motivo || erro || "").slice(0, 500) || null;
   const dados = { productUrl: String(url), probedAt: new Date(), ok: !!leitura.ok, cupons: leitura.valem.length, campaignIds: leitura.valem, motivo };
-  await prisma().mlCheckoutProbe.upsert({ where: { productKey: k }, create: { productKey: k, ...dados }, update: dados });
-  _reservas.delete(chaveSonda(k));
+  for (const k of chaves) {
+    await prisma().mlCheckoutProbe.upsert({ where: { productKey: k }, create: { productKey: k, ...dados }, update: dados });
+    _reservas.delete(chaveSonda(k));
+  }
 
-  // O que importa pro envio: as campanhas achadas que têm PALAVRA (melhorCupom só
-  // usa cupom com código).
   const palavras = leitura.valem.length
     ? (await prisma().mlCoupon.findMany({
       where: { campaignId: { in: leitura.valem.map(String) }, code: { not: null } },
       select: { code: true },
     })).map(c => c.code)
     : [];
+  return { leitura, motivo, palavras };
+}
+
+// O material da sonda vira vínculo e a linha de `ml_checkout_probes` que solta o
+// envio. Diferente do coupons/checkout-lote.js:gravarResultado, não exige o
+// produto no catálogo: o item da fila basta. Devolve as PALAVRAS achadas.
+async function registrarSondaRepasse({ key, url, material = null, erro = null, source = "repasse-checkout" }) {
+  const k = String(key || "").trim();
+  if (!k || !url) throw Object.assign(new Error("Faltou o produto ou o link."), { status: 400 });
+  const { leitura, motivo, palavras } = await lerPaginaEVincular({ keys: [k], url, material, erro });
 
   if (material?.muro && source === "repasse-checkout-auto") {
     armarBreaker({ motivo: material.muro, o_que: "O Mercado Livre pediu verificação ao sondar o checkout de um produto do repasse sem cupom, e ninguém resolveu a tempo." });
   }
   return { ok: !!leitura.ok, motivo, palavras, cupons: leitura.valem.length, cuponsNovos: leitura.gravado?.cuponsNovos || 0 };
+}
+
+// A palavra testada não deu certo, mas o teste JÁ abriu a página dos cupons do
+// checkout deste produto: os outros cupons de palavra que valem ali (o DESCONTOS
+// do TODOSITE0411, 04/11) viram vínculo agora, sem esperar a sonda fazer outra
+// viagem. A página é do carrinho DESTE produto — outro produto preso com a mesma
+// palavra ainda depende da sonda dele. Falhar aqui não mexe no veredito.
+async function aproveitarPaginaDoTeste({ material, url }) {
+  try {
+    if (!material?.htmlCupons) return null;
+    const { chavesCandidatas } = require("../coupons/quick-check");
+    const final = material.finalUrl && !material.notProductPage ? material.finalUrl : null;
+    const productUrl = final || url;
+    const keys = [...chavesCandidatas(url), ...(final ? chavesCandidatas(final) : [])];
+    if (!productUrl || !keys.length) return null;
+    const { leitura, palavras } = await lerPaginaEVincular({
+      keys, url: productUrl, material: { paginaDosCupons: { ok: true, html: material.htmlCupons } },
+    });
+    return { palavras, cupons: leitura.valem.length };
+  } catch (err) {
+    console.error(`[repasse] página dos cupons do teste: ${err.message}`);
+    return null;
+  }
 }
 
 // CAPTCHA ao buscar campanha no Chrome do servidor: insistir de 15 em 15 min só

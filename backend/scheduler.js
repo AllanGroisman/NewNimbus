@@ -704,14 +704,17 @@ async function couponRuleForItem(item) {
 // checkout (repasse/coupon-autotest.js:pendentesSonda): um cupom que já está no
 // sistema pode valer nele sem o líder ter escrito (o CASAMELI do meli.la/1KUKHgA).
 // A sonda que voltou, achando ou não, solta o item.
-// A palavra do item conta como "sem palavra" quando o ML já disse que ela não
-// existe: aí o produto vai pela sonda do checkout, que pode achar um cupom do
-// sistema que vale nele — e o envio troca a palavra ruim por ela (sendItem).
+// A palavra do item conta como "sem palavra" quando o teste dela já rodou e não
+// serviu: o ML disse que ela não existe ("invalid") OU não mostrou nem erro nem o
+// cupom aplicado ("indeterminado" — o TODOSITE0411 do Repasse Mulheres, 04/11).
+// Aí o produto vai pela sonda do checkout, que pode achar um cupom do sistema que
+// vale nele (o DESCONTOS) — e o envio troca a palavra ruim por ela (sendItem).
+// Esperar o reteste do indeterminado não adianta: ele só vem horas depois.
 async function palavraRecusada(item) {
   const palavra = String(item?.coupon || "").trim();
   if (!palavra) return false;
-  const teste = await coupons.findCodeCheck(palavra.toUpperCase(), { maxAgeHours: Infinity }).catch(() => null);
-  return teste?.verdict === "invalid";
+  const teste = await coupons.findCodeCheck(palavra.toUpperCase(), { maxAgeHours: Infinity, comIndeterminado: true }).catch(() => null);
+  return teste?.verdict === "invalid" || teste?.verdict === "indeterminado";
 }
 
 async function aguardandoCupom(group, item, agora = Date.now()) {
@@ -761,7 +764,8 @@ function soCupomValido(group) {
 // O que se sabe hoje do cupom de um item da fila:
 //   "sem_cupom" — não tem palavra, ou não dá para validar (outra loja, mensagem
 //                 original): segue o fluxo de sempre;
-//   "valido"    — o desconto é conhecido e a campanha não venceu;
+//   "valido"    — o desconto é conhecido e a campanha não venceu, ou o ML
+//                 aprovou a palavra em outro produto (palavraAprovadaVale);
 //   "invalido"  — o ML respondeu que a palavra não existe;
 //   "testando"  — ainda sem resposta do teste no checkout.
 async function estadoCupomDoItem(item, agora = Date.now()) {
@@ -771,7 +775,22 @@ async function estadoCupomDoItem(item, agora = Date.now()) {
   if (regra && !(regra.expiresAt && new Date(regra.expiresAt).getTime() <= agora)) return "valido";
   const teste = await coupons.findCodeCheck(palavra.toUpperCase(), { maxAgeHours: Infinity }).catch(() => null);
   if (teste?.verdict === "invalid") return "invalido";
+  if (palavraAprovadaVale(teste, agora)) return "valido";
   return "testando";
+}
+
+// O ML aprovou a palavra no checkout de OUTRO produto, mas a campanha dela ainda
+// não está no sistema (importação pendente ou barrada): acreditar no cupom mesmo
+// assim — decisão do usuário (04/11). O envio sai com a palavra e sem o
+// {preco_com_cupom} calculado. Só não confia em aprovação vencida (o vencimento
+// que o teste leu do cartão) nem, sem vencimento, numa de mais de 24h.
+const APROVACAO_SEM_VENCIMENTO_MS = 24 * 3600_000;
+function palavraAprovadaVale(teste, agora = Date.now()) {
+  if (teste?.verdict !== "valid") return false;
+  const vence = require("./repasse/coupons").vencimentoDoTeste(teste);
+  if (vence) return vence.getTime() > agora;
+  const quando = new Date(teste.checkedAt || 0).getTime();
+  return Number.isFinite(quando) && quando > 0 && agora - quando < APROVACAO_SEM_VENCIMENTO_MS;
 }
 
 // Com "só cupom válido" ligado, item do repasse com cupom que não vale (ou que
@@ -780,6 +799,30 @@ async function barradoPorCupom(group, item, agora = Date.now()) {
   if (!soCupomValido(group) || item?.source !== "repasse") return false;
   const estado = await estadoCupomDoItem(item, agora);
   return estado === "invalido" || estado === "testando";
+}
+
+// Com "só cupom válido" o item barrado fica na fila sem prazo — bem depois da
+// janela de `esperaCupomMin` do aguardandoCupom. Se a palavra dele já foi testada
+// e não serviu, a sonda do checkout ainda pode achar um cupom do sistema que vale
+// no produto e destravá-lo. Uma sonda por item: a que voltou depois de ele entrar
+// encerra, achando ou não (sondaRespondeu).
+async function precisaSondaBarrado(group, item, agora = Date.now()) {
+  if (!soCupomValido(group) || item?.source !== "repasse" || !item.key || !item.link) return false;
+  if (!(await barradoPorCupom(group, item, agora))) return false;
+  if (!(await palavraRecusada(item))) return false;
+  let cfg, autotest;
+  try {
+    cfg = require("./repasse/coupon-autotest-config").readConfig();
+    autotest = require("./repasse/coupon-autotest");
+    const ate = autotest.status().bloqueadoAte;
+    if (ate && agora < new Date(ate).getTime()) return false;
+  } catch {
+    return false;
+  }
+  if (!cfg.checkoutAuto || cfg.sondaSemCupom === false) return false;
+  const sonda = await autotest.sondaDoProduto(item.key).catch(() => undefined);
+  if (sonda === undefined) return false;
+  return !autotest.sondaRespondeu(sonda, item, agora);
 }
 
 // Índice do primeiro item da fila que pode sair agora; -1 se todos esperam.
@@ -1608,7 +1651,7 @@ async function addItemToGroup(userId, group, item, { force = false } = {}) {
 
 module.exports = {
   _setConferirPrecoML, conferirPrecoNaNossaLanding,
-  aguardandoCupom, palavraRecusada, primeiroProntoParaEnvio, estadoCupomDoItem, estadosCupomDaFila, soCupomValido,
+  aguardandoCupom, palavraRecusada, precisaSondaBarrado, primeiroProntoParaEnvio, estadoCupomDoItem, estadosCupomDaFila, soCupomValido,
   start, stop, tick, sendNextNow, refillNow, manualAdd, addItemToGroup,
   isRepasse, isAutoApprove, isAutoRefill, resolveSources, activeSources, sourcesForCampaign,
   status, processSendJob,

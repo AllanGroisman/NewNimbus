@@ -590,13 +590,15 @@ async function listCodeChecks({ limit = 50 } = {}) {
 // Uma palavra já conhecida — evita ir ao ML de novo por algo que já foi testado
 // hoje. `maxAgeHours` existe porque cupom vence: a resposta de ontem não vale
 // para sempre.
-async function findCodeCheck(code, { maxAgeHours = 24 } = {}) {
+// `comIndeterminado` devolve também o "não deu pra saber" — pra quem precisa saber
+// que o teste RODOU (scheduler.js:palavraRecusada), não pra usar como cache.
+async function findCodeCheck(code, { maxAgeHours = 24, comIndeterminado = false } = {}) {
   if (!code) return null;
   const r = await prisma().mlCouponCode.findUnique({ where: { code } });
   if (!r) return null;
   // Engasgo do ML não é resposta: guardá-lo em cache prenderia a palavra num
   // "não deu pra saber" por horas, quando repetir custa só um Chrome.
-  if (r.verdict === "indeterminado") return null;
+  if (r.verdict === "indeterminado" && !comIndeterminado) return null;
   const idadeH = (Date.now() - new Date(r.checkedAt).getTime()) / 36e5;
   return idadeH <= maxAgeHours ? r : null;
 }

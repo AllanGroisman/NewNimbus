@@ -136,6 +136,22 @@ describe("só enviar com cupom válido", () => {
     expect(await scheduler.estadoCupomDoItem(item(), AGORA)).toBe("valido");
   });
 
+  // Aprovada no checkout de outro produto, campanha ainda fora do sistema.
+  it("palavra aprovada vale mesmo sem a campanha no sistema", async () => {
+    const aprovada = (over) => ({ verdict: "valid", checkedAt: new Date(AGORA - 3600_000), raw: {}, ...over });
+    coupons.findCodeCheck.mockResolvedValue(aprovada({ raw: { vencimento: "2026-11-03" } }));
+    expect(await scheduler.estadoCupomDoItem(item(), AGORA)).toBe("valido");
+    expect(await scheduler.primeiroProntoParaEnvio(SO_VALIDO, [item({ addedAt: new Date(AGORA - 60 * MIN).toISOString() })], AGORA)).toBe(0);
+    // Vencida pelo cartão do teste.
+    coupons.findCodeCheck.mockResolvedValue(aprovada({ raw: { vencimento: "2026-11-02" } }));
+    expect(await scheduler.estadoCupomDoItem(item(), AGORA)).toBe("testando");
+    // Sem vencimento: só uma aprovação de menos de 24h.
+    coupons.findCodeCheck.mockResolvedValue(aprovada());
+    expect(await scheduler.estadoCupomDoItem(item(), AGORA)).toBe("valido");
+    coupons.findCodeCheck.mockResolvedValue(aprovada({ checkedAt: new Date(AGORA - 48 * 3600_000) }));
+    expect(await scheduler.estadoCupomDoItem(item(), AGORA)).toBe("testando");
+  });
+
   it("cupom vencido não conta como válido", async () => {
     coupons.findCouponByCode.mockResolvedValue({ ...valido, expiresAt: new Date(AGORA - 1000) });
     expect(await scheduler.estadoCupomDoItem(item(), AGORA)).toBe("testando");
@@ -168,6 +184,61 @@ describe("só enviar com cupom válido", () => {
     coupons.findCodeCheck.mockResolvedValue({ verdict: "invalid" });
     const r = await scheduler.estadosCupomDaFila({ ...SO_VALIDO, queue: [item({ id: 7 }), item({ key: "x", coupon: "" })] }, AGORA);
     expect(r).toEqual({ ativo: true, estados: { 7: "invalido", x: "sem_cupom" } });
+  });
+});
+
+// TODOSITE0411 no Repasse Mulheres (04/11): o teste no checkout voltou
+// "indeterminado", o item ficou em "testando" sem prazo e a sonda — que acharia o
+// DESCONTOS — nunca rodou, porque só valia pra palavra "invalid" e dentro da
+// janela de 15 min.
+describe("palavra que não serviu: sonda do checkout", () => {
+  const SO_VALIDO = { id: 2, scraping: { kind: "repasse", autoSend: true, repasse: { soCupomValido: true } } };
+  const preso = (over = {}) => item({
+    coupon: "TODOSITE0411", link: "https://produto.mercadolivre.com.br/MLB-1",
+    addedAt: new Date(AGORA - 6 * 3600_000).toISOString(), ...over,
+  });
+  const indeterminado = async (p, o) => (o?.comIndeterminado ? { verdict: "indeterminado" } : null);
+
+  it("indeterminado conta como palavra recusada; sem teste, não", async () => {
+    expect(await scheduler.palavraRecusada(preso())).toBe(false);
+    coupons.findCodeCheck.mockImplementation(indeterminado);
+    expect(await scheduler.palavraRecusada(preso())).toBe(true);
+    // O estado na fila segue "testando" (o reteste ainda pode aprovar).
+    expect(await scheduler.estadoCupomDoItem(preso(), AGORA)).toBe("testando");
+  });
+
+  it("indeterminada dentro da janela: espera a sonda", async () => {
+    coupons.findCodeCheck.mockImplementation(indeterminado);
+    autotest.sondaDoProduto.mockResolvedValue(null);
+    const novo = preso({ addedAt: new Date(AGORA - 2 * MIN).toISOString() });
+    expect(await scheduler.aguardandoCupom(REPASSE, novo, AGORA)).toBe(true);
+  });
+
+  it("barrado fora da janela: pede a sonda até ela voltar", async () => {
+    coupons.findCodeCheck.mockImplementation(indeterminado);
+    autotest.sondaDoProduto.mockResolvedValue(null);
+    expect(await scheduler.aguardandoCupom(SO_VALIDO, preso(), AGORA)).toBe(false);
+    expect(await scheduler.precisaSondaBarrado(SO_VALIDO, preso(), AGORA)).toBe(true);
+    // Sonda voltou depois de ele entrar: não repete.
+    autotest.sondaDoProduto.mockResolvedValue({ probedAt: new Date(AGORA - MIN), ok: false });
+    expect(await scheduler.precisaSondaBarrado(SO_VALIDO, preso(), AGORA)).toBe(false);
+  });
+
+  it("recusada também; sem a opção, ou palavra não testada, ou freio armado: não", async () => {
+    autotest.sondaDoProduto.mockResolvedValue(null);
+    expect(await scheduler.precisaSondaBarrado(SO_VALIDO, preso(), AGORA)).toBe(false);
+    coupons.findCodeCheck.mockResolvedValue({ verdict: "invalid" });
+    expect(await scheduler.precisaSondaBarrado(SO_VALIDO, preso(), AGORA)).toBe(true);
+    expect(await scheduler.precisaSondaBarrado(REPASSE, preso(), AGORA)).toBe(false);
+    autotest.status.mockReturnValue({ bloqueadoAte: new Date(AGORA + 60 * MIN).toISOString() });
+    expect(await scheduler.precisaSondaBarrado(SO_VALIDO, preso(), AGORA)).toBe(false);
+  });
+
+  it("depois que a sonda liga um cupom do sistema, o item fica válido", async () => {
+    coupons.findCodeCheck.mockImplementation(indeterminado);
+    coupons.couponsListForKeys.mockResolvedValue(new Map([["k1", [{ code: "DESCONTOS", kind: "percent", value: 10, expiresAt: new Date(AGORA + 3600_000) }]]]));
+    expect(await scheduler.estadoCupomDoItem(preso(), AGORA)).toBe("valido");
+    expect(await scheduler.precisaSondaBarrado(SO_VALIDO, preso(), AGORA)).toBe(false);
   });
 });
 

@@ -345,10 +345,21 @@ describe("cupom que valeu vira vínculo com o produto", () => {
   });
 
   it("cupom recusado não cria nada", async () => {
-    const r = await autotest.registrarCheckout({ code: "CASA25", material: valeu({ cartaoDepois: null, erroCampo: "O cupom não está mais disponível." }) });
+    const r = await autotest.registrarCheckout({ code: "CASA25", material: valeu({ cartaoDepois: null, erroCampo: "O cupom não está mais disponível.", htmlCupons: null }) });
     expect(r.vinculo).toBeNull();
     expect(await prisma().mlCoupon.count()).toBe(0);
     expect(await prisma().mlCouponProduct.count()).toBe(0);
+  });
+
+  // Com a página dos cupons: a palavra recusada não ganha campanha, mas o cupom
+  // que a página mostra valendo no carrinho vira vínculo (aproveitarPaginaDoTeste).
+  it("cupom recusado: a página do teste liga o que vale, sem a palavra recusada", async () => {
+    const r = await autotest.registrarCheckout({ code: "CASA25", material: valeu({ cartaoDepois: null, erroCampo: "O cupom não está mais disponível." }) });
+    expect(r.vinculo).toBeNull();
+    expect(r.daPagina).toMatchObject({ cupons: 1, palavras: [] });
+    const cupom = await prisma().mlCoupon.findUnique({ where: { campaignId: "14167118" } });
+    expect(cupom?.code ?? null).not.toBe("CASA25");
+    expect(await prisma().mlCouponProduct.count({ where: { campaignId: "14167118", origem: "checkout" } })).toBeGreaterThanOrEqual(1);
   });
 
   // Os outros produtos que o grupo mandou com o mesmo código (repasse/coupon-products.js).
@@ -753,6 +764,31 @@ describe("a sonda do produto sem cupom", () => {
     expect((mapa.get(KEY) || []).map(c => c.code)).toContain("CASAMELI");
   });
 
+  // TODOSITE0411 (04/11): a palavra não deu certo, mas o teste já estava na
+  // página dos cupons — o DESCONTOS que valia ali vira vínculo na mesma ida.
+  it("palavra recusada: o teste aproveita a página e liga os cupons de palavra que valem", async () => {
+    await prisma().mlCoupon.create({ data: { campaignId: "14167118", title: "Casa", kind: "percent", value: 10, code: "CASAMELI" } });
+    const { chavesCandidatas } = require(path.join(backendDir, "coupons", "quick-check"));
+    const [chave] = chavesCandidatas(URL);
+    const r = await autotest.registrarCheckout({
+      code: "TODOSITE0411", url: URL,
+      material: { ...MATERIAL.indisponivel, htmlCupons: html },
+    });
+    expect(r.verdict).not.toBe("valid");
+    expect(r.daPagina).toMatchObject({ palavras: ["CASAMELI"] });
+    expect(r.message).toContain("achou na página: CASAMELI");
+    expect(await prisma().mlCheckoutProbe.findUnique({ where: { productKey: chave } })).toMatchObject({ ok: true, cupons: 1 });
+    const coupons = require(path.join(backendDir, "coupons"));
+    const mapa = await coupons.couponsListForKeys([chave]);
+    expect((mapa.get(chave) || []).map(c => c.code)).toContain("CASAMELI");
+  });
+
+  it("palavra recusada sem a página: nada muda", async () => {
+    const r = await autotest.registrarCheckout({ code: "TODOSITE0411", url: URL, material: MATERIAL.indisponivel });
+    expect(r.daPagina).toBeNull();
+    expect(await prisma().mlCheckoutProbe.count()).toBe(0);
+  });
+
   it("falha da extensão grava a sonda (solta o envio) sem vínculo", async () => {
     const r = await autotest.registrarSondaRepasse({ key: KEY, url: URL, erro: "timeout" });
     expect(r).toMatchObject({ ok: false, palavras: [] });
@@ -791,6 +827,18 @@ describe("a sonda do produto sem cupom", () => {
     storage.loadState.mockResolvedValue({ groups: [{ id: 9, scraping: { kind: "repasse" }, queue: [{ ...it1, coupon: "NOVO" }, { ...it1, coupon: "RUIM" }] }] });
     expect((await autotest.pendentesCheckout()).itens.filter(i => i.tipo === "sonda"))
       .toEqual([expect.objectContaining({ key: KEY, motivo: "cupom-invalido" })]);
+
+    // "Só cupom válido": palavra indeterminada, item preso há horas (fora da
+    // janela de 15 min) — ainda entra na sonda (TODOSITE0411, 04/11).
+    check.mockImplementation(async (p, o) => (p === "TODOSITE0411" && o?.comIndeterminado ? { verdict: "indeterminado" } : null));
+    const velho = new Date(Date.now() - 6 * 3600_000).toISOString();
+    storage.loadState.mockResolvedValue({ groups: [{ id: 9, scraping: { kind: "repasse", repasse: { soCupomValido: true } }, queue: [{ ...it1, coupon: "TODOSITE0411", addedAt: velho }] }] });
+    expect((await autotest.pendentesCheckout()).itens.filter(i => i.tipo === "sonda"))
+      .toEqual([expect.objectContaining({ key: KEY, motivo: "cupom-invalido" })]);
+    // Sem a opção, o mesmo item velho já saiu da espera: nada de sonda.
+    storage.loadState.mockResolvedValue({ groups: [{ id: 9, scraping: { kind: "repasse" }, queue: [{ ...it1, coupon: "TODOSITE0411", addedAt: velho }] }] });
+    expect((await autotest.pendentesCheckout()).itens.filter(i => i.tipo === "sonda")).toEqual([]);
+
     check.mockRestore();
     storage.loadState.mockResolvedValue({ groups: [{ id: 9, scraping: { kind: "repasse" }, queue: [it1, { ...it1 }] }] });
 
