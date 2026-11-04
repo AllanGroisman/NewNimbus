@@ -1032,8 +1032,9 @@ export async function adminRepasseCupomCheckoutReivindicar(code) {
   return http("POST", "/api/admin/repasse/cupom-checkout/reivindicar", { code });
 }
 
-export async function adminRepasseCupomCheckoutResultado({ code, url, material, source, durationMs, manualId = null }) {
-  return http("POST", "/api/admin/repasse/cupom-checkout/resultado", { code, url, material, source, durationMs, manualId });
+// `erro` sem `material` = a extensão falhou no meio do teste.
+export async function adminRepasseCupomCheckoutResultado({ code, url, material, source, durationMs, manualId = null, erro }) {
+  return http("POST", "/api/admin/repasse/cupom-checkout/resultado", { code, url, material, source, durationMs, manualId, erro });
 }
 
 // Resumo da janela (1h/24h/7d): totais por resultado, por motivo e taxa por loja.

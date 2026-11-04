@@ -4061,7 +4061,16 @@ app.post("/api/admin/repasse/cupom-checkout/sonda", auth.requireAuth, auth.requi
 });
 
 app.post("/api/admin/repasse/cupom-checkout/resultado", auth.requireAuth, auth.requireAdmin, async (req, res) => {
-  const { code, url, material, source, durationMs, manualId } = req.body || {};
+  const { code, url, material, source, durationMs, manualId, erro } = req.body || {};
+  // A extensão falhou no meio: sem material, só o erro. Solta a reserva e vai pro diário.
+  if (code && erro && !material) {
+    try {
+      return res.json(await require("./repasse/coupon-autotest").registrarFalhaCheckout({ code, url: url || null, erro: String(erro), source, durationMs }));
+    } catch (err) {
+      if (err.status === 400) return res.status(400).json({ error: err.message });
+      return httpErrors.serverError(res, err, { req, ctx: "POST /api/admin/repasse/cupom-checkout/resultado (falha)" });
+    }
+  }
   if (!code || !material || typeof material !== "object") return res.status(400).json({ error: "Faltou o código ou o material do teste." });
   try {
     const autotest = require("./repasse/coupon-autotest");

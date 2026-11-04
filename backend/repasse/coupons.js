@@ -20,6 +20,16 @@ const { Prisma } = require("@prisma/client");
 
 const PAGE_SIZE_MAX = 200;
 
+// O "vence 04/10/2026" que o teste no checkout leu (`raw.vencimento`, YYYY-MM-DD),
+// como o fim desse dia no horário de Brasília. null se não houver ou não fizer sentido.
+function vencimentoDoTeste(chk) {
+  if (chk?.verdict !== "valid") return null;
+  const v = chk?.raw?.vencimento;
+  if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+  const d = new Date(`${v}T23:59:59.999-03:00`);
+  return Number.isFinite(d.getTime()) ? d : null;
+}
+
 // Os desfechos em que o link virou produto de verdade. Serve pra tela dizer
 // "esse cupom rendeu N produtos" e não só "apareceu N vezes" — cupom que só
 // aparece em link descartado não vale o teste.
@@ -181,7 +191,10 @@ async function aggregate({ days = 90, q = "" } = {}) {
       // "trazer campanha" — não há FK entre `ml_coupon_codes` e `ml_coupons`.
       inSystem: chk?.campaignId ? cupomById.has(chk.campaignId) : null,
       couponTitle: cupom?.title ?? null,
-      expiresAt: cupom?.expiresAt ?? null,
+      // Campanha fora do sistema (a limpeza apaga a vencida): o vencimento que o
+      // próprio teste no checkout leu no cartão. Sem ele, o MODAML de campanha morta
+      // parecia só "não importada" e o robô passou 24h tentando trazê-la.
+      expiresAt: cupom ? cupom.expiresAt ?? null : vencimentoDoTeste(chk),
       produtos: chk?.campaignId ? (produtosById.get(chk.campaignId) || 0) : 0,
       produtosVitrine: chk?.campaignId ? (daVitrineById.get(chk.campaignId) || 0) : 0,
       // null = a campanha não está aqui (nem se sabe).
@@ -414,6 +427,7 @@ module.exports = {
   // A fila de trabalho do coupon-autotest.js. Exportado (e não recriado lá) pra
   // tela e job lerem exatamente o mesmo cruzamento log × ml_coupon_codes.
   aggregate,
+  vencimentoDoTeste,
   STATUS,
   OUTCOMES_APROVEITADOS,
   OUTCOMES_CUPOM,

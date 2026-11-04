@@ -318,7 +318,9 @@ export default function FilaCheckoutRepasse({ temCheckout, depurar = false, temD
             </thead>
             <tbody>
               {itens.map(item => {
-                const ocupado = testando === item.code || item.reservado;
+                // Reservado por falha da extensão não é "testando": mostra o erro e
+                // deixa o Testar à mão; só a fila automática espera os 10 min.
+                const ocupado = testando === item.code || (item.reservado && !item.falhou);
                 return (
                   <tr key={`${item.origem}-${item.manualId || item.code}`} style={{ borderBottom: "0.5px solid var(--color-border-tertiary)" }}>
                     <td style={{ ...td, fontFamily: item.tipo === "sonda" ? undefined : "monospace", fontWeight: 500 }}>
@@ -340,6 +342,11 @@ export default function FilaCheckoutRepasse({ temCheckout, depurar = false, temD
                       {item.motivo === "indeterminado" && <div style={{ color: "var(--color-text-secondary)" }}>nova tentativa</div>}
                       {item.motivo === "renovar" && <div style={{ color: "var(--color-text-secondary)" }}>cupom vencido voltou</div>}
                       {item.motivo === "cupom-invalido" && <div style={{ color: "var(--color-text-secondary)" }}>cupom do líder não vale — procurando outro</div>}
+                      {item.falhou && testando !== item.code && (
+                        <div style={{ color: "var(--warn-text)" }} title={item.falhou.message}>
+                          ⚠ último teste não terminou ({dataHora(item.falhou.em)})
+                        </div>
+                      )}
                     </td>
                     <td style={td}>{dataHora(item.criadoEm)}</td>
                     <td style={td}>

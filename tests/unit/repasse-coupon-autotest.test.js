@@ -282,6 +282,13 @@ describe("selecionar — palavra aprovada cuja campanha venceu e voltou a aparec
     expect(motivos(autotest.selecionar([l], CFG, AGORA))).toEqual([]);
   });
 
+  it("vencida mas testada há pouco: nem renova ainda, nem busca a campanha morta (MODAML)", () => {
+    const l = valida({ inSystem: false, checkedAt: new Date(AGORA - HORA), produtos: 0 });
+    const r = autotest.selecionar([l], CFG, AGORA);
+    expect(motivos(r)).toEqual([]);
+    expect(r.pesado).toEqual([]);
+  });
+
   it("campanha ainda vigente não renova", () => {
     const l = valida({ expiresAt: new Date(AGORA + 24 * HORA) });
     expect(motivos(autotest.selecionar([l], CFG, AGORA))).toEqual([]);

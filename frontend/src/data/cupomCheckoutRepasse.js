@@ -24,6 +24,15 @@ export async function testarNoCheckout(code, url, { source = "repasse-checkout",
   const c = String(code || "").trim().toUpperCase();
   if (!c || !url) throw new Error("Faltou o código ou o link do produto.");
   const t0 = Date.now();
-  const material = await cupomNoCheckout({ url, code: c, depurar }, { onProgresso });
+  let material;
+  try {
+    material = await cupomNoCheckout({ url, code: c, depurar }, { onProgresso });
+  } catch (err) {
+    // A extensão desistiu no meio: o servidor precisa saber, senão o cupom fica
+    // reservado ("testando") por meia hora e a tentativa some do diário.
+    const erro = err?.message || String(err || "a extensão não respondeu");
+    await adminRepasseCupomCheckoutResultado({ code: c, url, erro, source, manualId, durationMs: Date.now() - t0 }).catch(() => {});
+    throw err;
+  }
   return adminRepasseCupomCheckoutResultado({ code: c, url, material, source, manualId, durationMs: Date.now() - t0 });
 }

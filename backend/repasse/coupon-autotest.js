@@ -60,6 +60,10 @@ const _status = {
   // diria "12 puladas" sem dizer por quê, que é a única coisa que se quer saber.
   pulada: null,
   bloqueadoAte: null,
+  // CAPTCHA no Chrome DO SERVIDOR (busca de campanha). Separado do `bloqueadoAte`,
+  // que é o muro na aba do admin: o servidor barrado não impede a extensão de
+  // testar no checkout — e é esse teste que destrava a palavra.
+  buscaPausadaAte: null,
   lastError: null,
   nextRunAt: null,
 };
@@ -144,6 +148,9 @@ function selecionar(linhas, cfg, agora = Date.now()) {
 
     // Daqui pra baixo a palavra é uma campanha de verdade. O que falta é trazê-la.
     if (!l.campaignId) continue;
+    // Campanha que já venceu (o vencimento vem do teste quando ela nem está mais
+    // aqui): trazer ou raspar não adianta nada. Espera o "renovar" acima.
+    if (l.expiresAt && new Date(l.expiresAt).getTime() <= agora) continue;
 
     if (!l.inSystem) {
       if (cfg.importarCampanha) importacoes.push({ code: l.code, campaignId: l.campaignId, linha: l });
@@ -271,7 +278,11 @@ async function runOnce({ manual = false } = {}) {
       return await pular("sem-sessao", "Sem sessão do Mercado Livre do sistema — cole o cookie em Admin › Mercado Livre.");
     }
 
-    const { pesado } = selecionar(linhas, cfg);
+    const buscaPausada = !manual && _status.buscaPausadaAte && Date.now() < new Date(_status.buscaPausadaAte).getTime();
+    const { pesado } = buscaPausada ? { pesado: [] } : selecionar(linhas, cfg);
+    if (buscaPausada) {
+      resumo.pulada = `O ML pediu verificação no Chrome do servidor; a busca de campanhas volta em ${new Date(_status.buscaPausadaAte).toLocaleString("pt-BR")}.`;
+    }
 
     // As palavras NÃO são mais testadas aqui. O teste de palavra solta em /cupons,
     // neste Chrome do servidor, voltava "o ML não respondeu" para todo cupom (o ML
@@ -289,6 +300,10 @@ async function runOnce({ manual = false } = {}) {
             message: r.message || null,
           });
           if (r.ok) resumo.importados += 1;
+          if (!r.ok && kindDoBloqueio(r.message)) {
+            pausarBuscaDeCampanha();
+            break;
+          }
         } else {
           // A vitrine da página do cupom, no Chrome do servidor.
           const r = await sync.syncOneCoupon(alvo.campaignId);
@@ -307,6 +322,10 @@ async function runOnce({ manual = false } = {}) {
           errorKind: classifyFromText(err.message),
           message: err.message,
         });
+        if (kindDoBloqueio(err.message)) {
+          pausarBuscaDeCampanha();
+          break;
+        }
       }
     }
 
@@ -358,12 +377,47 @@ async function importarEsperando(sync, campaignId, cfg) {
 // com um muro, a extensão espera o humano até 25 min. Passado isso, a aba morreu.
 const RESERVA_MS = 30 * 60_000;
 const _reservas = new Map();   // code → expira em (ms)
+// A extensão desistiu no meio (erro, tempo esgotado): a reserva vira uma espera
+// curta, pra fila automática não reabrir o mesmo cupom em seguida, e a tela mostra
+// o que deu errado em vez de "testando" por meia hora.
+const FALHA_ESPERA_MS = 10 * 60_000;
+const _falhas = new Map();     // code → { em, message }
 
 function reservado(code, agora = Date.now()) {
   const ate = _reservas.get(code);
   if (ate && ate > agora) return true;
   _reservas.delete(code);
   return false;
+}
+
+// A última falha da extensão neste código, enquanto a espera dela vale.
+function falhou(code, agora = Date.now()) {
+  const f = _falhas.get(code);
+  if (f && reservado(code, agora)) return f;
+  _falhas.delete(code);
+  return null;
+}
+
+// A extensão não terminou o teste: nada de veredito (não foi o ML quem respondeu),
+// mas fica no diário — sem isso a tentativa sumia e o cupom parecia "testando" pra
+// sempre, de 30 em 30 min (o MODAML de 04/11).
+async function registrarFalhaCheckout({ code, url = null, erro, source = "repasse-checkout", durationMs = null }) {
+  const c = String(code || "").trim().toUpperCase();
+  if (!c) throw Object.assign(new Error("Código vazio."), { status: 400 });
+  const texto = String(erro || "a extensão não respondeu").slice(0, 400);
+  const message = `A extensão não terminou o teste: ${texto}`;
+  const agora = Date.now();
+  _reservas.set(c, agora + FALHA_ESPERA_MS);
+  _falhas.set(c, { em: new Date(agora).toISOString(), message });
+  await logAutotest({
+    code: c, action: ACTION.TEST, ok: false, verdict: null, url,
+    errorKind: classifyFromText(texto), message,
+    durationMs: Number.isFinite(durationMs) ? Math.round(durationMs) : null,
+  });
+  if (source === "repasse-checkout-auto" && kindDoBloqueio(texto)) {
+    armarBreaker({ motivo: kindDoBloqueio(texto), o_que: "O Mercado Livre pediu verificação no teste de cupom do repasse, e a extensão desistiu." });
+  }
+  return { ok: false, message };
 }
 
 // O teste de palavra do robô antigo não conta como tentativa: aquele
@@ -398,7 +452,7 @@ async function pendentesCheckout({ limit = 50 } = {}) {
     vistos.add(m.code);
     itens.push({
       origem: "manual", manualId: String(m.id), code: m.code, url: m.url,
-      criadoEm: m.createdAt, motivo: "manual", reservado: reservado(m.code),
+      criadoEm: m.createdAt, motivo: "manual", reservado: reservado(m.code), falhou: falhou(m.code),
     });
   }
 
@@ -417,7 +471,7 @@ async function pendentesCheckout({ limit = 50 } = {}) {
     itens.push({
       origem: "repasse", code: t.code, url: outroLink.get(t.code) || t.linha.link, motivo: t.motivo,
       capturas: t.linha.capturas, criadoEm: t.linha.primeira, ultima: t.linha.ultima,
-      reservado: reservado(t.code),
+      reservado: reservado(t.code), falhou: falhou(t.code),
     });
   }
 
@@ -469,7 +523,8 @@ async function removerManual(id) {
 function reivindicarCheckout(code) {
   const c = String(code || "").trim().toUpperCase();
   if (!c) return { ok: false };
-  if (reservado(c)) return { ok: false };
+  if (reservado(c) && !falhou(c)) return { ok: false };
+  _falhas.delete(c);
   _reservas.set(c, Date.now() + RESERVA_MS);
   return { ok: true, code: c };
 }
@@ -503,6 +558,7 @@ async function registrarCheckout({ code, url = null, material, source = "repasse
     recomecarContagem: !!anterior && !FONTES_DO_CHECKOUT.has(anterior.source),
   });
   _reservas.delete(c);
+  _falhas.delete(c);
 
   // Aprovado: os outros produtos que o repasse trouxe com este código entram
   // ligados a ele também, como vínculo fraco (repasse/coupon-products.js). Depois
@@ -650,6 +706,14 @@ async function registrarSondaRepasse({ key, url, material = null, erro = null, s
   return { ok: !!leitura.ok, motivo, palavras, cupons: leitura.valem.length, cuponsNovos: leitura.gravado?.cuponsNovos || 0 };
 }
 
+// CAPTCHA ao buscar campanha no Chrome do servidor: insistir de 15 em 15 min só
+// queima a conta (foram 66 seguidas no MODAML). Pausa só a busca, pelo mesmo tempo
+// do freio do checkout.
+function pausarBuscaDeCampanha() {
+  const cfg = cfgStore.readConfig();
+  _status.buscaPausadaAte = new Date(Date.now() + cfg.pausaAposBloqueioMin * 60_000).toISOString();
+}
+
 // Muro na aba do admin: a fila automática para por um tempo, e o grupo de admin
 // fica sabendo — a extensão já trouxe a aba pra frente e esperou alguém resolver.
 function armarBreaker({ motivo, o_que }) {
@@ -738,14 +802,15 @@ function status() {
 function _resetEstado() {
   _running = false;
   _reservas.clear();
+  _falhas.clear();
   Object.assign(_status, {
     lastRunAt: null, lastDuration: null, testados: 0, importados: 0,
-    vitrines: 0, pulada: null, bloqueadoAte: null, lastError: null, nextRunAt: null,
+    vitrines: 0, pulada: null, bloqueadoAte: null, buscaPausadaAte: null, lastError: null, nextRunAt: null,
   });
 }
 
 module.exports = {
   start, stop, status, runOnce, selecionar, kindDoBloqueio, ACTION, _resetEstado,
-  pendentesCheckout, reivindicarCheckout, registrarCheckout, adicionarManual, removerManual,
+  pendentesCheckout, reivindicarCheckout, registrarCheckout, registrarFalhaCheckout, adicionarManual, removerManual,
   pendentesSonda, registrarSondaRepasse, sondaDoProduto, sondaRespondeu, chaveSonda,
 };

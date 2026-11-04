@@ -25,6 +25,7 @@ const backendDir = path.resolve(__dirname, "..", "..", "backend");
 const autotest = require(path.join(backendDir, "repasse", "coupon-autotest.js"));
 const autotestLog = require(path.join(backendDir, "repasse", "coupon-autotest-log.js"));
 const sync = require(path.join(backendDir, "coupons", "sync.js"));
+const repasseCoupons = require(path.join(backendDir, "repasse", "coupons.js"));
 const affiliate = require(path.join(backendDir, "scraping", "affiliate.js"));
 const { prisma } = require(path.join(backendDir, "db.js"));
 
@@ -58,10 +59,10 @@ const MATERIAL = {
 };
 
 // A palavra já testada antes, do jeito que o checkWord a deixaria.
-async function palavraTestada(code, { verdict, campaignId = null, checkCount = 1, horasAtras = 0 } = {}) {
+async function palavraTestada(code, { verdict, campaignId = null, checkCount = 1, horasAtras = 0, raw = {} } = {}) {
   await prisma().mlCouponCode.create({
     data: {
-      code, verdict, campaignId, checkCount,
+      code, verdict, campaignId, checkCount, raw,
       source: "repasse-auto",
       checkedAt: new Date(Date.now() - horasAtras * 3600_000),
     },
@@ -166,6 +167,26 @@ describe("a fila do teste no checkout", () => {
     expect(autotest.reivindicarCheckout("A1000").ok).toBe(false);
     const { itens } = await autotest.pendentesCheckout();
     expect(Object.fromEntries(itens.map(i => [i.code, i.reservado]))).toEqual({ A1000: true, B1000: false });
+  });
+
+  it("extensão que desiste no meio: vai pro diário, sai do 'testando' e a fila espera um pouco (MODAML)", async () => {
+    await capturado("FALHOU1");
+    autotest.reivindicarCheckout("FALHOU1");
+    const r = await autotest.registrarFalhaCheckout({ code: "falhou1", url: "https://www.mercadolivre.com.br/p/MLB9", erro: "tempo esgotado" });
+    expect(r.ok).toBe(false);
+
+    const log = await logDe("FALHOU1");
+    expect(log[0]).toMatchObject({ action: "test", ok: false, verdict: null });
+    expect(log[0].message).toContain("tempo esgotado");
+    // Nada de veredito: não foi o ML quem respondeu.
+    expect(await prisma().mlCouponCode.findUnique({ where: { code: "FALHOU1" } })).toBeNull();
+
+    const [item] = (await autotest.pendentesCheckout()).itens;
+    expect(item).toMatchObject({ code: "FALHOU1", reservado: true });
+    expect(item.falhou.message).toContain("tempo esgotado");
+    // O Testar à mão pode pegar de novo na hora, e aí a falha some.
+    expect(autotest.reivindicarCheckout("FALHOU1").ok).toBe(true);
+    expect((await autotest.pendentesCheckout()).itens[0].falhou).toBeNull();
   });
 
   it("o pedido manual vem antes do repasse, e o mesmo código não aparece duas vezes", async () => {
@@ -542,6 +563,46 @@ describe("trazer a campanha e a vitrine", () => {
   });
 });
 
+describe("campanha morta e CAPTCHA na busca (MODAML)", () => {
+  const CAPTCHA = "O Mercado Livre pediu verificação (CAPTCHA) — tente de novo daqui a alguns minutos.";
+
+  it("palavra aprovada numa campanha que já venceu e sumiu volta pro checkout, sem buscar a campanha morta", async () => {
+    // O teste de ontem deu indeterminado: manteve o "valid" de outubro e renovou o checkedAt.
+    await palavraTestada("MODAML", { verdict: "valid", campaignId: "14380574", horasAtras: 2, raw: { vencimento: "2026-10-04" } });
+    await capturado("MODAML");
+    const linha = (await repasseCoupons.aggregate({ days: 30 })).find(l => l.code === "MODAML");
+    expect(linha.inSystem).toBe(false);
+    expect(new Date(linha.expiresAt).toISOString()).toBe("2026-10-05T02:59:59.999Z");
+
+    const startImport = vi.spyOn(sync, "startImport");
+    await autotest.runOnce();
+    expect(startImport).not.toHaveBeenCalled();
+  });
+
+  it("CAPTCHA ao buscar a campanha pausa só a busca — a fila do checkout segue no automático", async () => {
+    await capturado("CAPA1");
+    await capturado("CAPA2");
+    await palavraTestada("CAPA1", { verdict: "valid", campaignId: "901" });
+    await palavraTestada("CAPA2", { verdict: "valid", campaignId: "902" });
+    const cfgStore = require(path.join(backendDir, "repasse", "coupon-autotest-config.js"));
+    vi.spyOn(cfgStore, "readConfig").mockReturnValue({ ...cfgStore.DEFAULTS, maxImportsPorRodada: 5 });
+    const startImport = vi.spyOn(sync, "startImport").mockRejectedValue(new Error(CAPTCHA));
+
+    await autotest.runOnce();
+    expect(startImport).toHaveBeenCalledTimes(1);
+    expect(autotest.status().buscaPausadaAte).toBeTruthy();
+    expect(autotest.status().bloqueadoAte).toBeNull();
+    expect((await autotest.pendentesCheckout()).auto).toBe(true);
+
+    // A próxima rodada da agenda não volta lá; o "Rodar agora" ainda pode.
+    await autotest.runOnce();
+    expect(startImport).toHaveBeenCalledTimes(1);
+    expect(autotest.status().pulada).toContain("Chrome do servidor");
+    await autotest.runOnce({ manual: true });
+    expect(startImport).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("o diário", () => {
   it("lista do mais recente pro mais antigo e pagina", async () => {
     await capturado("D1000");
@@ -617,6 +678,15 @@ describe("as rotas do admin", () => {
       .expect(200);
     expect(r.body).toMatchObject({ verdict: "invalid", source: "repasse-checkout-auto", resultado: { status: "falha", motivo: "indisponivel" } });
     expect(r.body.checkedAt).toBeTruthy();
+  });
+
+  it("resultado só com `erro` registra a falha da extensão", async () => {
+    await capturado("ROTA20");
+    await adminReq("post", "/api/admin/repasse/cupom-checkout/reivindicar").send({ code: "ROTA20" }).expect(200);
+    const r = await adminReq("post", "/api/admin/repasse/cupom-checkout/resultado")
+      .send({ code: "ROTA20", url: "https://www.mercadolivre.com.br/p/MLB3", erro: "a extensão não respondeu" }).expect(200);
+    expect(r.body).toMatchObject({ ok: false });
+    expect((await logDe("ROTA20"))[0]).toMatchObject({ action: "test", ok: false });
   });
 
   it("o pedido manual pela rota: link fora do ML é 400; certo entra e sai com DELETE", async () => {
