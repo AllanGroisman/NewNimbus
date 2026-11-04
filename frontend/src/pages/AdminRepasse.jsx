@@ -5,6 +5,7 @@ import { useLembrado } from "../data/useLembrado";
 import Badge from "../components/ui/Badge";
 import RepasseSummary from "../components/admin/RepasseSummary";
 import CouponDetection from "../components/admin/CouponDetection";
+import PriceDetection from "../components/admin/PriceDetection";
 import { OUTCOME_LABEL, VERDICT_CURTO } from "../data/cupomRotulos";
 
 const POLL_MS = 5000;
@@ -117,6 +118,8 @@ export default function PageAdminRepasse() {
       </div>
 
       <CouponDetection />
+
+      <PriceDetection />
 
       <RepasseSummary
         summary={summary}

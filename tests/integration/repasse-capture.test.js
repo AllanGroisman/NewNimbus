@@ -265,6 +265,41 @@ describe("repasse capture — grupo líder", () => {
     expect(logs[0].coupon).toBe("JBL20");
   });
 
+  it("Shopee: preço com Pix + cupom da legenda vai como Por, o da API vira o De", async () => {
+    const { user } = await createTestUser({ plan: "pro" });
+    affiliate.writeShopeeConfig(user.id, { appId: "123", appSecret: "s" });
+    await storage.saveState(user.id, { groups: [repasseGroup(5015, { auto: true })] });
+    await capture.rebuildLeaderIndex();
+    scraper.scrapeSingleProduct.mockImplementation(async (url) => ({
+      name: "Combo Pokémon", link: url, price: 1739.9, originalPrice: null,
+      discount: 0, img: "https://img/x.jpg", store: "Shopee",
+    }));
+
+    await capture.onUpsert(user.id, NUMBER_ID, [
+      msgWithText("Combo Pokémon\n✅ Por: R$ 1.739,90\n💰 R$ 1.520 no Pix com cupom\nhttps://shopee.com.br/product/454657733/58270097180"),
+    ]);
+
+    const g = (await storage.loadState(user.id)).groups.find(x => x.id === 5015);
+    expect(g.queue.length).toBe(1);
+    expect(g.queue[0].price).toBe(1520);
+    expect(g.queue[0].originalPrice).toBe(1739.9);
+    expect(g.queue[0].discount).toBe(13);
+  });
+
+  it("ML: preço da legenda não mexe no preço lido da página", async () => {
+    const { user } = await createTestUser({ plan: "pro" });
+    affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
+    await storage.saveState(user.id, { groups: [repasseGroup(5016, { auto: true })] });
+    await capture.rebuildLeaderIndex();
+
+    await capture.onUpsert(user.id, NUMBER_ID, [
+      msgWithText("Por: R$ 89,90 https://www.mercadolivre.com.br/p/MLB778"),
+    ]);
+
+    const g = (await storage.loadState(user.id)).groups.find(x => x.id === 5016);
+    expect(g.queue[0].price).toBe(99.9);
+  });
+
   it("sem cupom na legenda, o log grava null", async () => {
     const { user } = await createTestUser({ plan: "pro" });
     affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });

@@ -38,6 +38,7 @@ const cpfUtil = require("./utils/cpf");
 const phoneUtil = require("./utils/phone");
 const repasseLeaders = require("./repasse/leaders");
 const couponWords = require("./repasse/coupon-words");
+const priceWords = require("./repasse/price-words");
 const couponAutotestConfig = require("./repasse/coupon-autotest-config");
 const queueMod = require("./infra/queue");
 const logger = require("./infra/logger");
@@ -3905,6 +3906,45 @@ app.post("/api/admin/repasse/coupon-config/test", auth.requireAuth, auth.require
     // capture.js arrasta scraper/scheduler e a rota é usada de vez em quando.
     const capture = require("./repasse/capture");
     res.json({ coupon: capture.extractCoupon(text, config), config });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ── Detecção de preço na legenda do grupo líder (só Shopee) ──────────────
+// A API da Shopee só dá o preço de vitrine; o preço com Pix + cupom que o grupo
+// líder escreve ("R$ 1.520 no Pix") é lido do texto. Mesmo desenho das rotas de
+// cupom acima: config em app_config, vale no worker em até 30s.
+app.get("/api/admin/repasse/price-config", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  res.json({ config: priceWords.readConfig(), defaults: priceWords.DEFAULTS });
+});
+
+app.put("/api/admin/repasse/price-config", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const config = priceWords.writeConfig(req.body || {});
+    if (!await confirmConfigSaved(res)) return;
+    res.json({ config });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Testador: roda com a config do formulário (não a salva). Devolve todos os
+// valores aceitos e o escolhido (o menor) — e, se vier `apiPrice`, se ele
+// trocaria o preço da Shopee.
+app.post("/api/admin/repasse/price-config/test", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  try {
+    const body = req.body || {};
+    const text = String(body.text || "").slice(0, 4000);
+    const config = priceWords.sanitize(body.config);
+    const capture = require("./repasse/capture");
+    const candidates = capture.extractPriceCandidates(text, config);
+    const price = candidates.length ? Math.min(...candidates) : null;
+    const apiPrice = Number(body.apiPrice);
+    const troca = price != null && Number.isFinite(apiPrice) && apiPrice > 0
+      ? capture.textPriceFor({ store: "Shopee", price: apiPrice }, price, config)
+      : undefined;
+    res.json({ price, candidates, troca, config });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

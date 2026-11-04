@@ -1089,6 +1089,9 @@ export async function adminRepasseCouponConfig()      { return http("GET", "/api
 export async function adminRepasseCouponConfigSave(config) { return http("PUT", "/api/admin/repasse/coupon-config", config); }
 // Testa com a config do formulário (ainda não salva) — daí ela ir no corpo.
 export async function adminRepasseCouponTest(text, config) { return http("POST", "/api/admin/repasse/coupon-config/test", { text, config }); }
+export async function adminRepassePriceConfig()      { return http("GET", "/api/admin/repasse/price-config"); }
+export async function adminRepassePriceConfigSave(config) { return http("PUT", "/api/admin/repasse/price-config", config); }
+export async function adminRepassePriceTest(text, config, apiPrice) { return http("POST", "/api/admin/repasse/price-config/test", { text, config, apiPrice }); }
 
 // ─── Layout (paleta de cores, global) ──────────────────────────────────
 // A leitura é pública: a tela de login precisa da paleta antes do login.

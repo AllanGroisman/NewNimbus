@@ -21,6 +21,7 @@ const { leadersOf } = require("./leaders");
 const { logCapture } = require("./capture-log");
 const { KIND, STAGE, classifyFromText } = require("./error-kinds");
 const couponWords = require("./coupon-words");
+const priceWords = require("./price-words");
 const originalMessage = require("./original-message");
 const wordFilter = require("./word-filter");
 
@@ -159,6 +160,93 @@ function extractCoupon(text, cfg) {
   return null;
 }
 
+// Valor em formato brasileiro (ou quase): "1.520", "1.520,90", "1520", "99,90",
+// "1520.90". Não pode estar grudado em letra/número (pedaço de código "X10") nem
+// ser seguido de % ("50% OFF") ou de "x" ("10x").
+const PRICE_NUM_RE = /(?<![\p{L}\p{N}.,])(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)(?![\p{N}%]|[.,]\d|\s?x(?!\p{L}))/gu;
+// "12x de R$ 145", "10x R$ 99" — o valor é a parcela, não o preço.
+const PARCELA_RE = /\d\s*x\s*(?:de\s*)?(?:r\$\s*)?$/i;
+
+function parseBRL(s) {
+  let t = String(s);
+  if (t.includes(",")) t = t.replace(/\./g, "").replace(",", ".");
+  else if (/\.\d{3}(?:\.|$)/.test(t)) t = t.replace(/\./g, "");
+  const n = Number(t);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+// Palavras (só letras, sem acento, minúsculas). O "R" de "R$" não conta: senão
+// ele ocuparia uma das 2 posições olhadas antes do valor.
+function palavras(s) {
+  return (semAcentoLower(String(s).replace(/r\$/gi, " ")).match(/\p{L}+/gu) || []);
+}
+function semAcentoLower(s) {
+  return couponWords.semAcento(s).toLowerCase();
+}
+
+// Todos os valores da legenda que parecem PREÇO: vêm logo depois de um gatilho
+// ("Por: R$ 1.739,90", "pix 1520") e não têm palavra de "não é preço" colada —
+// as 2 palavras antes ("desconto de R$ 50", "frete R$ 15") ou a 1ª depois,
+// pulando "de" ("R$ 20 OFF", "R$ 20 de desconto"). Parcela ("12x de R$ 145")
+// é sempre descartada. Pura → testável; `cfg` só vem do testador e dos testes.
+function extractPriceCandidates(text, cfg) {
+  if (!text || typeof text !== "string") return [];
+  const { before, ignore, triggerWords } = priceWords.compile(cfg || priceWords.readConfig());
+  // Link tem número de monte (IDs da Shopee) — sai antes de procurar valor.
+  const limpo = text.replace(URL_RE, " ");
+  const out = [];
+  let m;
+  PRICE_NUM_RE.lastIndex = 0;
+  while ((m = PRICE_NUM_RE.exec(limpo))) {
+    const ini = m.index;
+    const fim = ini + m[0].length;
+    // Contexto só da MESMA linha: a legenda é uma lista de linhas, e a palavra
+    // da linha de cima não fala do valor desta.
+    const linhaIni = limpo.lastIndexOf("\n", ini - 1) + 1;
+    const quebra = limpo.indexOf("\n", fim);
+    const antes = limpo.slice(Math.max(linhaIni, ini - 60), ini);
+    const depois = limpo.slice(fim, quebra < 0 ? fim + 40 : Math.min(quebra, fim + 40));
+    if (!before.test(antes)) continue;
+    if (PARCELA_RE.test(antes)) continue;
+    // Só as palavras DEPOIS do último gatilho-palavra ("por", "pix"…): em "50% OFF
+    // por R$ 99,90" o OFF é da frase de antes, o "por" já diz que vem o preço.
+    let ant = palavras(antes);
+    const ultimoGatilho = ant.map(w => triggerWords.has(w)).lastIndexOf(true);
+    if (ultimoGatilho >= 0) ant = ant.slice(ultimoGatilho + 1);
+    if (ant.slice(-2).some(w => ignore.has(w))) continue;
+    const prox = palavras(depois).filter(w => w !== "de")[0];
+    if (prox && ignore.has(prox)) continue;
+    const v = parseBRL(m[1]);
+    if (v != null) out.push(v);
+  }
+  return out;
+}
+
+// O preço que o grupo líder escreveu: o MENOR dos candidatos ("De R$ 1.999 Por
+// R$ 1.739 / R$ 1.520 no Pix" → 1520), ou null.
+function extractPrice(text, cfg) {
+  const c = extractPriceCandidates(text, cfg);
+  return c.length ? Math.min(...c) : null;
+}
+
+// Decide se o preço do texto substitui o da API. Só Shopee (a API dela só sabe o
+// preço de vitrine; no ML/Amazon o scrape já lê o preço da página), só quando é
+// MENOR que o da API e pelo menos `minPct`% dele (abaixo disso é parcela, frete,
+// valor do cupom). O preço da API vira o "De". Devolve os campos novos ou null.
+function textPriceFor(item, textPrice, cfg) {
+  if (!item || item.store !== "Shopee") return null;
+  const api = Number(item.price);
+  if (!Number.isFinite(api) || api <= 0 || !(textPrice > 0)) return null;
+  const { minPct } = priceWords.compile(cfg || priceWords.readConfig());
+  if (textPrice >= api || textPrice < api * minPct / 100) return null;
+  const originalPrice = Math.max(api, Number(item.originalPrice) || 0);
+  return {
+    price: textPrice,
+    originalPrice,
+    discount: Math.round((1 - textPrice / originalPrice) * 100),
+  };
+}
+
 // Resolve redirects (amzn.to, link.amazon, merc.li, mlb.li, links /sec/ de afiliado
 // alheio) pra chegar na URL canônica — necessário pra extractASIN/createLink
 // funcionarem. Best-effort: em qualquer falha devolve a URL original.
@@ -281,7 +369,10 @@ async function saveToCatalog(items) {
     catch (err) { console.warn(`[repasse] categoria de "${it.name}" falhou: ${err.message}`); }
     products.push({
       name: it.name, link: it.link, img: it.img,
-      price: it.price, originalPrice: it.originalPrice, discount: it.discount,
+      // Item com preço do texto (Shopee) guarda o da API em api*: é ele que vai.
+      price: it.apiPrice ?? it.price,
+      originalPrice: it.apiPrice != null ? it.apiOriginalPrice : it.originalPrice,
+      discount: it.apiPrice != null ? it.apiDiscount : it.discount,
       sold: it.sold, soldCount: it.soldCount, rating: it.rating,
       freeShipping: it.freeShipping, store: it.store, category,
     });
@@ -373,11 +464,15 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null, text 
   // configurado) pra registrar no log de captura em cada campanha líder.
   const items = [];
   const discarded = [];
+  // Quantos links da mensagem são da Shopee (com ou sem scrape ok): o preço do
+  // texto só vale quando há UM — com vários produtos não dá pra saber de qual é.
+  let shopeeLinks = 0;
   for (const rawUrl of urls) {
     try {
       const resolved = await resolveUrl(rawUrl);
       const store = scraper.detectStore(resolved);
       const statusKey = STORE_STATUS_KEY[store];
+      if (store === "Shopee") shopeeLinks++;
       console.log(`[repasse] link ${rawUrl}${resolved !== rawUrl ? ` → ${resolved}` : ""} | loja=${store || "desconhecida"}`);
       if (!statusKey) {
         console.log(`[repasse] loja não suportada → ignorado`);
@@ -551,6 +646,30 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null, text 
 
   if (!items.length) return;
 
+  // Shopee: a API só sabe o preço de vitrine; o grupo líder costuma escrever o
+  // preço com Pix + cupom ("R$ 1.520 no Pix"). Se ele for menor (e plausível),
+  // vai no envio como "Por" e o da API vira o "De". O catálogo segue com o da
+  // API (apiPrice…): o preço do texto é desta oferta, não de quem busca lá.
+  if (shopeeLinks === 1) {
+    let textPrice = null;
+    try { textPrice = extractPrice(text); }
+    catch (err) { console.warn(`[repasse] leitura do preço no texto falhou: ${err.message}`); }
+    if (textPrice != null) {
+      for (const it of items) {
+        const novo = textPriceFor(it, textPrice);
+        if (!novo) {
+          if (it.store === "Shopee") console.log(`[repasse] Shopee: preço do texto R$ ${textPrice} ignorado (API R$ ${it.price})`);
+          continue;
+        }
+        console.log(`[repasse] Shopee: preço do texto R$ ${novo.price} no lugar de R$ ${it.price}`);
+        it.apiPrice = it.price;
+        it.apiOriginalPrice = it.originalPrice;
+        it.apiDiscount = it.discount;
+        Object.assign(it, novo);
+      }
+    }
+  }
+
   // Uma vez por mensagem (não por campanha), e solto: o catálogo é bônus, não
   // pode atrasar nem derrubar a captura.
   saveToCatalog(items).catch(err =>
@@ -692,6 +811,9 @@ module.exports = {
   // exportados p/ testes
   extractUrls,
   extractCoupon,
+  extractPrice,
+  extractPriceCandidates,
+  textPriceFor,
   textFromMessage,
   unwrapMessage,
   rebuildLeaderIndex,
