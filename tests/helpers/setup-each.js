@@ -20,6 +20,10 @@ const appConfig = require("../../backend/config");
 // Índice em memória dos grupos cadastrados (aba Grupos): com o banco limpo entre
 // testes, um índice velho mandaria gravar pra grupo que não existe mais.
 const groupStatsCapture = require("../../backend/group-stats/capture");
+// O log de captura do repasse grava solto (fire-and-forget). Um insert que ainda
+// estava em voo quando o teste anterior acabou escapava da limpeza e colidia no
+// id com o primeiro insert do teste seguinte (sequence zerada pelo truncateAll).
+const captureLog = require("../../backend/repasse/capture-log");
 
 // A integração roda com isolate: false — os arquivos de um worker dividem o
 // processo (ver vitest.integration.config.mjs). Então o que um arquivo deixa em
@@ -34,6 +38,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
+  await captureLog._aguardarGravacoes();
   if (!globalThis.__NIMBUS_SKIP_TRUNCATE_BETWEEN_TESTS) {
     await truncateAll();
   }

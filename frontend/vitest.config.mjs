@@ -1,5 +1,9 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
+// Mesma trava da suíte do backend: não roda com o Nimbus no ar nesta máquina.
+import { assertNotProduction } from "../tests/helpers/prod-guard.mjs";
+
+assertNotProduction("Os testes do frontend");
 
 export default defineConfig({
   plugins: [react({ jsxRuntime: "automatic" })],

@@ -301,8 +301,10 @@ describe("fimLocalRun", () => {
     sync.startLocalRun({ limiteCupons: 3 });
     // O admin fechou a aba: ninguém mais chama nada. O relógio da rodada é o que
     // devolve o sistema ao normal.
+    // Um minuto além do prazo do sync.js. Lido de lá: com o número fixo aqui
+    // (10 min), o teste quebrou quando o prazo subiu para 30 min.
     const antes = Date.now;
-    Date.now = () => antes() + 10 * 60 * 1000;
+    Date.now = () => antes() + sync.LOCAL_SEM_NOTICIA_MS + 60 * 1000;
     try {
       expect(sync.status().running).toBe(false);
       expect(() => sync.startLocalRun({})).not.toThrow();

@@ -46,6 +46,16 @@ const item = (n, status = "ok") => ({
   estimado: false,
 });
 
+// O botão aparece assim que a lista de envios chega, mas só liga quando a
+// extensão responde (extensaoConfere). As duas promessas resolvem em ordem
+// variável: clicar antes é clique no botão desligado, a rodada nem começa, e os
+// mockResolvedValueOnce que sobram vazam pro teste seguinte.
+async function botaoConferir() {
+  const b = await screen.findByRole("button", { name: "Conferir preços" });
+  await waitFor(() => expect(b.disabled).toBe(false));
+  return b;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   coletorEntende.mockResolvedValue(true);
@@ -70,7 +80,7 @@ describe("Cupons Teste", () => {
       .mockResolvedValueOnce({ item: item(1, "ok"), muro: false })
       .mockResolvedValueOnce({ item: item(2, "divergente"), muro: false });
     render(<CuponsTeste />);
-    fireEvent.click(await screen.findByRole("button", { name: "Conferir preços" }));
+    fireEvent.click(await botaoConferir());
 
     await waitFor(() => expect(adminCuponsTesteFecharRun).toHaveBeenCalledWith("9", { status: "concluida", motivo: null }));
     expect(cupomNoCheckout).toHaveBeenCalledTimes(2);
@@ -85,7 +95,7 @@ describe("Cupons Teste", () => {
     cupomNoCheckout.mockImplementationOnce(() => new Promise(r => { soltar = r; }));
     adminCuponsTesteItem.mockResolvedValue({ item: item(1), muro: false });
     render(<CuponsTeste />);
-    fireEvent.click(await screen.findByRole("button", { name: "Conferir preços" }));
+    fireEvent.click(await botaoConferir());
 
     fireEvent.click(await screen.findByRole("button", { name: "Parar" }));
     expect(screen.getByText(/parando depois do produto aberto/)).toBeTruthy();
@@ -99,7 +109,7 @@ describe("Cupons Teste", () => {
   it("verificação do ML não resolvida para a rodada toda", async () => {
     adminCuponsTesteItem.mockResolvedValue({ item: item(1, "falhou"), muro: true });
     render(<CuponsTeste />);
-    fireEvent.click(await screen.findByRole("button", { name: "Conferir preços" }));
+    fireEvent.click(await botaoConferir());
 
     await waitFor(() => expect(adminCuponsTesteFecharRun).toHaveBeenCalledWith("9", expect.objectContaining({ status: "interrompida" })));
     expect(cupomNoCheckout).toHaveBeenCalledTimes(1);
@@ -112,7 +122,7 @@ describe("Cupons Teste", () => {
       .mockResolvedValueOnce({ item: item(1, "falhou"), muro: false })
       .mockResolvedValueOnce({ item: item(2), muro: false });
     render(<CuponsTeste />);
-    fireEvent.click(await screen.findByRole("button", { name: "Conferir preços" }));
+    fireEvent.click(await botaoConferir());
 
     await waitFor(() => expect(adminCuponsTesteFecharRun).toHaveBeenCalled());
     expect(adminCuponsTesteItem.mock.calls[0][1]).toMatchObject({ material: null, erro: "A extensão não respondeu a tempo." });

@@ -1,6 +1,9 @@
 import { defineConfig } from "vitest/config";
 import { readdirSync, readFileSync } from "fs";
 import path from "path";
+import { assertNotProduction } from "./helpers/prod-guard.mjs";
+
+assertNotProduction("Os testes unitários");
 
 // Config dos testes UNITÁRIOS. As camadas que precisam de Postgres
 // (integration/ e journey/) rodam pela vitest.integration.config.mjs.

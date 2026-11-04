@@ -1,4 +1,7 @@
 import { defineConfig } from "vitest/config";
+import { assertNotProduction } from "./helpers/prod-guard.mjs";
+
+assertNotProduction("Os testes de integração");
 
 // Config das camadas que precisam de Postgres: integration/ e journey/.
 // Os unitários rodam pela vitest.config.mjs (sem banco, em paralelo).

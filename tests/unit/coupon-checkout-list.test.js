@@ -38,7 +38,7 @@ describe("parseCheckoutCupons (captura real)", () => {
       descontoNoCarrinho: 20,
       minPurchase: 25,
       maxDiscount: 20,
-      expiresAt: "2026-11-01T02:59Z",
+      expiresAt: "2099-12-31T02:59Z",
     });
   });
 

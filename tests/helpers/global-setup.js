@@ -15,7 +15,7 @@
 // (O backend não tem o driver `pg` solto — só o @prisma/client.)
 
 import { execSync } from "child_process";
-import { readdirSync } from "fs";
+import { readdirSync, readFileSync } from "fs";
 import path from "path";
 import { createRequire } from "module";
 import { fileURLToPath } from "url";
@@ -117,7 +117,32 @@ async function ensureShards() {
   });
 }
 
+// Prisma Client gerado de um schema mais velho que o do disco (faltou o
+// `npx prisma generate` depois de um pull). Sem esta checagem a suíte não falha
+// de cara: o backend engole o erro de "Unknown argument" em vários pontos (ex.:
+// repasse/capture-log.js), e os testes que esperam a linha gravada ficam
+// esperando. Em 04/11/2026 isso deu 26 falhas confusas e 3,5 min de suíte em vez
+// de ~1 min. O Prisma reformata o espaçamento na cópia gerada, por isso a
+// comparação ignora espaços.
+function assertPrismaClientFresh() {
+  const norm = (f) => readFileSync(f, "utf8").replace(/\s+/g, "");
+  let src, gen;
+  try {
+    src = norm(path.join(backendDir, "prisma", "schema.prisma"));
+    gen = norm(path.join(backendDir, "node_modules", ".prisma", "client", "schema.prisma"));
+  } catch {
+    return; // client nunca gerado: o require do @prisma/client já reclama sozinho
+  }
+  if (src !== gen) {
+    throw new Error(
+      "\n[global-setup] O Prisma Client está desatualizado em relação ao backend/prisma/schema.prisma.\n" +
+      "  Rode: cd backend && npx prisma generate\n"
+    );
+  }
+}
+
 export async function setup() {
+  assertPrismaClientFresh();
   const onDisk = migrationsOnDisk();
   const applied = await migrationCount(TEMPLATE);
   const upToDate = onDisk !== null && applied !== null && onDisk === applied;

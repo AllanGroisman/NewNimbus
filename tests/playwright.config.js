@@ -14,10 +14,24 @@ import { defineConfig, devices } from "@playwright/test";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { assertNotProduction } from "./helpers/prod-guard.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const root = path.resolve(__dirname, "..");
+
+assertNotProduction("Os testes E2E");
+
+// Sem o backend/.env.e2e o NIMBUS_MODE=e2e não sobrepõe nada: o `node server.js`
+// do webServer sobe com o backend/.env normal, ou seja, porta 3001, fila Redis,
+// scheduler ligado e o DATABASE_URL do banco principal. Na VPS esse banco é o de
+// produção. O CI cria o arquivo na hora (.github/workflows/tests.yml).
+if (!fs.existsSync(path.join(root, "backend", ".env.e2e"))) {
+  throw new Error(
+    "\n[e2e] backend/.env.e2e não existe. Sem ele o backend de teste sobe com o .env normal " +
+    "(banco e fila de verdade). Copie o bloco 'Criar env files de E2E' do .github/workflows/tests.yml.\n"
+  );
+}
 
 // Portas dedicadas pra E2E — não conflita com dev (3001/5173)
 const BACKEND_PORT = 3101;

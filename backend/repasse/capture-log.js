@@ -8,9 +8,29 @@
 
 const affiliate = require("../scraping/affiliate");
 
+// Gravações em voo. Quem chama não espera (best-effort, ver logCapture), então um
+// teste pode terminar com o insert ainda pendente. O tests/helpers/setup-each.js
+// espera estas antes de limpar o banco do teste seguinte. Sem isso o insert
+// atrasado escapava do DELETE, a limpeza voltava a sequence pra 1 e o próximo
+// insert batia no mesmo id ("Unique constraint failed on the fields: (`id`)").
+const _emVoo = new Set();
+
 // Best-effort: nunca deve quebrar nem atrasar o pipeline — qualquer falha é
 // engolida (o log é observabilidade, não parte do fluxo).
-async function logCapture(fields) {
+function logCapture(fields) {
+  const p = gravar(fields);
+  _emVoo.add(p);
+  // O .catch é só da promise derivada do finally: a `p` devolvida a quem chama
+  // segue igual a antes.
+  p.finally(() => _emVoo.delete(p)).catch(() => {});
+  return p;
+}
+
+function _aguardarGravacoes() {
+  return Promise.allSettled([..._emVoo]);
+}
+
+async function gravar(fields) {
   try {
     const { prisma } = require("../db");
     await prisma().repasseCaptureLog.create({
@@ -60,4 +80,4 @@ async function logCapture(fields) {
   }
 }
 
-module.exports = { logCapture };
+module.exports = { logCapture, _aguardarGravacoes };

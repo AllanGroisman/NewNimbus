@@ -1832,6 +1832,7 @@ module.exports = {
   paginaLocal,
   pedirProximas,
   fimLocalRun,
+  LOCAL_SEM_NOTICIA_MS,
   registrarRodada,
   ultimas,
   localAtivo,
