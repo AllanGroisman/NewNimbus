@@ -25,6 +25,7 @@ const catalog = require("./catalog");
 const adminScraper = require("./scraping/admin");
 const faxina = require("./faxina");
 const storeLocks = require("./scraping/store-locks");
+const featureFlags = require("./feature-flags");
 const mlHub = require("./scraping/ml-hub");
 const scrapTester = require("./scraping/tester");
 const mlCoupon = require("./scraping/ml-coupon");
@@ -872,6 +873,18 @@ app.put("/api/admin/layout", auth.requireAuth, auth.requireAdmin, async (req, re
   appConfig.set(PALETTE_KEY, palette);
   if (!await confirmConfigSaved(res)) return;
   res.json({ ok: true, palette });
+});
+
+// Interruptores de função (admin → Gerais) — ver backend/feature-flags.js. A
+// leitura é de qualquer usuário logado: é a tela dele que esconde a função.
+app.get("/api/features", auth.requireAuth, (req, res) => {
+  res.json({ flags: featureFlags.readFlags() });
+});
+
+app.put("/api/admin/features", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  const flags = featureFlags.writeFlags((req.body || {}).flags);
+  if (!await confirmConfigSaved(res)) return;
+  res.json({ ok: true, flags });
 });
 
 // Preferências de tela do admin (filtros, modos), iguais para todos os admins.
@@ -2111,6 +2124,47 @@ app.get("/api/state/groups/:gid/queue/cupons", auth.requireAuth, async (req, res
     res.json(await scheduler.estadosCupomDaFila(group));
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Histórico → Filtro de palavras da campanha de repasse: cada produto que passou
+// pela lista branca/negra (repasse/word-filter.js), aprovado ou reprovado, com o
+// motivo. Lê do log de captura (colunas wordFilter/wordFilterReason). Com a
+// função desligada em Admin → Gerais a tela nem mostra a aba; aqui volta vazio.
+const FILTRO_PALAVRAS_PAGE = 50;
+app.get("/api/state/groups/:gid/repasse/filtro-palavras", auth.requireAuth, async (req, res) => {
+  try {
+    if (!featureFlags.isOn("repasseWordFilter")) {
+      return res.json({ desligado: true, rows: [], total: 0, page: 1, pageSize: FILTRO_PALAVRAS_PAGE });
+    }
+    const state = await storage.loadState(req.user.id);
+    const group = (state?.groups || []).find(g => String(g.id) === String(req.params.gid));
+    if (!group) return res.status(404).json({ error: "Campanha não encontrada" });
+
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const where = { groupId: BigInt(group.id), userId: String(req.user.id), wordFilter: { not: null } };
+    if (req.query.filtro === "approved" || req.query.filtro === "rejected") where.wordFilter = req.query.filtro;
+
+    const { prisma } = require("./db");
+    const [total, rows] = await Promise.all([
+      prisma().repasseCaptureLog.count({ where }),
+      prisma().repasseCaptureLog.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * FILTRO_PALAVRAS_PAGE,
+        take: FILTRO_PALAVRAS_PAGE,
+        select: {
+          id: true, createdAt: true, productName: true, productImg: true, store: true,
+          price: true, rawUrl: true, outcome: true, wordFilter: true, wordFilterReason: true,
+        },
+      }),
+    ]);
+    res.json({
+      desligado: false, total, page, pageSize: FILTRO_PALAVRAS_PAGE,
+      rows: rows.map(r => ({ ...r, id: String(r.id) })),
+    });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/state/groups/:gid/repasse/filtro-palavras" });
   }
 });
 

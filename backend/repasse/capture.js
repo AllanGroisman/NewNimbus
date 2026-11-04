@@ -22,6 +22,7 @@ const { logCapture } = require("./capture-log");
 const { KIND, STAGE, classifyFromText } = require("./error-kinds");
 const couponWords = require("./coupon-words");
 const originalMessage = require("./original-message");
+const wordFilter = require("./word-filter");
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
 
@@ -289,6 +290,58 @@ async function saveToCatalog(items) {
   console.log(`[repasse] catálogo: +${r.inserted} novos, ${r.updated} atualizados (categorias: ${products.map(p => p.category || "—").join(", ")})`);
 }
 
+// Aplica a lista branca/negra da campanha (repasse/word-filter.js) e devolve só
+// os itens que passaram; os barrados ficam no log como "discarded" sem errorKind
+// (nada falhou — a campanha é que não quer esse produto).
+//
+// No modo "mensagem original" a mensagem é uma coisa só: se UM produto cai na
+// lista negra, a mensagem inteira sai (senão o link dele iria cru, com o
+// afiliado do outro). Na lista branca basta um produto da mensagem passar.
+//
+// Devolve { items, verdict }: `verdict(item)` dá os campos do log
+// ({ wordFilter, wordFilterReason }) de um item aprovado — vazio quando o filtro
+// não rodou (campanha sem palavras).
+function filterByWords(items, group, { groupId, userId, waJid }) {
+  const wf = wordFilter.wordFilterOf(group);
+  if (!wordFilter.isActive(wf)) return { items, verdict: () => ({}) };
+  const verdicts = items.map(it => ({ it, r: wordFilter.checkName(it.name, wf) }));
+  const aprovados = new Map(verdicts.filter(v => v.r.ok)
+    .map(v => [v.it, { wordFilter: "approved", wordFilterReason: v.r.reason }]));
+
+  let rejected;
+  if (originalMessage.isOriginalMode(group)) {
+    const negra = verdicts.find(v => !v.r.ok && v.r.list === "block");
+    const algumPassou = verdicts.some(v => v.r.ok);
+    if (negra) {
+      rejected = verdicts.map(v => ({ it: v.it, reason: v.it === negra.it ? v.r.reason : `mensagem descartada — outro produto dela tem ${negra.r.reason}` }));
+    } else if (!algumPassou) {
+      rejected = verdicts.map(v => ({ it: v.it, reason: v.r.reason }));
+    } else {
+      rejected = [];
+    }
+  } else {
+    rejected = verdicts.filter(v => !v.r.ok).map(v => ({ it: v.it, reason: v.r.reason }));
+  }
+
+  for (const { it, reason } of rejected) {
+    console.log(`[repasse] "${it.name}" barrado pelo filtro de palavras da campanha ${groupId}: ${reason}`);
+    logCapture({
+      groupId, userId, waJid,
+      rawUrl: it.rawUrl, resolvedUrl: it.link, store: it.store,
+      affiliateConfigured: it.affiliateConfigured, scrapeOk: it.scrapeOk,
+      productName: it.name, productImg: it.img, price: it.price, originalPrice: it.originalPrice,
+      discount: it.discount, sold: it.sold, coupon: it.coupon,
+      outcome: "discarded", reason, stage: STAGE.WORDS,
+      wordFilter: "rejected", wordFilterReason: reason,
+    });
+  }
+  const fora = new Set(rejected.map(x => x.it));
+  // O item juntado do modo original é um objeto novo ({ ...usable[0] }); ele
+  // aponta pro original em `_wordOf` pra herdar o veredito do primeiro produto.
+  const verdict = (item) => aprovados.get(item?._wordOf || item) || {};
+  return { items: items.filter(it => !fora.has(it)), verdict };
+}
+
 // `text` é a mensagem inteira do líder — só usada pelas campanhas no modo
 // "mensagem original" (ver original-message.js).
 async function processMessage(userId, leaders, urls, waJid, coupon = null, text = "") {
@@ -520,23 +573,29 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null, text 
     // do grupo líder, então só vale a escolha de lojas da própria campanha.
     const allowedSources = scheduler.resolveSources(group.scraping?.sources);
 
+    // Lista branca/negra de palavras da campanha, sobre o nome do produto. Vem
+    // antes da montagem do modo original: lá a mensagem vira um item só.
+    const { items: campaignItems, verdict: wordVerdict } = filterByWords(items, group, { groupId, userId, waJid });
+    if (!campaignItems.length) continue;
+
     // Modo "mensagem original": a mensagem inteira vira UM item, com os links de
     // produto que deram certo trocados no envio. Link que não serviu (página de
     // cupom, não-produto, loja fora da campanha) NÃO derruba a mensagem: fica cru
     // no texto, como veio do líder. Os de loja fora da campanha seguem no batch
     // só pra cair no log de "fonte não habilitada" do loop abaixo.
-    let batch = items;
+    let batch = campaignItems;
     if (originalMessage.isOriginalMode(group)) {
-      const blocked = items.filter(b => {
+      const blocked = campaignItems.filter(b => {
         const sid = scraper.normalizeSource(b.store);
         return !sid || !allowedSources.includes(sid);
       });
-      const usable = items.filter(b => !blocked.includes(b));
+      const usable = campaignItems.filter(b => !blocked.includes(b));
       batch = blocked;
       if (usable.length) {
         const extra = usable.length - 1;
         batch = [{
           ...usable[0],
+          _wordOf: usable[0],
           name: extra > 0 ? `${usable[0].name} (+${extra} produto${extra > 1 ? "s" : ""})` : usable[0].name,
           originalText: text,
           originalLinks: usable.map(b => ({ raw: b.rawUrl, link: b.link, store: b.store })),
@@ -556,6 +615,7 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null, text 
           sourceAllowed: false, affiliateConfigured: base.affiliateConfigured, scrapeOk: base.scrapeOk,
           productName: base.name, productImg: base.img, price: base.price, originalPrice: base.originalPrice,
           discount: base.discount, sold: base.sold, coupon: base.coupon,
+          ...wordVerdict(base),
           // Sem errorKind de propósito: nada falhou. A campanha é que não aceita
           // essa loja — contar isso como erro sujaria a taxa de sucesso do resumo.
           outcome: "discarded", reason: "fonte não habilitada", stage: STAGE.SOURCE,
@@ -563,7 +623,9 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null, text 
         continue;
       }
       try {
-        const item = { ...base, category: (Array.isArray(group.categories) ? group.categories[0] : null) || null };
+        // `_wordOf` é só referência interna do filtro de palavras — não vai pra fila.
+        const { _wordOf, ...semRef } = base;
+        const item = { ...semRef, category: (Array.isArray(group.categories) ? group.categories[0] : null) || null };
         // force:false → produto em cooldown volta { inCooldown } e é pulado (sem UI
         // pra confirmar; não reenviar dentro do intervalo é o comportamento certo).
         const r = await scheduler.addItemToGroup(userId, group, item, { force: false });
@@ -576,6 +638,7 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null, text 
             sourceAllowed: true, affiliateConfigured: base.affiliateConfigured, scrapeOk: base.scrapeOk,
             productName: base.name, productImg: base.img, price: base.price, originalPrice: base.originalPrice,
             discount: base.discount, sold: base.sold, coupon: base.coupon,
+          ...wordVerdict(base),
             outcome: r.target === "queue" ? "queued" : "pending", stage: STAGE.QUEUE,
           });
           // Recarrega o grupo pra refletir a inserção anterior (dedup correto).
@@ -589,6 +652,7 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null, text 
             sourceAllowed: true, affiliateConfigured: base.affiliateConfigured, scrapeOk: base.scrapeOk,
             productName: base.name, productImg: base.img, price: base.price, originalPrice: base.originalPrice,
             discount: base.discount, sold: base.sold, coupon: base.coupon,
+          ...wordVerdict(base),
             outcome: "cooldown", stage: STAGE.QUEUE,
           });
         }
@@ -606,6 +670,7 @@ async function processMessage(userId, leaders, urls, waJid, coupon = null, text 
           sourceAllowed: true, affiliateConfigured: base.affiliateConfigured, scrapeOk: base.scrapeOk,
           productName: base.name, productImg: base.img, price: base.price, originalPrice: base.originalPrice,
           discount: base.discount, sold: base.sold, coupon: base.coupon,
+          ...wordVerdict(base),
           outcome: isDup ? "duplicate" : "error", reason: isDup ? err.code : err.message,
           stage: STAGE.QUEUE,
           // Duplicata não é erro (o produto só já estava lá); só o `error` classifica.

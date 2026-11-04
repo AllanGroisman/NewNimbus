@@ -3,7 +3,7 @@
 // pontos críticos que mudaram recentemente.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
 
 // Mock dos imports de api antes de importar o componente
 vi.mock("../data/api", () => ({
@@ -39,6 +39,7 @@ vi.mock("../data/api", () => ({
   listDmBroadcasts: vi.fn().mockResolvedValue({ broadcasts: [] }),
   startDmBroadcast: vi.fn(),
   cancelDmBroadcast: vi.fn(),
+  filtroPalavrasLog: vi.fn().mockResolvedValue({ rows: [], total: 0, page: 1 }),
 }));
 
 import GroupDashboard from "../components/GroupDashboard.jsx";
@@ -914,5 +915,73 @@ describe("GroupDashboard — grupos não encontrados no WhatsApp", () => {
     await new Promise(r => setTimeout(r, 0));   // deixa a rejeição chegar no estado
     expect(screen.queryByText("Não encontrado no WhatsApp")).not.toBeInTheDocument();
     expect(screen.queryByText(/não foi encontrado/)).not.toBeInTheDocument();
+  });
+});
+
+describe("GroupDashboard — lista de palavras do repasse", () => {
+  function abrirGerenciar(repasse = {}) {
+    renderDashboard({ group: { scraping: { kind: "repasse", sources: [], filters: {}, repasse: { leaders: [], ...repasse } } } });
+    fireEvent.click(screen.getByRole("button", { name: /^Gerenciar$/ }));
+  }
+
+  afterEach(async () => {
+    const { setFeaturesCache } = await import("../data/features");
+    setFeaturesCache({ repasseWordFilter: true });
+  });
+
+  it("mostra as duas listas com as palavras salvas e aceita palavra nova", () => {
+    abrirGerenciar({ allowWords: ["fone"], blockWords: ["infantil"] });
+    expect(screen.getByText("Só repassar produtos com estas palavras")).toBeInTheDocument();
+    expect(screen.getByText("Nunca repassar produtos com estas palavras")).toBeInTheDocument();
+    expect(screen.getByText("fone")).toBeInTheDocument();
+    expect(screen.getByText("infantil")).toBeInTheDocument();
+
+    const input = screen.getByPlaceholderText("ex.: infantil, capinha");
+    fireEvent.change(input, { target: { value: "Capinha, película" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByText("capinha")).toBeInTheDocument();
+    expect(screen.getByText("película")).toBeInTheDocument();
+  });
+
+  it("some quando o admin desliga a função em Gerais", async () => {
+    const { setFeaturesCache } = await import("../data/features");
+    abrirGerenciar({ blockWords: ["infantil"] });
+    expect(screen.getByText("Nunca repassar produtos com estas palavras")).toBeInTheDocument();
+    await act(async () => { setFeaturesCache({ repasseWordFilter: false }); });
+    expect(screen.queryByText("Nunca repassar produtos com estas palavras")).not.toBeInTheDocument();
+  });
+});
+
+describe("GroupDashboard — Histórico → Filtro de palavras", () => {
+  afterEach(async () => {
+    const { setFeaturesCache } = await import("../data/features");
+    setFeaturesCache({ repasseWordFilter: true });
+  });
+
+  function abrirHistorico(scraping) {
+    renderDashboard({ group: { scraping } });
+    fireEvent.click(screen.getByRole("button", { name: /^Histórico/ }));
+  }
+
+  it("no repasse, mostra as abas Envios e Filtro de palavras", async () => {
+    const api = await import("../data/api");
+    abrirHistorico({ kind: "repasse", sources: [], filters: {}, repasse: { leaders: [] } });
+    expect(screen.getByRole("tab", { name: "Envios" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("tab", { name: "Filtro de palavras" }));
+    expect(await screen.findByText(/Nenhum produto passou pelo filtro ainda/)).toBeInTheDocument();
+    expect(api.filtroPalavrasLog).toHaveBeenCalledWith(1, { page: 1, filtro: "" });
+  });
+
+  it("some com a função desligada no admin", async () => {
+    const { setFeaturesCache } = await import("../data/features");
+    setFeaturesCache({ repasseWordFilter: false });
+    abrirHistorico({ kind: "repasse", sources: [], filters: {}, repasse: { leaders: [] } });
+    expect(screen.queryByRole("tab", { name: "Filtro de palavras" })).not.toBeInTheDocument();
+    expect(screen.getByText("Histórico de envios")).toBeInTheDocument();
+  });
+
+  it("campanha que não é de repasse não tem a aba", () => {
+    abrirHistorico({ auto: true, sources: ["Amazon"], filters: {} });
+    expect(screen.queryByRole("tab", { name: "Filtro de palavras" })).not.toBeInTheDocument();
   });
 });

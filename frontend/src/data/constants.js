@@ -325,6 +325,7 @@ export const sidebarItems = [
   { id: "admin-whatsnimbus",    icon: "❂", label: "WhatsNimbus",    adminOnly: true },
   { id: "admin-layout",         icon: "◐", label: "Layout",         adminOnly: true },
   { id: "admin-stripe",         icon: "▤", label: "Stripe",         adminOnly: true },
+  { id: "admin-gerais",         icon: "⚙", label: "Gerais",         adminOnly: true },
 ];
 
 // Rótulo do plano exibido na sidebar. FALLBACK: o nome de verdade vem do
@@ -383,6 +384,7 @@ export const PAGE_TO_PATH = {
   "admin-whatsnimbus": "/admin/whatsnimbus",
   "admin-layout": "/admin/layout",
   "admin-stripe": "/admin/stripe",
+  "admin-gerais": "/admin/gerais",
 };
 
 // Rotas que funcionam SEM login — o caminho de quem vem da landing page pagar.

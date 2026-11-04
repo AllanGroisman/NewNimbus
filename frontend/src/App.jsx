@@ -54,6 +54,7 @@ import PageAdminEmails from "./pages/AdminEmails";
 import PageAdminWhatsNimbus from "./pages/AdminWhatsNimbus";
 import PageAdminLayout from "./pages/AdminLayout";
 import PageAdminStripe from "./pages/AdminStripe";
+import PageAdminGerais from "./pages/AdminGerais";
 import PageAdminRepasse from "./pages/AdminRepasse";
 import PageAdminCupom from "./pages/AdminCupom";
 import PageAdminCupons from "./pages/AdminCupons";
@@ -1192,6 +1193,7 @@ export default function App() {
     "admin-whatsnimbus":    user?.role === "admin" ? <PageAdminWhatsNimbus /> : fallbackPage,
     "admin-layout":         user?.role === "admin" ? <PageAdminLayout /> : fallbackPage,
     "admin-stripe":         user?.role === "admin" ? <PageAdminStripe /> : fallbackPage,
+    "admin-gerais":         user?.role === "admin" ? <PageAdminGerais /> : fallbackPage,
     "tutorials":     <PageTutoriais
       targetTutorialId={tutorialTarget}
       onboarding={onboarding}

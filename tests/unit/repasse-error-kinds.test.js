@@ -45,7 +45,7 @@ describe("ERROR_KINDS", () => {
   });
 
   it("STAGE_ORDER cobre toda etapa e é estritamente crescente na ordem do pipeline", () => {
-    const seq = [STAGE.STORE, STAGE.AFFILIATE_CONFIG, STAGE.SCRAPE, STAGE.VALIDATE, STAGE.SOURCE, STAGE.QUEUE, STAGE.SEND];
+    const seq = [STAGE.STORE, STAGE.AFFILIATE_CONFIG, STAGE.SCRAPE, STAGE.VALIDATE, STAGE.SOURCE, STAGE.WORDS, STAGE.QUEUE, STAGE.SEND];
     for (const st of Object.values(STAGE)) expect(STAGE_ORDER[st]).toBeTypeOf("number");
     for (let i = 1; i < seq.length; i++) {
       expect(STAGE_ORDER[seq[i]]).toBeGreaterThan(STAGE_ORDER[seq[i - 1]]);

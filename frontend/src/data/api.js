@@ -1055,6 +1055,9 @@ export async function adminRepasseCouponTest(text, config) { return http("POST",
 
 // ─── Layout (paleta de cores, global) ──────────────────────────────────
 // A leitura é pública: a tela de login precisa da paleta antes do login.
+// Interruptores de função (admin → Gerais) — backend/feature-flags.js.
+export async function featuresGet()                { return http("GET",  "/api/features"); }
+export async function adminFeaturesSave(flags)     { return http("PUT",  "/api/admin/features", { flags }); }
 export async function layoutGet()                 { return http("GET",  "/api/layout"); }
 // Última paleta conhecida, pra pintar a tela já na primeira renderização em vez
 // de esperar a resposta do servidor (ver o script inline no index.html).
@@ -1069,6 +1072,13 @@ export async function adminPrefSet(chave, value)  { return http("PUT",  `/api/ad
 export async function adminNotifConfig()          { return http("GET",  "/api/admin/notifications/config"); }
 export async function adminNotifSave(cfg)         { return http("PUT",  "/api/admin/notifications/config", cfg); }
 // Estado do cupom de cada item da fila ("Só enviar com cupom válido").
+// Histórico → Filtro de palavras: produtos aprovados/reprovados pela lista
+// branca/negra da campanha de repasse. `filtro` = "approved" | "rejected" | "".
+export async function filtroPalavrasLog(groupId, { page = 1, filtro = "" } = {}) {
+  const qs = new URLSearchParams({ page: String(page) });
+  if (filtro) qs.set("filtro", filtro);
+  return http("GET", `/api/state/groups/${groupId}/repasse/filtro-palavras?${qs}`);
+}
 export async function estadosCupomDaFila(groupId) { return http("GET", `/api/state/groups/${groupId}/queue/cupons`); }
 export async function adminNotifTest()            { return http("POST", "/api/admin/notifications/test"); }
 // O ML pediu verificação no Chrome: o servidor manda o link do VNC no WhatsApp.

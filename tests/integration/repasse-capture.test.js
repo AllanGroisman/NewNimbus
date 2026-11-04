@@ -772,3 +772,136 @@ describe("repasse capture — catálogo", () => {
     expect(g.queue.length).toBe(1);
   });
 });
+
+// Lista branca/negra de palavras da campanha (repasse/word-filter.js).
+describe("repasse capture — lista de palavras", () => {
+  const appConfig = require(path.join(backendDir, "config"));
+  const featureFlags = require(path.join(backendDir, "feature-flags.js"));
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    appConfig.set(featureFlags.FEATURE_FLAGS_KEY, {});
+    global.fetch = vi.fn(async (url) => ({ url, body: { cancel: async () => {} } }));
+    vi.spyOn(scraper, "scrapeSingleProduct").mockImplementation(async (url) => ({
+      name: /MLB1/.test(url) ? "Fone Bluetooth JBL" : "Boneca Infantil Rosa",
+      link: url, price: 99.9, originalPrice: 149.9,
+      discount: 33, img: "https://img/x.jpg", store: scraper.detectStore(url),
+    }));
+  });
+
+  function wordsGroup(id, repasse) {
+    const g = repasseGroup(id, { auto: true });
+    g.scraping.repasse = { leaders: [{ numberId: NUMBER_ID, jid: LEADER_JID, name: "Grupo Líder" }], ...repasse };
+    return g;
+  }
+
+  async function setup(id, repasse) {
+    const { user } = await createTestUser({ plan: "pro" });
+    affiliate.writeConfig(user.id, { tag: "t", cookie: "c-sessid" });
+    await storage.saveState(user.id, { groups: [wordsGroup(id, repasse)] });
+    await capture.rebuildLeaderIndex();
+    return user;
+  }
+
+  it("as listas sobrevivem ao save da campanha", async () => {
+    const user = await setup(5201, { allowWords: ["Fone"], blockWords: ["infantil"] });
+    const g = (await storage.loadState(user.id)).groups.find(x => x.id === 5201);
+    expect(g.scraping.repasse.allowWords).toEqual(["fone"]);
+    expect(g.scraping.repasse.blockWords).toEqual(["infantil"]);
+  });
+
+  it("produto com palavra da lista negra não entra e fica no log como descartado", async () => {
+    const user = await setup(5202, { blockWords: ["infantil"] });
+    await capture.onUpsert(user.id, NUMBER_ID, [
+      msgWithText("https://www.mercadolivre.com.br/p/MLB1 e https://www.mercadolivre.com.br/p/MLB2"),
+    ]);
+    const g = (await storage.loadState(user.id)).groups.find(x => x.id === 5202);
+    expect(g.queue.map(i => i.name)).toEqual(["Fone Bluetooth JBL"]);
+    const rows = await waitForLogs(user.id, 2);
+    const barrado = rows.find(r => /MLB2/.test(r.rawUrl));
+    expect(barrado.outcome).toBe("discarded");
+    expect(barrado.stage).toBe("words");
+    expect(barrado.errorKind).toBeNull();
+    expect(barrado.reason).toMatch(/lista negra: "infantil"/);
+  });
+
+  it("lista branca: só entra produto com pelo menos uma das palavras", async () => {
+    const user = await setup(5203, { allowWords: ["notebook", "fone"] });
+    await capture.onUpsert(user.id, NUMBER_ID, [
+      msgWithText("https://www.mercadolivre.com.br/p/MLB1 e https://www.mercadolivre.com.br/p/MLB2"),
+    ]);
+    const g = (await storage.loadState(user.id)).groups.find(x => x.id === 5203);
+    expect(g.queue.map(i => i.name)).toEqual(["Fone Bluetooth JBL"]);
+    const rows = await waitForLogs(user.id, 2);
+    expect(rows.find(r => /MLB2/.test(r.rawUrl)).reason).toMatch(/lista branca/);
+  });
+
+  it("modo original: um produto na lista negra derruba a mensagem inteira", async () => {
+    const user = await setup(5204, { messageMode: "original", blockWords: ["infantil"] });
+    await capture.onUpsert(user.id, NUMBER_ID, [
+      msgWithText("https://www.mercadolivre.com.br/p/MLB1 e https://www.mercadolivre.com.br/p/MLB2"),
+    ]);
+    const g = (await storage.loadState(user.id)).groups.find(x => x.id === 5204);
+    expect(g.queue.length).toBe(0);
+    const rows = await waitForLogs(user.id, 2);
+    expect(rows.every(r => r.outcome === "discarded" && r.stage === "words")).toBe(true);
+  });
+
+  it("modo original: na lista branca basta um produto da mensagem passar", async () => {
+    const user = await setup(5205, { messageMode: "original", allowWords: ["fone"] });
+    await capture.onUpsert(user.id, NUMBER_ID, [
+      msgWithText("https://www.mercadolivre.com.br/p/MLB1 e https://www.mercadolivre.com.br/p/MLB2"),
+    ]);
+    const g = (await storage.loadState(user.id)).groups.find(x => x.id === 5205);
+    expect(g.queue.length).toBe(1);
+    expect(g.queue[0].originalLinks.length).toBe(2);
+  });
+
+  it("o log guarda o veredito do filtro: aprovado e reprovado, cada um com o motivo", async () => {
+    const user = await setup(5207, { allowWords: ["fone"], blockWords: ["infantil"] });
+    await capture.onUpsert(user.id, NUMBER_ID, [
+      msgWithText("https://www.mercadolivre.com.br/p/MLB1 e https://www.mercadolivre.com.br/p/MLB2"),
+    ]);
+    const rows = await waitForLogs(user.id, 2);
+    const ok = rows.find(r => /MLB1/.test(r.rawUrl));
+    const nok = rows.find(r => /MLB2/.test(r.rawUrl));
+    expect(ok.outcome).toBe("queued");
+    expect(ok.wordFilter).toBe("approved");
+    expect(ok.wordFilterReason).toBe('tem "fone" da lista branca');
+    expect(nok.wordFilter).toBe("rejected");
+    expect(nok.wordFilterReason).toBe('palavra da lista negra: "infantil"');
+    // A referência interna do modo original nunca vaza pra fila.
+    const g = (await storage.loadState(user.id)).groups.find(x => x.id === 5207);
+    expect(g.queue[0]).not.toHaveProperty("_wordOf");
+  });
+
+  it("modo original: o item juntado herda o veredito e não leva a referência interna", async () => {
+    const user = await setup(5208, { messageMode: "original", allowWords: ["fone"] });
+    await capture.onUpsert(user.id, NUMBER_ID, [
+      msgWithText("https://www.mercadolivre.com.br/p/MLB1 e https://www.mercadolivre.com.br/p/MLB2"),
+    ]);
+    const g = (await storage.loadState(user.id)).groups.find(x => x.id === 5208);
+    expect(g.queue[0]).not.toHaveProperty("_wordOf");
+    const rows = await waitForLogs(user.id, 1);
+    expect(rows[0].wordFilter).toBe("approved");
+  });
+
+  it("campanha sem palavras não grava veredito", async () => {
+    const user = await setup(5209, {});
+    await capture.onUpsert(user.id, NUMBER_ID, [msgWithText("https://www.mercadolivre.com.br/p/MLB1")]);
+    const rows = await waitForLogs(user.id, 1);
+    expect(rows[0].outcome).toBe("queued");
+    expect(rows[0].wordFilter).toBeNull();
+  });
+
+  it("função desligada no admin: as listas salvas não valem", async () => {
+    featureFlags.writeFlags({ repasseWordFilter: false });
+    const user = await setup(5206, { blockWords: ["infantil"] });
+    await capture.onUpsert(user.id, NUMBER_ID, [
+      msgWithText("https://www.mercadolivre.com.br/p/MLB2"),
+    ]);
+    const g = (await storage.loadState(user.id)).groups.find(x => x.id === 5206);
+    expect(g.queue.length).toBe(1);
+    featureFlags.writeFlags({ repasseWordFilter: true });
+  });
+});

@@ -44,6 +44,13 @@ function normalizeRepasse(scraping) {
   }
   // "Só enviar com cupom válido" (scheduler.js:estadoCupomDoItem). Ausente = desligado.
   if (sc.repasse?.soCupomValido === true) repasse.soCupomValido = true;
+  // Lista branca/negra de palavras (repasse/word-filter.js). Vazia = omitida.
+  // Lazy-require: word-filter puxa config/feature-flags, que este módulo puro não precisa no topo.
+  const { sanitizeWords } = require("./word-filter");
+  const allowWords = sanitizeWords(sc.repasse?.allowWords);
+  const blockWords = sanitizeWords(sc.repasse?.blockWords);
+  if (allowWords.length) repasse.allowWords = allowWords;
+  if (blockWords.length) repasse.blockWords = blockWords;
   return { ...sc, repasse };
 }
 

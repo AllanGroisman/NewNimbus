@@ -41,6 +41,9 @@ async function logCapture(fields) {
         errorKind: fields.errorKind || null,
         stage: fields.stage || null,
         reason: fields.reason || null,
+        // Veredito da lista branca/negra (repasse/word-filter.js). Null = não rodou.
+        wordFilter: fields.wordFilter || null,
+        wordFilterReason: fields.wordFilterReason || null,
       },
     });
   } catch (err) {

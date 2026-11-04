@@ -154,6 +154,9 @@ import DesempenhoCampanha from "./campaign/DesempenhoCampanha";
 import Tabs from "./ui/Tabs";
 import Modal from "./ui/Modal";
 import Toggle from "./ui/Toggle";
+import WordList from "./WordList";
+import FiltroPalavrasLog from "./campaign/FiltroPalavrasLog";
+import { useFeatures } from "../data/features";
 import { ProductRow } from "./ui/ProductCard";
 import ProductSearchTab from "./campaign/ProductSearchTab";
 import GroupsTab from "./campaign/GroupsTab";
@@ -455,6 +458,10 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   const [actionError, setActionError] = useState(null);
   const [sched, setSched] = useState(group.schedule);
   const [scraping, setScraping] = useState(group.scraping);
+  // Interruptores do admin (aba Gerais): esconde a lista de palavras do repasse.
+  const features = useFeatures();
+  // Sub-aba do Histórico: "envios" (de sempre) ou "palavras" (filtro de palavras do repasse).
+  const [historySub, setHistorySub] = useState("envios");
   const [queue, setQueue] = useState(group.queue);
   const [pending, setPending] = useState(group.pending);
   const [groupInfo, setGroupInfo] = useState({
@@ -1574,6 +1581,8 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     || (isRepasseGroup && stableJSON(scraping?.auto) !== stableJSON(group.scraping?.auto))
     || (isRepasseGroup && stableJSON(scraping?.repasse?.messageMode) !== stableJSON(group.scraping?.repasse?.messageMode))
     || (isRepasseGroup && !!scraping?.repasse?.soCupomValido !== !!group.scraping?.repasse?.soCupomValido)
+    || (isRepasseGroup && stableJSON(scraping?.repasse?.allowWords || []) !== stableJSON(group.scraping?.repasse?.allowWords || []))
+    || (isRepasseGroup && stableJSON(scraping?.repasse?.blockWords || []) !== stableJSON(group.scraping?.repasse?.blockWords || []))
     || stableJSON(scraping?.notifications) !== stableJSON(group.scraping?.notifications)
     || stableJSON(scraping?.mlTag) !== stableJSON(group.scraping?.mlTag)
     || cooldownDirty;
@@ -2084,6 +2093,34 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
                   onChange={v => setScraping(s => ({ ...s, repasse: { ...(s.repasse || {}), soCupomValido: v } }))}
                 />
               </div>
+              {/* Lista branca/negra de palavras (backend/repasse/word-filter.js).
+                  Some quando o admin desliga a função em Admin → Gerais. */}
+              {features.repasseWordFilter && (
+                <>
+                  <div style={{ padding: "10px 0 0", borderTop: "0.5px solid var(--color-border-tertiary)" }}>
+                    <div style={{ fontSize: 13, fontWeight: 500 }}>Só repassar produtos com estas palavras</div>
+                    <div style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "2px 0 8px" }}>
+                      O nome do produto precisa ter pelo menos uma delas. Vazio = repassa tudo. Acento e maiúsculas não importam.
+                    </div>
+                    <WordList
+                      words={scraping.repasse?.allowWords || []}
+                      onChange={v => setScraping(s => ({ ...s, repasse: { ...(s.repasse || {}), allowWords: v } }))}
+                      placeholder="ex.: fone, notebook"
+                    />
+                  </div>
+                  <div style={{ padding: "10px 0 0", marginTop: 10, borderTop: "0.5px solid var(--color-border-tertiary)" }}>
+                    <div style={{ fontSize: 13, fontWeight: 500 }}>Nunca repassar produtos com estas palavras</div>
+                    <div style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "2px 0 8px" }}>
+                      Produto cujo nome tenha uma delas é descartado, mesmo que esteja na lista acima.
+                    </div>
+                    <WordList
+                      words={scraping.repasse?.blockWords || []}
+                      onChange={v => setScraping(s => ({ ...s, repasse: { ...(s.repasse || {}), blockWords: v } }))}
+                      placeholder="ex.: infantil, capinha"
+                    />
+                  </div>
+                </>
+              )}
             </div>
           )}
 
@@ -2830,7 +2867,30 @@ onError={setActionError}
         </div>
       )}
 
-      {tab === "history" && (
+      {tab === "history" && isRepasse && features.repasseWordFilter && (
+        <div role="tablist" aria-label="Histórico" style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+          {[{ id: "envios", label: "Envios" }, { id: "palavras", label: "Filtro de palavras" }].map(t => {
+            const ativo = historySub === t.id;
+            return (
+              <button key={t.id} type="button" role="tab" aria-selected={ativo} onClick={() => setHistorySub(t.id)}
+                style={{
+                  padding: "6px 14px", borderRadius: 7, fontSize: 13, cursor: "pointer",
+                  border: `0.5px solid ${ativo ? PRIMARY : "var(--color-border-secondary)"}`,
+                  background: ativo ? PRIMARY_LIGHT : "transparent",
+                  color: ativo ? PRIMARY_DARK : "var(--color-text-primary)", fontWeight: ativo ? 600 : 400,
+                }}>
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {tab === "history" && isRepasse && features.repasseWordFilter && historySub === "palavras" && (
+        <FiltroPalavrasLog groupId={group.id} />
+      )}
+
+      {tab === "history" && !(isRepasse && features.repasseWordFilter && historySub === "palavras") && (
         <div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
             <div>

@@ -109,6 +109,7 @@ const STAGE = {
   SCRAPE: "scrape",                     // abrir a página e ler o produto
   VALIDATE: "validate",                 // o que voltou é mesmo um produto?
   SOURCE: "source",                     // essa loja está habilitada NA campanha?
+  WORDS: "words",                       // listas branca/negra de palavras da campanha
   QUEUE: "queue",                       // inserir na fila / revisão
   SEND: "send",                         // envio pro WhatsApp
 };
@@ -119,8 +120,9 @@ const STAGE_ORDER = {
   [STAGE.SCRAPE]: 2,
   [STAGE.VALIDATE]: 3,
   [STAGE.SOURCE]: 4,
-  [STAGE.QUEUE]: 5,
-  [STAGE.SEND]: 6,
+  [STAGE.WORDS]: 5,
+  [STAGE.QUEUE]: 6,
+  [STAGE.SEND]: 7,
 };
 
 // Classificação a partir do texto. É o CAMINHO DE EXCEÇÃO, não o normal: quase

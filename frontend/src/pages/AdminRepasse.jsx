@@ -21,12 +21,12 @@ const selectStyle = {
 // backend/repasse/error-kinds.js — é o que permite dizer que uma checagem não
 // chegou a rodar em vez de mostrar um traço que parece defeito.
 const STAGE_ORDER = {
-  store: 0, "affiliate-config": 1, scrape: 2, validate: 3, source: 4, queue: 5, send: 6,
+  store: 0, "affiliate-config": 1, scrape: 2, validate: 3, source: 4, words: 5, queue: 6, send: 7,
 };
 
 const STAGE_LABEL = {
   store: "detecção da loja", "affiliate-config": "checagem do afiliado", scrape: "leitura da página",
-  validate: "validação do produto", source: "lojas da campanha", queue: "fila", send: "envio",
+  validate: "validação do produto", source: "lojas da campanha", words: "filtro de palavras", queue: "fila", send: "envio",
 };
 
 function Flag({ ok, rowStage, atStage }) {

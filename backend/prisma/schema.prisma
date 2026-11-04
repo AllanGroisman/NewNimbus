@@ -247,6 +247,12 @@ model RepasseCaptureLog {
   // dizer "não chegou nessa etapa" em vez de mostrar um traço solto que parece bug.
   stage               String?
   reason              String?
+  // Lista branca/negra de palavras da campanha (repasse/word-filter.js):
+  // "approved" | "rejected", e o motivo em texto. Null = a campanha não tinha
+  // palavra nenhuma e o filtro não rodou. É o que a aba Histórico → Filtro de
+  // palavras da campanha lista.
+  wordFilter          String?
+  wordFilterReason    String?
   createdAt           DateTime @default(now())
 
   @@index([groupId, createdAt(sort: Desc)])
@@ -258,6 +264,8 @@ model RepasseCaptureLog {
   // Prisma não sabe declarar índice parcial. Ele mora só na migration
   // 20260831120000_repasse_log_coupon_index — declarar um @@index aqui criaria um
   // segundo índice, cheio, sobre a mesma tabela.
+  // Mesma coisa pro índice parcial (groupId, createdAt) WHERE wordFilter IS NOT
+  // NULL, da migration 20261104120000_repasse_log_word_filter.
   @@map("repasse_capture_log")
 }
 
