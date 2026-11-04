@@ -78,6 +78,28 @@ describe("couponRuleForItem — sem palavra não há desconto a anunciar", () =>
     expect(enviadas[0]).toContain("Economia: R$ 20,00");
   });
 
+  it("o histórico do envio guarda o que a mensagem prometeu (aba Cupons Teste)", async () => {
+    vi.spyOn(coupons, "couponsListForKeys").mockResolvedValue(new Map([["k1", [COM_PALAVRA]]]));
+
+    const r = await scheduler.sendItem("u1", GRUPO, WA, item());
+
+    expect(r.history[0]).toMatchObject({
+      coupon: "GALAXY10",
+      couponCampaignId: "13495993",
+      sentPrice: 200,
+      priceWithCoupon: 180,
+      couponLabel: "10% OFF",
+    });
+  });
+
+  it("envio sem cupom: o histórico grava o preço e nada de cupom", async () => {
+    vi.spyOn(coupons, "couponsListForKeys").mockResolvedValue(new Map([["k1", [SEM_PALAVRA]]]));
+
+    const r = await scheduler.sendItem("u1", GRUPO, WA, item());
+
+    expect(r.history[0]).toMatchObject({ coupon: null, sentPrice: 200, priceWithCoupon: null, couponLabel: null });
+  });
+
   it("cupom do catálogo SEM palavra: preço normal e nenhuma linha de cupom", async () => {
     vi.spyOn(coupons, "couponsListForKeys").mockResolvedValue(new Map([["k1", [SEM_PALAVRA]]]));
 

@@ -999,6 +999,7 @@ async function sendItem(userId, group, whatsappGroups, item) {
   itemForSend = {
     ...itemForSend,
     coupon: palavra,
+    couponCampaignId: regraCupom?.campaignId ?? itemForSend.couponCampaignId ?? null,
     priceWithCoupon: detalhe ? detalhe.final : null,
     couponLabel: detalhe ? detalhe.rotulo : null,
     couponSaving: detalhe ? detalhe.economia : null,
@@ -1141,6 +1142,13 @@ async function deliverItem(userId, group, linked, item, itemForSend, text, { men
     discount: item.discount,
     sentAt: new Date().toISOString(),
     groupCount: sentCount,
+    // O que a mensagem prometeu — a aba Cupons Teste confere contra o checkout.
+    // `sentPrice` é o preço depois da conferência na landing (pode diferir do da fila).
+    coupon: (itemForSend?.coupon || "").toString().trim() || null,
+    couponCampaignId: itemForSend?.couponCampaignId ?? null,
+    sentPrice: Number.isFinite(Number(itemForSend?.price)) && itemForSend?.price != null ? Number(itemForSend.price) : null,
+    priceWithCoupon: Number(itemForSend?.priceWithCoupon) > 0 ? Number(itemForSend.priceWithCoupon) : null,
+    couponLabel: itemForSend?.couponLabel || null,
   }, ...(group.history || [])].slice(0, 200);
 
   const metrics = bumpMetrics(group, true);
@@ -1661,6 +1669,9 @@ module.exports = {
   // qualquer envio — exportado pra tests/unit/scheduler-send-discard.test.js
   // poder cobrir esse caminho sem subir WhatsApp.
   sendItem,
+  // A regra do cupom de um item — a aba Cupons Teste refaz a conta dos envios
+  // antigos (coupons/preco-teste.js), que não gravaram o preço com cupom.
+  couponRuleForItem,
   // Etiqueta do ML da campanha no refill (tests/unit/scheduler-ml-tag.test.js).
   convertItemAffiliate,
   // Funções puras exportadas só pra teste unitário (tests/unit/scheduler-core.test.js).

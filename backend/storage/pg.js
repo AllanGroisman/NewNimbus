@@ -46,6 +46,29 @@ function contadoresDe(row, history) {
 }
 
 // Group row + relações → shape que o frontend/scheduler esperam.
+// Uma linha de `group_history` como o scheduler a conhece. Os campos do cupom só
+// existem nos envios feitos depois de 05/11/2026 — e precisam voltar aqui, senão o
+// "apaga e regrava" do saveGroup perderia o que foi gravado no envio anterior.
+function historyRowToObject(h) {
+  return {
+    key: h.productKey,
+    name: h.name,
+    link: h.link,
+    img: h.img,
+    store: h.store,
+    price: h.price,
+    originalPrice: h.originalPrice,
+    discount: h.discount,
+    sentAt: h.sentAt.toISOString(),
+    groupCount: h.groupCount,
+    coupon: h.coupon ?? null,
+    couponCampaignId: h.couponCampaignId ?? null,
+    sentPrice: h.sentPrice ?? null,
+    priceWithCoupon: h.priceWithCoupon ?? null,
+    couponLabel: h.couponLabel ?? null,
+  };
+}
+
 // Inclui queue/pending/history "inline" como o JSON antigo.
 function groupRowToObject(row, queue = [], pending = [], history = []) {
   return {
@@ -62,18 +85,7 @@ function groupRowToObject(row, queue = [], pending = [], history = []) {
     avgDiscount: parseAvgDiscount(row.avgDiscount),
     queue: queue.map(q => q.payload),
     pending: pending.map(p => p.payload),
-    history: history.map(h => ({
-      key: h.productKey,
-      name: h.name,
-      link: h.link,
-      img: h.img,
-      store: h.store,
-      price: h.price,
-      originalPrice: h.originalPrice,
-      discount: h.discount,
-      sentAt: h.sentAt.toISOString(),
-      groupCount: h.groupCount,
-    })),
+    history: history.map(historyRowToObject),
   };
 }
 
@@ -422,6 +434,11 @@ async function updateGroupOps(userId, groupId, patch) {
           discount: h.discount ?? null,
           sentAt: h.sentAt ? new Date(h.sentAt) : new Date(),
           groupCount: h.groupCount || 1,
+          coupon: h.coupon || null,
+          couponCampaignId: h.couponCampaignId ? String(h.couponCampaignId) : null,
+          sentPrice: Number.isFinite(Number(h.sentPrice)) && h.sentPrice != null ? Number(h.sentPrice) : null,
+          priceWithCoupon: Number.isFinite(Number(h.priceWithCoupon)) && h.priceWithCoupon != null ? Number(h.priceWithCoupon) : null,
+          couponLabel: h.couponLabel || null,
         },
       }));
     }
@@ -515,18 +532,7 @@ async function loadOps(userId) {
       id: Number(g.id),
       queue: (qByG.get(String(g.id)) || []).map(q => q.payload),
       pending: (pByG.get(String(g.id)) || []).map(p => p.payload),
-      history: historico.map(h => ({
-        key: h.productKey,
-        name: h.name,
-        link: h.link,
-        img: h.img,
-        store: h.store,
-        price: h.price,
-        originalPrice: h.originalPrice,
-        discount: h.discount,
-        sentAt: h.sentAt.toISOString(),
-        groupCount: h.groupCount,
-      })),
+      history: historico.map(historyRowToObject),
       ...contadoresDe(g, historico),
       lastSend: g.lastSend,
       avgDiscount: parseAvgDiscount(g.avgDiscount),

@@ -4137,6 +4137,94 @@ app.get("/api/admin/ml-cupons/sonda-lote/alvos", auth.requireAuth, auth.requireA
   }
 });
 
+// ── Cupons Teste (coupons/preco-teste.js) ────────────────────────────────
+// O preço com cupom que a mensagem prometeu × o que o checkout do ML cobra. O laço
+// anda na aba do admin, pela extensão; aqui ficam a config, a lista dos envios a
+// conferir e as rodadas.
+const erroCuponsTeste = (res, req, err, ctx) => (err.status && err.status < 500
+  ? res.status(err.status).json({ error: err.message })
+  : httpErrors.serverError(res, err, { req, ctx }));
+
+app.get("/api/admin/cupons-teste/config", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const cfgStore = require("./coupons/preco-teste-config");
+    const grupos = await require("./db").prisma().group.findMany({
+      select: { id: true, name: true, scraping: true }, orderBy: { name: "asc" },
+    });
+    res.json({
+      config: cfgStore.readConfig(), defaults: cfgStore.DEFAULTS, faixas: cfgStore.FAIXAS,
+      // As campanhas que a tela oferece no filtro.
+      campanhas: grupos.map(g => ({ id: String(g.id), name: g.name, repasse: g.scraping?.kind === "repasse" })),
+    });
+  } catch (err) {
+    erroCuponsTeste(res, req, err, "GET /api/admin/cupons-teste/config");
+  }
+});
+
+app.put("/api/admin/cupons-teste/config", auth.requireAuth, auth.requireAdmin, (req, res) => {
+  try {
+    res.json({ config: require("./coupons/preco-teste-config").writeConfig(req.body || {}) });
+  } catch (err) {
+    erroCuponsTeste(res, req, err, "PUT /api/admin/cupons-teste/config");
+  }
+});
+
+app.get("/api/admin/cupons-teste/alvos", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const cfg = require("./coupons/preco-teste-config").readConfig();
+    res.json({ ...(await require("./coupons/preco-teste").alvos(cfg)), config: cfg });
+  } catch (err) {
+    erroCuponsTeste(res, req, err, "GET /api/admin/cupons-teste/alvos");
+  }
+});
+
+app.get("/api/admin/cupons-teste/runs", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    res.json({ runs: await require("./coupons/preco-teste").listarRuns({ limit: req.query.limit }) });
+  } catch (err) {
+    erroCuponsTeste(res, req, err, "GET /api/admin/cupons-teste/runs");
+  }
+});
+
+app.post("/api/admin/cupons-teste/runs", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const cfg = require("./coupons/preco-teste-config").readConfig();
+    res.json({ run: await require("./coupons/preco-teste").abrirRun({ config: cfg, total: req.body?.total }) });
+  } catch (err) {
+    erroCuponsTeste(res, req, err, "POST /api/admin/cupons-teste/runs");
+  }
+});
+
+app.get("/api/admin/cupons-teste/runs/:id", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    res.json(await require("./coupons/preco-teste").detalheRun(req.params.id));
+  } catch (err) {
+    erroCuponsTeste(res, req, err, "GET /api/admin/cupons-teste/runs/:id");
+  }
+});
+
+app.post("/api/admin/cupons-teste/runs/:id/item", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const { alvo, material, erro, durationMs } = req.body || {};
+    res.json(await require("./coupons/preco-teste").registrarItem({
+      runId: req.params.id, alvo, material: material && typeof material === "object" ? material : null,
+      erro: erro ? String(erro) : null, durationMs,
+    }));
+  } catch (err) {
+    erroCuponsTeste(res, req, err, "POST /api/admin/cupons-teste/runs/:id/item");
+  }
+});
+
+app.post("/api/admin/cupons-teste/runs/:id/fim", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    res.json(await require("./coupons/preco-teste").fecharRun({
+      runId: req.params.id, status: req.body?.status, motivo: req.body?.motivo,
+    }));
+  } catch (err) {
+    erroCuponsTeste(res, req, err, "POST /api/admin/cupons-teste/runs/:id/fim");
+  }
+});
+
 // O histórico das execuções do lote (as últimas; a tela manda o resumo no fim).
 app.get("/api/admin/ml-cupons/sonda-lote/runs", auth.requireAuth, auth.requireAdmin, (req, res) => {
   res.json({ runs: require("./coupons/checkout-lote").ultimasRuns() });

@@ -965,6 +965,42 @@ export async function adminSondaLoteSalvarConfig(patch) {
   return http("PUT", "/api/admin/ml-cupons/sonda-lote/config", patch);
 }
 
+// ─── Admin / Cupons Teste (backend/coupons/preco-teste.js) ─────────────
+// O preço com cupom que a mensagem prometeu × o que o checkout do ML cobra.
+// GET config devolve { config, defaults, faixas, campanhas }; PUT grava e devolve { config }.
+export async function adminCuponsTesteConfig() {
+  return http("GET", "/api/admin/cupons-teste/config");
+}
+
+export async function adminCuponsTesteSalvarConfig(patch) {
+  return http("PUT", "/api/admin/cupons-teste/config", patch);
+}
+
+// { alvos[], total, disponiveis, campanhas, envios, semCupom, estimados, config }
+export async function adminCuponsTesteAlvos() {
+  return http("GET", "/api/admin/cupons-teste/alvos");
+}
+
+export async function adminCuponsTesteRuns() {
+  return http("GET", "/api/admin/cupons-teste/runs");
+}
+
+export async function adminCuponsTesteRun(id) {
+  return http("GET", `/api/admin/cupons-teste/runs/${encodeURIComponent(id)}`);
+}
+
+export async function adminCuponsTesteAbrirRun(total) {
+  return http("POST", "/api/admin/cupons-teste/runs", { total });
+}
+
+export async function adminCuponsTesteItem(runId, { alvo, material = null, erro = null, durationMs = null }) {
+  return http("POST", `/api/admin/cupons-teste/runs/${encodeURIComponent(runId)}/item`, { alvo, material, erro, durationMs });
+}
+
+export async function adminCuponsTesteFecharRun(runId, { status, motivo = null }) {
+  return http("POST", `/api/admin/cupons-teste/runs/${encodeURIComponent(runId)}/fim`, { status, motivo });
+}
+
 // ─── Admin / Repasse (teste automático de cupom) ───────────────────────
 // O robô que testa no ML a palavra pescada na legenda e traz a campanha pro
 // sistema. GET devolve config + defaults + o status da última rodada juntos —

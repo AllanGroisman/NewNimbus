@@ -154,11 +154,20 @@ model GroupHistory {
   discount      Int?
   sentAt        DateTime
   groupCount    Int      @default(1)
+  // O que a MENSAGEM prometeu (aba Cupons Teste confere contra o checkout do ML).
+  // `sentPrice` é o preço depois de conferido na landing do nosso link, que pode
+  // diferir de `price` (o da fila). Null nos envios de antes de 05/11/2026.
+  coupon           String?
+  couponCampaignId String?
+  sentPrice        Float?
+  priceWithCoupon  Float?
+  couponLabel      String?
 
   group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
 
   @@index([groupId, sentAt(sort: Desc)])
   @@index([groupId, productKey])
+  @@index([sentAt(sort: Desc)])
   @@map("group_history")
 }
 
@@ -850,4 +859,61 @@ model Tutorial {
 
   @@index([sectionId, sort])
   @@map("tutorials")
+}
+
+// Admin › Scraping Cupons › Cupons Teste: uma rodada que confere, no checkout do
+// ML (pela extensão), se o preço com cupom que a mensagem prometeu é o que o ML
+// cobra (coupons/preco-teste.js). O laço anda na aba do admin; o servidor guarda
+// a rodada e cada produto conferido.
+// status: rodando | concluida | cancelada | interrompida
+model CupomTesteRun {
+  id         BigInt    @id @default(autoincrement())
+  status     String    @default("rodando")
+  config     Json      @default("{}")
+  total      Int       @default(0)
+  feitos     Int       @default(0)
+  ok         Int       @default(0)
+  divergente Int       @default(0)
+  naoPegou   Int       @default(0) @map("nao_pegou")
+  falhou     Int       @default(0)
+  motivoFim  String?   @map("motivo_fim")
+  startedAt  DateTime  @default(now()) @map("started_at")
+  finishedAt DateTime? @map("finished_at")
+
+  itens CupomTesteItem[]
+
+  @@index([startedAt(sort: Desc)])
+  @@map("cupom_teste_runs")
+}
+
+// status: ok | divergente | cupom-nao-pegou | prometeu-sem-desconto | falhou
+model CupomTesteItem {
+  id                BigInt    @id @default(autoincrement())
+  runId             BigInt    @map("run_id")
+  groupId           String?   @map("group_id")
+  groupName         String?   @map("group_name")
+  productKey        String?   @map("product_key")
+  name              String?
+  img               String?
+  link              String
+  coupon            String?
+  sentAt            DateTime? @map("sent_at")
+  estimado          Boolean   @default(false)
+  prometidoPreco    Float?    @map("prometido_preco")
+  prometidoComCupom Float?    @map("prometido_com_cupom")
+  precoPagina       Float?    @map("preco_pagina")
+  descontoMl        Float?    @map("desconto_ml")
+  realComCupom      Float?    @map("real_com_cupom")
+  totalCheckout     Float?    @map("total_checkout")
+  diferenca         Float?
+  status            String
+  motivo            String?
+  detalhe           Json      @default("{}")
+  durationMs        Int?      @map("duration_ms")
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  run CupomTesteRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, id])
+  @@map("cupom_teste_itens")
 }
