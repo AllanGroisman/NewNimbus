@@ -339,6 +339,7 @@ export default function FilaCheckoutRepasse({ temCheckout, depurar = false, temD
                           : `repasse · ${item.capturas ?? "?"} captura(s)`}
                       {item.motivo === "indeterminado" && <div style={{ color: "var(--color-text-secondary)" }}>nova tentativa</div>}
                       {item.motivo === "renovar" && <div style={{ color: "var(--color-text-secondary)" }}>cupom vencido voltou</div>}
+                      {item.motivo === "cupom-invalido" && <div style={{ color: "var(--color-text-secondary)" }}>cupom do líder não vale — procurando outro</div>}
                     </td>
                     <td style={td}>{dataHora(item.criadoEm)}</td>
                     <td style={td}>

@@ -63,9 +63,26 @@ describe("aguardandoCupom", () => {
     expect(await scheduler.aguardandoCupom(REPASSE, item(), AGORA)).toBe(true);
   });
 
-  it("palavra que o ML recusou não espera", async () => {
+  it("palavra que o ML recusou não espera o teste dela — espera a sonda, como sem palavra", async () => {
     coupons.findCodeCheck.mockResolvedValue({ verdict: "invalid" });
-    expect(await scheduler.aguardandoCupom(REPASSE, item(), AGORA)).toBe(false);
+    const comLink = item({ link: "https://produto.mercadolivre.com.br/MLB-1" });
+    // Sonda já voltou (padrão do beforeEach): solta.
+    expect(await scheduler.aguardandoCupom(REPASSE, comLink, AGORA)).toBe(false);
+    // Produto ainda não sondado: segura até a sonda procurar outro cupom.
+    autotest.sondaDoProduto.mockResolvedValue(null);
+    expect(await scheduler.aguardandoCupom(REPASSE, comLink, AGORA)).toBe(true);
+    // Opção da sonda desligada: não espera.
+    cfg.sondaSemCupom = false;
+    expect(await scheduler.aguardandoCupom(REPASSE, comLink, AGORA)).toBe(false);
+  });
+
+  it("palavra recusada com outro cupom ligado ao produto: não espera e conta como válido", async () => {
+    coupons.findCodeCheck.mockResolvedValue({ verdict: "invalid" });
+    autotest.sondaDoProduto.mockResolvedValue(null);
+    coupons.couponsListForKeys.mockResolvedValue(new Map([["k1", [{ code: "CASAMELI", kind: "percent", value: 10 }]]]));
+    const comLink = item({ link: "https://produto.mercadolivre.com.br/MLB-1" });
+    expect(await scheduler.aguardandoCupom(REPASSE, comLink, AGORA)).toBe(false);
+    expect(await scheduler.estadoCupomDoItem(comLink, AGORA)).toBe("valido");
   });
 
   it("não espera com 0 minutos, com o teste automático desligado ou bloqueado", async () => {

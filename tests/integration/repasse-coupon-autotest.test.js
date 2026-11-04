@@ -714,6 +714,16 @@ describe("a sonda do produto sem cupom", () => {
     expect(desligada.sondaSemCupom).toBe(false);
     cfgStore.readConfig.mockReturnValue({ ...cfgStore.DEFAULTS, checkoutAuto: true, esperaCupomMin: 15 });
 
+    // Palavra que o ML recusou: entra na sonda (procurar outro cupom); a ainda
+    // não testada fica de fora (espera o teste dela).
+    const coupons = require(path.join(backendDir, "coupons"));
+    const check = vi.spyOn(coupons, "findCodeCheck").mockImplementation(async (p) => (p === "RUIM" ? { verdict: "invalid" } : null));
+    storage.loadState.mockResolvedValue({ groups: [{ id: 9, scraping: { kind: "repasse" }, queue: [{ ...it1, coupon: "NOVO" }, { ...it1, coupon: "RUIM" }] }] });
+    expect((await autotest.pendentesCheckout()).itens.filter(i => i.tipo === "sonda"))
+      .toEqual([expect.objectContaining({ key: KEY, motivo: "cupom-invalido" })]);
+    check.mockRestore();
+    storage.loadState.mockResolvedValue({ groups: [{ id: 9, scraping: { kind: "repasse" }, queue: [it1, { ...it1 }] }] });
+
     // Depois da sonda, ele sai da fila.
     await autotest.registrarSondaRepasse({ key: KEY, url: URL, erro: "timeout" });
     expect((await autotest.pendentesCheckout()).itens.filter(i => i.tipo === "sonda")).toEqual([]);

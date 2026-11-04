@@ -599,12 +599,16 @@ async function pendentesSonda(agora = Date.now()) {
     for (const g of state?.groups || []) {
       if (!scheduler.isRepasse(g)) continue;
       for (const it of g.queue || []) {
-        if (!it?.key || vistos.has(it.key) || String(it.coupon || "").trim() || !it.link) continue;
+        if (!it?.key || vistos.has(it.key) || !it.link) continue;
+        // Com palavra, só entra se o ML já a recusou — a que ainda não foi
+        // testada espera o teste dela, não a sonda.
+        const temPalavra = !!String(it.coupon || "").trim();
+        if (temPalavra && !(await scheduler.palavraRecusada(it))) continue;
         if (!(await scheduler.aguardandoCupom(g, it, agora))) continue;
         vistos.add(it.key);
         itens.push({
           origem: "sonda", tipo: "sonda", code: chaveSonda(it.key), key: it.key, url: it.link,
-          name: it.name || null, criadoEm: it.addedAt, motivo: "sem-cupom",
+          name: it.name || null, criadoEm: it.addedAt, motivo: temPalavra ? "cupom-invalido" : "sem-cupom",
           reservado: reservado(chaveSonda(it.key), agora),
         });
       }

@@ -117,6 +117,29 @@ describe("couponRuleForItem — sem palavra não há desconto a anunciar", () =>
     expect(enviadas[0]).toContain("Com cupom: R$ 180,00");
   });
 
+  it("palavra do item que não existe no ML é TROCADA pelo cupom do catálogo que vale", async () => {
+    // O líder escreveu ERRADO10 (o ML recusou), mas o produto tem o GALAXY10
+    // vinculado: o preço sai com o desconto dele, e a palavra também tem que ser a dele.
+    vi.spyOn(coupons, "findCouponByCode").mockResolvedValue(null);
+    vi.spyOn(coupons, "couponsListForKeys").mockResolvedValue(new Map([["k1", [COM_PALAVRA]]]));
+
+    await scheduler.sendItem("u1", GRUPO, WA, item({ coupon: "ERRADO10" }));
+
+    expect(enviadas[0]).toContain("Com cupom: R$ 180,00");
+    expect(enviadas[0]).toContain("Cupom: GALAXY10");
+    expect(enviadas[0]).not.toContain("ERRADO10");
+  });
+
+  it("palavra do item sem cupom nenhum no sistema segue como veio", async () => {
+    vi.spyOn(coupons, "findCouponByCode").mockResolvedValue(null);
+    vi.spyOn(coupons, "couponsListForKeys").mockResolvedValue(new Map());
+
+    await scheduler.sendItem("u1", GRUPO, WA, item({ coupon: "NOVO10" }));
+
+    expect(enviadas[0]).toContain("Cupom: NOVO10");
+    expect(enviadas[0]).not.toContain("Com cupom:");
+  });
+
   it("produto de outra loja não pega cupom do ML", async () => {
     // `ml_coupons` é a aba de cupons do Mercado Livre: um cupom de lá não vale num
     // produto da Amazon, nem que a palavra bata por coincidência.

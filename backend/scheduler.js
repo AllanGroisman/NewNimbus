@@ -704,10 +704,20 @@ async function couponRuleForItem(item) {
 // checkout (repasse/coupon-autotest.js:pendentesSonda): um cupom que já está no
 // sistema pode valer nele sem o líder ter escrito (o CASAMELI do meli.la/1KUKHgA).
 // A sonda que voltou, achando ou não, solta o item.
+// A palavra do item conta como "sem palavra" quando o ML já disse que ela não
+// existe: aí o produto vai pela sonda do checkout, que pode achar um cupom do
+// sistema que vale nele — e o envio troca a palavra ruim por ela (sendItem).
+async function palavraRecusada(item) {
+  const palavra = String(item?.coupon || "").trim();
+  if (!palavra) return false;
+  const teste = await coupons.findCodeCheck(palavra.toUpperCase(), { maxAgeHours: Infinity }).catch(() => null);
+  return teste?.verdict === "invalid";
+}
+
 async function aguardandoCupom(group, item, agora = Date.now()) {
   if (!isRepasse(group) || item?.source !== "repasse") return false;
   if (item.store !== "Mercado Livre" || item.originalText) return false;
-  const palavra = String(item.coupon || "").trim();
+  let palavra = String(item.coupon || "").trim();
 
   let cfg, bloqueado, autotest;
   try {
@@ -729,6 +739,10 @@ async function aguardandoCupom(group, item, agora = Date.now()) {
   const regra = await couponRuleForItem(item).catch(() => null);
   if (regra && !(regra.expiresAt && new Date(regra.expiresAt).getTime() <= agora)) return false;
 
+  // O ML já disse que a palavra não existe: esperar o teste não muda a resposta,
+  // mas a sonda pode achar outro cupom do sistema pro produto.
+  if (palavra && await palavraRecusada(item)) palavra = "";
+
   if (!palavra) {
     if (cfg.sondaSemCupom === false || !item.key || !item.link) return false;
     // Banco fora do ar: não segura o envio por uma resposta que não vai chegar.
@@ -736,10 +750,6 @@ async function aguardandoCupom(group, item, agora = Date.now()) {
     if (sonda === undefined) return false;
     return !autotest.sondaRespondeu(sonda, item, agora);
   }
-
-  // O ML já disse que a palavra não existe: esperar não muda a resposta.
-  const teste = await coupons.findCodeCheck(palavra.toUpperCase(), { maxAgeHours: Infinity }).catch(() => null);
-  if (teste?.verdict === "invalid") return false;
   return true;
 }
 
@@ -932,10 +942,13 @@ async function sendItem(userId, group, whatsappGroups, item) {
   // A regra do cupom lida AGORA — e ela sempre tem palavra (couponRuleForItem não
   // devolve cupom sem `code`).
   const regraCupom = await couponRuleForItem(itemForSend);
-  // Quando o item não trazia palavra e o catálogo tinha uma, ela é HERDADA aqui.
-  // Sem isso, o {preco_com_cupom} descontava e o {cupom} sumia da mesma mensagem:
-  // preço de cupom sem dizer qual cupom. Os dois falam do mesmo cupom ou nenhum.
-  const palavra = coupon || (regraCupom?.code || "").toString().trim();
+  // A palavra da mensagem é a do cupom que deu o desconto. Quando o item não
+  // trazia palavra e o catálogo tinha uma, ela é HERDADA; quando a do item não
+  // existe no ML (o líder errou, ou a campanha acabou) e o produto tem outro
+  // cupom do sistema que vale, ela é TROCADA. Sem isso o {preco_com_cupom} saía
+  // com o desconto de um cupom e o {cupom} com a palavra de outro. Os dois falam
+  // do mesmo cupom ou nenhum. Sem regra, a palavra do item segue como veio.
+  const palavra = (regraCupom?.code || "").toString().trim() || coupon;
   // O preço com o desconto e o quanto ele vale, contra o que o banco diz do cupom
   // neste instante. `null` = não deu pra calcular, e aí o {preco_com_cupom} sai
   // igual ao {preco} e as linhas de {desconto_cupom}/{economia_cupom} somem.
@@ -1595,7 +1608,7 @@ async function addItemToGroup(userId, group, item, { force = false } = {}) {
 
 module.exports = {
   _setConferirPrecoML, conferirPrecoNaNossaLanding,
-  aguardandoCupom, primeiroProntoParaEnvio, estadoCupomDoItem, estadosCupomDaFila, soCupomValido,
+  aguardandoCupom, palavraRecusada, primeiroProntoParaEnvio, estadoCupomDoItem, estadosCupomDaFila, soCupomValido,
   start, stop, tick, sendNextNow, refillNow, manualAdd, addItemToGroup,
   isRepasse, isAutoApprove, isAutoRefill, resolveSources, activeSources, sourcesForCampaign,
   status, processSendJob,
