@@ -42,7 +42,9 @@ describe("PriceDetection", () => {
     });
     abrir();
     fireEvent.click(await screen.findByText("Testar"));
-    await screen.findByText(/R\$ 1\.520,00/, { selector: "strong" });
+    // Aparece duas vezes: no "Detectado" e no "Por" da prévia do envio.
+    expect(await screen.findAllByText(/R\$ 1\.520,00/, { selector: "strong" })).toHaveLength(2);
+    expect(screen.getByText(/R\$ 1\.739,90/, { selector: "s" })).toBeTruthy();
     expect(screen.getByText(/13% OFF/)).toBeTruthy();
     expect(adminRepassePriceTest).toHaveBeenCalledWith(expect.any(String), CONFIG, 1739.9);
   });
