@@ -922,6 +922,10 @@ async function sendItem(userId, group, whatsappGroups, item) {
     return deliverItem(userId, group, linked, item, itemForSend, originalText, { previewUrl });
   }
 
+  // ML: o preço que vai na mensagem é o que o NOSSO link mostra (ver
+  // conferirPrecoNaNossaLanding). Antes do cupom, pra o "Por" sair do preço certo.
+  itemForSend = await conferirPrecoNaNossaLanding(item, itemForSend);
+
   // Cupom: o do próprio item (que vem da legenda do grupo líder no repasse, ou
   // digitado à mão na fila) ou, na falta dele, o que o catálogo conhece.
   const coupon = (itemForSend.coupon || "").toString().trim();
@@ -949,6 +953,63 @@ async function sendItem(userId, group, whatsappGroups, item) {
   // passa por aqui (não tem modelo), então nunca marca ninguém.
   const mentionAll = /\{todos\}/.test(group.messageTemplate || "");
   return deliverItem(userId, group, linked, item, itemForSend, text, { mentionAll, previewUrl: itemForSend.link || null });
+}
+
+// Preço do ML conferido na landing do link que VAI na mensagem.
+//
+// Por quê (04/11/2026, Box Pokémon): o grupo líder divulgou a oferta de UM
+// vendedor (anúncio MLB4895124579, R$ 599,90), mas a gente guarda só o link de
+// catálogo /p/MLB… — e a landing do nosso link mostra o vendedor que ganha a
+// caixa de compra (MLB7307110012, R$ 499). A mensagem dizia 599,90 e o cliente
+// via 499. Lendo a nossa landing, o preço da mensagem é o que o cliente vai ver.
+//
+// Best-effort: falha de rede, CAPTCHA ou produto diferente na landing mantêm o
+// preço que já tinha — nunca segura nem descarta o envio.
+// Em teste fica desligado (os testes de envio usam links falsos de meli.la e
+// sairiam pra rede); quem testa isto liga com _setConferirPrecoML(true).
+let conferirPrecoML = process.env.NODE_ENV !== "test";
+function _setConferirPrecoML(v) { conferirPrecoML = !!v; }
+
+async function conferirPrecoNaNossaLanding(item, itemForSend) {
+  if (!conferirPrecoML || itemForSend?.store !== "Mercado Livre") return itemForSend;
+  const mlSocial = require("./scraping/ml-social");
+  const link = itemForSend.link;
+  if (!link || !mlSocial.isAffiliateShareUrl(link)) return itemForSend;
+  const nome = (itemForSend.name || "").slice(0, 40);
+
+  let lido;
+  try {
+    lido = await mlSocial.fetchSocialLanding(link);
+  } catch (err) {
+    console.warn(`[scheduler] preço do ML não conferido pra "${nome}" (rede: ${err.message}) — vai o preço de antes`);
+    return itemForSend;
+  }
+  if (!lido?.ok || !lido.product || lido.product.price == null) {
+    console.warn(`[scheduler] preço do ML não conferido pra "${nome}" (${lido?.kind || "?"}) — vai o preço de antes`);
+    return itemForSend;
+  }
+
+  // A landing tem que ser do mesmo produto (mesma regra da faxina/rebusca.js).
+  const { mlItemIdFromUrl, mlUrlSpace } = require("./catalog/product-key");
+  const origem = item.originalLink || item.link;
+  const p = lido.product;
+  const esperado = mlItemIdFromUrl(origem);
+  const veio = mlItemIdFromUrl(p.link);
+  if (esperado && veio && (mlUrlSpace(origem) !== mlUrlSpace(p.link) || esperado !== veio)) {
+    console.warn(`[scheduler] preço do ML não conferido pra "${nome}": a landing trouxe outro produto (${veio}, esperado ${esperado})`);
+    return itemForSend;
+  }
+
+  if (p.price === itemForSend.price
+      && (p.originalPrice ?? null) === (itemForSend.originalPrice ?? null)) return itemForSend;
+
+  console.log(`[scheduler] preço do ML conferido no nosso link pra "${nome}": ${itemForSend.price} → ${p.price} (de ${itemForSend.originalPrice ?? "—"} → ${p.originalPrice ?? "—"}, anúncio ${p.mlItemId || "?"})`);
+  return {
+    ...itemForSend,
+    price: p.price,
+    originalPrice: p.originalPrice ?? null,
+    discount: p.discount ?? null,
+  };
 }
 
 // Como a foto vai na mensagem (`scraping.imageMode`): a escolha mora no modelo de
@@ -1533,6 +1594,7 @@ async function addItemToGroup(userId, group, item, { force = false } = {}) {
 }
 
 module.exports = {
+  _setConferirPrecoML, conferirPrecoNaNossaLanding,
   aguardandoCupom, primeiroProntoParaEnvio, estadoCupomDoItem, estadosCupomDaFila, soCupomValido,
   start, stop, tick, sendNextNow, refillNow, manualAdd, addItemToGroup,
   isRepasse, isAutoApprove, isAutoRefill, resolveSources, activeSources, sourcesForCampaign,
