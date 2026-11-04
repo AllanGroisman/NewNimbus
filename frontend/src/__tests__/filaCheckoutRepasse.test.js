@@ -6,10 +6,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("../data/api", () => ({
   errText: (err, fallback) => err?.message || fallback,
   adminRepasseCupomCheckoutReivindicar: vi.fn(),
+  adminRepasseCupomCheckoutSonda: vi.fn(),
 }));
 vi.mock("../data/cupomCheckoutRepasse", () => ({ testarNoCheckout: vi.fn() }));
+vi.mock("../data/coletor", () => ({ sondarCuponsNoCheckout: vi.fn() }));
+vi.mock("../data/sondaLote", () => ({ materialEnxuto: (m) => ({ enxuto: m }) }));
 
-import { adminRepasseCupomCheckoutReivindicar } from "../data/api";
+import { adminRepasseCupomCheckoutReivindicar, adminRepasseCupomCheckoutSonda } from "../data/api";
+import { sondarCuponsNoCheckout } from "../data/coletor";
 import { testarNoCheckout } from "../data/cupomCheckoutRepasse";
 import {
   _zerarParaTestes, emSerie, ocupado, passoDoEvento, testarTodos, testarItem, parar, registrarAoTestar,
@@ -85,5 +89,31 @@ describe("filaCheckoutRepasse", () => {
     adminRepasseCupomCheckoutReivindicar.mockRejectedValue(Object.assign(new Error("x"), { status: 409 }));
     expect(await testarItem(item("A"), "repasse-checkout")).toBeNull();
     expect(testarNoCheckout).not.toHaveBeenCalled();
+  });
+});
+
+// Produto do repasse que chegou sem cupom: o item `tipo: "sonda"` vai pra sonda do
+// checkout, não pro teste de palavra.
+describe("item de sonda", () => {
+  const sonda = { tipo: "sonda", code: "SONDA:K1", key: "k1", url: "https://meli.la/1KUKHgA", name: "Panela" };
+
+  it("roda a sonda e manda o material pro servidor", async () => {
+    sondarCuponsNoCheckout.mockResolvedValue({ cru: 1 });
+    adminRepasseCupomCheckoutSonda.mockResolvedValue({ ok: true, palavras: ["CASAMELI"] });
+    const r = await testarItem(sonda, "repasse-checkout-auto");
+    expect(testarNoCheckout).not.toHaveBeenCalled();
+    expect(sondarCuponsNoCheckout).toHaveBeenCalledWith("https://meli.la/1KUKHgA", expect.any(Object));
+    expect(adminRepasseCupomCheckoutSonda).toHaveBeenCalledWith({
+      key: "k1", url: "https://meli.la/1KUKHgA", material: { enxuto: { cru: 1 } }, source: "repasse-checkout-auto",
+    });
+    expect(r.palavras).toEqual(["CASAMELI"]);
+  });
+
+  it("extensão falhou: avisa o servidor com o erro, pra soltar o envio", async () => {
+    sondarCuponsNoCheckout.mockRejectedValue(new Error("timeout"));
+    adminRepasseCupomCheckoutSonda.mockResolvedValue({});
+    const r = await testarItem(sonda, "repasse-checkout");
+    expect(adminRepasseCupomCheckoutSonda).toHaveBeenCalledWith(expect.objectContaining({ key: "k1", erro: "timeout" }));
+    expect(r).toMatchObject({ ok: false, palavras: [] });
   });
 });

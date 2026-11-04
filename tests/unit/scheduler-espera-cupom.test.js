@@ -39,6 +39,8 @@ beforeEach(() => {
   vi.spyOn(coupons, "findCouponByCode").mockResolvedValue(null);
   vi.spyOn(coupons, "couponsListForKeys").mockResolvedValue(new Map());
   vi.spyOn(coupons, "findCodeCheck").mockResolvedValue(null);
+  // Por padrão o produto sem palavra já foi sondado: os casos antigos não esperam.
+  vi.spyOn(autotest, "sondaDoProduto").mockResolvedValue({ probedAt: new Date(AGORA - MIN), ok: true });
 });
 
 describe("aguardandoCupom", () => {
@@ -149,5 +151,86 @@ describe("só enviar com cupom válido", () => {
     coupons.findCodeCheck.mockResolvedValue({ verdict: "invalid" });
     const r = await scheduler.estadosCupomDaFila({ ...SO_VALIDO, queue: [item({ id: 7 }), item({ key: "x", coupon: "" })] }, AGORA);
     expect(r).toEqual({ ativo: true, estados: { 7: "invalido", x: "sem_cupom" } });
+  });
+});
+
+// Produto do repasse SEM palavra: espera a sonda do checkout dizer se algum cupom
+// do sistema vale nele (o CASAMELI que valia no meli.la/1KUKHgA e não foi).
+describe("sem cupom: espera a sonda do checkout", () => {
+  const semPalavra = (over = {}) => item({ coupon: "", link: "https://produto.mercadolivre.com.br/MLB-1", ...over });
+
+  it("segura enquanto o produto não foi sondado", async () => {
+    autotest.sondaDoProduto.mockResolvedValue(null);
+    expect(await scheduler.aguardandoCupom(REPASSE, semPalavra(), AGORA)).toBe(true);
+  });
+
+  it("solta quando a sonda voltou depois de ele entrar, achando ou não", async () => {
+    autotest.sondaDoProduto.mockResolvedValue({ probedAt: new Date(AGORA - MIN), ok: false });
+    expect(await scheduler.aguardandoCupom(REPASSE, semPalavra(), AGORA)).toBe(false);
+  });
+
+  it("sonda antiga: só conta se leu a lista nas últimas 12h", async () => {
+    autotest.sondaDoProduto.mockResolvedValue({ probedAt: new Date(AGORA - 3 * 3600_000), ok: true });
+    expect(await scheduler.aguardandoCupom(REPASSE, semPalavra(), AGORA)).toBe(false);
+    autotest.sondaDoProduto.mockResolvedValue({ probedAt: new Date(AGORA - 3 * 3600_000), ok: false });
+    expect(await scheduler.aguardandoCupom(REPASSE, semPalavra(), AGORA)).toBe(true);
+    autotest.sondaDoProduto.mockResolvedValue({ probedAt: new Date(AGORA - 13 * 3600_000), ok: true });
+    expect(await scheduler.aguardandoCupom(REPASSE, semPalavra(), AGORA)).toBe(true);
+  });
+
+  it("já tem cupom ligado ao produto: não espera", async () => {
+    autotest.sondaDoProduto.mockResolvedValue(null);
+    coupons.couponsListForKeys.mockResolvedValue(new Map([["k1", [{ code: "CASAMELI", kind: "percent", value: 10 }]]]));
+    expect(await scheduler.aguardandoCupom(REPASSE, semPalavra(), AGORA)).toBe(false);
+  });
+
+  it("solta com a espera estourada, automático desligado, bloqueio ou banco fora", async () => {
+    autotest.sondaDoProduto.mockResolvedValue(null);
+    expect(await scheduler.aguardandoCupom(REPASSE, semPalavra({ addedAt: new Date(AGORA - 16 * MIN).toISOString() }), AGORA)).toBe(false);
+    cfg.checkoutAuto = false;
+    expect(await scheduler.aguardandoCupom(REPASSE, semPalavra(), AGORA)).toBe(false);
+    cfg.checkoutAuto = true;
+    autotest.status.mockReturnValue({ bloqueadoAte: new Date(AGORA + MIN).toISOString() });
+    expect(await scheduler.aguardandoCupom(REPASSE, semPalavra(), AGORA)).toBe(false);
+    autotest.status.mockReturnValue({ bloqueadoAte: null });
+    autotest.sondaDoProduto.mockRejectedValue(new Error("db fora"));
+    expect(await scheduler.aguardandoCupom(REPASSE, semPalavra(), AGORA)).toBe(false);
+  });
+
+  it("outra loja, campanha de catálogo ou item sem link não esperam", async () => {
+    autotest.sondaDoProduto.mockResolvedValue(null);
+    expect(await scheduler.aguardandoCupom(REPASSE, semPalavra({ store: "Amazon" }), AGORA)).toBe(false);
+    expect(await scheduler.aguardandoCupom({ scraping: { kind: "busca" } }, semPalavra(), AGORA)).toBe(false);
+    expect(await scheduler.aguardandoCupom(REPASSE, semPalavra({ link: "" }), AGORA)).toBe(false);
+  });
+
+  it("'só cupom válido' não barra o produto sem cupom depois da sonda", async () => {
+    const SO_VALIDO = { id: 2, scraping: { kind: "repasse", autoSend: true, repasse: { soCupomValido: true } } };
+    expect(await scheduler.primeiroProntoParaEnvio(SO_VALIDO, [semPalavra()], AGORA)).toBe(0);
+  });
+});
+
+describe("opção 'procurar cupom em produto sem cupom'", () => {
+  it("desligada: o sem palavra sai na hora; o com palavra continua esperando", async () => {
+    autotest.sondaDoProduto.mockResolvedValue(null);
+    cfg.sondaSemCupom = false;
+    const semPalavra = item({ coupon: "", link: "https://produto.mercadolivre.com.br/MLB-1" });
+    expect(await scheduler.aguardandoCupom(REPASSE, semPalavra, AGORA)).toBe(false);
+    expect(await scheduler.aguardandoCupom(REPASSE, item(), AGORA)).toBe(true);
+    cfg.sondaSemCupom = true;
+    expect(await scheduler.aguardandoCupom(REPASSE, semPalavra, AGORA)).toBe(true);
+  });
+});
+
+describe("sondaRespondeu (pura)", () => {
+  const it0 = { addedAt: new Date(AGORA - 2 * MIN).toISOString() };
+  it("sem sonda ou data ruim: não respondeu", () => {
+    expect(autotest.sondaRespondeu(null, it0, AGORA)).toBe(false);
+    expect(autotest.sondaRespondeu({ probedAt: "x", ok: true }, it0, AGORA)).toBe(false);
+  });
+  it("depois da entrada responde mesmo falha; antes só se leu e é recente", () => {
+    expect(autotest.sondaRespondeu({ probedAt: new Date(AGORA - MIN), ok: false }, it0, AGORA)).toBe(true);
+    expect(autotest.sondaRespondeu({ probedAt: new Date(AGORA - 3600_000), ok: true }, it0, AGORA)).toBe(true);
+    expect(autotest.sondaRespondeu({ probedAt: new Date(AGORA - 3600_000), ok: false }, it0, AGORA)).toBe(false);
   });
 });

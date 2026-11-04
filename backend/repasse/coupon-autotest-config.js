@@ -73,6 +73,11 @@ const DEFAULTS = {
   // seguinte à captura, antes de o sistema saber quanto o cupom desconta, e o
   // {preco_com_cupom} sai sem o desconto. 0 = não segura.
   esperaCupomMin: 15,
+
+  // Produto do repasse que chegou SEM cupom espera uma sonda do checkout, que diz
+  // se algum cupom do sistema vale nele (coupon-autotest.js:pendentesSonda).
+  // Desligado, ele sai na hora, como antes.
+  sondaSemCupom: true,
 };
 
 // Faixas do saneamento. O corpo do PUT chega cru do admin e estes números viram
@@ -90,7 +95,7 @@ const FAIXAS = {
   esperaCupomMin: [0, 120],
 };
 
-const BOOLEANOS = ["enabled", "checkoutAuto", "importarCampanha", "rasparVitrine"];
+const BOOLEANOS = ["enabled", "checkoutAuto", "importarCampanha", "rasparVitrine", "sondaSemCupom"];
 
 // Checkbox de formulário chega como "true"/"on"/1 dependendo do caminho; um
 // `!!v` cru transformaria a string "false" em true.

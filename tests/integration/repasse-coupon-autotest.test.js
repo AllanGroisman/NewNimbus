@@ -658,3 +658,64 @@ describe("as rotas do admin", () => {
     expect(r.body.items.find(i => i.coupon === null).couponVerdict).toBeNull();
   });
 });
+
+// O produto do repasse que chegou SEM cupom: a sonda do checkout diz quais cupons
+// do sistema valem nele (o CASAMELI do meli.la/1KUKHgA) e solta o envio.
+describe("a sonda do produto sem cupom", () => {
+  const html = fs.readFileSync(path.resolve(__dirname, "..", "fixtures", "ml-checkout-cupons-iframe.html"), "utf8");
+  const KEY = "ml:MLB-SONDA-1";
+  const URL = "https://produto.mercadolivre.com.br/MLB-999-casa";
+
+  beforeEach(async () => {
+    await prisma().mlCouponProduct.deleteMany({});
+    await prisma().mlCheckoutProbe.deleteMany({});
+  });
+
+  it("acha o cupom de palavra que já está no sistema e o envio passa a vê-lo", async () => {
+    await prisma().mlCoupon.create({ data: { campaignId: "14167118", title: "Casa", kind: "percent", value: 10, code: "CASAMELI" } });
+    const r = await autotest.registrarSondaRepasse({ key: KEY, url: URL, material: { paginaDosCupons: { ok: true, html } } });
+    expect(r).toMatchObject({ ok: true, palavras: ["CASAMELI"] });
+
+    const probe = await prisma().mlCheckoutProbe.findUnique({ where: { productKey: KEY } });
+    expect(probe).toMatchObject({ ok: true, cupons: 1 });
+    const coupons = require(path.join(backendDir, "coupons"));
+    const mapa = await coupons.couponsListForKeys([KEY]);
+    expect((mapa.get(KEY) || []).map(c => c.code)).toContain("CASAMELI");
+  });
+
+  it("falha da extensão grava a sonda (solta o envio) sem vínculo", async () => {
+    const r = await autotest.registrarSondaRepasse({ key: KEY, url: URL, erro: "timeout" });
+    expect(r).toMatchObject({ ok: false, palavras: [] });
+    expect(await prisma().mlCheckoutProbe.findUnique({ where: { productKey: KEY } })).toMatchObject({ ok: false, motivo: "timeout" });
+  });
+
+  it("muro na fila automática arma o freio", async () => {
+    await autotest.registrarSondaRepasse({ key: KEY, url: URL, material: { muro: "captcha", checkout: { reached: false } }, source: "repasse-checkout-auto" });
+    expect(autotest.status().bloqueadoAte).toBeTruthy();
+  });
+
+  it("produto sem cupom segurado na fila de repasse entra em pendentesCheckout", async () => {
+    const storage = require(path.join(backendDir, "storage"));
+    const scheduler = require(path.join(backendDir, "scheduler.js"));
+    const cfgStore = require(path.join(backendDir, "repasse", "coupon-autotest-config.js"));
+    vi.spyOn(cfgStore, "readConfig").mockReturnValue({ ...cfgStore.DEFAULTS, checkoutAuto: true, esperaCupomMin: 15 });
+    const it1 = { key: KEY, link: URL, name: "Jogo de panelas", store: "Mercado Livre", source: "repasse", coupon: "", addedAt: new Date().toISOString() };
+    vi.spyOn(storage, "listAllUserIds").mockResolvedValue([userId]);
+    vi.spyOn(storage, "loadState").mockResolvedValue({ groups: [{ id: 9, scraping: { kind: "repasse" }, queue: [it1, { ...it1 }] }] });
+    expect(scheduler.isRepasse({ scraping: { kind: "repasse" } })).toBe(true);
+
+    const { itens } = await autotest.pendentesCheckout();
+    expect(itens.filter(i => i.tipo === "sonda")).toEqual([expect.objectContaining({ key: KEY, url: URL, code: "SONDA:ML:MLB-SONDA-1", reservado: false })]);
+
+    // Com a opção desligada, a fila não tem sonda nenhuma.
+    cfgStore.readConfig.mockReturnValue({ ...cfgStore.DEFAULTS, checkoutAuto: true, esperaCupomMin: 15, sondaSemCupom: false });
+    const desligada = await autotest.pendentesCheckout();
+    expect(desligada.itens.filter(i => i.tipo === "sonda")).toEqual([]);
+    expect(desligada.sondaSemCupom).toBe(false);
+    cfgStore.readConfig.mockReturnValue({ ...cfgStore.DEFAULTS, checkoutAuto: true, esperaCupomMin: 15 });
+
+    // Depois da sonda, ele sai da fila.
+    await autotest.registrarSondaRepasse({ key: KEY, url: URL, erro: "timeout" });
+    expect((await autotest.pendentesCheckout()).itens.filter(i => i.tipo === "sonda")).toEqual([]);
+  });
+});

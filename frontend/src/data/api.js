@@ -999,6 +999,17 @@ export async function adminRepasseCupomCheckoutPendentes({ limit = 50 } = {}) {
   return http("GET", `/api/admin/repasse/cupom-checkout/pendentes?limit=${limit}`);
 }
 
+// A sonda do checkout de um produto do repasse que chegou sem cupom: o material
+// (enxuto) ou o `erro` da extensão. Devolve { ok, motivo, palavras[], cupons }.
+export async function adminRepasseCupomCheckoutSonda({ key, url, material = null, erro = null, source = "repasse-checkout" }) {
+  return http("POST", "/api/admin/repasse/cupom-checkout/sonda", { key, url, material, erro, source });
+}
+
+// Liga/desliga a procura de cupom do sistema em produto do repasse sem cupom.
+export async function adminRepasseCupomCheckoutSondaSemCupom(ligado) {
+  return http("PUT", "/api/admin/repasse/cupom-checkout/sonda-sem-cupom", { ligado: !!ligado });
+}
+
 export async function adminRepasseCupomCheckoutAuto(auto) {
   return http("PUT", "/api/admin/repasse/cupom-checkout/auto", { auto: !!auto });
 }

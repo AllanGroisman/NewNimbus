@@ -3950,6 +3950,17 @@ app.put("/api/admin/repasse/cupom-checkout/auto", auth.requireAuth, auth.require
   }
 });
 
+// Liga/desliga a sonda do checkout no produto do repasse que chegou sem cupom.
+app.put("/api/admin/repasse/cupom-checkout/sonda-sem-cupom", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const config = couponAutotestConfig.writeConfig({ sondaSemCupom: req.body?.ligado });
+    if (!await confirmConfigSaved(res)) return;
+    res.json({ sondaSemCupom: config.sondaSemCupom });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // Um teste pedido à mão: link do produto + código. Entra no começo da fila.
 app.post("/api/admin/repasse/cupom-checkout/manual", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
@@ -3975,6 +3986,24 @@ app.post("/api/admin/repasse/cupom-checkout/reivindicar", auth.requireAuth, auth
   const r = require("./repasse/coupon-autotest").reivindicarCheckout(req.body?.code);
   if (!r.ok) return res.status(409).json({ error: "Esse cupom já está sendo testado (outra aba pode ter pegado)." });
   res.json(r);
+});
+
+// A sonda do checkout de um produto do repasse que chegou SEM cupom: quais
+// cupons do sistema valem nele (repasse/coupon-autotest.js:registrarSondaRepasse).
+// `erro` sem `material` = a extensão falhou, e o envio não espera mais por ela.
+app.post("/api/admin/repasse/cupom-checkout/sonda", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  const { key, url, material, erro, source } = req.body || {};
+  try {
+    const autotest = require("./repasse/coupon-autotest");
+    res.json(await autotest.registrarSondaRepasse({
+      key, url, source,
+      material: material && typeof material === "object" ? material : null,
+      erro: erro ? String(erro).slice(0, 500) : null,
+    }));
+  } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/admin/repasse/cupom-checkout/sonda" });
+  }
 });
 
 app.post("/api/admin/repasse/cupom-checkout/resultado", auth.requireAuth, auth.requireAdmin, async (req, res) => {

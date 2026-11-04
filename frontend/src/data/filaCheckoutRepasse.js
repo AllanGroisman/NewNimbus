@@ -11,8 +11,10 @@
 // A tela lê com `useFilaCheckout()`. O store não chama a tela: o "releia a fila"
 // vira o contador `recargas`, e a tela reage a ele com um efeito.
 import { useSyncExternalStore } from "react";
-import { adminRepasseCupomCheckoutReivindicar, errText } from "./api";
+import { adminRepasseCupomCheckoutReivindicar, adminRepasseCupomCheckoutSonda, errText } from "./api";
 import { testarNoCheckout } from "./cupomCheckoutRepasse";
+import { sondarCuponsNoCheckout } from "./coletor";
+import { materialEnxuto } from "./sondaLote";
 
 // Os passos de um teste, na ordem em que a extensão os anuncia
 // (extension/cupom-checkout.js e checkout.js). A fração é o quanto da barra do
@@ -129,6 +131,13 @@ export async function testarItem(item, source, { depurar = false } = {}) {
   }
   set({ testando: item.code, inicioEm: Date.now(), passo: passoDoEvento(null, { tipo: "inicio" }) });
   const onProgresso = (ev) => set(e => ({ passo: passoDoEvento(e.passo, ev) }));
+  if (item.tipo === "sonda") {
+    try {
+      return await emSerie(() => sondarItem(item, source, onProgresso));
+    } finally {
+      set({ testando: null, inicioEm: null, passo: null });
+    }
+  }
   try {
     const res = await emSerie(() => testarNoCheckout(item.code, item.url, {
       source, manualId: item.manualId || null, depurar, onProgresso,
@@ -145,6 +154,33 @@ export async function testarItem(item, source, { depurar = false } = {}) {
   } finally {
     set({ testando: null, inicioEm: null, passo: null });
   }
+}
+
+// O produto do repasse que chegou SEM cupom: uma sonda no checkout dele diz quais
+// cupons do sistema valem ali (backend/repasse/coupon-autotest.js:registrarSondaRepasse).
+// Falha da extensão também vai pro servidor — é ela que solta o envio do produto.
+export async function sondarItem(item, source, onProgresso) {
+  let res;
+  try {
+    const material = await sondarCuponsNoCheckout(item.url, { onProgresso });
+    res = await adminRepasseCupomCheckoutSonda({ key: item.key, url: item.url, material: materialEnxuto(material), source });
+  } catch (err) {
+    const erro = errText(err, "a extensão não respondeu");
+    await adminRepasseCupomCheckoutSonda({ key: item.key, url: item.url, erro, source }).catch(() => {});
+    res = { ok: false, motivo: erro, palavras: [] };
+  }
+  const palavras = res.palavras || [];
+  const verdict = palavras.length ? "valid" : res.ok ? "invalid" : "indeterminado";
+  const texto = palavras.length
+    ? `${item.name || "produto"}: achou ${palavras.join(", ")}`
+    : res.ok ? `${item.name || "produto"}: nenhum cupom do sistema vale aqui`
+      : `${item.name || "produto"}: sonda não chegou nos cupons (${res.motivo || "?"})`;
+  set(e => ({
+    resultados: [{ code: item.code, url: item.url, verdict, texto, em: new Date().toISOString() },
+      ...e.resultados.filter(r => r.code !== item.code)].slice(0, 20),
+    aviso: null,
+  }));
+  return res;
 }
 
 // A fila inteira, na ordem, um de cada vez. Parar vale ENTRE itens: o que está

@@ -15,7 +15,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   adminRepasseCupomCheckoutPendentes, adminRepasseCupomCheckoutAuto, adminRepasseCupomCheckoutManual,
-  adminRepasseCupomCheckoutEspera,
+  adminRepasseCupomCheckoutEspera, adminRepasseCupomCheckoutSondaSemCupom,
   adminRepasseCupomCheckoutManualRemover, errText,
 } from "../../data/api";
 import {
@@ -139,6 +139,19 @@ export default function FilaCheckoutRepasse({ temCheckout, depurar = false, temD
     }
   };
 
+  const trocarSondaSemCupom = async (v) => {
+    setSalvandoAuto(true);
+    setFila(f => f && { ...f, sondaSemCupom: v });
+    try {
+      await adminRepasseCupomCheckoutSondaSemCupom(v);
+    } catch (err) {
+      setAviso(errText(err, "Não deu pra salvar."));
+    } finally {
+      setSalvandoAuto(false);
+      await carregar();
+    }
+  };
+
   const salvarEspera = async () => {
     if (esperaDigitada == null) return;
     const n = Math.min(120, Math.max(0, parseInt(esperaDigitada, 10) || 0));
@@ -178,6 +191,18 @@ export default function FilaCheckoutRepasse({ temCheckout, depurar = false, temD
               onChange={e => trocarAuto(e.target.checked)}
             />
             Testar automaticamente
+          </label>
+          <label
+            style={{ fontSize: 12, display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}
+            title="Produto do repasse que chegou sem cupom espera uma olhada no checkout pra ver se algum cupom do sistema vale nele. Desligado, ele sai na hora."
+          >
+            <input
+              type="checkbox"
+              checked={fila?.sondaSemCupom !== false}
+              disabled={!fila || salvandoAuto}
+              onChange={e => trocarSondaSemCupom(e.target.checked)}
+            />
+            Procurar cupom em produto sem cupom
           </label>
           <label
             style={{ fontSize: 12, display: "flex", gap: 6, alignItems: "center" }}
@@ -296,7 +321,11 @@ export default function FilaCheckoutRepasse({ temCheckout, depurar = false, temD
                 const ocupado = testando === item.code || item.reservado;
                 return (
                   <tr key={`${item.origem}-${item.manualId || item.code}`} style={{ borderBottom: "0.5px solid var(--color-border-tertiary)" }}>
-                    <td style={{ ...td, fontFamily: "monospace", fontWeight: 500 }}>{item.code}</td>
+                    <td style={{ ...td, fontFamily: item.tipo === "sonda" ? undefined : "monospace", fontWeight: 500 }}>
+                      {item.tipo === "sonda"
+                        ? <span title="Produto do repasse sem cupom: a sonda vê se algum cupom do sistema vale nele">🔎 sondar checkout · {item.name || "produto"}</span>
+                        : item.code}
+                    </td>
                     {/* Reticências num div de dentro: maxWidth direto no <td> o
                         navegador nem sempre respeita, e a tabela alargava. */}
                     <td style={td}>
@@ -305,7 +334,9 @@ export default function FilaCheckoutRepasse({ temCheckout, depurar = false, temD
                       </div>
                     </td>
                     <td style={td}>
-                      {item.origem === "manual" ? "manual" : `repasse · ${item.capturas ?? "?"} captura(s)`}
+                      {item.origem === "manual" ? "manual"
+                        : item.tipo === "sonda" ? "repasse · chegou sem cupom"
+                          : `repasse · ${item.capturas ?? "?"} captura(s)`}
                       {item.motivo === "indeterminado" && <div style={{ color: "var(--color-text-secondary)" }}>nova tentativa</div>}
                       {item.motivo === "renovar" && <div style={{ color: "var(--color-text-secondary)" }}>cupom vencido voltou</div>}
                     </td>

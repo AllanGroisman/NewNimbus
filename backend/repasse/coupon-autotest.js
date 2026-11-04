@@ -421,12 +421,21 @@ async function pendentesCheckout({ limit = 50 } = {}) {
     });
   }
 
+  // Os produtos sem cupom que o envio está segurando: depois das palavras, que
+  // destravam mais de um produto por teste. Falhar aqui não esconde a fila.
+  try {
+    itens.push(...await pendentesSonda());
+  } catch (err) {
+    console.error(`[repasse] produtos sem cupom pra sondar: ${err.message}`);
+  }
+
   return {
     itens: itens.slice(0, teto),
     total: itens.length,
     auto: cfg.checkoutAuto && !bloqueado,
     checkoutAuto: cfg.checkoutAuto,
     esperaCupomMin: cfg.esperaCupomMin,
+    sondaSemCupom: cfg.sondaSemCupom,
     bloqueadoAte: bloqueado ? _status.bloqueadoAte : null,
   };
 }
@@ -531,20 +540,126 @@ async function registrarCheckout({ code, url = null, material, source = "repasse
   // Muro na aba do admin: a fila automática para por um tempo, e o grupo de admin
   // fica sabendo — a extensão já trouxe a aba pra frente e esperou alguém resolver.
   if (bloqueio && fonte === "repasse-checkout-auto") {
-    const cfg = cfgStore.readConfig();
-    _status.bloqueadoAte = new Date(Date.now() + cfg.pausaAposBloqueioMin * 60_000).toISOString();
-    require("../notifications/admin-notifier").notifyBlockDetected({
-      alvo: "Cupons do repasse · teste no checkout",
+    armarBreaker({
       motivo: resultado.bloqueio,
       o_que: `O Mercado Livre pediu verificação ao testar o cupom ${c} na aba do admin, e ninguém resolveu a tempo.`,
-      falhas: 1,
-      desde: new Date().toLocaleString("pt-BR"),
-      clientes: "",
-      o_que_fazer: `Abra o Chrome com a extensão, resolva a verificação no Mercado Livre e aperte "Testar" num cupom. A fila automática volta sozinha em ${cfg.pausaAposBloqueioMin} min.`,
-    }).catch(() => {});
+    });
   }
 
   return { resultado, verdict, message, linha, vinculo, repasse };
+}
+
+// ── A sonda do produto do repasse que chegou SEM cupom ───────────────────
+// O líder às vezes não põe cupom na legenda, mas um cupom que já está no sistema
+// (CASAMELI) vale no produto — e sem vínculo produto↔campanha o envio não tem como
+// saber. A sonda do checkout (a mesma do lote, coupons/checkout-lote.js) lê de uma
+// vez TODOS os cupons que o ML oferece pra aquele carrinho e grava os que valem
+// como vínculo `checkout`; depois disso o couponRuleForItem do envio já acha a
+// palavra. Quem segura o envio enquanto a sonda não volta é o
+// scheduler.js:aguardandoCupom, e é ele também quem diz quem entra nesta fila.
+
+// Uma sonda que LEU a lista há menos que isso responde pelo produto, mesmo feita
+// antes de ele entrar na fila: o que ela achou já virou vínculo, e repetir seria
+// só mais um Chrome na conta.
+const SONDA_VALE_HORAS = 12;
+const chaveSonda = (key) => `SONDA:${String(key || "").toUpperCase()}`;
+
+async function sondaDoProduto(key) {
+  if (!key) return null;
+  const { prisma } = require("../db");
+  return prisma().mlCheckoutProbe.findUnique({
+    where: { productKey: String(key) },
+    select: { probedAt: true, ok: true },
+  });
+}
+
+// Pura. A sonda já respondeu por este item da fila? A que veio depois de ele entrar
+// conta sempre (deu certo ou não: esperar outra não é o combinado); a de antes, só
+// se leu a lista e é recente.
+function sondaRespondeu(sonda, item, agora = Date.now()) {
+  if (!sonda) return false;
+  const quando = new Date(sonda.probedAt).getTime();
+  if (!Number.isFinite(quando)) return false;
+  if (quando >= new Date(item?.addedAt || 0).getTime()) return true;
+  return !!sonda.ok && agora - quando < SONDA_VALE_HORAS * HORA_MS;
+}
+
+// Os produtos que o envio está segurando à espera de uma sonda, de todas as
+// campanhas de repasse. Um por produto, mesmo que esteja em duas campanhas.
+async function pendentesSonda(agora = Date.now()) {
+  const cfg = cfgStore.readConfig();
+  if (!cfg.checkoutAuto || cfg.sondaSemCupom === false || !(Number(cfg.esperaCupomMin) > 0)) return [];
+  const storage = require("../storage");
+  const scheduler = require("../scheduler");
+  const itens = [];
+  const vistos = new Set();
+  for (const userId of await storage.listAllUserIds()) {
+    let state;
+    try { state = await storage.loadState(userId); } catch { continue; }
+    for (const g of state?.groups || []) {
+      if (!scheduler.isRepasse(g)) continue;
+      for (const it of g.queue || []) {
+        if (!it?.key || vistos.has(it.key) || String(it.coupon || "").trim() || !it.link) continue;
+        if (!(await scheduler.aguardandoCupom(g, it, agora))) continue;
+        vistos.add(it.key);
+        itens.push({
+          origem: "sonda", tipo: "sonda", code: chaveSonda(it.key), key: it.key, url: it.link,
+          name: it.name || null, criadoEm: it.addedAt, motivo: "sem-cupom",
+          reservado: reservado(chaveSonda(it.key), agora),
+        });
+      }
+    }
+  }
+  return itens.sort((a, b) => new Date(a.criadoEm) - new Date(b.criadoEm));
+}
+
+// O material da sonda vira vínculo (lerEVincular) e a linha de `ml_checkout_probes`
+// que solta o envio. Diferente do coupons/checkout-lote.js:gravarResultado, não
+// exige o produto no catálogo: o item da fila basta. Devolve as PALAVRAS achadas.
+async function registrarSondaRepasse({ key, url, material = null, erro = null, source = "repasse-checkout" }) {
+  const k = String(key || "").trim();
+  if (!k || !url) throw Object.assign(new Error("Faltou o produto ou o link."), { status: 400 });
+  const { prisma } = require("../db");
+  const { lerEVincular } = require("../coupons/product-coupons");
+
+  const leitura = material && typeof material === "object"
+    ? await lerEVincular({ url, material, productKeys: [k] })
+    : { ok: false, motivo: erro || "A extensão não devolveu nada.", cupons: [], valem: [], gravado: null };
+  const motivo = leitura.ok ? null
+    : String(material?.motivo || material?.checkout?.blockedReason || leitura.motivo || erro || "").slice(0, 500) || null;
+  const dados = { productUrl: String(url), probedAt: new Date(), ok: !!leitura.ok, cupons: leitura.valem.length, campaignIds: leitura.valem, motivo };
+  await prisma().mlCheckoutProbe.upsert({ where: { productKey: k }, create: { productKey: k, ...dados }, update: dados });
+  _reservas.delete(chaveSonda(k));
+
+  // O que importa pro envio: as campanhas achadas que têm PALAVRA (melhorCupom só
+  // usa cupom com código).
+  const palavras = leitura.valem.length
+    ? (await prisma().mlCoupon.findMany({
+      where: { campaignId: { in: leitura.valem.map(String) }, code: { not: null } },
+      select: { code: true },
+    })).map(c => c.code)
+    : [];
+
+  if (material?.muro && source === "repasse-checkout-auto") {
+    armarBreaker({ motivo: material.muro, o_que: "O Mercado Livre pediu verificação ao sondar o checkout de um produto do repasse sem cupom, e ninguém resolveu a tempo." });
+  }
+  return { ok: !!leitura.ok, motivo, palavras, cupons: leitura.valem.length, cuponsNovos: leitura.gravado?.cuponsNovos || 0 };
+}
+
+// Muro na aba do admin: a fila automática para por um tempo, e o grupo de admin
+// fica sabendo — a extensão já trouxe a aba pra frente e esperou alguém resolver.
+function armarBreaker({ motivo, o_que }) {
+  const cfg = cfgStore.readConfig();
+  _status.bloqueadoAte = new Date(Date.now() + cfg.pausaAposBloqueioMin * 60_000).toISOString();
+  require("../notifications/admin-notifier").notifyBlockDetected({
+    alvo: "Cupons do repasse · teste no checkout",
+    motivo,
+    o_que,
+    falhas: 1,
+    desde: new Date().toLocaleString("pt-BR"),
+    clientes: "",
+    o_que_fazer: `Abra o Chrome com a extensão, resolva a verificação no Mercado Livre e aperte "Testar" num cupom. A fila automática volta sozinha em ${cfg.pausaAposBloqueioMin} min.`,
+  }).catch(() => {});
 }
 
 // O cupom valeu no checkout DESTE produto: é a prova mais forte que existe de que
@@ -628,4 +743,5 @@ function _resetEstado() {
 module.exports = {
   start, stop, status, runOnce, selecionar, kindDoBloqueio, ACTION, _resetEstado,
   pendentesCheckout, reivindicarCheckout, registrarCheckout, adicionarManual, removerManual,
+  pendentesSonda, registrarSondaRepasse, sondaDoProduto, sondaRespondeu, chaveSonda,
 };

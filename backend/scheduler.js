@@ -699,17 +699,22 @@ async function couponRuleForItem(item) {
 // Só espera quando a espera pode dar em algo: teste automático ligado, sem o
 // breaker de bloqueio armado, e palavra que o ML não recusou. A espera é contada
 // do `addedAt` (addItemToGroup), então nunca passa de `esperaCupomMin`.
+//
+// Sem palavra nenhuma, o produto espera do mesmo jeito — mas pela SONDA do
+// checkout (repasse/coupon-autotest.js:pendentesSonda): um cupom que já está no
+// sistema pode valer nele sem o líder ter escrito (o CASAMELI do meli.la/1KUKHgA).
+// A sonda que voltou, achando ou não, solta o item.
 async function aguardandoCupom(group, item, agora = Date.now()) {
   if (!isRepasse(group) || item?.source !== "repasse") return false;
   if (item.store !== "Mercado Livre" || item.originalText) return false;
   const palavra = String(item.coupon || "").trim();
-  if (!palavra) return false;
 
-  let cfg, bloqueado;
+  let cfg, bloqueado, autotest;
   try {
     // Preguiçoso: o autotest puxa coupons/sync e o Chrome do servidor.
     cfg = require("./repasse/coupon-autotest-config").readConfig();
-    const ate = require("./repasse/coupon-autotest").status().bloqueadoAte;
+    autotest = require("./repasse/coupon-autotest");
+    const ate = autotest.status().bloqueadoAte;
     bloqueado = !!(ate && agora < new Date(ate).getTime());
   } catch {
     return false;
@@ -723,6 +728,14 @@ async function aguardandoCupom(group, item, agora = Date.now()) {
   // Já se sabe o desconto (e a campanha não venceu): nada a esperar.
   const regra = await couponRuleForItem(item).catch(() => null);
   if (regra && !(regra.expiresAt && new Date(regra.expiresAt).getTime() <= agora)) return false;
+
+  if (!palavra) {
+    if (cfg.sondaSemCupom === false || !item.key || !item.link) return false;
+    // Banco fora do ar: não segura o envio por uma resposta que não vai chegar.
+    const sonda = await autotest.sondaDoProduto(item.key).catch(() => undefined);
+    if (sonda === undefined) return false;
+    return !autotest.sondaRespondeu(sonda, item, agora);
+  }
 
   // O ML já disse que a palavra não existe: esperar não muda a resposta.
   const teste = await coupons.findCodeCheck(palavra.toUpperCase(), { maxAgeHours: Infinity }).catch(() => null);
