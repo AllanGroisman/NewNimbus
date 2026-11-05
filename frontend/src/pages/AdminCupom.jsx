@@ -9,6 +9,7 @@ import DescobrirPalavra from "./AdminCupomPalavra";
 import CuponsDoRepasse from "./AdminCupomRepasse";
 import CuponsDoProduto from "./AdminCupomProduto";
 import CuponsTeste from "./AdminCupomTeste";
+import CuponsComPalavras from "./AdminCupomComPalavra";
 
 // Cinco perguntas diferentes moram nesta página, e cada uma tem a sua aba:
 // "Cupons do ML" é a lista que o Mercado Livre oferece para a conta do sistema,
@@ -20,6 +21,8 @@ import CuponsTeste from "./AdminCupomTeste";
 // "Config Test" confere — e conserta — o que a colheita de vitrines precisa pra
 // rodar (AdminCupomConfig.jsx). "Cupons Teste" confere, no checkout do ML, se o
 // preço com cupom que os envios prometeram é o que o ML cobra (AdminCupomTeste.jsx).
+// "Cupons com Palavras" lista todo cupom que tem palavra, com as condições dele,
+// e limpa os vencidos / busca as condições que faltam (AdminCupomComPalavra.jsx).
 export default function PageAdminCupom() {
   const [aba, setAba] = useState("ml");
   // A campanha que a aba "Descobrir palavra" mandou ver na aba "Cupons do ML". O
@@ -46,6 +49,7 @@ export default function PageAdminCupom() {
           ["palavra", "Descobrir palavra"],
           ["config", "Config Test"],
           ["teste", "Cupons Teste"],
+          ["palavras", "Cupons com Palavras"],
         ].map(([id, label]) => (
           <button
             key={id}
@@ -71,6 +75,7 @@ export default function PageAdminCupom() {
       )}
       {aba === "config" && <ConfigTest />}
       {aba === "teste" && <CuponsTeste />}
+      {aba === "palavras" && <CuponsComPalavras />}
     </div>
   );
 }

@@ -769,6 +769,28 @@ export async function adminMlCuponsApagarVencidos() {
 export async function adminMlCuponsApagarProdutos(campaignId) {
   return http("DELETE", `/api/admin/ml-cupons/${encodeURIComponent(campaignId)}/produtos`, undefined, { timeoutMs: SLOW_TIMEOUT_MS });
 }
+// A aba Cupons com Palavras: a lista, a prévia do "Limpar vencidos" e o apagar.
+export async function adminMlCuponsPalavras() { return http("GET", "/api/admin/ml-cupons/palavras"); }
+// O material da sonda do checkout num produto da palavra → as condições gravadas.
+export async function adminMlCuponsPalavrasCondicoes({ campaignId, url, material }) {
+  return http("POST", "/api/admin/ml-cupons/palavras/condicoes", { campaignId, url, material }, { timeoutMs: SLOW_TIMEOUT_MS });
+}
+// O "Buscar condições" não achou o cupom desta campanha: fica marcado para limpar.
+export async function adminMlCuponsPalavrasMarcarNaoAchou(campaignId, motivo) {
+  return http("POST", "/api/admin/ml-cupons/palavras/nao-achou", { campaignId, motivo });
+}
+export async function adminMlCuponsPalavrasNaoAchadosPrevia() {
+  return http("GET", "/api/admin/ml-cupons/palavras/nao-achados", undefined, { timeoutMs: SLOW_TIMEOUT_MS });
+}
+export async function adminMlCuponsPalavrasApagarNaoAchados() {
+  return http("DELETE", "/api/admin/ml-cupons/palavras/nao-achados", undefined, { timeoutMs: SLOW_TIMEOUT_MS });
+}
+export async function adminMlCuponsPalavrasVencidosPrevia() {
+  return http("GET", "/api/admin/ml-cupons/palavras/vencidos", undefined, { timeoutMs: SLOW_TIMEOUT_MS });
+}
+export async function adminMlCuponsPalavrasApagarVencidos() {
+  return http("DELETE", "/api/admin/ml-cupons/palavras/vencidos", undefined, { timeoutMs: SLOW_TIMEOUT_MS });
+}
 export async function adminMlCuponsCodes(limit = 50) { return http("GET",  `/api/admin/ml-cupons/codes?limit=${limit}`); }
 export async function adminMlCuponsClearCodes()        { return http("DELETE", "/api/admin/ml-cupons/codes"); }
 // `source` marca de onde veio a palavra (`ml_coupon_codes.source`): "admin" quando

@@ -3258,6 +3258,96 @@ app.delete("/api/admin/ml-cupons/vencidos", auth.requireAuth, auth.requireAdmin,
   }
 });
 
+// A aba Cupons com Palavras: a lista dos cupons que têm palavra, com as condições
+// de cada um, e o "Limpar vencidos" dela (que apaga o cupom E a palavra). Ficam
+// ANTES das rotas `/:campaignId` pelo mesmo motivo do "codes".
+app.get("/api/admin/ml-cupons/palavras", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    res.json({ cupons: await couponsStore.listCuponsComPalavra({ comProdutos: true }) });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/ml-cupons/palavras" });
+  }
+});
+
+// "Buscar condições": a sonda do checkout rodou num produto da palavra (extensão,
+// comando "cupons-checkout") e a tela manda o material. A lista de cupons do
+// checkout traz desconto, mínimo, teto e validade de cada cupom — grava isso em
+// TODO cupom com palavra que aparecer nela, não só no procurado. Os cupons que
+// valem no produto viram vínculo "checkout", como na sonda da aba Cupons do produto.
+app.post("/api/admin/ml-cupons/palavras/condicoes", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const campaignId = String(req.body?.campaignId || "");
+    const url = req.body?.url ? String(req.body.url) : null;
+    const material = req.body?.material;
+    if (!campaignId || !url || !material) return res.status(400).json({ error: "Falta a campanha, o produto ou o material da sonda." });
+    const { lerCuponsDaSonda, lerEVincular } = require("./coupons/product-coupons");
+    const leitura = lerCuponsDaSonda(material);
+    if (!leitura.ok) {
+      return res.json({ ok: false, achou: false, motivo: material.motivo || material.checkout?.blockedReason || leitura.motivo, muro: material.muro || null });
+    }
+    const linhas = await couponsStore.listCuponsComPalavra();
+    const alvos = new Map(linhas.map(l => [l.campaignId, l.code]));
+    const gravados = await couponsStore.gravarCondicoesDoCheckout(leitura.cupons, alvos);
+    await lerEVincular({ url, material }).catch(err => console.error("[palavras.condicoes] vínculo:", err.message));
+    res.json({
+      ok: true,
+      achou: gravados.some(g => g.campaignId === campaignId),
+      gravados,
+      vistos: leitura.cupons.length,
+    });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "POST /api/admin/ml-cupons/palavras/condicoes" });
+  }
+});
+
+// O "Buscar condições" tentou os produtos da palavra e o cupom não apareceu: fica
+// marcado, para o "Limpar não achados" apagar depois.
+app.post("/api/admin/ml-cupons/palavras/nao-achou", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    res.json({ ok: true, ...await couponsStore.marcarSemCondicoes(String(req.body?.campaignId || ""), req.body?.motivo || null) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/ml-cupons/palavras/nao-achados", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    res.json(await couponsStore.apagarCuponsComPalavraNaoAchados({ simular: true }));
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/ml-cupons/palavras/nao-achados" });
+  }
+});
+
+app.delete("/api/admin/ml-cupons/palavras/nao-achados", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  if (mlCupons.status().running) {
+    return res.status(409).json({ error: "Tem uma rodada de cupons rodando — espere ela terminar." });
+  }
+  try {
+    res.json({ ok: true, ...await couponsStore.apagarCuponsComPalavraNaoAchados() });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "DELETE /api/admin/ml-cupons/palavras/nao-achados" });
+  }
+});
+
+app.get("/api/admin/ml-cupons/palavras/vencidos", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    res.json(await couponsStore.apagarCuponsComPalavraVencidos({ simular: true }));
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "GET /api/admin/ml-cupons/palavras/vencidos" });
+  }
+});
+
+app.delete("/api/admin/ml-cupons/palavras/vencidos", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  if (mlCupons.status().running) {
+    return res.status(409).json({ error: "Tem uma rodada de cupons rodando — espere ela terminar." });
+  }
+  try {
+    res.json({ ok: true, ...await couponsStore.apagarCuponsComPalavraVencidos() });
+  } catch (err) {
+    httpErrors.serverError(res, err, { req, ctx: "DELETE /api/admin/ml-cupons/palavras/vencidos" });
+  }
+});
+
 // Os produtos que vieram pela vitrine de UM cupom (task 10). O cupom fica, e volta
 // para a fila do botão 2.
 app.delete("/api/admin/ml-cupons/:campaignId/produtos", auth.requireAuth, auth.requireAdmin, async (req, res) => {

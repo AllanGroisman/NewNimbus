@@ -1005,6 +1005,317 @@ async function apagarCuponsMortos({ simular = false } = {}) {
   return { ...r, vencidos, palavraInvalida: rows.length - vencidos };
 }
 
+// Os cupons que têm PALAVRA (aba Scraping Cupons › Cupons com Palavras): o
+// dicionário palavra → campanha (`ml_coupon_codes`, só as `valid` com campanha)
+// junto com as condições que a campanha tem em `ml_coupons`, mais os cupons que
+// já carregam `code` sem teste guardado (palavra lida do título). Uma linha por
+// campanha — duas palavras da mesma campanha ficam na mesma linha.
+//
+// `semCondicoes`: a campanha não está em `ml_coupons` (nunca foi raspada) ou está
+// sem o valor do desconto. É a fila do botão "Buscar condições".
+//
+// `comProdutos`: cada linha leva também os produtos ligados à palavra (ver
+// `produtosDasPalavras`) — é deles que a sonda do checkout tira as condições.
+async function listCuponsComPalavra({ comProdutos = false } = {}) {
+  const agora = nowish();
+  const palavras = await prisma().mlCouponCode.findMany({
+    where: { verdict: "valid", campaignId: { not: null } },
+    orderBy: { checkedAt: "desc" },
+  });
+  const ids = [...new Set(palavras.map(p => p.campaignId))];
+  const cupons = await prisma().mlCoupon.findMany({
+    where: { OR: [{ campaignId: { in: ids } }, { code: { not: null } }] },
+    select: {
+      campaignId: true, title: true, kind: true, value: true, minPurchase: true,
+      maxDiscount: true, expiresAt: true, expiresText: true, activated: true,
+      scope: true, code: true,
+    },
+  });
+  const porId = new Map(cupons.map(c => [c.campaignId, c]));
+
+  const linhas = new Map();
+  const juntar = (campaignId, code, extra = {}) => {
+    const l = linhas.get(campaignId);
+    if (l) {
+      if (code && !l.codes.includes(code)) l.codes.push(code);
+      return;
+    }
+    linhas.set(campaignId, { campaignId, codes: code ? [code] : [], ...extra });
+  };
+  for (const p of palavras) {
+    juntar(p.campaignId, p.code, { checkedAt: p.checkedAt, source: p.source, naoAchou: null });
+    // A marca do "Buscar condições" que não achou (fica a mais recente entre as
+    // palavras da campanha).
+    const l = linhas.get(p.campaignId);
+    if (p.condicoesFalhouAt && (!l.naoAchou || p.condicoesFalhouAt > l.naoAchou.at)) {
+      l.naoAchou = { at: p.condicoesFalhouAt, motivo: p.condicoesMotivo || null };
+    }
+  }
+  for (const c of cupons) if (c.code) juntar(c.campaignId, c.code, { checkedAt: null, source: "titulo" });
+
+  const out = [...linhas.values()].map(l => {
+    const c = porId.get(l.campaignId) || null;
+    return {
+      ...l,
+      code: l.codes[0],
+      inSystem: !!c,
+      title: c?.title ?? null,
+      kind: c?.kind ?? null,
+      value: c?.value ?? null,
+      minPurchase: c?.minPurchase ?? null,
+      maxDiscount: c?.maxDiscount ?? null,
+      expiresAt: c?.expiresAt ?? null,
+      expiresText: c?.expiresText ?? null,
+      activated: c?.activated ?? null,
+      scope: c?.scope ?? null,
+      semCondicoes: !c || c.value == null,
+      // Só vale enquanto continua sem condições: achou depois, a marca não diz mais nada.
+      naoAchou: (!c || c.value == null) ? (l.naoAchou || null) : null,
+      vencido: !!(c?.expiresAt && c.expiresAt < agora),
+    };
+  });
+  if (comProdutos && out.length) {
+    const mapa = await produtosDasPalavras(out);
+    for (const l of out) {
+      const p = mapa.get(l.campaignId) || { itens: [], total: 0 };
+      l.produtos = p.itens;
+      l.totalProdutos = p.total;
+    }
+  }
+  // Vencidos por último; o resto pela validade mais próxima, sem validade no fim.
+  const t = (d) => (d ? new Date(d).getTime() : Infinity);
+  out.sort((a, b) => (a.vencido - b.vencido) || (t(a.expiresAt) - t(b.expiresAt)) || a.code.localeCompare(b.code));
+  return out;
+}
+
+// Os produtos ligados a cada linha da lista de palavras, de três fontes:
+//   - "teste": o produto em que o teste automático do repasse levou a palavra ao
+//     checkout (`repasse_coupon_autotest.url`). Vem primeiro quando o ML aprovou
+//     ali — é o produto em que o cupom com certeza aparece na lista;
+//   - "repasse": o produto que chegou na legenda do grupo líder JUNTO com a
+//     palavra (`repasse_capture_log.coupon`). É o mais provável de o cupom valer, e
+//     é o único que existe para a palavra cuja campanha nunca foi raspada — sem
+//     cupom em `ml_coupons` não há vínculo (a FK de `ml_coupon_products`);
+//   - os vínculos do cupom (`ml_coupon_products`: vitrine, parcial, checkout).
+// Só link de PRODUTO do Mercado Livre (o repasse também pesca listas "social", que
+// não têm checkout), e no máximo `porLinha` de cada fonte (a vitrine passa de 200).
+// A ordem da lista é a ordem em que a sonda tenta.
+const PRODUTOS_POR_LINHA = 8;
+const LINK_DE_PRODUTO_ML = "mercadoli[vb]re.*(MLB-?[0-9]|MLBU[0-9])";
+async function produtosDasPalavras(linhas, { porLinha = PRODUTOS_POR_LINHA } = {}) {
+  const ids = linhas.map(l => l.campaignId);
+  const codigoParaId = new Map();
+  for (const l of linhas) for (const c of l.codes) codigoParaId.set(String(c).toUpperCase(), l.campaignId);
+  const codigos = [...codigoParaId.keys()];
+
+  const testes = codigos.length ? await prisma().$queryRaw`
+    SELECT code, url, valeu, quando, total FROM (
+      SELECT upper(t."code") AS code, t."url" AS url,
+             bool_or(t."verdict" = 'valid') AS valeu, max(t."created_at") AS quando,
+             row_number() OVER (PARTITION BY upper(t."code")
+               ORDER BY bool_or(t."verdict" = 'valid') DESC, max(t."created_at") DESC) AS n,
+             count(*) OVER (PARTITION BY upper(t."code"))::int AS total
+        FROM "repasse_coupon_autotest" t
+       WHERE upper(t."code") = ANY(${codigos}::text[])
+         AND t."action" = 'test' AND t."url" ~* ${LINK_DE_PRODUTO_ML}
+       GROUP BY upper(t."code"), t."url"
+    ) x WHERE n <= ${porLinha}` : [];
+
+  const repasse = codigos.length ? await prisma().$queryRaw`
+    SELECT code, url, name, price, quando, total FROM (
+      SELECT upper(r."coupon") AS code, r."resolvedUrl" AS url,
+             max(r."productName") AS name, max(r."price") AS price, max(r."createdAt") AS quando,
+             row_number() OVER (PARTITION BY upper(r."coupon") ORDER BY max(r."createdAt") DESC) AS n,
+             count(*) OVER (PARTITION BY upper(r."coupon"))::int AS total
+        FROM "repasse_capture_log" r
+       WHERE upper(r."coupon") = ANY(${codigos}::text[])
+         AND r."resolvedUrl" ~* ${LINK_DE_PRODUTO_ML}
+       GROUP BY upper(r."coupon"), r."resolvedUrl"
+    ) x WHERE n <= ${porLinha}` : [];
+
+  const vinculos = await prisma().$queryRaw`
+    SELECT campaign_id, url, name, price, origem, quando, total FROM (
+      SELECT p."campaign_id", p."productUrl" AS url, cp."name" AS name, cp."price" AS price,
+             p."origem" AS origem, p."lastSeenAt" AS quando,
+             row_number() OVER (PARTITION BY p."campaign_id"
+               ORDER BY (p."origem" = 'checkout') DESC, p."lastSeenAt" DESC) AS n,
+             count(*) OVER (PARTITION BY p."campaign_id")::int AS total
+        FROM "ml_coupon_products" p
+        LEFT JOIN "catalog_products" cp ON cp."key" = p."productKey"
+       WHERE p."campaign_id" = ANY(${ids}::text[])
+         AND p."productUrl" ~* ${LINK_DE_PRODUTO_ML}
+    ) x WHERE n <= ${porLinha}`;
+
+  // O nome e o preço do produto do teste: o teste só guarda o link, e o mesmo
+  // link costuma estar no log de captura ou no catálogo.
+  const urlsTeste = [...new Set(testes.map(t => t.url))];
+  const nomes = new Map();
+  if (urlsTeste.length) {
+    const rows = await prisma().$queryRaw`
+      SELECT DISTINCT ON (url) url, name, price FROM (
+        SELECT r."resolvedUrl" AS url, r."productName" AS name, r."price" AS price, r."createdAt" AS quando
+          FROM "repasse_capture_log" r WHERE r."resolvedUrl" = ANY(${urlsTeste}::text[]) AND r."productName" IS NOT NULL
+        UNION ALL
+        SELECT cp."link", cp."name", cp."price", cp."lastSeenAt"
+          FROM "catalog_products" cp WHERE cp."link" = ANY(${urlsTeste}::text[])
+      ) x ORDER BY url, quando DESC`;
+    for (const r of rows) nomes.set(r.url, r);
+  }
+
+  const mapa = new Map();
+  const linhaDe = (id) => {
+    if (!mapa.has(id)) mapa.set(id, { itens: [], total: 0, vistos: new Set(), totais: new Map() });
+    return mapa.get(id);
+  };
+  // Os aprovados do teste primeiro; os recusados do teste vão para o fim, depois
+  // de tudo — o ML disse que ali o cupom não vale.
+  const recusados = [];
+  for (const t of testes) {
+    const id = codigoParaId.get(t.code);
+    if (!id) continue;
+    const l = linhaDe(id);
+    l.totais.set(`t:${t.code}`, t.total);
+    if (l.vistos.has(t.url)) continue;
+    l.vistos.add(t.url);
+    const item = { url: t.url, name: nomes.get(t.url)?.name || null, price: nomes.get(t.url)?.price ?? null, origem: t.valeu ? "teste" : "teste-recusado", palavra: t.code, quando: t.quando };
+    if (t.valeu) l.itens.push(item); else recusados.push([id, item]);
+  }
+  for (const r of repasse) {
+    const id = codigoParaId.get(r.code);
+    if (!id) continue;
+    const l = linhaDe(id);
+    l.totais.set(`r:${r.code}`, r.total);
+    if (l.vistos.has(r.url)) continue;
+    l.vistos.add(r.url);
+    l.itens.push({ url: r.url, name: r.name, price: r.price, origem: "repasse", palavra: r.code, quando: r.quando });
+  }
+  for (const r of vinculos) {
+    const l = linhaDe(r.campaign_id);
+    l.totais.set("v", r.total);
+    if (l.vistos.has(r.url)) continue;
+    l.vistos.add(r.url);
+    l.itens.push({ url: r.url, name: r.name, price: r.price, origem: r.origem, quando: r.quando });
+  }
+  for (const [id, item] of recusados) mapa.get(id).itens.push(item);
+  for (const l of mapa.values()) {
+    l.total = [...l.totais.values()].reduce((a, b) => a + Number(b || 0), 0);
+    delete l.vistos; delete l.totais;
+  }
+  return mapa;
+}
+
+// Grava as condições que a lista de cupons do CHECKOUT mostrou (a sonda da
+// extensão, coupons/checkout-list.js) nos cupons que têm palavra. Só toca nas
+// campanhas de `alvos` (as que estão na lista de palavras): o checkout lista todo
+// cupom da conta, e gravar os outros aqui seria colheita, não o pedido desta aba.
+//
+// Cria o cupom que não existia (origem "checkout", como o `vincularPorCheckout`) ou
+// completa o que existia — só com valor lido, nunca apagando o que já havia.
+async function gravarCondicoesDoCheckout(cupons, alvos) {
+  const agora = nowish();
+  const querem = new Map([...alvos].map(([id, code]) => [String(id), code]));
+  const gravados = [];
+  for (const c of cupons || []) {
+    const id = String(c?.campaignId || "");
+    if (!id || !querem.has(id)) continue;
+    const cond = {
+      ...(c.kind && c.kind !== "unknown" ? { kind: c.kind } : {}),
+      ...(c.value != null ? { value: c.value } : {}),
+      ...(c.minPurchase != null ? { minPurchase: c.minPurchase } : {}),
+      ...(c.maxDiscount != null ? { maxDiscount: c.maxDiscount } : {}),
+      ...(c.expiresAt ? { expiresAt: new Date(c.expiresAt) } : {}),
+    };
+    const atual = await prisma().mlCoupon.findUnique({ where: { campaignId: id }, select: { title: true, code: true } });
+    if (atual) {
+      await prisma().mlCoupon.update({
+        where: { campaignId: id },
+        data: {
+          ...cond,
+          ...(c.titulo && (!atual.title || atual.title === "(sem título)") ? { title: c.titulo } : {}),
+          ...(!atual.code && querem.get(id) ? { code: querem.get(id) } : {}),
+          lastSeenAt: agora,
+        },
+      });
+    } else {
+      await prisma().mlCoupon.create({
+        data: {
+          campaignId: id,
+          title: c.titulo || "(sem título)",
+          scope: c.grupo && c.grupo !== "meli" ? "store" : "campaign",
+          activated: true,
+          iconUrl: c.iconUrl || null,
+          origin: "checkout",
+          code: querem.get(id) || null,
+          raw: { viaCheckout: true, categoria: c.categoria || null, grupo: c.grupo || null },
+          firstSeenAt: agora,
+          lastSeenAt: agora,
+          kind: "unknown",
+          ...cond,
+        },
+      });
+    }
+    gravados.push({ campaignId: id, titulo: c.titulo || null, ...cond });
+  }
+  if (gravados.length) {
+    await prisma().mlCouponCode.updateMany({
+      where: { campaignId: { in: gravados.map(g => g.campaignId) }, condicoesFalhouAt: { not: null } },
+      data: { condicoesFalhouAt: null, condicoesMotivo: null },
+    });
+  }
+  return gravados;
+}
+
+// Apaga os cupons COM PALAVRA que já venceram — o cupom (pelo `apagarCampanhas`,
+// com os produtos que só vieram da vitrine dele) e também as palavras dele no
+// dicionário. Diferente do "Apagar vencidos" da aba Cupons do ML, que guarda as
+// palavras: aqui o pedido é tirar o cupom vencido da lista de vez.
+// `simular` é a prévia do modal: as mesmas contas, sem apagar nada.
+async function apagarCuponsComPalavraVencidos({ simular = false } = {}) {
+  const ids = (await listCuponsComPalavra()).filter(l => l.vencido).map(l => l.campaignId);
+  return apagarLinhasDePalavra(ids, { simular });
+}
+
+// O "Limpar não achados": as palavras que o "Buscar condições" testou e cujo cupom
+// não apareceu no checkout de nenhum produto — e o cupom delas, se existir (sem
+// condições, por definição). Mesma limpeza do vencido: cupom e palavra.
+async function apagarCuponsComPalavraNaoAchados({ simular = false } = {}) {
+  const ids = (await listCuponsComPalavra()).filter(l => l.naoAchou).map(l => l.campaignId);
+  return apagarLinhasDePalavra(ids, { simular });
+}
+
+// Marca que o "Buscar condições" rodou nos produtos desta campanha e não achou o
+// cupom. Vai em todas as palavras da campanha (a linha da tela é por campanha).
+async function marcarSemCondicoes(campaignId, motivo = null) {
+  const id = String(campaignId || "");
+  if (!id) throw new Error("Sem campanha.");
+  const { count } = await prisma().mlCouponCode.updateMany({
+    where: { campaignId: id },
+    data: { condicoesFalhouAt: nowish(), condicoesMotivo: motivo ? String(motivo).slice(0, 500) : null },
+  });
+  return { marcadas: count };
+}
+
+// Apaga as linhas da lista de palavras destas campanhas: as palavras do dicionário
+// (pela campanha e pela palavra carimbada no cupom) e os cupons que existirem, com
+// os produtos que só vieram da vitrine deles (`apagarCampanhas`). `simular` só conta.
+async function apagarLinhasDePalavra(ids, { simular = false } = {}) {
+  if (!ids.length) return { cupons: 0, vinculos: 0, produtos: 0, produtosMantidos: 0, palavras: 0 };
+  const existentes = await prisma().mlCoupon.findMany({
+    where: { campaignId: { in: ids } },
+    select: { campaignId: true, code: true },
+  });
+  const comCupom = existentes.map(c => c.campaignId);
+  const codes = existentes.map(c => c.code).filter(Boolean);
+  const ondePalavras = { OR: [{ campaignId: { in: ids } }, ...(codes.length ? [{ code: { in: codes } }] : [])] };
+
+  if (simular) {
+    const palavras = await prisma().mlCouponCode.count({ where: ondePalavras });
+    return { ...await apagarCampanhas(comCupom, { simular: true }), palavras };
+  }
+  const { count: palavras } = await prisma().mlCouponCode.deleteMany({ where: ondePalavras });
+  return { ...await apagarCampanhas(comCupom), palavras };
+}
+
 // Apaga estas campanhas, os vínculos delas e os produtos que só existiam pela
 // vitrine delas. O corpo comum de "Apagar vencidos" e da faxina.
 async function apagarCampanhas(ids, { simular = false } = {}) {
@@ -1107,6 +1418,11 @@ module.exports = {
   deleteCoupon,
   apagarVencidos,
   apagarCuponsMortos,
+  listCuponsComPalavra,
+  apagarCuponsComPalavraVencidos,
+  apagarCuponsComPalavraNaoAchados,
+  marcarSemCondicoes,
+  gravarCondicoesDoCheckout,
   apagarProdutosDaVitrine,
   marcarVitrineVazia,
   couponsSemVitrine,

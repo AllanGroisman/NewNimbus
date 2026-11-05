@@ -762,6 +762,11 @@ model MlCouponCode {
   checkCount   Int      @default(1) @map("check_count")
   firstSeenAt  DateTime @default(now()) @map("first_seen_at")
   raw          Json     @default("{}")
+  // O "Buscar condições" da aba Cupons com Palavras rodou nos produtos desta
+  // palavra e o cupom não apareceu no checkout. Null = nunca falhou (ou achou
+  // depois). É o que o "Limpar não achados" apaga.
+  condicoesFalhouAt DateTime? @map("condicoes_falhou_at")
+  condicoesMotivo   String?   @map("condicoes_motivo")
 
   @@index([campaignId])
   @@index([checkedAt])
