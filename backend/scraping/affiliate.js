@@ -356,6 +356,31 @@ function notifyMLCookie(userId, ok, tag) {
 // caminho do usuário carrega cache, telemetria e aviso de cookie vencido, que não
 // fazem sentido no outro — o que os dois compartilham é só isto aqui.
 async function postCreateLink({ cookie, tag, url, signal = undefined }) {
+  // Link de catálogo com o vendedor fixado (/p/MLB…?pdp_filters=item_id:…/#wid=…):
+  // a API IGNORA a query e devolve o link do catálogo, que abre o vendedor
+  // "ganhador" — outro, mais caro e sem o cupom (Booster Box, 05/11/2026). Pela URL
+  // do ANÚNCIO ela gera a landing com o pdp_filters certo, igual ao link que o
+  // próprio ML gera ao escolher a opção de vendedor. Se o anúncio for recusado
+  // (pausado, encerrado), cai no catálogo: o mesmo resultado de antes.
+  const doAnuncio = urlDoAnuncioML(url);
+  if (doAnuncio) {
+    const r = await postCreateLinkCru({ cookie, tag, url: doAnuncio, signal });
+    if (!r.ok || r.shortUrl) return r;
+    console.warn(`[afiliados ML] anúncio ${doAnuncio} recusado — gerando pelo catálogo (vendedor não fica fixo)`);
+  }
+  return postCreateLinkCru({ cookie, tag, url, signal });
+}
+
+// `/p/MLB<catálogo>` com o anúncio na query/fragmento → URL do anúncio. Qualquer
+// outro link → null (vai como veio). Pura → testável.
+function urlDoAnuncioML(url) {
+  const { mlUrlSpace, mlAnuncioIdFromUrl } = require("../catalog/product-key");
+  if (mlUrlSpace(url) !== "catalogo") return null;
+  const id = mlAnuncioIdFromUrl(url);
+  return id ? `https://produto.mercadolivre.com.br/MLB-${id.slice(3)}` : null;
+}
+
+async function postCreateLinkCru({ cookie, tag, url, signal = undefined }) {
   const res = await fetch(ML_ENDPOINT, {
     method: "POST",
     headers: {
@@ -1321,6 +1346,7 @@ module.exports = {
   criarLinkAfiliadoMLSistema,
   consultarShopeeItem,
   postCreateLink,
+  urlDoAnuncioML,
   // ML
   gerarLinkAfiliadoML,
   criarLinkAfiliadoML,

@@ -11,7 +11,8 @@ import { createRequire } from "module";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
-const { polycardToProduct } = require(path.resolve(__dirname, "..", "..", "backend", "scraping", "ml-hub.js"));
+const { polycardToProduct, pinMLSeller } = require(path.resolve(__dirname, "..", "..", "backend", "scraping", "ml-hub.js"));
+const { productKey, mlAnuncioIdFromUrl } = require(path.resolve(__dirname, "..", "..", "backend", "catalog", "product-key.js"));
 const fixture = require(path.resolve(__dirname, "..", "fixtures", "ml-hub-cards.json"));
 
 const { context, cards } = fixture;
@@ -41,11 +42,19 @@ describe("polycardToProduct", () => {
     expect(p.sold).toMatch(/vendidos/i);
   });
 
-  it("link é a URL canônica do produto, sem os parâmetros de rastreamento do Hub", () => {
+  it("link é a URL canônica do produto com o vendedor fixado, sem o rastreamento do Hub", () => {
     const p = polycardToProduct(byId("MLB3225819794"), context);
-    expect(p.link).toMatch(/^https:\/\/www\.mercadolivre\.com\.br\//);
-    expect(p.link).not.toContain("?");
-    expect(p.link).not.toContain("#");
+    // /p/ é catálogo: sem o anúncio, o ML abre o vendedor "ganhador", que pode
+    // ser outro, mais caro e sem o cupom.
+    expect(p.link).toBe("https://www.mercadolivre.com.br/balanca-digital-corporal-bioimpedancia-aplicativo-bluetooth-relaxmedic/p/MLB21814751?pdp_filters=item_id%3AMLB3225819794#wid=MLB3225819794");
+    expect(p.link).not.toMatch(/matt_|reco_|tracking_id/);
+  });
+
+  it("link com vendedor não muda a chave do catálogo e entrega o nº do anúncio", () => {
+    const p = polycardToProduct(byId("MLB3225819794"), context);
+    const semVendedor = p.link.split("?")[0];
+    expect(productKey({ link: p.link })).toBe(productKey({ link: semVendedor }));
+    expect(mlAnuncioIdFromUrl(p.link)).toBe("MLB3225819794");
   });
 
   it("imagem é montada pelo template do ML no tamanho grande", () => {
@@ -100,5 +109,30 @@ describe("polycardToProduct", () => {
     expect(p).not.toBeNull();
     expect(p.img).toBeNull();
     expect(p.link).toMatch(/^https:\/\//);
+  });
+});
+
+describe("pinMLSeller", () => {
+  const CAT = "https://www.mercadolivre.com.br/booster-box/p/MLB69246167";
+
+  it("fixa o anúncio num link de catálogo, no formato que o ML gera", () => {
+    expect(pinMLSeller(CAT, "MLB7253500418"))
+      .toBe(`${CAT}?pdp_filters=item_id%3AMLB7253500418#wid=MLB7253500418`);
+  });
+
+  it("descarta query e fragmento de rastreamento que vierem junto", () => {
+    expect(pinMLSeller(`${CAT}?matt_d2id=x#reco_id=y`, "MLB7253500418"))
+      .toBe(`${CAT}?pdp_filters=item_id%3AMLB7253500418#wid=MLB7253500418`);
+  });
+
+  it("sem anúncio, anúncio inválido ou igual ao catálogo: devolve como veio", () => {
+    expect(pinMLSeller(CAT, null)).toBe(CAT);
+    expect(pinMLSeller(CAT, "MLBU123456789")).toBe(CAT);
+    expect(pinMLSeller(CAT, "MLB69246167")).toBe(CAT);
+  });
+
+  it("link de anúncio (não catálogo) fica igual", () => {
+    const anuncio = "https://produto.mercadolivre.com.br/MLB-5344494748-talheres-_JM";
+    expect(pinMLSeller(anuncio, "MLB5344494748")).toBe(anuncio);
   });
 });

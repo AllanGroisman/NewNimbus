@@ -67,7 +67,9 @@ describe("parseSocialLanding — landing real", () => {
   it("guarda o permalink do produto, não a landing do outro afiliado", () => {
     const { product } = parseSocialLanding(html, LANDING_URL);
     // /p/MLB… é o formato que a API de afiliado do ML aceita na hora de reafiliar.
-    expect(product.link).toBe("https://www.mercadolivre.com.br/controle-sem-fio-xbox-series-sx-robot-white-branco/p/MLB52371739");
+    // O anúncio do card destacado vai junto: é o vendedor que o outro afiliado
+    // escolheu (e o preço/cupom da mensagem são dele).
+    expect(product.link).toBe("https://www.mercadolivre.com.br/controle-sem-fio-xbox-series-sx-robot-white-branco/p/MLB52371739?pdp_filters=item_id%3AMLB6862871044#wid=MLB6862871044");
     expect(product.finalUrl).toBe(product.link);
     expect(product.link).not.toMatch(/\/social\//);
   });

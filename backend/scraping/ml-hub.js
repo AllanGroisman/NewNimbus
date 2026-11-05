@@ -123,6 +123,24 @@ function buildPictureUrl(card, context) {
     .replace("{sanitized_title}", "");
 }
 
+// Fixa o vendedor num link de catálogo do ML: `/p/MLB<catálogo>` vira
+// `/p/MLB<catálogo>?pdp_filters=item_id%3AMLB<anúncio>#wid=MLB<anúncio>` — o mesmo
+// formato do link que o próprio ML gera ao escolher uma opção de vendedor. Link
+// que não é /p/, anúncio inválido ou igual ao nº do catálogo: devolve como veio.
+// Se o anúncio sair do ar, o filtro não acha nada e o ML mostra a página geral —
+// o mesmo de não fixar. O productKey não muda (sai do /p/MLB… do caminho).
+// Pura → testável.
+function pinMLSeller(url, itemId) {
+  if (!url || typeof url !== "string") return url;
+  const id = typeof itemId === "string" ? itemId.trim().toUpperCase() : "";
+  if (!/^MLB\d{6,}$/.test(id)) return url;
+  let u;
+  try { u = new URL(url); } catch { return url; }
+  const cat = u.pathname.match(/\/p\/(MLB\d+)/i);
+  if (!cat || cat[1].toUpperCase() === id) return url;
+  return `${u.origin}${u.pathname}?pdp_filters=item_id%3A${id}#wid=${id}`;
+}
+
 // Converte um card do Hub num produto no mesmo formato da vitrine (harvestMLCards).
 // Pura → testável sem navegador. Card sem título ou sem preço devolve null.
 function polycardToProduct(card, context = {}, category = null) {
@@ -133,9 +151,12 @@ function polycardToProduct(card, context = {}, category = null) {
 
   const url = card?.metadata?.url;
   if (!url) return null;
-  // Só a URL canônica do produto: os url_params são rastreamento da sessão do Hub
-  // e a chave do catálogo sai do MLB de qualquer jeito (catalog/product-key.js).
-  const link = /^https?:\/\//i.test(url) ? url : `${context?.url_prefix || "https://"}${url}`;
+  // A URL canônica do produto, sem o rastreamento da sessão (url_params e o resto
+  // do url_fragments). MAS com o vendedor: num /p/ (catálogo) o metadata.id é o
+  // ANÚNCIO do card, e sem ele o ML abre o vendedor "ganhador" do momento — que
+  // pode ser outro, mais caro e sem o cupom (envio da Booster Box, 05/11/2026).
+  const canonical = /^https?:\/\//i.test(url) ? url : `${context?.url_prefix || "https://"}${url}`;
+  const link = pinMLSeller(canonical, card?.metadata?.id);
 
   const originalPrice = typeof priceComp?.previous_price?.value === "number"
     ? priceComp.previous_price.value
@@ -390,6 +411,7 @@ module.exports = {
   HUB_CATEGORIES,
   classifyHubResult,
   polycardToProduct,
+  pinMLSeller,
   checkHubAccess,
   scrapeHub,
   dumpHub,
