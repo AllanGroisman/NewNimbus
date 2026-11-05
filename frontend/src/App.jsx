@@ -280,17 +280,19 @@ export default function App() {
       if (emailChangeRef.current) { setBootstrapping(false); return; }
       if (!getToken()) { setBootstrapping(false); return; }
       // Inatividade: se a última atividade foi há mais que o timeout, a sessão
-      // expirou enquanto a aba esteve fechada — cai direto no login sem validar.
+      // expirou enquanto a aba esteve fechada — cai no login. Admin é exceção
+      // (não sai por inatividade), por isso a decisão espera o /me dizer o papel.
       const last = getLastActivity();
-      if (last && Date.now() - last > IDLE_TIMEOUT_MS) {
-        clearToken();
-        setBootstrapping(false);
-        return;
-      }
-      setLastActivity(Date.now());
+      const idleExpired = !!last && Date.now() - last > IDLE_TIMEOUT_MS;
       try {
         const me = await authMe();
         if (cancelled) return;
+        if (idleExpired && me.user?.role !== "admin") {
+          clearToken();
+          setBootstrapping(false);
+          return;
+        }
+        setLastActivity(Date.now());
         setUser(me.user);
         const state = await loadAppState();
         if (cancelled) return;
@@ -353,7 +355,8 @@ export default function App() {
   // usuário. Enquanto há atividade, registra o timestamp e renova o token no
   // servidor (sliding session) com throttle. Um interval checa a ociosidade.
   useEffect(() => {
-    if (!user) return;
+    // Admin não é deslogado por inatividade (token dele é longo no backend).
+    if (!user || user.role === "admin") return;
     const REFRESH_THROTTLE_MS = 10 * 60 * 1000; // renova o token no máx. a cada 10 min
     let lastRefresh = Date.now();
 

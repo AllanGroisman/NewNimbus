@@ -151,6 +151,10 @@ let _jwtSecret = process.env.JWT_SECRET || null;
 // (sliding session). O frontend chama /api/auth/refresh a cada atividade (com
 // throttle); ficando ocioso, o token vence e a próxima request cai em 401.
 const TOKEN_TTL = "2h";
+// Admin não sai por inatividade: token longo (renovado pelo refresh) e o
+// frontend não roda o cronômetro de ociosidade pra ele. tokenVersion continua
+// derrubando a sessão em troca de senha, reset e suspensão.
+const ADMIN_TOKEN_TTL = "365d";
 
 // Carrega (ou gera+persiste) o JWT secret na tabela AppConfig.
 // Chamar no boot ANTES de qualquer sign/verify. Idempotente.
@@ -690,7 +694,7 @@ function signToken(user) {
   return jwt.sign(
     { sub: user.id, email: user.email, tv: user.tokenVersion ?? 0 },
     getJwtSecret(),
-    { expiresIn: TOKEN_TTL, algorithm: "HS256" }
+    { expiresIn: user.role === "admin" ? ADMIN_TOKEN_TTL : TOKEN_TTL, algorithm: "HS256" }
   );
 }
 
