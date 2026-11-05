@@ -180,10 +180,10 @@ describe("só enviar com cupom válido", () => {
   });
 
   it("estadosCupomDaFila: só calcula com a opção ligada", async () => {
-    expect(await scheduler.estadosCupomDaFila({ ...REPASSE, queue: [item()] }, AGORA)).toEqual({ ativo: false, estados: {} });
+    expect(await scheduler.estadosCupomDaFila({ ...REPASSE, queue: [item()] }, AGORA)).toMatchObject({ ativo: false, estados: {} });
     coupons.findCodeCheck.mockResolvedValue({ verdict: "invalid" });
     const r = await scheduler.estadosCupomDaFila({ ...SO_VALIDO, queue: [item({ id: 7 }), item({ key: "x", coupon: "" })] }, AGORA);
-    expect(r).toEqual({ ativo: true, estados: { 7: "invalido", x: "sem_cupom" } });
+    expect(r).toMatchObject({ ativo: true, estados: { 7: "invalido", x: "sem_cupom" } });
   });
 });
 

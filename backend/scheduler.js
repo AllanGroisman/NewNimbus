@@ -690,6 +690,35 @@ async function couponRuleForItem(item) {
   return null;
 }
 
+// O cupom que o item leva NESTE instante: a palavra, a campanha, o preço com o
+// desconto e o quanto ele tira. Usado pelo envio (sendItem) e pela prévia da aba
+// Fila (estadosCupomDaFila) — o mesmo cálculo nos dois, pra o que a fila mostra
+// ser o que sai na mensagem.
+async function cupomCalculadoDoItem(item) {
+  const coupon = (item?.coupon || "").toString().trim();
+  // A regra do cupom lida AGORA — e ela sempre tem palavra (couponRuleForItem não
+  // devolve cupom sem `code`).
+  const regraCupom = await couponRuleForItem(item);
+  // A palavra da mensagem é a do cupom que deu o desconto. Quando o item não
+  // trazia palavra e o catálogo tinha uma, ela é HERDADA; quando a do item não
+  // existe no ML (o líder errou, ou a campanha acabou) e o produto tem outro
+  // cupom do sistema que vale, ela é TROCADA. Sem isso o {preco_com_cupom} saía
+  // com o desconto de um cupom e o {cupom} com a palavra de outro. Os dois falam
+  // do mesmo cupom ou nenhum. Sem regra, a palavra do item segue como veio.
+  const palavra = (regraCupom?.code || "").toString().trim() || coupon;
+  // O preço com o desconto e o quanto ele vale, contra o que o banco diz do cupom
+  // neste instante. `null` = não deu pra calcular, e aí o {preco_com_cupom} sai
+  // igual ao {preco} e as linhas de {desconto_cupom}/{economia_cupom} somem.
+  const detalhe = coupons.detalheDoCupom(item?.price, regraCupom);
+  return {
+    coupon: palavra,
+    couponCampaignId: regraCupom?.campaignId ?? item?.couponCampaignId ?? null,
+    priceWithCoupon: detalhe ? detalhe.final : null,
+    couponLabel: detalhe ? detalhe.rotulo : null,
+    couponSaving: detalhe ? detalhe.economia : null,
+  };
+}
+
 // O produto do repasse chegou com uma palavra de cupom que o sistema ainda não
 // sabe quanto desconta? Então ele espera um pouco na fila: o teste no checkout
 // (repasse/coupon-autotest.js:pendentesCheckout, palavra nova primeiro) costuma
@@ -834,17 +863,26 @@ async function primeiroProntoParaEnvio(group, queue, agora = Date.now()) {
   return -1;
 }
 
-// Estado do cupom de cada item da fila, pra tela apagar os que não saem.
+// Estado do cupom de cada item da fila, pra tela apagar os que não saem, e o
+// cupom calculado agora (`precos`), pra a fila mostrar o {preco_com_cupom} e
+// companhia como sairiam num envio feito neste instante.
 // Chave = id (ou key) do item, a mesma que a tela usa pra editar o cupom.
 async function estadosCupomDaFila(group, agora = Date.now()) {
-  if (!soCupomValido(group)) return { ativo: false, estados: {} };
+  const ativo = soCupomValido(group);
   const estados = {};
+  const precos = {};
   for (const item of group.queue || []) {
     const id = item?.id ?? item?.key;
     if (id == null) continue;
-    estados[id] = item.source === "repasse" ? await estadoCupomDoItem(item, agora) : "sem_cupom";
+    if (ativo) estados[id] = item.source === "repasse" ? await estadoCupomDoItem(item, agora) : "sem_cupom";
+    // Um cupom que não dá pra ler não derruba a fila inteira: o item fica sem prévia.
+    const calc = await cupomCalculadoDoItem(item).catch(() => null);
+    if (calc) {
+      const { couponCampaignId, ...resto } = calc;
+      precos[id] = resto;
+    }
   }
-  return { ativo: true, estados };
+  return { ativo, estados, precos };
 }
 
 // Conversão de link de afiliado por loja. Tabela em vez de três `else if`
@@ -981,29 +1019,7 @@ async function sendItem(userId, group, whatsappGroups, item) {
 
   // Cupom: o do próprio item (que vem da legenda do grupo líder no repasse, ou
   // digitado à mão na fila) ou, na falta dele, o que o catálogo conhece.
-  const coupon = (itemForSend.coupon || "").toString().trim();
-  // A regra do cupom lida AGORA — e ela sempre tem palavra (couponRuleForItem não
-  // devolve cupom sem `code`).
-  const regraCupom = await couponRuleForItem(itemForSend);
-  // A palavra da mensagem é a do cupom que deu o desconto. Quando o item não
-  // trazia palavra e o catálogo tinha uma, ela é HERDADA; quando a do item não
-  // existe no ML (o líder errou, ou a campanha acabou) e o produto tem outro
-  // cupom do sistema que vale, ela é TROCADA. Sem isso o {preco_com_cupom} saía
-  // com o desconto de um cupom e o {cupom} com a palavra de outro. Os dois falam
-  // do mesmo cupom ou nenhum. Sem regra, a palavra do item segue como veio.
-  const palavra = (regraCupom?.code || "").toString().trim() || coupon;
-  // O preço com o desconto e o quanto ele vale, contra o que o banco diz do cupom
-  // neste instante. `null` = não deu pra calcular, e aí o {preco_com_cupom} sai
-  // igual ao {preco} e as linhas de {desconto_cupom}/{economia_cupom} somem.
-  const detalhe = coupons.detalheDoCupom(itemForSend.price, regraCupom);
-  itemForSend = {
-    ...itemForSend,
-    coupon: palavra,
-    couponCampaignId: regraCupom?.campaignId ?? itemForSend.couponCampaignId ?? null,
-    priceWithCoupon: detalhe ? detalhe.final : null,
-    couponLabel: detalhe ? detalhe.rotulo : null,
-    couponSaving: detalhe ? detalhe.economia : null,
-  };
+  itemForSend = { ...itemForSend, ...(await cupomCalculadoDoItem(itemForSend)) };
 
   const text = renderTemplate(group.messageTemplate, itemForSend);
   // {todos} no modelo = marcar o grupo inteiro. O repasse no modo original não
@@ -1659,7 +1675,7 @@ async function addItemToGroup(userId, group, item, { force = false } = {}) {
 
 module.exports = {
   _setConferirPrecoML, conferirPrecoNaNossaLanding,
-  aguardandoCupom, palavraRecusada, precisaSondaBarrado, primeiroProntoParaEnvio, estadoCupomDoItem, estadosCupomDaFila, soCupomValido,
+  aguardandoCupom, palavraRecusada, precisaSondaBarrado, primeiroProntoParaEnvio, estadoCupomDoItem, estadosCupomDaFila, cupomCalculadoDoItem, soCupomValido,
   start, stop, tick, sendNextNow, refillNow, manualAdd, addItemToGroup,
   isRepasse, isAutoApprove, isAutoRefill, resolveSources, activeSources, sourcesForCampaign,
   status, processSendJob,

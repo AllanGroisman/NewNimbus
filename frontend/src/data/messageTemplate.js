@@ -23,7 +23,7 @@ function formatVendas(p) {
   return "";
 }
 
-function templateValues(p, { modeloTemPreco = false } = {}) {
+export function templateValues(p, { modeloTemPreco = false } = {}) {
   const num = v => (v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : null);
   const pos = v => (num(v) > 0 ? num(v) : null);
   const text = v => (v == null ? "" : String(v).trim()) || null;

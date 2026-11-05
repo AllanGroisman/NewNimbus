@@ -195,3 +195,27 @@ describe("couponRuleForItem — sem palavra não há desconto a anunciar", () =>
     expect(enviadas[0]).toBe("Fone Bluetooth\nSai por: R$ 200,00");
   });
 });
+
+// A aba Fila mostra o {preco_com_cupom} e companhia antes do envio. A conta é a do
+// sendItem (cupomCalculadoDoItem) — se divergir, a fila promete um preço e a
+// mensagem sai com outro.
+describe("estadosCupomDaFila — prévia do cupom na fila", () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  it("devolve o preço com cupom de cada item, mesmo sem 'só cupom válido'", async () => {
+    vi.spyOn(coupons, "couponsListForKeys").mockResolvedValue(new Map([["k1", [COM_PALAVRA]]]));
+
+    const r = await scheduler.estadosCupomDaFila({ ...GRUPO, queue: [item({ id: 9 })] });
+
+    expect(r.ativo).toBe(false);
+    expect(r.precos[9]).toEqual({ coupon: "GALAXY10", priceWithCoupon: 180, couponLabel: "10% OFF", couponSaving: 20 });
+  });
+
+  it("cupom sem palavra: sem preço com cupom", async () => {
+    vi.spyOn(coupons, "couponsListForKeys").mockResolvedValue(new Map([["k1", [SEM_PALAVRA]]]));
+
+    const r = await scheduler.estadosCupomDaFila({ ...GRUPO, queue: [item({ id: 9 })] });
+
+    expect(r.precos[9]).toMatchObject({ priceWithCoupon: null, couponLabel: null, couponSaving: null });
+  });
+});

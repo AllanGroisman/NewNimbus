@@ -3,7 +3,7 @@ import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, storeLockMessage, CAT
 import { createWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, checkWAGroups, refillQueueNow, clearGroupQueue, saveGroupQueue, saveItemCoupon, estadosCupomDaFila, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue, errText } from "../data/api";
 import { refillResultMsg, queueMax } from "../data/refill";
 import { DEFAULT_MESSAGE_TEMPLATE, CLASSIC_MESSAGE_TEMPLATE, LEGACY_DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
-import { renderMessageTemplate, previewItem, PREVIEW_ITEM } from "../data/messageTemplate";
+import { renderMessageTemplate, previewItem, PREVIEW_ITEM, templateValues } from "../data/messageTemplate";
 import { leadersOf, withLeaders } from "../data/repasseLeaders";
 import { useUnsavedGuard, useRequestNavigation } from "../data/navGuard";
 import { useTextHistory } from "../data/textHistory";
@@ -320,11 +320,18 @@ const CUPOM_BARRADO = {
   testando: "⏳ Testando o cupom — envia quando validar",
 };
 
-function QueueItemCard({ item, idx, eta, isLast, touch, estadoCupom, onRemove, onMoveToTop, onMoveUp, onMoveDown, onSaveCoupon, onDragStart, onDragOver, onDragEnd, onDrop, isDragOver, isDragging }) {
+function QueueItemCard({ item, idx, eta, isLast, touch, estadoCupom, precoCupom, modeloTemPreco, onRemove, onMoveToTop, onMoveUp, onMoveDown, onSaveCoupon, onDragStart, onDragOver, onDragEnd, onDrop, isDragOver, isDragging }) {
   const addedAt = item.addedAt ? new Date(item.addedAt) : null;
   const addedAtStr = addedAt && !isNaN(addedAt.getTime()) ? addedAt.toLocaleString("pt-BR") : null;
   const discountStr = !isEmpty(item.discount) ? (typeof item.discount === "number" ? `${item.discount}%` : String(item.discount)) : null;
   const hasLink = !isEmpty(item.link);
+  // Os valores do modelo de mensagem, formatados pelo MESMO templateValues da
+  // prévia do editor. O cupom (preço com cupom, rótulo, economia) vem do servidor,
+  // calculado agora com a regra do envio (scheduler.js:cupomCalculadoDoItem);
+  // enquanto ele não responde, o card usa o que o item já tem.
+  const v = templateValues({ ...item, ...(precoCupom || {}) }, { modeloTemPreco });
+  const temCupomValendo = Number(precoCupom?.priceWithCoupon) > 0;
+  const palavraNoEnvio = precoCupom?.coupon && precoCupom.coupon !== (item.coupon || "") ? precoCupom.coupon : null;
 
   const border = isDragOver
     ? `2px dashed ${PRIMARY}`
@@ -407,17 +414,31 @@ function QueueItemCard({ item, idx, eta, isLast, touch, estadoCupom, onRemove, o
           <QueueField label="Preço" value={fmtBR(item.price)} />
           <QueueField label="Preço antigo" value={fmtBR(item.originalPrice)} />
           <QueueField label="Desconto" value={discountStr} />
-          <CouponField value={item.coupon} onSave={onSaveCoupon} />
-          {/* O que o cupom tira, do jeito que o preenchimento leu no catálogo. Só o
-              RÓTULO da regra ("15% OFF"), nunca o preço final: esse é calculado no
-              envio, contra o cupom daquele instante (scheduler.js:sendItem), porque
-              o item fica dias na fila e o cupom vence nesse meio-tempo. Um número
-              congelado aqui viraria promessa velha. */}
-          <QueueField label="Desconto do cupom" value={item.couponLabel} />
+          <QueueField label="Economia" value={v.economia} />
+          <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+            <CouponField value={item.coupon} onSave={onSaveCoupon} />
+            {palavraNoEnvio && (
+              <div title="O cupom digitado não vale, ou não havia; o envio usa este, que vale no produto." style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                No envio: <span style={{ fontFamily: "monospace", color: "var(--color-text-primary)" }}>{palavraNoEnvio}</span>
+              </div>
+            )}
+          </div>
+          {/* Preço com cupom e companhia: PRÉVIA, calculada pelo servidor agora
+              contra o cupom deste instante. Não fica gravada no item porque o item
+              fica dias na fila e o cupom vence nesse meio-tempo — o envio confere
+              de novo (scheduler.js:sendItem). */}
+          <QueueField label="Preço com cupom" value={temCupomValendo ? v.preco_com_cupom : null} />
+          <QueueField label="Desconto do cupom" value={precoCupom ? v.desconto_cupom : item.couponLabel} />
+          <QueueField label="Economia do cupom" value={v.economia_cupom} />
+          <QueueField label="Desconto total" value={v.desconto_total} />
+          <QueueField label="Economia total" value={v.economia_total} />
           <QueueField label="Vendidos" value={soldText(item)} />
           <QueueField label="Avaliação" value={item.rating ? `★ ${item.rating}${item.reviewsCount ? ` (${item.reviewsCount})` : ""}` : null} />
           <QueueField label="Frete grátis" value={item.freeShipping ? "Sim" : null} />
           <QueueField label="Adicionado" value={addedAtStr} />
+          <div style={{ gridColumn: "1 / -1", minWidth: 0 }}>
+            <QueueField label="Link" value={hasLink ? item.link : null} link />
+          </div>
         </div>
       </div>
       <OriginalTextPreview text={item.originalText} />
@@ -547,14 +568,21 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   // "Só enviar com cupom válido": quais itens da fila estão barrados. Só pergunta
   // ao servidor com a aba Fila aberta e a opção salva ligada.
   const [estadosCupom, setEstadosCupom] = useState({});
+  // Prévia do cupom de cada item (preço com cupom, rótulo, economia), calculada
+  // pelo servidor com a regra do envio. Vem na mesma resposta, pra toda campanha.
+  const [precosCupom, setPrecosCupom] = useState({});
   // Editar o cupom de um item muda o estado dele: pergunta de novo.
   const queueCupomSig = (group.queue || []).map(q => q.coupon || "").join("|");
   const soCupomValidoSalvo = group?.scraping?.kind === "repasse" && !!group?.scraping?.repasse?.soCupomValido;
   useEffect(() => {
-    if (tab !== "queue" || !soCupomValidoSalvo) { setEstadosCupom({}); return; }
+    if (tab !== "queue") { setEstadosCupom({}); return; }
     let vivo = true;
     const carregar = () => estadosCupomDaFila(group.id)
-      .then(r => { if (vivo) setEstadosCupom(r?.ativo ? (r.estados || {}) : {}); })
+      .then(r => {
+        if (!vivo) return;
+        setEstadosCupom(soCupomValidoSalvo && r?.ativo ? (r.estados || {}) : {});
+        setPrecosCupom(r?.precos || {});
+      })
       .catch(() => {});
     carregar();
     const t = setInterval(carregar, 30_000);
@@ -2767,6 +2795,9 @@ onError={setActionError}
             const etas = queue.map(it => (barrado(it) ? null : etasLivres[livre++]));
             return (
               <div data-tour="qu-list" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ fontSize: 11, color: "var(--color-text-secondary)", padding: "0 4px" }}>
+                  🎟️ O preço com cupom é uma prévia de agora — o envio confere o cupom de novo na hora.
+                </div>
                 {queue.length > 1 && (
                   <div style={{ fontSize: 11, color: "var(--color-text-secondary)", padding: "0 4px" }}>
                     {touch
@@ -2781,6 +2812,8 @@ onError={setActionError}
                     idx={idx}
                     eta={etas[idx]}
                     estadoCupom={estadosCupom[item.id ?? item.key]}
+                    precoCupom={precosCupom[item.id ?? item.key]}
+                    modeloTemPreco={String(group.messageTemplate || "").includes("{preco}")}
                     isLast={idx === queue.length - 1}
                     touch={touch}
                     onRemove={() => setConfirmRemoveQueueItem(item)}

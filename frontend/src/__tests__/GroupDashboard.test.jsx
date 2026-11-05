@@ -608,6 +608,27 @@ describe("GroupDashboard — só enviar com cupom válido", () => {
   });
 });
 
+describe("GroupDashboard — prévia do cupom na fila", () => {
+  it("card mostra o preço com cupom e as economias que o servidor calculou", async () => {
+    const api = await import("../data/api");
+    api.estadosCupomDaFila.mockResolvedValueOnce({
+      ativo: false, estados: {},
+      precos: { a: { coupon: "GALAXY10", priceWithCoupon: 180, couponLabel: "10% OFF", couponSaving: 20 } },
+    });
+    renderDashboard({
+      group: {
+        queue: [{ key: "a", name: "Fone", store: "Mercado Livre", price: 200, originalPrice: 250, link: "https://x.y/p" }],
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Fila/ }));
+    expect(await screen.findByText("R$ 180,00")).toBeInTheDocument();
+    expect(screen.getByText("R$ 20,00")).toBeInTheDocument();      // economia do cupom
+    expect(screen.getByText("28%")).toBeInTheDocument();           // 250 → 180
+    expect(screen.getByText("R$ 70,00")).toBeInTheDocument();      // economia total
+    expect(screen.getByText("GALAXY10")).toBeInTheDocument();      // palavra herdada no envio
+  });
+});
+
 describe("GroupDashboard — grupos de origem do repasse", () => {
   function abrirRepasse(overrides) {
     const r = renderDashboard(overrides);
