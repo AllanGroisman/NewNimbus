@@ -1295,6 +1295,36 @@ async function marcarSemCondicoes(campaignId, motivo = null) {
   return { marcadas: count };
 }
 
+// O admin diz, na mão, de qual cupom é esta palavra. É o conserto para quando o
+// teste no checkout não conseguiu ligar as duas: o DEZOFF voltou "indeterminado"
+// e o "10% OFF com DEZOFF" ficou sem palavra, então os itens da fila com "só cupom
+// válido" ficaram presos. A palavra é carimbada no cupom (é o que o
+// findCouponByCode lê) e sai de qualquer outro cupom, para não ficar em dois. O
+// dicionário passa a dizer "valid", origem "manual". Um teste que venha depois não
+// desfaz isso: o indeterminado é preservado (recordCodeCheck) e nenhum teste
+// apaga `ml_coupons.code`.
+async function vincularPalavraManual(code, campaignId) {
+  const palavra = String(code || "").trim().toUpperCase();
+  const id = String(campaignId || "").trim();
+  if (!palavra) throw new Error("Falta a palavra do cupom.");
+  if (!/^[A-Z0-9]{2,40}$/.test(palavra)) throw new Error("A palavra do cupom só pode ter letras e números.");
+  if (!id) throw new Error("Falta o cupom.");
+  const cupom = await prisma().mlCoupon.findUnique({ where: { campaignId: id } });
+  if (!cupom) throw new Error("Esse cupom não existe no sistema.");
+  const agora = nowish();
+  const linha = { verdict: "valid", campaignId: id, message: "Vinculado manualmente pelo admin", source: "manual", checkedAt: agora, condicoesFalhouAt: null, condicoesMotivo: null };
+  const [, atualizado] = await prisma().$transaction([
+    prisma().mlCoupon.updateMany({ where: { code: palavra, campaignId: { not: id } }, data: { code: null } }),
+    prisma().mlCoupon.update({ where: { campaignId: id }, data: { code: palavra } }),
+    prisma().mlCouponCode.upsert({
+      where: { code: palavra },
+      create: { code: palavra, ...linha, raw: { manual: true }, checkCount: 1, firstSeenAt: agora },
+      update: { ...linha, raw: { manual: true } },
+    }),
+  ]);
+  return atualizado;
+}
+
 // Apaga as linhas da lista de palavras destas campanhas: as palavras do dicionário
 // (pela campanha e pela palavra carimbada no cupom) e os cupons que existirem, com
 // os produtos que só vieram da vitrine deles (`apagarCampanhas`). `simular` só conta.
@@ -1422,6 +1452,7 @@ module.exports = {
   apagarCuponsComPalavraVencidos,
   apagarCuponsComPalavraNaoAchados,
   marcarSemCondicoes,
+  vincularPalavraManual,
   gravarCondicoesDoCheckout,
   apagarProdutosDaVitrine,
   marcarVitrineVazia,

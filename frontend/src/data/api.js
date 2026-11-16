@@ -779,6 +779,10 @@ export async function adminMlCuponsPalavrasCondicoes({ campaignId, url, material
 export async function adminMlCuponsPalavrasMarcarNaoAchou(campaignId, motivo) {
   return http("POST", "/api/admin/ml-cupons/palavras/nao-achou", { campaignId, motivo });
 }
+// O admin liga uma palavra a um cupom na mão (Fila → "Validar cupom", aba Cupons com Palavras).
+export async function vincularPalavraCupom(code, campaignId) {
+  return http("POST", "/api/admin/ml-cupons/palavras/vincular", { code, campaignId });
+}
 export async function adminMlCuponsPalavrasNaoAchadosPrevia() {
   return http("GET", "/api/admin/ml-cupons/palavras/nao-achados", undefined, { timeoutMs: SLOW_TIMEOUT_MS });
 }

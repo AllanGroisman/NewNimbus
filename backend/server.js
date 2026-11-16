@@ -3310,6 +3310,17 @@ app.post("/api/admin/ml-cupons/palavras/nao-achou", auth.requireAuth, auth.requi
   }
 });
 
+// O admin liga uma palavra a um cupom na mão (Fila → "Validar cupom", ou a aba
+// Cupons com Palavras). Os itens da fila presos por essa palavra saem sozinhos no
+// próximo ciclo, porque o scheduler relê o banco.
+app.post("/api/admin/ml-cupons/palavras/vincular", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    res.json({ ok: true, cupom: await couponsStore.vincularPalavraManual(req.body?.code, req.body?.campaignId) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.get("/api/admin/ml-cupons/palavras/nao-achados", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
     res.json(await couponsStore.apagarCuponsComPalavraNaoAchados({ simular: true }));

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, allSources, storeLockMessage, CATEGORIES, categoryLabel, categoryColor, categoryIcon, formatPrice, soldText, getGroupCategories, getGroupStats, computeQueueETA, formatETA, formatTimeBR, formatDateBR, isSameDayBR, WHATSNIMBUS_EVENTS } from "../data/constants";
+import VincularCupomModal from "./VincularCupomModal";
 import { createWAGroup, revokeWAInvite, sendNextNow as apiSendNextNow, loadAppOps, listWAGroups, checkWAGroups, refillQueueNow, clearGroupQueue, saveGroupQueue, saveItemCoupon, estadosCupomDaFila, clearGroupHistory, approvePendingItem, rejectPendingItem, approveAllPending, rejectAllPending, fetchUrlMetadata, manualAddToQueue, errText } from "../data/api";
 import { refillResultMsg, queueMax } from "../data/refill";
 import { DEFAULT_MESSAGE_TEMPLATE, CLASSIC_MESSAGE_TEMPLATE, LEGACY_DEFAULT_MESSAGE_TEMPLATE } from "../data/mockData";
@@ -320,7 +321,7 @@ const CUPOM_BARRADO = {
   testando: "⏳ Testando o cupom — envia quando validar",
 };
 
-function QueueItemCard({ item, idx, eta, isLast, touch, estadoCupom, precoCupom, modeloTemPreco, onRemove, onMoveToTop, onMoveUp, onMoveDown, onSaveCoupon, onDragStart, onDragOver, onDragEnd, onDrop, isDragOver, isDragging }) {
+function QueueItemCard({ item, idx, eta, isLast, touch, estadoCupom, precoCupom, modeloTemPreco, onValidarCupom, onRemove, onMoveToTop, onMoveUp, onMoveDown, onSaveCoupon, onDragStart, onDragOver, onDragEnd, onDrop, isDragOver, isDragging }) {
   const addedAt = item.addedAt ? new Date(item.addedAt) : null;
   const addedAtStr = addedAt && !isNaN(addedAt.getTime()) ? addedAt.toLocaleString("pt-BR") : null;
   const discountStr = !isEmpty(item.discount) ? (typeof item.discount === "number" ? `${item.discount}%` : String(item.discount)) : null;
@@ -375,6 +376,17 @@ function QueueItemCard({ item, idx, eta, isLast, touch, estadoCupom, precoCupom,
               style={{ padding: "5px 10px", borderRadius: 7, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", fontSize: 12, cursor: "pointer" }}
             >
               ⬆ Enviar primeiro
+            </button>
+          )}
+          {/* Só o admin vê (onValidarCupom só chega pra ele): liga a palavra ao
+              cupom na mão quando o teste no checkout não conseguiu. */}
+          {onValidarCupom && CUPOM_BARRADO[estadoCupom] && !isEmpty(item.coupon) && (
+            <button
+              onClick={onValidarCupom}
+              title="Escolher de qual cupom é esta palavra, para o produto sair com o desconto"
+              style={{ padding: "5px 10px", borderRadius: 7, border: `0.5px solid ${PRIMARY}`, background: PRIMARY_LIGHT, color: PRIMARY_DARK, fontSize: 12, cursor: "pointer", fontWeight: 500 }}
+            >
+              ✓ Validar cupom
             </button>
           )}
           <button onClick={onRemove} style={{ padding: "5px 10px", borderRadius: 7, border: "0.5px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", fontSize: 12, cursor: "pointer" }}>Remover</button>
@@ -571,6 +583,10 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
   // Prévia do cupom de cada item (preço com cupom, rótulo, economia), calculada
   // pelo servidor com a regra do envio. Vem na mesma resposta, pra toda campanha.
   const [precosCupom, setPrecosCupom] = useState({});
+  // Admin validando na mão a palavra de um item barrado: a palavra do modal, e um
+  // contador que faz a fila perguntar os estados de novo quando ele termina.
+  const [validarPalavra, setValidarPalavra] = useState(null);
+  const [recarregaCupons, setRecarregaCupons] = useState(0);
   // Editar o cupom de um item muda o estado dele: pergunta de novo.
   const queueCupomSig = (group.queue || []).map(q => q.coupon || "").join("|");
   const soCupomValidoSalvo = group?.scraping?.kind === "repasse" && !!group?.scraping?.repasse?.soCupomValido;
@@ -587,7 +603,7 @@ export default function GroupDashboard({ group, numbers, whatsappGroups = [], af
     carregar();
     const t = setInterval(carregar, 30_000);
     return () => { vivo = false; clearInterval(t); };
-  }, [tab, soCupomValidoSalvo, group.id, queueKeySig, queueCupomSig]);
+  }, [tab, soCupomValidoSalvo, group.id, queueKeySig, queueCupomSig, recarregaCupons]);
   useEffect(() => { setPending(group.pending || []); }, [pendingKeySig]);
 
   async function handleClearHistory() {
@@ -2814,6 +2830,7 @@ onError={setActionError}
                     estadoCupom={estadosCupom[item.id ?? item.key]}
                     precoCupom={precosCupom[item.id ?? item.key]}
                     modeloTemPreco={String(group.messageTemplate || "").includes("{preco}")}
+                    onValidarCupom={isAdmin ? () => setValidarPalavra(item.coupon) : undefined}
                     isLast={idx === queue.length - 1}
                     touch={touch}
                     onRemove={() => setConfirmRemoveQueueItem(item)}
@@ -2829,6 +2846,13 @@ onError={setActionError}
                     isDragging={dragIdx === idx}
                   />
                 ))}
+                {validarPalavra != null && (
+                  <VincularCupomModal
+                    palavra={validarPalavra}
+                    onClose={() => setValidarPalavra(null)}
+                    onDone={() => setRecarregaCupons(n => n + 1)}
+                  />
+                )}
               </div>
             );
           })()}

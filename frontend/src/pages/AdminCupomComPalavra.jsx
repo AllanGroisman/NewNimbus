@@ -24,6 +24,7 @@ import {
   adminMlCuponsPalavrasApagarNaoAchados, errText,
 } from "../data/api";
 import Modal from "../components/ui/Modal";
+import VincularCupomModal from "../components/VincularCupomModal";
 import { coletorEntende, sondarCuponsNoCheckout } from "../data/coletor";
 import { materialEnxuto, descreverPasso } from "../data/sondaLote";
 import {
@@ -84,6 +85,7 @@ export default function CuponsComPalavras() {
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState(null);
   const [tick, setTick] = useState(0);
+  const [vincular, setVincular] = useState(false);
   const recarregar = useCallback(() => setTick(t => t + 1), []);
 
   // Limpar vencidos / não achados: a prévia abre o modal; confirmar apaga.
@@ -230,8 +232,11 @@ export default function CuponsComPalavras() {
         <button onClick={() => abrirPrevia("naoAchados")} disabled={ocupado || !naoAchados.length} style={botaoPerigo(ocupado || !naoAchados.length)}>
           {limpando ? "apagando..." : `🗑 Limpar não achados (${naoAchados.length})`}
         </button>
+        <button onClick={() => setVincular(true)} disabled={ocupado} style={botaoSecundario} title="Diz na mão de qual cupom é uma palavra, quando o teste no checkout não conseguiu ligar as duas">🔗 Vincular palavra a cupom</button>
         <button onClick={recarregar} disabled={ocupado} style={botaoSecundario}>⟳ Atualizar</button>
       </div>
+
+      {vincular && <VincularCupomModal onClose={() => setVincular(false)} onDone={() => recarregar()} />}
 
       {busca && (
         <div style={{ fontSize: 12, marginBottom: 12, color: "var(--color-text-secondary)" }}>
